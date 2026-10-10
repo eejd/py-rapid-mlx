@@ -1838,6 +1838,11 @@ class _BuildSlot:
 
 # Per-key in-flight build registry for single-flight (key -> _BuildSlot).
 _compiled_matcher_building: "dict[tuple[int, str], _BuildSlot]" = {}
+# An offloaded build can outlive a cancelled request. Keep its tokenizer ID
+# invalidated until its last builder finishes, so unload cannot be undone by
+# a late cache publication. The builder itself pins the tokenizer while this
+# ID is present, preventing ID reuse; the final builder removes the marker.
+_compiled_matcher_invalidated: set[int] = set()
 
 
 def release_model_matchers(tokenizer: Any) -> None:
@@ -1850,9 +1855,12 @@ def release_model_matchers(tokenizer: Any) -> None:
     hit, lltokenizer = _lltokenizer_cache_get(tokenizer)
     if not hit or lltokenizer is None:
         return
+    tokenizer_id = id(lltokenizer)
     with _compiled_matcher_lock:
+        if any(key[0] == tokenizer_id for key in _compiled_matcher_building):
+            _compiled_matcher_invalidated.add(tokenizer_id)
         for key in tuple(_compiled_matcher_cache):
-            if key[0] == id(lltokenizer):
+            if key[0] == tokenizer_id:
                 _compiled_matcher_cache_bytes -= _compiled_matcher_cache.pop(key)[2]
 
 
@@ -1948,7 +1956,10 @@ def get_request_matcher(lltokenizer: Any, grammar: str) -> Any:
                 # Refuse to cache a single grammar larger than the whole byte
                 # budget — it would evict everything and still overflow; it
                 # rebuilds per request (rare: schema pre-capped at 64 KiB).
-                if nbytes <= _COMPILED_MATCHER_CACHE_MAX_BYTES:
+                if (
+                    nbytes <= _COMPILED_MATCHER_CACHE_MAX_BYTES
+                    and id(lltokenizer) not in _compiled_matcher_invalidated
+                ):
                     _compiled_matcher_cache[key] = (lltokenizer, template, nbytes)
                     _compiled_matcher_cache_bytes += nbytes
                     _evict_compiled_matchers_locked()
@@ -1961,6 +1972,11 @@ def get_request_matcher(lltokenizer: Any, grammar: str) -> Any:
             with _compiled_matcher_lock:
                 slot.event.set()
                 _compiled_matcher_building.pop(key, None)
+                if not any(
+                    active_key[0] == id(lltokenizer)
+                    for active_key in _compiled_matcher_building
+                ):
+                    _compiled_matcher_invalidated.discard(id(lltokenizer))
 
 
 def build_tool_grammar(
