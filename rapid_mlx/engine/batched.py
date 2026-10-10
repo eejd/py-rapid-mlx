@@ -1797,11 +1797,12 @@ class BatchedEngine(BaseEngine):
         # "There is no Stream(gpu, N) in current thread" on the first request.
         # The same executor is then handed to MLLMScheduler so step calls
         # land on the model-owning thread.
-        self._model_load_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="mllm-step",
-            initializer=_init_mlx_step_thread,
-        )
+        if self._model_load_executor is None:
+            self._model_load_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="mllm-step",
+                initializer=_init_mlx_step_thread,
+            )
 
         def _load_mllm() -> MLXMultimodalLM:
             instance = MLXMultimodalLM(
@@ -2522,7 +2523,11 @@ class BatchedEngine(BaseEngine):
             raise RuntimeError("model worker is not running")
         return executor.submit(func, *args, **kwargs).result()
 
-    async def stop(self) -> None:
+    async def idle_stop(self) -> None:
+        """Unload weights while retaining the MLLM model-owning stream thread."""
+        await self.stop(preserve_model_worker=self._is_mllm and self._engine is None)
+
+    async def stop(self, *, preserve_model_worker: bool = False) -> None:
         """Stop the engine and cleanup resources."""
         # Scheduler shutdown queues work on the same single model executor
         # used by guided decoding. Signal guided jobs first so a long schema
@@ -2540,13 +2545,18 @@ class BatchedEngine(BaseEngine):
             await self._mllm_scheduler.stop()
             self._mllm_scheduler = None
 
-        if self._is_mllm and self._model_load_executor is not None:
+        if (
+            self._is_mllm
+            and self._model_load_executor is not None
+            and not preserve_model_worker
+        ):
             self._model_load_executor.shutdown(wait=False)
 
         # _engine.stop() already shutdown the shared mlx-step executor
         # (handed off in start()). Drop our reference so __del__ doesn't
         # double-shutdown.
-        self._model_load_executor = None
+        if not preserve_model_worker or not self._is_mllm:
+            self._model_load_executor = None
         self._start_time = None
 
         self._model = None
