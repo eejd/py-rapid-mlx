@@ -1,0 +1,396 @@
+{
+  "config": {},
+  "extra": {
+    "ds": {
+      "offset": [
+        70,
+        90
+      ],
+      "scale": 0.85
+    }
+  },
+  "groups": [],
+  "id": "c4e8895e-b775-43c3-a30e-1e88fb2734e7",
+  "last_link_id": 3,
+  "last_node_id": 4,
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "VIDEO"
+    ]
+  ],
+  "nodes": [
+    {
+      "flags": {},
+      "id": 1,
+      "inputs": [
+        {
+          "link": null,
+          "localized_name": "base_url",
+          "name": "base_url",
+          "type": "STRING",
+          "widget": {
+            "name": "base_url"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "model",
+          "name": "model",
+          "type": "STRING",
+          "widget": {
+            "name": "model"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "prompt",
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "width",
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "height",
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "steps",
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          }
+        }
+      ],
+      "mode": 0,
+      "order": 0,
+      "outputs": [
+        {
+          "links": [
+            1,
+            2
+          ],
+          "localized_name": "IMAGE",
+          "name": "IMAGE",
+          "type": "IMAGE"
+        }
+      ],
+      "pos": [
+        70,
+        100
+      ],
+      "properties": {
+        "Node name for S&R": "RapidMLXImage"
+      },
+      "size": [
+        450,
+        500
+      ],
+      "type": "RapidMLXImage",
+      "widgets_values": [
+        "http://127.0.0.1:18427",
+        "qwen-image-2.1",
+        "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. Rainy deserted railway platform at midnight. The boat floats in a shallow puddle in the foreground, teal station lamps reflected on wet stone. A luminous tunnel in the distance.",
+        1024,
+        704,
+        40,
+        7300,
+        "fixed"
+      ],
+      "widgets_values_named": {
+        "base_url": "http://127.0.0.1:18427",
+        "control_after_generate": "fixed",
+        "height": 704,
+        "model": "qwen-image-2.1",
+        "prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. Rainy deserted railway platform at midnight. The boat floats in a shallow puddle in the foreground, teal station lamps reflected on wet stone. A luminous tunnel in the distance.",
+        "seed": 7300,
+        "steps": 40,
+        "width": 1024
+      }
+    },
+    {
+      "flags": {},
+      "id": 2,
+      "inputs": [
+        {
+          "link": 1,
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE"
+        },
+        {
+          "link": null,
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          }
+        }
+      ],
+      "mode": 0,
+      "order": 1,
+      "outputs": [
+        {
+          "links": null,
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE"
+        }
+      ],
+      "pos": [
+        570,
+        100
+      ],
+      "properties": {},
+      "size": [
+        270,
+        58
+      ],
+      "type": "SaveImage",
+      "widgets_values": [
+        "rapid-cinema/01-departure"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "rapid-cinema/01-departure"
+      }
+    },
+    {
+      "flags": {},
+      "id": 3,
+      "inputs": [
+        {
+          "link": 2,
+          "localized_name": "image",
+          "name": "image",
+          "type": "IMAGE"
+        },
+        {
+          "link": null,
+          "localized_name": "base_url",
+          "name": "base_url",
+          "type": "STRING",
+          "widget": {
+            "name": "base_url"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "prompt",
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "width",
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "height",
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "frames",
+          "name": "frames",
+          "type": "INT",
+          "widget": {
+            "name": "frames"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          }
+        }
+      ],
+      "mode": 0,
+      "order": 2,
+      "outputs": [
+        {
+          "links": [
+            3
+          ],
+          "localized_name": "VIDEO",
+          "name": "VIDEO",
+          "type": "VIDEO"
+        }
+      ],
+      "pos": [
+        570,
+        420
+      ],
+      "properties": {
+        "Node name for S&R": "RapidMLXVideo"
+      },
+      "size": [
+        450,
+        480
+      ],
+      "type": "RapidMLXVideo",
+      "widgets_values": [
+        "http://127.0.0.1:18428",
+        "Low camera slowly tracks alongside the red paper boat as it drifts across the rain puddle. Raindrops ripple the water, the amber lantern flame gently flickers, mist moves through the deserted station. Quiet rain and distant train rumble. One continuous shot.",
+        704,
+        480,
+        97,
+        7300,
+        "fixed"
+      ],
+      "widgets_values_named": {
+        "base_url": "http://127.0.0.1:18428",
+        "control_after_generate": "fixed",
+        "frames": 97,
+        "height": 480,
+        "prompt": "Low camera slowly tracks alongside the red paper boat as it drifts across the rain puddle. Raindrops ripple the water, the amber lantern flame gently flickers, mist moves through the deserted station. Quiet rain and distant train rumble. One continuous shot.",
+        "seed": 7300,
+        "width": 704
+      }
+    },
+    {
+      "flags": {},
+      "id": 4,
+      "inputs": [
+        {
+          "link": 3,
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO"
+        },
+        {
+          "link": null,
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "codec",
+          "name": "format.codec",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format.codec"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "codec",
+          "name": "codec",
+          "shape": 7,
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "codec"
+          }
+        }
+      ],
+      "mode": 0,
+      "order": 3,
+      "outputs": [
+        {
+          "links": null,
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO"
+        }
+      ],
+      "pos": [
+        1100,
+        420
+      ],
+      "properties": {},
+      "size": [
+        270,
+        106
+      ],
+      "type": "SaveVideo",
+      "widgets_values": [
+        "rapid-cinema/01-departure",
+        "mp4",
+        "auto",
+        "auto"
+      ],
+      "widgets_values_named": {
+        "codec": "auto",
+        "filename_prefix": "rapid-cinema/01-departure",
+        "format": "mp4",
+        "format.codec": "auto"
+      }
+    }
+  ],
+  "revision": 0,
+  "version": 0.4
+}

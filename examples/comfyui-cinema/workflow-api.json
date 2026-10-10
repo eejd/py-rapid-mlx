@@ -44,7 +44,9 @@
         0
       ],
       "filename_prefix": "rapid-cinema/01-departure",
-      "format": "mp4"
+      "format": "mp4",
+      "format.codec": "auto",
+      "codec": "auto"
     }
   }
 }

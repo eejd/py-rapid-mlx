@@ -1,0 +1,72 @@
+{
+  "status": "six_keyframes_verified_video_pending",
+  "recorded_utc": "2026-10-10T21:49:38Z",
+  "hardware": "Mac Studio M3 Ultra, 256 GB unified memory",
+  "os": "26.5.2",
+  "image_model": "mlx-community/Qwen-Image-2.1-mflux-q4",
+  "image_revision": "746a58556820933a2df5c75887a2570f1ad200c0",
+  "steps": 40,
+  "size": "1024x704",
+  "comfy_commit": "0df64eb242b7c5759c3e86afd5d1846d923b1033",
+  "ltx_runtime_prepared_commit": "57952288076766abe27dda3a774b2c24f7346977",
+  "ltx_model_revision_cached": "f1b56e7dc89f71a9af2cddac787b89ed22a8b7fc",
+  "image_attempts": 6,
+  "video_attempts": 0,
+  "records": [
+    {
+      "id": "01-departure",
+      "prompt_id": "71c13c55-0eeb-42dd-8033-4fa34a6a0483",
+      "seed": 7300,
+      "request_sha256": "f518cc8ffe918aa831d5b6b6bccba0bf70afd5d95431d90cbb7c84c3237466d1",
+      "image_sha256": "18c54af7cad163d5c261277233f566e7fb7303ae23ee402d718f04b0386929d6",
+      "comfy_execution_seconds": 110.231
+    },
+    {
+      "id": "02-cloud-sea",
+      "prompt_id": "c8631286-ca84-44ba-8ade-3efdf268898d",
+      "seed": 7301,
+      "request_sha256": "ffa9631d57cdc3ea74e2a54ec28689e2d5656613c1f14a5b66b2fa18c6b8e24d",
+      "image_sha256": "1de6db31b83cce3e83b911543ef4f0d1041d408104c0e29f12e91e158670afac",
+      "comfy_execution_seconds": 109.643
+    },
+    {
+      "id": "03-moon-canal",
+      "prompt_id": "71d4be8f-c9e6-4416-9a23-eea7dfe5f80e",
+      "seed": 7302,
+      "request_sha256": "7978b92381abb8c3d7e1e26f46a1ba9b5aa250f37914af1924065ee4daf45708",
+      "image_sha256": "434fb498487e7a0f27ffdc1cf1d653d5c427a5577559dee17708b1e5e278269c",
+      "comfy_execution_seconds": 109.68
+    },
+    {
+      "id": "04-deep-blue",
+      "prompt_id": "e3b86e4a-fc74-46da-89ff-99ef50da644a",
+      "seed": 7303,
+      "request_sha256": "2c162718a5552dea47b76ebf069eb5a2bd3ba981f34524e6d978811f1bb05db8",
+      "image_sha256": "1dadc808822db8ad59296fe71c410040336f28ddac3540f488e2008d1b438ff1",
+      "comfy_execution_seconds": 112.507
+    },
+    {
+      "id": "05-forest",
+      "prompt_id": "1e262efb-68e4-4b61-90e6-91a54ae7df76",
+      "seed": 7304,
+      "request_sha256": "ee968bfb6e75404ef3d28569e73acd412d682ed3e86d552d0092a2e61a3aa1fd",
+      "image_sha256": "2439e9cd5a89a935824d28ee39fc65a67b5ca61f8b50f86acb39f20400c85b78",
+      "comfy_execution_seconds": 112.511
+    },
+    {
+      "id": "06-home",
+      "prompt_id": "013bb058-178f-4d31-8ff8-9db9b1ff256a",
+      "seed": 7305,
+      "request_sha256": "94b23285ba950e4950bb5f3b4a86d339c8867281f9a8eda85d214d2e10e131f9",
+      "image_sha256": "64da028e07afd78001e77816c8bdd89856b2edcd81f4fbf3bb571875661c80b0",
+      "comfy_execution_seconds": 112.446
+    }
+  ],
+  "review_notes": [
+    "All six keyframes inspected; recurring boat and lantern differ somewhat in shape.",
+    "Moon prompt requested a canal but produced dry lunar ruins; motion adapted to orbit the existing scene.",
+    "Final boat rests on wooden dock; motion adapted to rising camera, leaves and lanterns.",
+    "Comfy timings include node execution; shared-host data is not a controlled throughput benchmark.",
+    "CPU-only renderer tested with six synthetic 9-frame clips: 198 output frames,24fps,8.271333s including AAC padding. Synthetic media kept in scratch, excluded from demo media."
+  ]
+}

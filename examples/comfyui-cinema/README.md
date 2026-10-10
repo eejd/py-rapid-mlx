@@ -1,12 +1,14 @@
 # The Last Lantern — local AI microfilm
 
-**Preparation status:** six-shot storyboard, ComfyUI nodes and API workflow are
-prepared. Video generation and visual verification have not run for this demo.
-The Studio GPU is reserved for Spark; do not start inference or load models until
-that reservation is explicitly released. No speed or film-quality claim is made.
+**Status as of 2026-10-10:** all six Qwen keyframes were generated and visually
+reviewed. The custom video node registered in the running ComfyUI, the canvas
+workflow was exported, and the renderer passed a CPU-only synthetic-media check.
+LTX inference and the final film have not run: the shared Studio GPU was handed
+back for another validation window. No video-quality or throughput claim is made.
+See [keyframe execution evidence](verified-keyframes.json).
 
 The intended film follows a red paper boat carrying an amber lantern through six
-worlds: a rainy station, a cloud ocean, a moon canal, an underwater bubble, a
+worlds: a rainy station, a cloud ocean, a lunar ruin, an underwater bubble, a
 mushroom forest and a quiet dawn. Each shot targets 97 frames at 24 fps, about
 4.04 seconds. Six generated shots provide about 24 seconds before editorial
 cards. Qwen-Image supplies the first frame; LTX-2.5 generates motion and audio.
@@ -78,7 +80,8 @@ these fit the current server's shape and pixel-frame limits. Check
 `GET /v1/videos/capabilities` before changing them. LTX-2.5's distilled pipeline
 does not accept CFG guidance or negative prompts.
 
-`workflow-api.json` is an **API prompt graph**, submitted as the `prompt` member
+`workflow.json` is the canvas workflow exported from the running ComfyUI; drag it
+into the UI after installing both custom nodes. `workflow-api.json` is an **API prompt graph**, submitted as the `prompt` member
 of `POST /prompt`; it is not a canvas export to drag into the UI. It illustrates
 the full graph. The batch script uses two passes so saved keyframes can be
 reviewed before animation. Keep ComfyUI's output directory: the second pass
@@ -127,5 +130,7 @@ python3 examples/comfyui-cinema/render.py \
 
 The renderer requires Pillow and FFmpeg. It refuses missing shots or missing
 native audio instead of silently substituting stills or a silent soundtrack.
+The film starts with the generated departure shot before its title card.
 Its six-second title/outro cards bring the intended film length to about 30
-seconds. This editing path also awaits an actual generated-video validation run.
+seconds. The editor passed a six-clip synthetic video/audio smoke test; actual LTX-generated
+media and sound quality still await validation.

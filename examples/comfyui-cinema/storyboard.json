@@ -15,7 +15,7 @@
     "id": "03-moon-canal",
     "seed": 7302,
     "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. The boat passes through a canal in a miniature city built inside a lunar crater. Warm window lights, arched bridges, an enormous blue Earth above the horizon, stars and silver moon dust.",
-    "motion_prompt": "Water carries the red boat slowly underneath a tiny arched bridge. Camera tracks at water level, moon dust drifts in the air and warm lights shimmer on the canal. Gentle water lapping and distant chimes. One continuous shot."
+    "motion_prompt": "Camera slowly orbits the red paper boat resting on silver lunar dust, revealing the immense blue Earth above ancient stone arches. Fine dust particles drift, the amber lantern flame flickers and warm windows glimmer. Subtle low wind and delicate chimes. One continuous shot."
   },
   {
     "id": "04-deep-blue",
@@ -33,6 +33,6 @@
     "id": "06-home",
     "seed": 7305,
     "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. The boat rests at a tiny wooden riverside dock beneath a blooming tree at sunrise. Hundreds of small amber lanterns glow on the branches. Warm golden morning, soft pink clouds, peaceful wide ending.",
-    "motion_prompt": "Camera slowly rises from the red boat at the dock, revealing the tree full of glowing lanterns. Leaves stir gently, morning mist lifts from the river, the boat rocks softly against the dock. Birds and gentle flowing water. One continuous shot."
+    "motion_prompt": "Camera slowly rises from the red paper boat resting on the wooden dock, revealing the tree full of glowing lanterns. Leaves stir gently, hanging lanterns sway softly and morning mist lifts from the river. The paper boat stays on the dock. Birds and gentle flowing water. One continuous shot."
   }
 ]
