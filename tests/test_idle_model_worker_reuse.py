@@ -36,7 +36,10 @@ async def test_idle_lifecycle_uses_idle_stop_when_available():
 
 
 @pytest.mark.asyncio
-async def test_mllm_idle_stop_releases_model_but_reuses_worker(monkeypatch):
+@pytest.mark.parametrize("dual_scheduler", [False, True])
+async def test_mllm_idle_stop_releases_model_but_reuses_worker(
+    monkeypatch, dual_scheduler
+):
     from rapid_mlx.engine.batched import BatchedEngine
 
     class Model:
@@ -44,7 +47,8 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(monkeypatch):
 
     engine = BatchedEngine.__new__(BatchedEngine)
     engine._is_mllm = True
-    engine._engine = None
+    text_engine = Mock(stop=AsyncMock(), engine=Mock(close=Mock()))
+    engine._engine = text_engine if dual_scheduler else None
     engine._mllm_scheduler = Mock(stop=AsyncMock())
     engine._guided_requests_lock = threading.Lock()
     monkeypatch.setattr(engine, "_abort_all_guided_requests", lambda: None)
@@ -68,6 +72,9 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(monkeypatch):
         assert engine._model_load_executor is worker
         assert worker.submit(lambda: 1).result(timeout=2) == 1
         assert engine._mllm_scheduler is None
+        if dual_scheduler:
+            text_engine.stop.assert_awaited_once()
+            text_engine.engine.close.assert_called_once()
 
         await engine.stop()
         assert engine._model_load_executor is None

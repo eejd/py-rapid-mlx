@@ -2525,7 +2525,7 @@ class BatchedEngine(BaseEngine):
 
     async def idle_stop(self) -> None:
         """Unload weights while retaining the MLLM model-owning stream thread."""
-        await self.stop(preserve_model_worker=self._is_mllm and self._engine is None)
+        await self.stop(preserve_model_worker=self._is_mllm)
 
     async def stop(self, *, preserve_model_worker: bool = False) -> None:
         """Stop the engine and cleanup resources."""
