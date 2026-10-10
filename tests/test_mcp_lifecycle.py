@@ -304,3 +304,103 @@ async def test_unexpected_owner_cancellation_is_reported(owned_client):
     assert client.state == MCPServerState.ERROR
     assert "cancelled" in client.get_status().error
     assert client._lifecycle_task is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shutdown", ["stop", "cancel", "close_error"])
+async def test_sse_sdk_contexts_unwind_on_shutdown(monkeypatch, shutdown):
+    import asyncio
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    mcp = pytest.importorskip("mcp")
+    sse = pytest.importorskip("mcp.client.sse")
+
+    from rapid_mlx.mcp.client import MCPClient
+    from rapid_mlx.mcp.types import MCPServerConfig, MCPServerState
+
+    events = []
+    read, write = object(), object()
+    session = SimpleNamespace(
+        initialize=AsyncMock(return_value=SimpleNamespace()),
+        list_tools=AsyncMock(return_value=SimpleNamespace(tools=[])),
+    )
+
+    @asynccontextmanager
+    async def transport(url):
+        assert url == "https://example.com/sse"
+        owner = asyncio.current_task()
+        events.append("transport enter")
+        try:
+            yield read, write
+        finally:
+            assert asyncio.current_task() is owner
+            events.append("transport exit")
+
+    class Session:
+        def __init__(self, actual_read, actual_write):
+            assert (actual_read, actual_write) == (read, write)
+            self.initialize = session.initialize
+            self.list_tools = session.list_tools
+
+        async def __aenter__(self):
+            self.owner = asyncio.current_task()
+            events.append("session enter")
+            return self
+
+        async def __aexit__(self, *exc):
+            assert asyncio.current_task() is self.owner
+            events.append("session exit")
+            if shutdown == "close_error":
+                raise RuntimeError("session close failed")
+
+    # Replace only SDK I/O; exercise the production SSE connection, handshake,
+    # discovery and owner teardown rather than replacing _connect_sse.
+    monkeypatch.setattr(sse, "sse_client", transport)
+    monkeypatch.setattr(mcp, "ClientSession", Session)
+    client = MCPClient(
+        MCPServerConfig(name="remote", transport="sse", url="https://example.com/sse")
+    )
+    assert await client.connect()
+    session.initialize.assert_awaited_once()
+    session.list_tools.assert_awaited_once()
+    if shutdown == "cancel":
+        client._lifecycle_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await client.disconnect()
+        assert client.state == MCPServerState.ERROR
+        assert "cancelled before clean shutdown" in client.get_status().error
+    else:
+        await client.disconnect()
+        if shutdown == "close_error":
+            assert client.state == MCPServerState.ERROR
+            assert "session close failed" in client.get_status().error
+        else:
+            assert client.state == MCPServerState.DISCONNECTED
+    assert events == [
+        "transport enter",
+        "session enter",
+        "session exit",
+        "transport exit",
+    ]
+    assert client._lifecycle_task is None
+    assert client._session is None
+    assert client._read is client._write is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_transport_fails_without_leaving_an_owner():
+    from rapid_mlx.mcp.client import MCPClient
+    from rapid_mlx.mcp.types import MCPServerConfig, MCPServerState
+
+    client = MCPClient(MCPServerConfig(name="unknown", command="python3"))
+    # A malformed in-memory configuration must still terminate startup and
+    # allow shutdown, even when the normal configuration validator is bypassed.
+    client.config.transport = "unknown"
+    assert not await client.connect()
+    assert client.state == MCPServerState.ERROR
+    assert "Unknown transport" in client.get_status().error
+    await client.disconnect()
+    assert client._lifecycle_task is None
+    assert client._exit_stack is None
