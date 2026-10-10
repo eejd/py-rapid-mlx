@@ -847,6 +847,11 @@ async def test_impossible_load_counts_only_eligible_residents(protected):
 def test_capacity_rejection_via_http_preserves_secondary(monkeypatch):
     from rapid_mlx.routes.residency import router
 
+    # This contract concerns model residency. Audio lanes are process-global
+    # and their idle clocks may advance after earlier audio tests loaded them.
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.audio_worker.audio_worker.snapshot", lambda: []
+    )
     manager, registry, loaded, _ = manager_fixture(limit_gib=10)
     monkeypatch.setattr(
         "rapid_mlx.routes.residency.get_config",
