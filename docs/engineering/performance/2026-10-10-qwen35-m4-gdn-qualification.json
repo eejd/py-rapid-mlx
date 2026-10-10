@@ -70,6 +70,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "ec7301b5f96b01898830a484e5ca325ca501995d82b231caa92cfcfdf8430115"
     },
     {
@@ -83,6 +91,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "ec7301b5f96b01898830a484e5ca325ca501995d82b231caa92cfcfdf8430115"
     },
     {
@@ -96,6 +112,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "8e0153cfb7fed959688f1d642db8db9728dc78dc573b0fc910bd0f08f82c88d0"
     },
     {
@@ -109,6 +133,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "8e0153cfb7fed959688f1d642db8db9728dc78dc573b0fc910bd0f08f82c88d0"
     },
     {
@@ -122,6 +154,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "14084100d3ddccf6657aa214c71f76b97bf932ab644a307083cf9a7c650a6ecc"
     },
     {
@@ -135,6 +175,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "14084100d3ddccf6657aa214c71f76b97bf932ab644a307083cf9a7c650a6ecc"
     },
     {
@@ -148,6 +196,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "8e0153cfb7fed959688f1d642db8db9728dc78dc573b0fc910bd0f08f82c88d0"
     },
     {
@@ -161,6 +217,14 @@
       "steps_completed": 256,
       "rows": 7680,
       "error": null,
+      "comparisons": {
+        "metric_comparisons": 30720,
+        "exact_comparisons": 30720,
+        "non_finite_comparisons": 0,
+        "differing_elements": 0,
+        "metric_errors": 0,
+        "exact": true
+      },
       "tokens_sha256": "8e0153cfb7fed959688f1d642db8db9728dc78dc573b0fc910bd0f08f82c88d0"
     }
   ],

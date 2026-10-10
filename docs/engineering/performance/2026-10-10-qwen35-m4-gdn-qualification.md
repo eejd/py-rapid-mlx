@@ -12,8 +12,11 @@ defect was established, and no performance or universal hardware claim is made.
 - Python 3.12.13, MLX/Metal 0.32.3, native model package 0.31.3, NumPy 2.4.4.
 - Transformers 5.15.1; the complete package inventory is retained with raw evidence.
 - Two immutable checkpoints copied from the existing cache into the worker's
-  default Hugging Face cache. All weight shards are verified against their
-  content-addressed SHA-256 names before loading.
+  default Hugging Face cache. Snapshot entries such as
+  `model-00001-of-00004.safetensors` are symlinks to `../../blobs/<64-hex-SHA256>`.
+  Before loading, the diagnostic streams every shard through SHA-256 and checks
+  it against the resolved blob's filename. The verified content digest is also
+  recorded in the supplement; ordinal snapshot filenames are not hash inputs.
 
 The shared kernel source includes the admission check merged since the earlier
 capture. These results use a new source inventory; the earlier evidence has not
@@ -117,6 +120,8 @@ Every row, generated continuation, full process/GPU-client sample, sanitized
 lease receipt, runtime package list, focused-test log and the external
 collector/audit scripts are retained on Studio under
 `/Volumes/RTL-2T/scratch-archive/rapid-mlx-4448/ff7a54403-m4-20261010/`.
-The archive's `artifact-manifest.json` hashes all 30 retained files; its SHA-256 is
-`fd99c4c52878648af737073cefb0dff12d138cafda7312086b98c2495b1bf21e`.
+The archive's `artifact-manifest-v2.json` hashes all 33 retained files; its SHA-256 is
+`80146be3ff73dfc84a795b9df28ba6bed03649e5ea8193f1ab67df5fdc3aa466`.
+The original summary/manifest remain intact; `summary-v2.json` and `audit-v2.py`
+add per-trajectory exactness counts derived from the same immutable row streams.
 Credentials and lease secrets are excluded from the archive and this supplement.
