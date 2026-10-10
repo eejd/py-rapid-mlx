@@ -820,6 +820,76 @@ input()
         first.communicate(timeout=10)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS psutil clock correction")
+@pytest.mark.parametrize("offset", [-2.0, 2.0])
+def test_live_child_remains_live_after_parent_clock_baseline_changes(
+    tmp_path, capsys, monkeypatch, offset
+):
+    psosx = pytest.importorskip("psutil._psosx")
+    if not hasattr(psosx, "INIT_BOOT_TIME"):
+        pytest.skip("psutil version has no import-time clock correction")
+    # A fresh child imports psutil after the clock change, while a long-lived
+    # parent keeps its earlier baseline. Change only Python state, not the clock.
+    monkeypatch.setattr(psosx, "INIT_BOOT_TIME", psosx.boot_time() + offset)
+    test_second_server_does_not_acknowledge_live_server_crash_file(tmp_path, capsys)
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("same", True),
+        ("reused", False),
+        ("legacy", False),
+        ("missing", False),
+        ("dead", False),
+        ("denied", True),
+        ("invalid", False),
+    ],
+)
+def test_raw_creation_time_probe_keeps_identity_boundaries(monkeypatch, kind, expected):
+    from rapid_mlx import _process_identity as identity
+
+    marker = {"pid": 123, "create_time": 100.0, "boot_time": 50.0, "app_version": "1"}
+    no_such_process = type("NoSuchProcess", (Exception,), {})
+    calls = []
+
+    def raw_time(*, monotonic):
+        assert monotonic is True
+        calls.append("raw")
+        if kind == "dead":
+            raise no_such_process()
+        if kind == "denied":
+            raise PermissionError("denied")
+        return {"same": 100.0, "reused": 101.0, "invalid": float("nan")}[kind]
+
+    if kind == "missing":
+        backend = None
+    elif kind == "legacy":
+        backend = SimpleNamespace(create_time=lambda: 100.0)
+    else:
+        backend = SimpleNamespace(create_time=raw_time)
+    fake = SimpleNamespace(
+        Process=lambda _pid: SimpleNamespace(_proc=backend),
+        NoSuchProcess=no_such_process,
+    )
+    monkeypatch.setattr(identity, "psutil", fake)
+    monkeypatch.setattr(identity.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        identity,
+        "process_identity",
+        lambda _pid: identity.ProcessIdentity(123, 102.0, 50.0),
+    )
+    assert identity.is_same_process(marker) is expected
+    calls.clear()
+    assert identity.is_same_process({**marker, "boot_time": 49.0}) is False
+    assert calls == []  # boot mismatch never consults the extra timestamp
+    assert identity.is_same_process({**marker, "create_time": 102.0}) is True
+    assert calls == []  # ordinary identity matches need no private capability
+    monkeypatch.setattr(identity.sys, "platform", "linux")
+    assert identity.is_same_process(marker) is False
+    assert calls == []
+
+
 def test_reported_suffix_collision_is_acknowledged_once(tmp_path, capsys):
     from rapid_mlx import _signal_observability as so
 
