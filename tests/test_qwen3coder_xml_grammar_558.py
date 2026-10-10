@@ -444,7 +444,7 @@ def _load_cached_tokenizer(transformers):
     """
     from huggingface_hub import try_to_load_from_cache
 
-    for filename in ("tokenizer.json", "tokenizer_config.json", "config.json"):
+    for filename in ("tokenizer.json", "tokenizer_config.json"):
         cached = try_to_load_from_cache(
             _TOKENIZER_MODEL,
             filename,
@@ -1211,9 +1211,7 @@ def test_build_tool_grammar_opts_out_r3_bad_enum(tok):
     )
 
 
-@pytest.mark.parametrize(
-    "missing", ["tokenizer.json", "tokenizer_config.json", "config.json"]
-)
+@pytest.mark.parametrize("missing", ["tokenizer.json", "tokenizer_config.json"])
 def test_tokenizer_cache_miss_skips_without_loading(monkeypatch, missing):
     from types import SimpleNamespace
 
@@ -1260,3 +1258,32 @@ def test_cached_tokenizer_corruption_fails_offline(monkeypatch):
     with pytest.raises(OSError) as caught:
         _load_cached_tokenizer(transformers)
     assert caught.value is failure
+
+
+def test_cached_tokenizer_load_needs_no_model_config(monkeypatch):
+    from types import SimpleNamespace
+
+    import huggingface_hub
+
+    probes = []
+
+    def cached(repo, filename, *, revision, cache_dir):
+        assert repo == _TOKENIZER_MODEL
+        assert revision == _TOKENIZER_REVISION
+        assert cache_dir == _TOKENIZER_CACHE
+        probes.append(filename)
+        if filename == "config.json":
+            return None
+        return f"/cached/snapshot/{filename}"
+
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", cached)
+    tokenizer = object()
+
+    def load(snapshot, *, local_files_only):
+        assert snapshot == "/cached/snapshot"
+        assert local_files_only is True
+        return tokenizer
+
+    transformers = SimpleNamespace(AutoTokenizer=SimpleNamespace(from_pretrained=load))
+    assert _load_cached_tokenizer(transformers) is tokenizer
+    assert probes == ["tokenizer.json", "tokenizer_config.json"]
