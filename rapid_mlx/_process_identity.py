@@ -174,11 +174,13 @@ def is_same_process(marker: object) -> bool:
         return False  # backend has no raw-time capability
     except (psutil.NoSuchProcess, ProcessLookupError):
         return False
+    except (psutil.AccessDenied, PermissionError):
+        return True  # retain diagnostics when the extra probe is denied
     except Exception as exc:
         logger.debug(
             "could not probe raw creation time for pid %s: %r", expected.pid, exc
         )
-        return True  # retain live diagnostics when the extra probe is denied
+        return False  # an unexpected failure cannot override a known mismatch
     return _valid_time(raw) and math.isclose(
         float(raw), expected.create_time, rel_tol=0.0, abs_tol=0.01
     )

@@ -843,6 +843,8 @@ def test_live_child_remains_live_after_parent_clock_baseline_changes(
         ("missing", False),
         ("dead", False),
         ("denied", True),
+        ("access-denied", True),
+        ("broken", False),
         ("invalid", False),
     ],
 )
@@ -851,6 +853,7 @@ def test_raw_creation_time_probe_keeps_identity_boundaries(monkeypatch, kind, ex
 
     marker = {"pid": 123, "create_time": 100.0, "boot_time": 50.0, "app_version": "1"}
     no_such_process = type("NoSuchProcess", (Exception,), {})
+    access_denied = type("AccessDenied", (Exception,), {})
     calls = []
 
     def raw_time(*, monotonic):
@@ -860,6 +863,10 @@ def test_raw_creation_time_probe_keeps_identity_boundaries(monkeypatch, kind, ex
             raise no_such_process()
         if kind == "denied":
             raise PermissionError("denied")
+        if kind == "access-denied":
+            raise access_denied()
+        if kind == "broken":
+            raise ValueError("malformed backend data")
         return {"same": 100.0, "reused": 101.0, "invalid": float("nan")}[kind]
 
     if kind == "missing":
@@ -871,6 +878,7 @@ def test_raw_creation_time_probe_keeps_identity_boundaries(monkeypatch, kind, ex
     fake = SimpleNamespace(
         Process=lambda _pid: SimpleNamespace(_proc=backend),
         NoSuchProcess=no_such_process,
+        AccessDenied=access_denied,
     )
     monkeypatch.setattr(identity, "psutil", fake)
     monkeypatch.setattr(identity.sys, "platform", "darwin")
