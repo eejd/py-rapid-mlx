@@ -1,0 +1,50 @@
+{
+  "1": {
+    "class_type": "RapidMLXImage",
+    "inputs": {
+      "base_url": "http://127.0.0.1:18427",
+      "model": "qwen-image-2.1",
+      "prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. Rainy deserted railway platform at midnight. The boat floats in a shallow puddle in the foreground, teal station lamps reflected on wet stone. A luminous tunnel in the distance.",
+      "width": 1024,
+      "height": 704,
+      "steps": 40,
+      "seed": 7300
+    }
+  },
+  "2": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ],
+      "filename_prefix": "rapid-cinema/01-departure"
+    }
+  },
+  "3": {
+    "class_type": "RapidMLXVideo",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "base_url": "http://127.0.0.1:18428",
+      "prompt": "Low camera slowly tracks alongside the red paper boat as it drifts across the rain puddle. Raindrops ripple the water, the amber lantern flame gently flickers, mist moves through the deserted station. Quiet rain and distant train rumble. One continuous shot.",
+      "width": 704,
+      "height": 480,
+      "frames": 97,
+      "seed": 7300
+    }
+  },
+  "4": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "3",
+        0
+      ],
+      "filename_prefix": "rapid-cinema/01-departure",
+      "format": "mp4"
+    }
+  }
+}

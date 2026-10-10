@@ -1,0 +1,38 @@
+[
+  {
+    "id": "01-departure",
+    "seed": 7300,
+    "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. Rainy deserted railway platform at midnight. The boat floats in a shallow puddle in the foreground, teal station lamps reflected on wet stone. A luminous tunnel in the distance.",
+    "motion_prompt": "Low camera slowly tracks alongside the red paper boat as it drifts across the rain puddle. Raindrops ripple the water, the amber lantern flame gently flickers, mist moves through the deserted station. Quiet rain and distant train rumble. One continuous shot."
+  },
+  {
+    "id": "02-cloud-sea",
+    "seed": 7301,
+    "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. The boat sails on a luminous silver river suspended above a vast ocean of clouds. An enormous translucent sky whale crosses far behind it, small floating islands in the distance, violet twilight.",
+    "motion_prompt": "Camera gently pulls back from the drifting red boat to reveal the immense cloud ocean. A translucent whale glides slowly in the distant sky, clouds roll beneath the silver river. Soft wind and a low whale call. One continuous shot."
+  },
+  {
+    "id": "03-moon-canal",
+    "seed": 7302,
+    "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. The boat passes through a canal in a miniature city built inside a lunar crater. Warm window lights, arched bridges, an enormous blue Earth above the horizon, stars and silver moon dust.",
+    "motion_prompt": "Water carries the red boat slowly underneath a tiny arched bridge. Camera tracks at water level, moon dust drifts in the air and warm lights shimmer on the canal. Gentle water lapping and distant chimes. One continuous shot."
+  },
+  {
+    "id": "04-deep-blue",
+    "seed": 7303,
+    "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. The boat floats within a transparent spherical air bubble beneath a dark cobalt ocean. Huge translucent jellyfish and pale bioluminescent plankton surround the bubble. Amber lantern contrasts with blue water.",
+    "motion_prompt": "The transparent bubble with the red boat slowly rises through blue water. Jellyfish pulse gently around it, glowing plankton spirals past the camera. Slow upward camera movement. Muffled bubbles and deep underwater ambience. One continuous shot."
+  },
+  {
+    "id": "05-forest",
+    "seed": 7304,
+    "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. The boat follows a narrow stream through a cathedral of enormous glowing mushrooms. Turquoise luminous gills, golden fireflies, moss-covered roots forming archways, volumetric shafts of light.",
+    "motion_prompt": "Camera follows the red boat downstream beneath glowing mushroom arches. Fireflies wander around the amber lantern, water ripples around mossy roots. Soft woodland sounds and a trickling stream. One continuous shot."
+  },
+  {
+    "id": "06-home",
+    "seed": 7305,
+    "keyframe_prompt": "A single small red folded paper boat carrying one miniature brass lantern with a warm amber flame. The boat has crisp triangular folded sides; no people, no lettering, no logos. Cinematic practical miniature photography, tactile paper, dramatic atmospheric light, detailed wide composition. The boat rests at a tiny wooden riverside dock beneath a blooming tree at sunrise. Hundreds of small amber lanterns glow on the branches. Warm golden morning, soft pink clouds, peaceful wide ending.",
+    "motion_prompt": "Camera slowly rises from the red boat at the dock, revealing the tree full of glowing lanterns. Leaves stir gently, morning mist lifts from the river, the boat rocks softly against the dock. Birds and gentle flowing water. One continuous shot."
+  }
+]
