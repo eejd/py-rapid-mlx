@@ -1,5 +1,6 @@
-"""Idle unload must not create a fresh MLX stream worker on every reload."""
+"""Idle unload releases native state without churning the MLX stream worker."""
 
+import asyncio
 import concurrent.futures
 import gc
 import threading
@@ -9,6 +10,110 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from rapid_mlx.runtime.primary_lifecycle import PrimaryModelLifecycle
+
+
+@pytest.mark.asyncio
+async def test_unload_drains_grammar_build_before_releasing_matchers(monkeypatch):
+    from rapid_mlx.api import tool_grammar
+    from rapid_mlx.engine.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._is_mllm = False
+    engine._engine = None
+    engine._mllm_scheduler = None
+    engine._model_load_executor = None
+    engine._tokenizer = object()
+    engine._processor = None
+    engine._model = None
+    engine._mllm_instance = None
+    engine._tool_grammar_futures_lock = threading.Lock()
+    engine._tool_grammar_futures = set()
+    monkeypatch.setattr(engine, "_abort_all_guided_requests", lambda: None)
+    released = []
+    monkeypatch.setattr(
+        tool_grammar,
+        "release_model_matchers",
+        lambda tokenizer: released.append(tokenizer),
+    )
+
+    pending = concurrent.futures.Future()
+    engine.track_tool_grammar_build(pending)
+    unloading = asyncio.create_task(engine.stop())
+    await asyncio.sleep(0)
+    assert not unloading.done()
+    assert released == []
+
+    pending.set_result(None)
+    await unloading
+    assert len(released) == 1
+    assert engine._tool_grammar_futures == set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tool_build_cannot_recache_after_unload(monkeypatch):
+    from rapid_mlx.api import tool_grammar
+    from rapid_mlx.engine.batched import BatchedEngine
+    from rapid_mlx.routes import chat
+
+    class Tokenizer:
+        pass
+
+    class Matcher:
+        def __init__(self, tokenizer, grammar):
+            pass
+
+        def get_error(self):
+            return ""
+
+        def deep_copy(self):
+            return self
+
+    tokenizer = Tokenizer()
+    lltok = object()
+    setattr(tokenizer, tool_grammar._LLTOKENIZER_ATTR, lltok)
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._is_mllm = False
+    engine._engine = None
+    engine._mllm_scheduler = None
+    engine._model_load_executor = None
+    engine._tokenizer = tokenizer
+    engine._processor = None
+    engine._model = None
+    engine._mllm_instance = None
+    engine._tool_grammar_futures_lock = threading.Lock()
+    engine._tool_grammar_futures = set()
+    monkeypatch.setattr(engine, "_abort_all_guided_requests", lambda: None)
+    monkeypatch.setattr(tool_grammar, "LLMatcher", Matcher)
+    monkeypatch.setattr(chat, "_tool_grammar_eligible", lambda *_: True)
+    monkeypatch.setattr(chat, "_try_admit_tool_grammar_build", lambda: True)
+    monkeypatch.setattr(chat, "_release_tool_grammar_build", lambda: None)
+
+    entered = threading.Event()
+    resume = threading.Event()
+
+    def build(*args):
+        entered.set()
+        assert resume.wait(5)
+        tool_grammar.get_request_matcher(lltok, "schema")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        monkeypatch.setattr(chat, "_get_tool_grammar_build_executor", lambda: pool)
+        monkeypatch.setattr(chat, "_maybe_build_tool_grammar_processor", build)
+        request = asyncio.create_task(
+            chat._offload_tool_grammar_build(engine, None, None)
+        )
+        assert await asyncio.to_thread(entered.wait, 5)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+
+        unloading = asyncio.create_task(engine.stop())
+        await asyncio.sleep(0)
+        assert not unloading.done()
+        resume.set()
+        await unloading
+
+    assert all(key[0] != id(lltok) for key in tool_grammar._compiled_matcher_cache)
 
 
 @pytest.mark.asyncio
@@ -84,6 +189,22 @@ async def test_idle_lifecycle_uses_idle_stop_when_available():
 
     assert await lifecycle.evict_if_idle() is True
     assert engine.calls == ["idle_stop"]
+
+
+@pytest.mark.asyncio
+async def test_idle_lifecycle_falls_back_to_stop():
+    class Engine:
+        _loaded = True
+
+        async def stop(self):
+            self._loaded = False
+
+    engine = Engine()
+    lifecycle = PrimaryModelLifecycle(engine, idle_unload_seconds=1, clock=lambda: 2)
+    lifecycle._last_activity = 0
+
+    assert await lifecycle.evict_if_idle() is True
+    assert engine._loaded is False
 
 
 @pytest.mark.asyncio

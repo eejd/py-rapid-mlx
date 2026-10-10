@@ -23,6 +23,7 @@ import time
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -1251,6 +1252,34 @@ class BatchedEngine(BaseEngine):
         self._guided_abort_events: dict[str, threading.Event] = {}
         self._guided_owner_tasks: dict[str, asyncio.Task] = {}
         self._guided_stopping = False
+        self._tool_grammar_futures_lock = threading.Lock()
+        self._tool_grammar_futures: set[Future] = set()
+
+    def track_tool_grammar_build(self, future: Future) -> None:
+        """Keep a shielded grammar build visible to model teardown."""
+        with self._tool_grammar_futures_lock:
+            self._tool_grammar_futures.add(future)
+
+        def forget(done: Future) -> None:
+            with self._tool_grammar_futures_lock:
+                self._tool_grammar_futures.discard(done)
+
+        future.add_done_callback(forget)
+
+    async def _drain_tool_grammar_builds(self) -> None:
+        """Wait for cancelled clients' offloaded builds before cache cleanup."""
+        lock = getattr(self, "_tool_grammar_futures_lock", None)
+        if lock is None:
+            return
+        while True:
+            with lock:
+                pending = tuple(self._tool_grammar_futures)
+            if not pending:
+                return
+            await asyncio.gather(
+                *(asyncio.wrap_future(future) for future in pending),
+                return_exceptions=True,
+            )
 
     def _bind_prompt_host_cache(self, async_engine: Any) -> None:
         """Share the host cache with a concrete scheduler when one exists."""
@@ -2551,6 +2580,8 @@ class BatchedEngine(BaseEngine):
         if self._mllm_scheduler:
             await self._mllm_scheduler.stop()
             self._mllm_scheduler = None
+
+        await self._drain_tool_grammar_builds()
 
         # Startup's tool-grammar warmup pins a native matcher template in a
         # process-wide cache. Release this model's templates before dropping
