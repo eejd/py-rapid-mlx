@@ -1805,11 +1805,18 @@ class BatchedEngine(BaseEngine):
             )
 
         def _load_mllm() -> MLXMultimodalLM:
+            import mlx.core as mx
+
             instance = MLXMultimodalLM(
                 self._model_name,
                 trust_remote_code=self._trust_remote_code,
             )
             instance.load()
+            # Model constructors create random, lazy placeholder weights
+            # before checkpoint tensors replace them. The process-global RNG
+            # key otherwise retains their Split/RandomBits graph across every
+            # idle reload, even after the model and Metal buffers are gone.
+            mx.eval(mx.random.state)
             return instance
 
         # Reason string for the text-only degrade, set only when we intend to
@@ -2544,6 +2551,13 @@ class BatchedEngine(BaseEngine):
         if self._mllm_scheduler:
             await self._mllm_scheduler.stop()
             self._mllm_scheduler = None
+
+        # Startup's tool-grammar warmup pins a native matcher template in a
+        # process-wide cache. Release this model's templates before dropping
+        # its tokenizer; the automaton is much larger than the grammar string.
+        from ..api.tool_grammar import release_model_matchers
+
+        release_model_matchers(self.tokenizer)
 
         if (
             self._is_mllm

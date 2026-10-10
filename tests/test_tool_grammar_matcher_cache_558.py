@@ -82,6 +82,29 @@ def _isolate_cache(monkeypatch):
     _FakeMatcher.proceed.set()
 
 
+def test_release_model_matchers_drops_only_unloaded_tokenizer():
+    class Tokenizer:
+        pass
+
+    first = Tokenizer()
+    second = Tokenizer()
+    first_lltok = object()
+    second_lltok = object()
+    setattr(first, tg._LLTOKENIZER_ATTR, first_lltok)
+    setattr(second, tg._LLTOKENIZER_ATTR, second_lltok)
+    tg.get_request_matcher(first_lltok, "first-a")
+    tg.get_request_matcher(first_lltok, "first-b")
+    tg.get_request_matcher(second_lltok, "second")
+
+    tg.release_model_matchers(first)
+
+    assert {key[0] for key in tg._compiled_matcher_cache} == {id(second_lltok)}
+    assert tg._compiled_matcher_cache_bytes == len("second")
+    tg.release_model_matchers(first)  # Repeated unload is harmless.
+    tg.release_model_matchers(Tokenizer())  # A model without grammar has no cache.
+    assert len(tg._compiled_matcher_cache) == 1
+
+
 @contextmanager
 def _single_flight_latch(monkeypatch, n):
     """Hold the sole builder until all ``n`` callers commit in the critical path.

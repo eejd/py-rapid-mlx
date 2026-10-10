@@ -12,6 +12,57 @@ from rapid_mlx.runtime.primary_lifecycle import PrimaryModelLifecycle
 
 
 @pytest.mark.asyncio
+async def test_mllm_load_materializes_random_state_on_model_worker(monkeypatch):
+    mx = pytest.importorskip("mlx.core")
+    from rapid_mlx import engine_core
+    from rapid_mlx.engine import batched as batched_mod
+    from rapid_mlx.models import mllm as mllm_mod
+    from rapid_mlx.utils import chat_template_registry
+
+    calls = []
+
+    class StopAfterLoadError(Exception):
+        pass
+
+    class Model:
+        model = object()
+        processor = object()
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def load(self):
+            calls.append(("load", threading.get_ident()))
+
+    original_eval = mx.eval
+
+    def record_eval(*arrays):
+        calls.append(("eval", threading.get_ident()))
+        return original_eval(*arrays)
+
+    def stop_after_load(*args):
+        raise StopAfterLoadError
+
+    monkeypatch.setattr(mllm_mod, "MLXMultimodalLM", Model)
+    monkeypatch.setattr(engine_core, "_init_mlx_step_thread", lambda: None)
+    monkeypatch.setattr(mx, "eval", record_eval)
+    monkeypatch.setattr(
+        chat_template_registry, "resolve_chat_template", stop_after_load
+    )
+    engine = batched_mod.BatchedEngine("fake/model")
+    engine._is_mllm = True
+
+    try:
+        with pytest.raises(StopAfterLoadError):
+            await engine._start_mllm()
+        assert [name for name, _ in calls] == ["load", "eval"]
+        assert calls[0][1] == calls[1][1]
+    finally:
+        if engine._model_load_executor is not None:
+            engine._model_load_executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
 async def test_idle_lifecycle_uses_idle_stop_when_available():
     class Engine:
         _loaded = True
