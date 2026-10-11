@@ -5,6 +5,7 @@ import http.client
 import io
 import threading
 import urllib.error
+from email.message import Message
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,6 +13,14 @@ import pytest
 from rapid_mlx import _download_gate as gate
 from rapid_mlx.share import cli, ws_tunnel
 from rapid_mlx.share import quicksilver as qs
+
+
+def metrics_response(body):
+    response = io.BytesIO(body)
+    response.status = 200
+    response.headers = Message()
+    response.headers["Content-Type"] = "text/plain; version=0.0.4"
+    return response
 
 
 def metrics(requests=0, tokens=0, speed_sum=0, speed_count=0):
@@ -35,7 +44,7 @@ def clock(monkeypatch):
 def status(monkeypatch, clock):
     snapshot = [metrics(1, 8, 40, 1)]  # Local warm-up.
     monkeypatch.setattr(
-        qs.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(snapshot[0].encode())
+        qs, "_open", lambda *a, **kw: metrics_response(snapshot[0].encode())
     )
     return qs._PoolStatus(8765, lambda: True), snapshot
 
@@ -117,7 +126,7 @@ def test_status_late_warmup_accounting_before_pool_traffic(monkeypatch, clock, c
     qs._warmup(8765, "local-key", "local-model")
     assert "warm-up failed" in capsys.readouterr().err
     monkeypatch.setattr(
-        qs.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(snapshot[0].encode())
+        qs, "_open", lambda *a, **kw: metrics_response(snapshot[0].encode())
     )
     started = threading.Event()
     reporter = qs._PoolStatus(8765, lambda: True, requests_started_fn=started.is_set)
@@ -293,7 +302,7 @@ def test_status_metrics_failure_is_silent(monkeypatch, clock, capsys, error):
     def fail(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr(qs.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(qs, "_open", fail)
     reporter = qs._PoolStatus(8765, lambda: True)
     reporter.poll(True)
     assert reporter.baseline is None
@@ -307,14 +316,14 @@ def test_status_metrics_http_error_closes_response(monkeypatch):
     def fail(*a, **kw):
         raise error
 
-    monkeypatch.setattr(qs.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(qs, "_open", fail)
     assert qs._PoolStatus(8765, lambda: True).baseline is None
     assert body.closed
 
 
 @pytest.mark.parametrize("body", [b"x" * (256 * 1024 + 1), b"\xff"])
 def test_status_bounded_read_and_invalid_encoding(monkeypatch, body):
-    monkeypatch.setattr(qs.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(body))
+    monkeypatch.setattr(qs, "_open", lambda *a, **kw: metrics_response(body))
     assert qs._PoolStatus(8765, lambda: True).baseline is None
 
 
@@ -468,6 +477,7 @@ def test_download_progress_fake_cache_and_clock(cache, clock, capsys):
     snapshot.mkdir(parents=True)
     (blobs / "config").write_bytes(b"xx")
     (snapshot / "config.json").symlink_to(blobs / "config")
+    assert reporter._cache_size() == 1842
     for now in (100, 101, 129.9):
         clock[0] = now
         reporter.poll()
@@ -477,6 +487,7 @@ def test_download_progress_fake_cache_and_clock(cache, clock, capsys):
     assert "30s elapsed, model cache size 0.0 GiB" in capsys.readouterr().err
     (blobs / "weights.incomplete").rename(blobs / "weights")
     (snapshot / "weights").symlink_to(blobs / "weights")
+    assert reporter._cache_size() == 1842
     clock[0] = 160
     reporter.poll()
     assert "60s elapsed, model cache size 0.0 GiB" in capsys.readouterr().err

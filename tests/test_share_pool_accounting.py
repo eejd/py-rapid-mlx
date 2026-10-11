@@ -2,7 +2,6 @@
 """Pool status from real batched/MTP completions, with only model doubles."""
 
 import asyncio
-import io
 import json
 from unittest.mock import patch
 
@@ -12,11 +11,15 @@ import pytest
 @pytest.mark.requires_mlx
 @pytest.mark.asyncio
 async def test_pool_status_tracks_streaming_and_nonstreaming_mtp(capsys):
-    pytest.importorskip("mlx.core")
+    try:
+        import mlx.core  # noqa: F401 — ensure the runtime can open Metal
+    except (ImportError, RuntimeError) as exc:
+        pytest.skip(f"Pool accounting requires a working Metal device: {exc}")
     import httpx
     from fastapi import FastAPI
 
     from rapid_mlx.config import reset_config
+    from tests.test_share_progress import metrics_response
 
     # Match the repository's headless-runtime skip convention: the engine
     # imports require Metal even when only model doubles are used.
@@ -136,8 +139,8 @@ async def test_pool_status_tracks_streaming_and_nonstreaming_mtp(capsys):
             # Only replace the HTTP transport. Every metric is rendered from
             # the real scheduler/ledger; none is stubbed or manually incremented.
             with patch(
-                "rapid_mlx.share.quicksilver.urllib.request.urlopen",
-                return_value=io.BytesIO(initial),
+                "rapid_mlx.share.quicksilver._open",
+                return_value=metrics_response(initial),
             ):
                 status = _PoolStatus(8765, lambda: True)
             assert status.baseline[:2] == (1, 2)
@@ -156,8 +159,8 @@ async def test_pool_status_tracks_streaming_and_nonstreaming_mtp(capsys):
             current = (await client.get("/metrics")).content
             with (
                 patch(
-                    "rapid_mlx.share.quicksilver.urllib.request.urlopen",
-                    return_value=io.BytesIO(current),
+                    "rapid_mlx.share.quicksilver._open",
+                    return_value=metrics_response(current),
                 ),
                 patch("rapid_mlx.share.quicksilver.time.monotonic", return_value=20),
             ):

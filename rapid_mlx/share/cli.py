@@ -41,6 +41,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -460,19 +461,24 @@ class _DownloadProgress:
         from huggingface_hub.constants import HF_HUB_CACHE
 
         self.cache_dir = Path(HF_HUB_CACHE) / f"models--{repo.replace('/', '--')}"
-        self.estimated = estimated
+        self.estimated = estimated if estimated is not None and estimated > 0 else None
+        self._scan_thread: threading.Thread | None = None
+        self._last_size: int | None = None
         self.started = time.monotonic()
         self.next_poll = self.started + 30
         size = (
-            f"approximately {estimated / 1024**3:.1f} GiB"
-            if estimated is not None
+            f"approximately {self.estimated / 1024**3:.1f} GiB"
+            if self.estimated is not None
             else "estimated size unknown"
         )
-        print(
-            f"First-run model download: {size}. Cache size every 30s until ready.",
-            file=sys.stderr,
-            flush=True,
-        )
+        try:
+            print(
+                f"First-run model download: {size}. Cache size every 30s until ready.",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:  # noqa: BLE001 — progress must never abort preparation
+            pass
 
     def _cache_size(self) -> int | None:
         # Blobs may be relocated through a directory symlink. Walk both resolved
@@ -509,11 +515,33 @@ class _DownloadProgress:
         return size
 
     def poll(self) -> None:
+        try:
+            self._poll()
+        except Exception:  # noqa: BLE001 — no endpoint/path/exception text
+            pass
+
+    def _poll(self) -> None:
         now = time.monotonic()
         if now < self.next_poll:
             return
         self.next_poll = now + 30
-        size = self._cache_size()
+        # Filesystem calls on a disconnected/external volume can block in the
+        # kernel. Never run them on the child/signal supervisor or pile up
+        # scanners when a volume hangs. Only this supervisor prints progress.
+        if self._scan_thread is None or not self._scan_thread.is_alive():
+
+            def scan() -> None:
+                try:
+                    self._last_size = self._cache_size()
+                except BaseException:  # optional daemon; never print a traceback
+                    self._last_size = None
+
+            self._scan_thread = threading.Thread(
+                target=scan, name="rapid-mlx-download-progress", daemon=True
+            )
+            self._scan_thread.start()
+            self._scan_thread.join(timeout=0.1)
+        size = self._last_size
         cached = f"{size / 1024**3:.1f} GiB" if size is not None else "unavailable"
         print(
             f"Preparing model: {int(now - self.started)}s elapsed, "
@@ -555,7 +583,11 @@ def _maybe_confirm_download(
 
         if is_repo_cached(alias):
             return None
-        progress = _DownloadProgress(alias, estimate_download_size_bytes(alias))
+        try:
+            estimated = estimate_download_size_bytes(alias)
+        except Exception:  # noqa: BLE001 — a failed estimate must not abort share
+            estimated = None
+        progress = _DownloadProgress(alias, estimated)
     if os.environ.get("RAPID_MLX_CHAT_SPAWN", "") == "1":
         # Grandchild safety: a parent ``rapid-mlx`` invocation already
         # gated and set this marker. Don't re-prompt.

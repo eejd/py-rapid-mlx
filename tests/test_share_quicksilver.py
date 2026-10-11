@@ -1529,6 +1529,7 @@ def _run_patches(serve, tunnel_cls, sleep_side_effect):
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(qs.ws_tunnel, "TunnelClient", new=tunnel_cls),
         patch.object(qs, "_warmup"),
+        patch.object(qs._PoolStatus, "_scrape", return_value=None),
         patch.object(qs, "_supervisor_sleep", side_effect=sleep_side_effect),
     )
 
@@ -1630,6 +1631,7 @@ def test_run_share_serve_uses_served_model_name_catalog_id():
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(qs.ws_tunnel, "TunnelClient", new=lambda **kw: tunnel),
         patch.object(qs, "_warmup"),
+        patch.object(qs._PoolStatus, "_scrape", return_value=None),
         patch.object(qs, "_supervisor_sleep", side_effect=ctrl_c),
         patch.object(
             qs, "_open", lambda req, timeout=None: _FakeResp(_register_payload())
@@ -3492,7 +3494,7 @@ def test_pool_cleanup_failure_prevents_serve_spawn(capsys):
 
 
 def test_pool_progress_and_status_follow_serve_lifecycle():
-    """Progress ends at health; metrics baseline follows warm-up, before relay."""
+    """Sample before warm-up; await accounting before opening the relay."""
     qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
     tunnel = _fake_tunnel()
     tunnel.ready_event.is_set.return_value = True
@@ -3502,25 +3504,37 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
     reporter = MagicMock()
     events = []
 
-    def make_status(port, *, connected_fn, requests_started_fn):
+    def make_status(port, *, connected_fn, requests_started_fn, api_key):
+        assert api_key
         assert port == 18765
-        assert events == ["warmup"]
+        assert events == []
         assert not connected_fn()  # No tunnel exists until after the baseline.
         assert not requests_started_fn()
-        events.append("baseline")
+        events.append("pre-warmup")
         reporter.connected_fn = connected_fn
         reporter.requests_started_fn = requests_started_fn
         return reporter
 
+    def warmup(*args):
+        assert events == ["pre-warmup"]
+        events.append("warmup")
+
+    def accounting_wait(stop):
+        assert events == ["pre-warmup", "warmup"]
+        assert not stop.is_set()
+        events.append("accounted-baseline")
+
+    reporter.wait_for_warmup.side_effect = accounting_wait
+
     def tunnel_factory(**kw):
-        assert events == ["warmup", "baseline"]
+        assert events == ["pre-warmup", "warmup", "accounted-baseline"]
         kw["requests_started_event"].set()
         return tunnel
 
     ctxs = _run_patches(serve, tunnel_factory, ctrl_c) + (
         patch.object(share_cli, "_maybe_confirm_download", return_value=progress),
         patch.object(share_cli, "_wait_for_healthz", return_value=True),
-        patch.object(qs, "_warmup", side_effect=lambda *a: events.append("warmup")),
+        patch.object(qs, "_warmup", side_effect=warmup),
         patch.object(qs, "_PoolStatus", side_effect=make_status),
         patch.object(qs, "_Heartbeat", return_value=heartbeat),
     )
