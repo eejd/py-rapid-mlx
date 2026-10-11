@@ -492,16 +492,23 @@ async def cache_stats():
         image_stats = {"pixel_values_cache": None, "pil_image_cache": None}
         try:
             from mlx_vlm import utils as vlm_utils
-        except ImportError:
-            pass
+        except Exception:
+            logger.debug("Optional image-cache statistics unavailable", exc_info=True)
         else:
             for field, api in (
                 ("pixel_values_cache", "get_pixel_values_cache_stats"),
                 ("pil_image_cache", "get_pil_cache_stats"),
             ):
-                getter = getattr(vlm_utils, api, None)
-                if callable(getter):
-                    image_stats[field] = getter()
+                try:
+                    getter = getattr(vlm_utils, api, None)
+                    if callable(getter):
+                        image_stats[field] = getter()
+                except Exception:
+                    logger.debug(
+                        "Optional %s statistics unavailable", field, exc_info=True
+                    )
+        # BaseEngine supplies get_cache_stats() returning None by default,
+        # including for serving backends without reusable-prefix counters.
         return {
             "model_type": "mllm",
             "multimodal_kv_cache": engine.get_cache_stats(),

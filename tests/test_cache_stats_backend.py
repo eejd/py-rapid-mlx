@@ -89,3 +89,35 @@ def test_vision_cache_stats_work_without_optional_image_apis(monkeypatch):
     assert result["multimodal_kv_cache"] == {"hits": 3}
     assert result["pixel_values_cache"] is None
     assert result["pil_image_cache"] is None
+
+
+@pytest.mark.parametrize(
+    "failed_api", ["get_pixel_values_cache_stats", "get_pil_cache_stats"]
+)
+@pytest.mark.parametrize(
+    "error", [ImportError, RuntimeError, AttributeError, ValueError]
+)
+def test_vision_cache_stats_isolate_optional_image_api_failures(
+    monkeypatch, failed_api, error
+):
+    from rapid_mlx.routes import health
+
+    utils = SimpleNamespace(
+        get_pixel_values_cache_stats=Mock(return_value={"hits": 7}),
+        get_pil_cache_stats=Mock(return_value={"hits": 11}),
+    )
+    getattr(utils, failed_api).side_effect = error("optional counter unavailable")
+    monkeypatch.setitem(sys.modules, "mlx_vlm", SimpleNamespace(utils=utils))
+    engine = SimpleNamespace(is_mllm=True, get_cache_stats=lambda: {"hits": 3})
+    monkeypatch.setattr(health, "get_config", lambda: SimpleNamespace(engine=engine))
+
+    assert asyncio.run(health.cache_stats()) == {
+        "model_type": "mllm",
+        "multimodal_kv_cache": {"hits": 3},
+        "pixel_values_cache": None
+        if failed_api == "get_pixel_values_cache_stats"
+        else {"hits": 7},
+        "pil_image_cache": None
+        if failed_api == "get_pil_cache_stats"
+        else {"hits": 11},
+    }
