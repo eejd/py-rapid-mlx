@@ -285,6 +285,14 @@ async def test_tunnel_request_signal_is_shared_across_reconnects():
     client._dispatch_inbound({"t": "abort", "id": "absent"})
     assert not started.is_set()
 
+    async def ignore(msg):
+        pass
+
+    client._handle_request = ignore
+    client._dispatch_inbound({"t": "req"})  # malformed: no request id
+    client._dispatch_inbound({"t": "req", "id": 7})
+    assert not started.is_set()
+
     async def handle(msg):
         assert started.is_set()  # Set before the request can reach serve.
 

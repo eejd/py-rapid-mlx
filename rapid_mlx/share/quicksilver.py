@@ -1144,6 +1144,13 @@ class _PoolStatus:
 
         Every wait is short and signal-interruptible: on the main thread a
         SIGINT/SIGTERM handler that raises aborts it immediately.
+
+        A counter increment is attributed to the warm-up because nothing else
+        can reach serve at this point: it listens on loopback only, requires
+        this run's random bearer key, and the relay tunnel is created only
+        after this method returns (pinned by the lifecycle test). The aggregate
+        ledger has no per-request identity, so stricter correlation would need
+        a server-side change, which is out of scope here.
         """
         stop = stop if stop is not None else threading.Event()
         pre_warmup = self.baseline

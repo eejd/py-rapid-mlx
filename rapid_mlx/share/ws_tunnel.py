@@ -583,9 +583,11 @@ class TunnelClient:
     def _dispatch_inbound(self, msg: dict[str, Any]) -> None:
         t = msg.get("t")
         if t == "req":
-            self._requests_started.set()
             req_id = msg.get("id")
             if isinstance(req_id, str):
+                # Only a well-formed request can reach serve; a malformed
+                # frame must not end the status reporter's warm-up baseline.
+                self._requests_started.set()
                 # Epoch opens at DISPATCH, on the loop thread that also
                 # reads aborts: from here until _release_epoch, an abort
                 # naming this id is unambiguously for THIS request even
