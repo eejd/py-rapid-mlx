@@ -11,6 +11,31 @@ import pytest
 pytestmark = pytest.mark.requires_mlx
 
 
+@pytest.mark.parametrize("is_mllm", [False, True])
+def test_installed_backend_diagnostics_do_not_claim_request_readiness(
+    monkeypatch, is_mllm
+):
+    from rapid_mlx.engine.batched import BatchedEngine
+    from rapid_mlx.routes import health
+
+    engine = BatchedEngine("not-started")
+    engine._is_mllm = is_mllm
+    assert engine._engine is None
+    assert engine._mllm_scheduler is None
+    assert engine.get_cache_stats() is None
+    monkeypatch.setitem(
+        sys.modules, "mlx_vlm", SimpleNamespace(utils=SimpleNamespace())
+    )
+    monkeypatch.setattr(
+        health, "get_config", lambda: SimpleNamespace(engine=engine, ready=False)
+    )
+    result = asyncio.run(health.cache_stats())
+    assert result["model_type"] == ("mllm" if is_mllm else "llm")
+    assert result["multimodal_kv_cache"] is None
+    assert result["pixel_values_cache"] is None
+    assert result["pil_image_cache"] is None
+
+
 @pytest.mark.parametrize("stats", [None, {"entry_count": 2, "hits": 3}])
 def test_vision_cache_stats_use_active_engine(monkeypatch, stats):
     from rapid_mlx.routes import health

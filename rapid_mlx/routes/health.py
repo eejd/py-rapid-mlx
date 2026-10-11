@@ -475,7 +475,7 @@ async def status():
 
 @router.get("/v1/cache/stats")
 async def cache_stats():
-    """Report cache statistics from the active backend, not optional globals."""
+    """Describe the installed backend; readiness is exposed by /health/ready."""
     engine = get_config().engine
     if engine is None:
         return {

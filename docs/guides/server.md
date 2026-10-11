@@ -192,9 +192,11 @@ scheduler is present. An unloaded engine still returns HTTP 503. Vision prefix
 reuse and cache clearing remain available in memory.
 
 `GET /v1/cache/stats` identifies the active backend (`model_type: "mllm"` for
-vision, `"llm"` for text, or `null` when no engine is installed). Vision
-`multimodal_kv_cache` contains the active engine's reusable-prefix counters, or
-`null` if those counters are unavailable. It does not depend on optional
+vision, `"llm"` for text, or `null` when no engine is installed).
+This diagnostic classification is separate from request readiness; use
+`GET /health/ready` to check readiness during startup or model switching.
+Vision `multimodal_kv_cache` contains the active engine's reusable-prefix
+counters, or `null` if those counters are unavailable. It does not depend on optional
 package-global image-cache APIs. The existing `pixel_values_cache` and
 `pil_image_cache` fields remain present as `null` when their statistics are
 unavailable.
