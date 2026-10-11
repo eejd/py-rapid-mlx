@@ -3,6 +3,7 @@
 
 import http.client
 import io
+import re
 import threading
 import urllib.error
 from email.message import Message
@@ -57,8 +58,7 @@ def test_status_first_request_and_throttle(status, clock, capsys):
     clock[0] = 110
     reporter.poll(True)
     assert capsys.readouterr().err == (
-        "QuickSilver status: 1 request served, 1 output token since start, "
-        "average 0.0 tok/s, connected.\n"
+        "QuickSilver status: 1 request served, 1 output token since start, connected.\n"
     )
     snapshot[0] = metrics(13, 1848, 82.6, 3)
     for second in range(120, 170, 10):
@@ -76,6 +76,116 @@ def test_status_first_request_and_throttle(status, clock, capsys):
         reporter.poll(True)
     assert capsys.readouterr().err == ""
     assert reporter.last_print == 170  # Idle polls never advance the throttle.
+
+
+@pytest.mark.parametrize(
+    ("speed_sum", "speed_count", "speed"),
+    [(0, 0, ""), (0, 1, ""), (0.049, 1, ""), (0.051, 1, "average 0.1 tok/s, ")],
+)
+@pytest.mark.parametrize("connected", [False, True])
+def test_status_optional_average_format(
+    status, capsys, speed_sum, speed_count, speed, connected
+):
+    reporter, snapshot = status
+    snapshot[0] = metrics(2, 9, 40 + speed_sum, 1 + speed_count)
+    reporter.poll(connected)
+    output = capsys.readouterr().err
+    connection = "connected" if connected else "disconnected, reconnecting"
+    assert output == (
+        "QuickSilver status: 1 request served, 1 output token since start, "
+        f"{speed}{connection}.\n"
+    )
+    assert re.fullmatch(
+        r"QuickSilver status: [\d,]+ requests? served, [\d,]+ output tokens? "
+        r"since (?:start|metrics became available), "
+        r"(?:average \d+\.\d tok/s, )?(?:connected|disconnected, reconnecting)\.\n",
+        output,
+    )
+    assert "average 0.0" not in output
+
+
+@pytest.mark.parametrize("polled", [False, True])
+def test_status_stop_flushes_changed_totals_without_throttle(
+    status, clock, capsys, polled
+):
+    reporter, snapshot = status
+    reporter._stop = threading.Event()
+    snapshot[0] = metrics(4, 38, 100, 4)
+    reporter.poll(True)
+    assert "3 requests served" in capsys.readouterr().err
+    snapshot[0] = metrics(6, 58, 140, 6)
+    clock[0] += 10
+    if polled:
+        reporter.poll(True)  # Accounted but throttled: still needs a final line.
+        assert capsys.readouterr().err == ""
+    serve = MagicMock(poll=MagicMock(return_value=None))
+    reporter.stop(serve)
+    assert reporter._stop.is_set()
+    assert capsys.readouterr().err == (
+        "QuickSilver status: 5 requests served, 50 output tokens since start, "
+        "average 20.0 tok/s, connected.\n"
+    )
+    reporter.stop(serve)
+    assert capsys.readouterr().err == ""
+
+
+def test_status_stop_flushes_first_one_token_request(status, capsys):
+    reporter, snapshot = status
+    snapshot[0] = metrics(2, 9, 40, 1)
+    reporter.stop(MagicMock(poll=MagicMock(return_value=None)))
+    assert capsys.readouterr().err == (
+        "QuickSilver status: 1 request served, 1 output token since start, connected.\n"
+    )
+
+
+def test_status_stop_flushes_token_only_change(status, capsys):
+    reporter, snapshot = status
+    snapshot[0] = metrics(2, 18, 60, 2)
+    reporter.poll(True)
+    capsys.readouterr()
+    snapshot[0] = metrics(2, 20, 60, 2)  # Partial output from a failed request.
+    reporter.stop(MagicMock(poll=MagicMock(return_value=None)))
+    assert "1 request served, 12 output tokens" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("served", [False, True])
+def test_status_stop_unchanged_totals_are_silent(status, monkeypatch, capsys, served):
+    reporter, snapshot = status
+    if served:
+        snapshot[0] = metrics(2, 18, 60, 2)
+        reporter.poll(True)
+        capsys.readouterr()
+    monkeypatch.setattr(reporter, "_connected_fn", lambda: False)
+    reporter.stop(MagicMock(poll=MagicMock(return_value=None)))
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("exited_during_scrape", [False, True])
+def test_status_stop_dead_serve_is_silent(
+    status, monkeypatch, capsys, exited_during_scrape
+):
+    reporter, _ = status
+    read = MagicMock(return_value=(2, 18, 60, 2))
+    monkeypatch.setattr(reporter, "_read", read)
+    serve = MagicMock()
+    serve.poll.side_effect = [None, 9] if exited_during_scrape else [9]
+    reporter.stop(serve)
+    assert read.call_count == int(exited_during_scrape)
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("result", [None, RuntimeError("private endpoint text")])
+def test_status_stop_failed_scrape_is_silent(status, monkeypatch, capsys, result):
+    reporter, _ = status
+    read = MagicMock()
+    if isinstance(result, Exception):
+        read.side_effect = result
+    else:
+        read.return_value = result
+    monkeypatch.setattr(reporter, "_read", read)
+    reporter.stop(MagicMock(poll=MagicMock(return_value=None)))
+    assert 0 < read.call_args.kwargs["timeout"] <= 1
+    assert capsys.readouterr() == ("", "")
 
 
 def test_status_disconnect_and_reconnect_are_coalesced(status, clock, capsys):
@@ -438,6 +548,31 @@ def test_pool_gate_resolves_real_alias_and_reuses_estimate(
     else:
         confirm.assert_not_called()
     assert "approximately 15.0 GiB" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cached", [0, int(3.2 * 1024**3), None, "scan-error"])
+def test_download_initial_total_and_cached_size(cache, monkeypatch, capsys, cached):
+    if cached == "scan-error":
+        monkeypatch.setattr(
+            cli._DownloadProgress,
+            "_refresh_cache_size",
+            MagicMock(side_effect=RuntimeError("private cache path")),
+        )
+    elif cached is None:
+        monkeypatch.setattr(cli._DownloadProgress, "_cache_size", lambda self: None)
+    elif cached:
+        blobs = cache / "models--org--repo" / "blobs"
+        blobs.mkdir(parents=True)
+        with (blobs / "weights.incomplete").open("wb") as stream:
+            stream.truncate(cached)
+    cli._DownloadProgress("org/repo", int(15.2 * 1024**3))
+    already = (
+        " (3.2 GiB already in the cache)" if isinstance(cached, int) and cached else ""
+    )
+    assert capsys.readouterr().err == (
+        f"Model download: approximately 15.2 GiB in total{already}. "
+        "Cache size every 30s until ready.\n"
+    )
 
 
 @pytest.mark.parametrize("variable", ["RAPID_MLX_AUTO_PULL", "RAPID_MLX_CHAT_SPAWN"])

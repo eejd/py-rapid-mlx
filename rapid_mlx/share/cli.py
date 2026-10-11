@@ -467,13 +467,20 @@ class _DownloadProgress:
         self.started = time.monotonic()
         self.next_poll = self.started + 30
         size = (
-            f"approximately {self.estimated / 1024**3:.1f} GiB"
+            f"approximately {self.estimated / 1024**3:.1f} GiB in total"
             if self.estimated is not None
             else "estimated size unknown"
         )
+        if self.estimated is not None:
+            try:
+                self._refresh_cache_size()
+            except Exception:  # noqa: BLE001 — unavailable cache must keep the notice
+                pass
+            if self._last_size is not None and self._last_size > 0:
+                size += f" ({self._last_size / 1024**3:.1f} GiB already in the cache)"
         try:
             print(
-                f"First-run model download: {size}. Cache size every 30s until ready.",
+                f"Model download: {size}. Cache size every 30s until ready.",
                 file=sys.stderr,
                 flush=True,
             )
@@ -525,6 +532,17 @@ class _DownloadProgress:
         if now < self.next_poll:
             return
         self.next_poll = now + 30
+        self._refresh_cache_size()
+        size = self._last_size
+        cached = f"{size / 1024**3:.1f} GiB" if size is not None else "unavailable"
+        print(
+            f"Preparing model: {int(now - self.started)}s elapsed, "
+            f"model cache size {cached} (downloading or loading)…",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _refresh_cache_size(self) -> None:
         # Filesystem calls on a disconnected/external volume can block in the
         # kernel. Never run them on the child/signal supervisor or pile up
         # scanners when a volume hangs. Only this supervisor prints progress.
@@ -541,14 +559,6 @@ class _DownloadProgress:
             )
             self._scan_thread.start()
             self._scan_thread.join(timeout=0.1)
-        size = self._last_size
-        cached = f"{size / 1024**3:.1f} GiB" if size is not None else "unavailable"
-        print(
-            f"Preparing model: {int(now - self.started)}s elapsed, "
-            f"model cache size {cached} (downloading or loading)…",
-            file=sys.stderr,
-            flush=True,
-        )
 
 
 def _maybe_confirm_download(

@@ -2929,7 +2929,7 @@ def test_run_share_propagates_serve_exit_and_resets_after_healthy_connection():
         patch.object(
             qs.time,
             "monotonic",
-            side_effect=[100.0, 100.0 + qs._FAST_REJECT_WINDOW_SECONDS + 1],
+            side_effect=[100.0] + [100.0 + qs._FAST_REJECT_WINDOW_SECONDS + 1] * 3,
         ),
     )
     with _enter(*ctxs):
@@ -3526,6 +3526,15 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
 
     reporter.wait_for_warmup.side_effect = accounting_wait
 
+    def final_status(child):
+        assert child is serve
+        assert child.poll() is None
+        heartbeat.stop.assert_called_once()
+        tunnel.stop.assert_not_called()
+        child.terminate.assert_not_called()
+
+    reporter.stop.side_effect = final_status
+
     def tunnel_factory(**kw):
         assert events == ["pre-warmup", "warmup", "accounted-baseline"]
         kw["requests_started_event"].set()
@@ -3549,6 +3558,7 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
         assert qs._Heartbeat.call_args.kwargs["status"] is reporter
     heartbeat.start.assert_called_once()
     heartbeat.stop.assert_called_once()
+    reporter.stop.assert_called_once_with(serve)
     connected_fn = reporter.connected_fn
     assert reporter.requests_started_fn()
     assert connected_fn()

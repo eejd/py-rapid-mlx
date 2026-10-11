@@ -55,9 +55,11 @@ lsof -nP -iTCP:18765 -sTCP:LISTEN
 The listener must disappear. Repeat the startup command using the same
 `DOGFOOD_DIR`: the partial cache must resume and still show progress, without
 counting snapshot symlinks twice. Finish the download and stop/restart again.
-The cached restart must print neither `First-run model download:` nor
-`Preparing model:`. Preserve this isolated cache; no cache cleanup is part of
-this test. A foreground cached run should also exit cleanly with Ctrl-C:
+The resumed download notice must report the estimated total size and, when
+available, how much is already in the cache. The cached restart must print
+neither `Model download:` nor `Preparing model:`. Preserve this isolated cache;
+no cache cleanup is part of this test. A foreground cached run should also exit
+cleanly with Ctrl-C:
 
 ```sh
 RAPID_MLX_AUTO_PULL=1 HF_HOME="$DOGFOOD_DIR/hf" rapid-mlx share "$ALIAS" \
@@ -97,10 +99,12 @@ request and a few tokens). Compare
 request/token increases with the returned usage and actual node assignment,
 allowing for other pool traffic/readiness requests. Exercise accepted MTP
 requests and one-token completions; the latter have no decode-rate observation.
+Relay readiness probes are ordinary requests to the node and count in totals.
 Compare average tok/s with the model performance metrics' sum/count deltas,
-not with aggregate wall-clock throughput. No sentinel, output text, customer
-identifier, or credential should appear in the status lines. The sentinel
-search of the supervisor log must find nothing.
+not with aggregate wall-clock throughput. The average clause must be absent
+when there are no decode-rate observations or the rate would display as 0.0.
+No sentinel, output text, customer identifier, or credential should appear in
+the status lines. The sentinel search of the supervisor log must find nothing.
 
 Leave serving for at least 24 hours with periods of traffic and idle time.
 Check timestamps around emissions: no interval under 60 seconds, no periodic
@@ -108,6 +112,9 @@ unchanged idle line, and at most 1,440 status lines per 24 hours. Other existing
 supervisor/reconnect messages have their own frequency; count only lines
 starting `QuickSilver status:`. Logs grow over time; this PR does not add log
 rotation or a total-size limit.
+On shutdown, allow one final status line outside the throttle if request/token
+totals changed. Its scrape must finish within one second; failed scrapes and an
+already exited serve child must produce no final line.
 
 ## 3. Disconnects, child death, SIGTERM and Ctrl-C
 

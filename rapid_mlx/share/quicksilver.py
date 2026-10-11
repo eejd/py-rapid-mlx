@@ -1029,12 +1029,13 @@ class _PoolStatus:
     The scheduler's performance ledger accounts terminal requests, including
     batched MTP, for both chat response modes. Decode sum/count is the mean
     per-request post-first-token rate, excluding unmeasurable one-token runs.
-    Metrics cannot distinguish a relay readiness probe from customer traffic.
+    Relay readiness probes are ordinary requests to the node and are counted.
     This status is informational; payouts are metered by QuickSilver, not by
     this line. If a timed-out warm-up is accounted only after pool traffic
     starts, totals may include one warm-up request and its few output tokens.
     After the first served request, changed totals or connection state may emit
-    a line, even when totals are unchanged, at most once per 60 seconds.
+    a line, even when totals are unchanged, at most once per 60 seconds. Shutdown
+    may emit one final line with changed totals, within the scrape timeout.
     """
 
     _METRICS = (
@@ -1071,6 +1072,7 @@ class _PoolStatus:
         self._stop: threading.Event | None = None
         self._thread: threading.Thread | None = None
         self._start_lock = threading.Lock()
+        self._poll_lock = threading.Lock()
 
     @classmethod
     def _parse(cls, raw: str) -> tuple[float, ...] | None:
@@ -1212,9 +1214,36 @@ class _PoolStatus:
 
     def poll(self, connected: bool) -> None:
         try:
-            self._poll(connected)
+            with self._poll_lock:
+                self._poll(connected)
         except Exception:  # noqa: BLE001 — includes broken/closed stderr
             pass
+
+    def stop(self, serve_proc: subprocess.Popen[bytes]) -> None:
+        """Flush changed totals while serve is alive, spending at most one second."""
+        acquired = False
+        try:
+            if self._stop is not None:
+                self._stop.set()
+            if serve_proc.poll() is not None:
+                return
+            deadline = time.monotonic() + 1.0
+            # Include an in-flight poll in the same bound; never race its accounting.
+            acquired = self._poll_lock.acquire(timeout=1.0)
+            if not acquired:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            requests_started = self._requests_started_fn()
+            values = self._read(timeout=remaining)
+            if values is not None and serve_proc.poll() is None:
+                self._update(values, requests_started, self._connected_fn(), final=True)
+        except Exception:  # noqa: BLE001 — shutdown observation is optional
+            pass
+        finally:
+            if acquired:
+                self._poll_lock.release()
 
     def _poll(self, connected: bool) -> None:
         now = time.monotonic()
@@ -1225,6 +1254,16 @@ class _PoolStatus:
         values = self._read()
         if values is None or (self._stop is not None and self._stop.is_set()):
             return
+        self._update(values, requests_started, connected)
+
+    def _update(
+        self,
+        values: tuple[float, ...],
+        requests_started: bool,
+        connected: bool,
+        *,
+        final: bool = False,
+    ) -> None:
         # Throttle from emission time, including the scrape's latency.
         now = time.monotonic()
         if not requests_started:
@@ -1255,14 +1294,18 @@ class _PoolStatus:
         self._previous = values
         requests, tokens, speed_sum, speed_count = self._totals
         counts = (int(requests), int(tokens), connected)
+        if final and counts[:2] == self.last_counts[:2]:
+            return
         if counts == self.last_counts or (not requests and self.last_print is None):
             return
         # Totals and connection-state changes share the 60-second throttle,
         # including connected ↔ reconnecting with unchanged totals. Only an
         # emitted line advances it; idle/failed scrapes never postpone output.
-        if self.last_print is not None and now - self.last_print < 60:
+        if not final and self.last_print is not None and now - self.last_print < 60:
             return
         average = speed_sum / speed_count if speed_count else 0.0
+        rate = f"{average:.1f}"
+        speed = f"average {rate} tok/s, " if speed_count and rate != "0.0" else ""
         window = (
             "since start"
             if self.baseline_at_start
@@ -1272,7 +1315,7 @@ class _PoolStatus:
             f"QuickSilver status: {int(requests):,} "
             f"{'request' if requests == 1 else 'requests'} served, "
             f"{int(tokens):,} output {'token' if tokens == 1 else 'tokens'} "
-            f"{window}, average {average:.1f} tok/s, "
+            f"{window}, {speed}"
             f"{'connected' if connected else 'disconnected, reconnecting'}.",
             file=sys.stderr,
             flush=True,
@@ -1932,6 +1975,7 @@ def _run_share(
     tunnel: ws_tunnel.TunnelClient | None = None
     tunnel_thread: threading.Thread | None = None
     heartbeat: _Heartbeat | None = None
+    status: _PoolStatus | None = None
     exit_code = 0
     # Keep the websockets library at WARNING for the session: its
     # client logger prints connect URIs, and any future credential that
@@ -2209,6 +2253,8 @@ def _run_share(
             pass
         if heartbeat is not None:
             heartbeat.stop()
+        if status is not None and serve_proc is not None:
+            status.stop(serve_proc)
         if tunnel is not None:
             tunnel.stop()
         if tunnel_thread is not None and tunnel_thread.is_alive():

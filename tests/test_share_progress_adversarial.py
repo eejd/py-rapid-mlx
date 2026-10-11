@@ -4,6 +4,7 @@
 import http.client
 import io
 import threading
+import time
 import urllib.request
 from email.message import Message
 from unittest.mock import MagicMock
@@ -148,6 +149,89 @@ def test_shutdown_never_joins_status_scrape(monkeypatch):
         release.set()
         scraper.join(2)
     assert reporter.last_print is None
+
+
+@pytest.mark.parametrize("inflight_poll", [False, True])
+def test_final_status_scrape_and_poll_share_one_shutdown_bound(
+    monkeypatch, capsys, inflight_poll
+):
+    monkeypatch.setattr(
+        qs, "_open", lambda *a, **kw: metrics_response(metrics().encode())
+    )
+    reporter = qs._PoolStatus(1, lambda: True)
+    reporter._stop = threading.Event()
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked():
+        entered.set()
+        release.wait(5)
+        return (1, 10, 20, 1)
+
+    # Exercise the real deadline/daemon implementation, including a peer that
+    # returns valid metrics only after shutdown has already skipped the scrape.
+    monkeypatch.setattr(reporter, "_scrape", blocked)
+    poller = None
+    if inflight_poll:
+        poller = threading.Thread(target=reporter.poll, args=(True,))
+        poller.start()
+        assert entered.wait(2)
+    try:
+        started = time.monotonic()
+        reporter.stop(MagicMock(poll=MagicMock(return_value=None)))
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.25  # One-second deadline, with scheduler tolerance.
+        assert entered.is_set()
+        assert reporter._stop.is_set()
+        assert reporter._scrape_thread.daemon
+        assert reporter._scrape_thread.is_alive()
+        assert reporter.last_print is None
+        assert capsys.readouterr() == ("", "")
+    finally:
+        release.set()
+        reporter._scrape_thread.join(2)
+        if poller is not None:
+            poller.join(2)
+    assert capsys.readouterr() == ("", "")
+
+
+def test_download_initial_cache_scan_is_bounded_and_reused(
+    monkeypatch, tmp_path, clock, capsys
+):
+    import huggingface_hub.constants
+
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path))
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def blocked(self):
+        calls.append(1)
+        entered.set()
+        release.wait(5)
+        return 3 * 1024**3
+
+    monkeypatch.setattr(cli._DownloadProgress, "_cache_size", blocked)
+    reporter = None
+    try:
+        started = time.perf_counter()  # The progress clock is deterministic.
+        reporter = cli._DownloadProgress("org/repo", 15 * 1024**3)
+        assert time.perf_counter() - started < 0.5
+        assert entered.is_set()
+        assert reporter._scan_thread.daemon and reporter._scan_thread.is_alive()
+        assert capsys.readouterr().err == (
+            "Model download: approximately 15.0 GiB in total. "
+            "Cache size every 30s until ready.\n"
+        )
+        clock[0] = 130
+        reporter.poll()
+        assert calls == [1]
+        assert "model cache size unavailable" in capsys.readouterr().err
+    finally:
+        release.set()
+        if reporter is not None:
+            reporter._scan_thread.join(2)
+    clock[0] = 160
+    reporter.poll()
+    assert "model cache size 3.0 GiB" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("source", ["callback", "read", "stderr"])
@@ -345,7 +429,7 @@ def test_failed_or_empty_estimate_still_reports_unknown(
     assert reporter.estimated is None
     assert (
         capsys.readouterr().err
-        == "First-run model download: estimated size unknown. Cache size every 30s until ready.\n"
+        == "Model download: estimated size unknown. Cache size every 30s until ready.\n"
     )
 
 
@@ -411,7 +495,7 @@ def test_real_partial_cache_resumes_but_complete_cache_is_silent(
     reporter = cli._maybe_confirm_download("org/repo", pool_mode=True)
     assert reporter is not None
     assert reporter._cache_size() >= len(b"first shard")
-    assert "First-run model download:" in capsys.readouterr().err
+    assert "Model download:" in capsys.readouterr().err
     (snapshot / "model-00002-of-00002.safetensors").write_bytes(b"second shard")
     assert gate.is_repo_cached("org/repo")
     estimate.reset_mock()
@@ -597,7 +681,7 @@ assert reporter is not None
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
-    assert "First-run model download:" in result.stderr
+    assert "Model download:" in result.stderr
     assert "estimated size unknown" in result.stderr
 
 
