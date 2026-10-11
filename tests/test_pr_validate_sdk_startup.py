@@ -87,6 +87,21 @@ def test_missing_registered_script_blocks(ctx, agent):
     assert result["executed"] is False
 
 
+@pytest.mark.parametrize("prefix", [None, "", 42])
+def test_sdk_without_valid_result_contract_cannot_pass(ctx, agent, monkeypatch, prefix):
+    agent["result_prefix"] = prefix
+    monkeypatch.setattr(
+        matrix.subprocess,
+        "run",
+        lambda *a, **kw: CompletedProcess(a, 0, "Toy SDK: 2/2 passed\n", ""),
+    )
+    result = matrix._run_agent(
+        ctx, matrix.ModelChoice("toy", "toy/model", 1, "golden", []), agent
+    )
+    assert result["status"] == "fail"
+    assert result["executed"] is False
+
+
 @pytest.mark.parametrize(
     "pr_executed,base_executed,expected",
     [(False, True, "fail"), (True, False, "fail"), (True, True, "pass")],
