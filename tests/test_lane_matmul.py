@@ -11,6 +11,7 @@ receipt, the environment switch and the engine wiring.
 from __future__ import annotations
 
 import asyncio
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -164,10 +165,49 @@ def _assert_mpp_projection(module, dtype):
     else:
         weight = module.weight
     reference = x[:8].astype(mx.float32) @ weight.astype(mx.float32).T
+    assert mx.all(mx.isfinite(reference)).item(), "non-finite reference projection"
     stock_error = mx.max(mx.abs(module(x[:8]).astype(mx.float32) - reference)).item()
     lane_error = mx.max(mx.abs(alone[:8].astype(mx.float32) - reference)).item()
+    assert math.isfinite(stock_error), "non-finite stock projection error"
+    assert math.isfinite(lane_error), "non-finite lane projection error"
     epsilon = 2.0 ** (-7 if dtype == mx.bfloat16 else -10)
     assert lane_error <= 2 * stock_error + mx.max(mx.abs(reference)).item() * epsilon
+
+
+@pytest.mark.parametrize(
+    "broken, rejected",
+    [
+        ("reference", "reference"),
+        ("stock", "stock"),
+        ("lane", "lane"),
+        ("both", "stock"),
+    ],
+)
+def test_mpp_projection_rejects_nonfinite_results(monkeypatch, broken, rejected):
+    class Projection:
+        weight = mx.full((36, 1024), float("inf") if broken == "reference" else 0)
+
+        def __call__(self, x):
+            return mx.full(
+                (x.shape[0], 36),
+                float("inf") if broken in ("stock", "both") else 0,
+                dtype=x.dtype,
+            )
+
+    monkeypatch.setattr(
+        lm, "prepare", lambda _: SimpleNamespace(backend="mpp", k=1024, format="test")
+    )
+    monkeypatch.setattr(
+        lm,
+        "lane_matmul",
+        lambda x, _: mx.full(
+            (x.shape[0], 36),
+            float("inf") if broken in ("lane", "both") else 0,
+            dtype=x.dtype,
+        ),
+    )
+    with pytest.raises(AssertionError, match=f"non-finite {rejected}"):
+        _assert_mpp_projection(Projection(), mx.bfloat16)
 
 
 def test_off_is_the_default_and_bad_values_fail(monkeypatch):
