@@ -95,12 +95,13 @@ class BrowserSecurityMiddleware:
             return
         headers = scope.get("headers", [])
         host_values = [v.decode("latin-1") for k, v in headers if k.lower() == b"host"]
-        scheme = {"ws": "http", "wss": "https"}.get(scope["scheme"], scope["scheme"])
+        raw_scheme = scope.get("scheme") or "http"
+        scheme = {"ws": "http", "wss": "https"}.get(raw_scheme, raw_scheme)
         authority = (
             _authority(host_values[0], scheme) if len(host_values) == 1 else None
         )
         allowed = authority is not None
-        if allowed and self.hosts is not None:
+        if authority is not None and self.hosts is not None:
             hostname = authority[0]
             allowed = any(
                 pattern == "*"
