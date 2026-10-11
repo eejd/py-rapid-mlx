@@ -204,10 +204,19 @@ def test_incomplete_registration_blocks_without_running_scripts(
     assert sdk_env_check.SDKEnvCheckStep().run(ctx).status == "fail"
 
 
+@pytest.mark.parametrize(
+    "missing,error",
+    [
+        (
+            "_harbor_sdk_startup_negative_control_missing_module_0161",
+            "ModuleNotFoundError",
+        ),
+        ("json:_harbor_missing_sdk_symbol_0161", "AttributeError"),
+    ],
+)
 def test_prerequisite_probe_reports_real_import_failure_without_sdk_or_network(
-    ctx, agent, monkeypatch
+    ctx, agent, monkeypatch, missing, error
 ):
-    missing = "_harbor_sdk_startup_negative_control_missing_module_0161"
     agent["prerequisite_imports"] = ["json", missing]
     monkeypatch.setattr(sdk_env_check, "_load_registry", lambda: {"agents": [agent]})
     real_run = sdk_env_check.subprocess.run
@@ -219,7 +228,23 @@ def test_prerequisite_probe_reports_real_import_failure_without_sdk_or_network(
     result = sdk_env_check.SDKEnvCheckStep().run(ctx)
     assert result.status == "fail"
     log = Path(result.artifacts[0]).read_text()
-    assert f"{missing}: ModuleNotFoundError" in log
+    assert f"{missing}: {error}" in log
+
+    # Exercise the real failing probe through the pipeline too: a module may
+    # exist while a required class is missing, and costly tests must not run.
+    from scripts.pr_validate import runner
+
+    monkeypatch.setattr(runner, "Context", lambda **kwargs: ctx)
+
+    class Costly(Step):
+        name = "full_unit"
+
+        def run(self, ctx):
+            pytest.fail("missing prerequisite must stop before costly work")
+
+    assert (
+        runner.run_pipeline(123, steps=[sdk_env_check.SDKEnvCheckStep(), Costly()]) == 1
+    )
 
 
 @pytest.mark.parametrize(

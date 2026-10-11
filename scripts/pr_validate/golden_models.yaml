@@ -270,7 +270,7 @@ overrides:
 # ``tests/integrations/test_agents_matrix.py`` and is not run by pr_validate.
 agents:
   - name: anthropic_sdk
-    prerequisite_imports: [httpx, anthropic]
+    prerequisite_imports: ["httpx:get", "anthropic:Anthropic"]
     result_prefix: "Anthropic SDK"
     script: tests/integrations/test_anthropic_sdk.py
     skip_for_smoke: false
@@ -281,7 +281,7 @@ agents:
     skip_for_models:
       - mlx-community/diffusiongemma-26B-A4B-it-4bit
   - name: langchain
-    prerequisite_imports: [httpx, langchain_core.messages, langchain_core.tools, langchain_openai, pydantic]
+    prerequisite_imports: ["httpx:get", "langchain_core.messages:HumanMessage", "langchain_core.messages:SystemMessage", "langchain_core.tools:tool", "langchain_openai:ChatOpenAI", "pydantic:BaseModel", "pydantic:Field"]
     result_prefix: "LangChain"
     script: tests/integrations/test_langchain.py
     skip_for_smoke: false
@@ -291,7 +291,7 @@ agents:
     skip_for_models:
       - mlx-community/diffusiongemma-26B-A4B-it-4bit
   - name: pydantic_ai
-    prerequisite_imports: [httpx, openai, pydantic, pydantic_ai, pydantic_ai.models.openai, pydantic_ai.providers.openai]
+    prerequisite_imports: ["httpx:get", "openai:AsyncOpenAI", "pydantic:BaseModel", "pydantic_ai:Agent", "pydantic_ai.models.openai:OpenAIChatModel", "pydantic_ai.providers.openai:OpenAIProvider"]
     result_prefix: "PydanticAI"
     script: tests/integrations/test_pydantic_ai_full.py
     # The multi-tool composition test reliably regresses on quants

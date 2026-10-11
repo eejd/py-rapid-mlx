@@ -43,11 +43,14 @@ class SDKEnvCheckStep(Step):
         probe = (
             "import importlib, sys\n"
             "failed = []\n"
-            "for module in sys.argv[1:]:\n"
-            "    try: importlib.import_module(module)\n"
+            "for prerequisite in sys.argv[1:]:\n"
+            "    try:\n"
+            "        module, sep, symbol = prerequisite.partition(':')\n"
+            "        imported = importlib.import_module(module)\n"
+            "        if sep: getattr(imported, symbol)\n"
             "    except Exception as exc:\n"
-            "        failed.append(module)\n"
-            "        print(f'{module}: {type(exc).__name__}: {exc}')\n"
+            "        failed.append(prerequisite)\n"
+            "        print(f'{prerequisite}: {type(exc).__name__}: {exc}')\n"
             "sys.exit(bool(failed))\n"
         )
         proc = subprocess.run(  # noqa: S603
