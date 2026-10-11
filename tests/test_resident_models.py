@@ -930,6 +930,40 @@ async def test_eviction_history_is_bounded_and_live_alias_wins(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_shared_engine_retirement_remembers_each_evicted_name(monkeypatch):
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.resident_models._release_allocator_cache", lambda: None
+    )
+    registry = ModelRegistry()
+    engine = BlockingStopLifecycleEngine()
+    manager = ResidentModelManager(registry, AsyncMock(), memory_reader=lambda: 0)
+    records = []
+    for name in ("first", "sibling"):
+        model = entry(name, engine)
+        registry.add(model)
+        record = ResidencyRecord(
+            entry=model, estimated_bytes=GIB, loaded_at=0, last_used_at=0
+        )
+        manager._index_record(record)
+        records.append(record)
+
+    async with manager._lock:
+        first = manager._begin_evict_locked(records[0], reason="explicit")
+        sibling = manager._begin_evict_locked(records[1], reason="explicit")
+    await engine.stop_started.wait()
+    try:
+        for name in ("first", "sibling"):
+            assert name not in registry
+            assert manager.was_evicted(name)
+            assert manager.was_evicted(f"repo/{name}")
+        assert engine.stop_calls == 1
+    finally:
+        engine.stop_release.set()
+        await asyncio.gather(first, sibling)
+    assert not manager._retiring
+
+
+@pytest.mark.asyncio
 async def test_rejected_load_is_not_a_previously_served_model():
     manager, registry, _, _ = manager_fixture(limit_gib=10)
     original_loader = manager.loader
