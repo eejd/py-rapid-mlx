@@ -1298,29 +1298,31 @@ def _install_continuous_mtp_router(
         if routed.route is not ContinuousMTPIntegrationRoute.CONTINUOUS_PLANNED:
             return
         specs = []
-        for lane in routed.cohort:
-            request_id = (
-                None
-                if uid_to_request_id is None
-                else uid_to_request_id.get(lane.spec.uid)
-            )
-            request = (
-                None
-                if requests is None or request_id is None
-                else requests.get(request_id)
-            )
-            counter = (
-                _ensure_request_mtp_counter(request) if request is not None else None
-            )
-            specs.append(
-                replace(
-                    lane.spec,
-                    accept_counter=counter,
-                    prompt_cache=_clone_cache(lane.spec.prompt_cache),
-                )
-            )
-        selected = {spec.uid for spec in specs}
         try:
+            for lane in routed.cohort:
+                request_id = (
+                    None
+                    if uid_to_request_id is None
+                    else uid_to_request_id.get(lane.spec.uid)
+                )
+                request = (
+                    None
+                    if requests is None or request_id is None
+                    else requests.get(request_id)
+                )
+                counter = (
+                    _ensure_request_mtp_counter(request)
+                    if request is not None
+                    else None
+                )
+                specs.append(
+                    replace(
+                        lane.spec,
+                        accept_counter=counter,
+                        prompt_cache=_clone_cache(lane.spec.prompt_cache),
+                    )
+                )
+            selected = {spec.uid for spec in specs}
             candidate_driver = ContinuousMTPDriver.create(
                 specs,
                 runtime,
@@ -1384,35 +1386,37 @@ def _install_continuous_mtp_router(
         joining_specs: list[SelfMTPLaneSpec] = []
         joining_stops: dict[int, frozenset[int]] = {}
         joining_sequences: dict[int, Any] = {}
-        for sequence, metadata in _queued_candidates(planned_bytes=budget is not None):
-            if len(joining_specs) >= room:
-                break
-            if not _lane_gate(metadata).eligible:
-                continue
-            if budget is not None:
-                cost = metadata.base_bytes
-                if cost > budget:
-                    break
-                budget -= cost
-            spec = SelfMTPLaneSpec(
-                uid=metadata.uid,
-                prompt=metadata.prompt_tokens,
-                max_tokens=metadata.max_tokens,
-                num_draft=2,
-                sampling=SelfMTPSampling(temperature=metadata.temperature),
-                prompt_cache=_clone_cache(metadata.prompt_cache),
-                accept_counter=(
-                    _ensure_request_mtp_counter(requests[metadata.lane_id])
-                    if requests is not None and metadata.lane_id in requests
-                    else None
-                ),
-            )
-            joining_specs.append(spec)
-            joining_stops[spec.uid] = metadata.stop_tokens
-            joining_sequences[spec.uid] = sequence
-        if not joining_specs:
-            return
         try:
+            for sequence, metadata in _queued_candidates(
+                planned_bytes=budget is not None
+            ):
+                if len(joining_specs) >= room:
+                    break
+                if not _lane_gate(metadata).eligible:
+                    continue
+                if budget is not None:
+                    cost = metadata.base_bytes
+                    if cost > budget:
+                        break
+                    budget -= cost
+                spec = SelfMTPLaneSpec(
+                    uid=metadata.uid,
+                    prompt=metadata.prompt_tokens,
+                    max_tokens=metadata.max_tokens,
+                    num_draft=2,
+                    sampling=SelfMTPSampling(temperature=metadata.temperature),
+                    prompt_cache=_clone_cache(metadata.prompt_cache),
+                    accept_counter=(
+                        _ensure_request_mtp_counter(requests[metadata.lane_id])
+                        if requests is not None and metadata.lane_id in requests
+                        else None
+                    ),
+                )
+                joining_specs.append(spec)
+                joining_stops[spec.uid] = metadata.stop_tokens
+                joining_sequences[spec.uid] = sequence
+            if not joining_specs:
+                return
             accepted = driver.queue_lanes(joining_specs, stop_tokens=joining_stops)
         except Exception as exc:  # noqa: BLE001 - optional route fails closed
             # A staged join owns no continuous cache yet.  Keep the base queue

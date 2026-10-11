@@ -1774,3 +1774,32 @@ def test_unconfirmed_dynamic_join_keeps_original_queue_ownership(monkeypatch, pa
     assert list(batch_gen._unprocessed_sequences) == source
     assert driver.pending_join_uids == ()
     assert driver.lane_uids == (1, 2)
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize("joining", [False, True])
+def test_resumed_cache_clone_failure_preserves_source_queue(monkeypatch, joining):
+    class UncopyableCache:
+        offset = 12
+        nbytes = 0
+
+        def __deepcopy__(self, memo):
+            raise MemoryError("cache clone refused")
+
+    batch_gen = _SchedulerBatchGenerator()
+    requests, mapping = _requests_for(1, 2, 3)
+    source = [_scheduler_sequence(1), _scheduler_sequence(2)]
+    resumed = _scheduler_sequence(3, caches=[UncopyableCache()], segments=[[44]])
+    batch_gen._unprocessed_sequences.extend(source if joining else [source[0], resumed])
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    if joining:
+        driver = created[0]
+        batch_gen._unprocessed_sequences.append(resumed)
+        batch_gen.next()
+        assert list(batch_gen._unprocessed_sequences) == [resumed]
+        assert driver.pending_join_uids == () and driver.lane_uids == (1, 2)
+    else:
+        assert created == []
+        assert list(batch_gen._unprocessed_sequences) == [source[0], resumed]
+    assert resumed[3][0].offset == 12
