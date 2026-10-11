@@ -13,6 +13,8 @@ import re
 import secrets
 import uuid
 
+from pydantic import ValidationError
+
 from .anthropic_models import (
     ANTHROPIC_EFFORT_TO_REASONING_MAX_TOKENS,
     AnthropicContentBlock,
@@ -887,6 +889,7 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
         elif block.type == "tool_result":
             # Tool result → OpenAI tool message
             result_content = block.content
+            result_images = []
             if isinstance(result_content, list):
                 # Extract text from content blocks
                 parts = []
@@ -894,9 +897,13 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
                     if isinstance(item, dict) and item.get("type") == "text":
                         parts.append(item.get("text", ""))
                     elif isinstance(item, dict) and item.get("type") == "image":
-                        tool_images.append(
-                            _image_content_part(AnthropicContentBlock(**item))
-                        )
+                        try:
+                            nested_image = AnthropicContentBlock(**item)
+                        except ValidationError as error:
+                            raise AnthropicContentError(
+                                "Invalid image source in tool_result content"
+                            ) from error
+                        result_images.append(_image_content_part(nested_image))
                     elif isinstance(item, dict) and item.get("type") == "document":
                         raise AnthropicContentError(
                             "document inputs are not supported in tool_result content"
@@ -907,6 +914,14 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
             elif result_content is None:
                 result_content = ""
 
+            if result_images:
+                tool_images.append(
+                    {
+                        "type": "text",
+                        "text": f"Images from tool_result {block.tool_use_id}:",
+                    }
+                )
+                tool_images.extend(result_images)
             tool_results.append(
                 Message(
                     role="tool",

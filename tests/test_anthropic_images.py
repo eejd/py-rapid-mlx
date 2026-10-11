@@ -297,3 +297,66 @@ def test_image_url_uses_existing_remote_media_safety_guard(monkeypatch, url):
     extracted = extract_multimodal_content(converted)[1]
     with pytest.raises(RemoteMediaFetchError):
         process_image_input(extracted[0])
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_invalid_nested_image_returns_400_before_generation(make_client, stream):
+    client, engine = make_client()
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "test-model",
+            "max_tokens": 20,
+            "stream": stream,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_123",
+                            "content": [
+                                image(
+                                    {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": "!!!",
+                                    }
+                                )
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 400
+    assert "Invalid image source in tool_result" in response.text
+    assert "!!!" not in response.text
+    assert not engine.calls
+
+
+def test_multiple_screenshot_results_keep_explicit_image_association():
+    converted = _convert_message(
+        AnthropicMessage(
+            role="user",
+            content=[
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_123",
+                    "content": [image()],
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_456",
+                    "content": [image({"type": "url", "url": URL})],
+                },
+            ],
+        )
+    )
+    assert [m.tool_call_id for m in converted[:2]] == ["toolu_123", "toolu_456"]
+    parts = converted[2].model_dump()["content"]
+    assert parts[0]["text"] == "Images from tool_result toolu_123:"
+    assert parts[1]["image_url"]["url"] == "data:image/png;base64,aGVsbG8="
+    assert parts[2]["text"] == "Images from tool_result toolu_456:"
+    assert parts[3]["image_url"]["url"] == URL
