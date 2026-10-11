@@ -278,14 +278,14 @@ def test_verified_alias_defaults_to_continuous_when_mtp_is_selected(
 
     assert args.mtp_continuous_batching is True
     assert args.mtp_continuous_batching_tier == "verified"
-    # A continuous cohort admits late requests instead of serializing them.
-    assert args.mtp_allow_dynamic_membership is True
+    # Continuous routing retains fixed cohorts unless explicitly enabled.
+    assert args.mtp_allow_dynamic_membership is False
 
 
 @pytest.mark.parametrize(
     ("payload", "continuous", "dynamic"),
     [
-        ('{"method":"mtp"}', True, True),
+        ('{"method":"mtp"}', True, False),
         ('{"method":"mtp","allow_dynamic_membership":false}', True, False),
         ('{"method":"mtp","continuous_batching":false}', False, False),
         (
@@ -302,7 +302,7 @@ def test_verified_alias_defaults_to_continuous_when_mtp_is_selected(
         ),
     ],
 )
-def test_dynamic_membership_follows_the_resolved_continuous_route(
+def test_dynamic_membership_requires_explicit_opt_in(
     payload: str, continuous: bool, dynamic: bool
 ) -> None:
     from rapid_mlx.cli import _normalize_speculative_config_or_exit

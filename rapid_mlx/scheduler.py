@@ -19,6 +19,7 @@ import os
 import threading
 import time
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
@@ -1069,9 +1070,8 @@ def _install_continuous_mtp_router(
     def _planning_headroom() -> int | None:
         """Live headroom for byte planning, ``None`` when it is unknowable.
 
-        Unknown telemetry (no cap configured or probe failure) plans by lane
-        count alone, as the router always has; a known cap with no headroom
-        is ``0`` and admits nothing.
+        Unknown telemetry (no cap configured or probe failure) refuses new
+        cohort admission. Existing singleton/plain ownership is preserved.
         """
         if not callable(free_bytes_getter):
             return None
@@ -1148,9 +1148,8 @@ def _install_continuous_mtp_router(
             for name in names
             for marker in ("rotating", "window", "sink")
         )
-        # Byte planning only runs with known headroom; lane-count-only planning
-        # (unknown telemetry) charges nothing.  A lane whose footprint cannot be
-        # projected is never admitted on a guess.
+        # Byte planning requires known headroom. A lane whose footprint cannot
+        # be projected is never admitted on a guess.
         base_bytes = 0
         if planned_bytes:
             if callable(lane_bytes_estimator):
@@ -1220,17 +1219,15 @@ def _install_continuous_mtp_router(
     def _stage_initial() -> None:
         nonlocal driver
         headroom = _planning_headroom()
-        candidates = _queued_candidates(planned_bytes=headroom is not None)
+        if headroom is None:
+            return
+        candidates = _queued_candidates(planned_bytes=True)
         if not candidates:
             return
         metadata = [item[1] for item in candidates]
         routed = router.plan(
             metadata,
-            free_bytes=(
-                headroom
-                if headroom is not None
-                else int(router.config.hard_reserve_bytes)
-            ),
+            free_bytes=headroom,
         )
         if routed.route is not ContinuousMTPIntegrationRoute.CONTINUOUS_PLANNED:
             return
@@ -1285,6 +1282,25 @@ def _install_continuous_mtp_router(
             int(routed.admission.draft_tokens) if routed.admission else 0,
         )
 
+    def _joining_budget() -> int | None:
+        if driver is None:
+            return None
+        headroom = _planning_headroom()
+        if headroom is None:
+            return None
+        budget = max(0, headroom - int(router.config.hard_reserve_bytes))
+        # Pending joins have not allocated caches yet, so live telemetry does
+        # not account for their reservations. Charge them exactly once.
+        for uid in driver.pending_join_uids:
+            snapshot = staged_join_sequences.get(uid)
+            if snapshot is None:
+                return None
+            metadata = _metadata(snapshot, planned_bytes=True)
+            if metadata is None:
+                return None
+            budget -= metadata.base_bytes
+        return max(0, budget)
+
     def _stage_joins() -> None:
         if driver is None or not driver.dynamic_membership:
             return
@@ -1296,12 +1312,9 @@ def _install_continuous_mtp_router(
         # the joining lanes' projected footprint is charged against it.  The
         # hard reserve is kept intact; FIFO order is preserved by stopping at
         # the first eligible lane that does not fit.
-        headroom = _planning_headroom()
-        budget = (
-            None
-            if headroom is None
-            else max(0, headroom - int(router.config.hard_reserve_bytes))
-        )
+        budget = _joining_budget()
+        if budget is None:
+            return
         joining_specs: list[SelfMTPLaneSpec] = []
         joining_stops: dict[int, frozenset[int]] = {}
         joining_sequences: dict[int, Any] = {}
@@ -1373,24 +1386,62 @@ def _install_continuous_mtp_router(
             and driver.dynamic_membership
         ):
             return
+        active_driver = driver
         gb = getattr(batch_gen, "_generation_batch", None)
         if list(getattr(gb, "uids", ()) or ()) != [owner]:
             return
-        processors = getattr(gb, "logits_processors", None)
-        probe: tuple[Any, ...] = (
-            owner,
-            [[0]],
-            1,
-            list(getattr(gb, "prompt_cache", None) or ()),
-            [],
-            None,
-            processors[0] if processors else [],
-            None,
-        )
-        metadata = _metadata(probe)
-        if metadata is None or not _lane_gate(metadata).eligible:
+        # Reserve against the exact resumable snapshot before its owner leaves
+        # the singleton. A failed reservation or removal retains that owner.
+        reserved = False
+        sequence: tuple[Any, ...] | None = None
+
+        def reserve(snapshot: tuple[Any, ...]) -> bool:
+            nonlocal reserved, sequence
+            occupied = len(active_driver.lane_uids) + len(
+                active_driver.pending_join_uids
+            )
+            if occupied >= int(router.config.max_lanes):
+                return False
+            budget = _joining_budget()
+            if budget is None:
+                return False
+            metadata = _metadata(snapshot, planned_bytes=True)
+            if metadata is None or not _lane_gate(metadata).eligible:
+                return False
+            if metadata.base_bytes > budget:
+                return False
+            spec = SelfMTPLaneSpec(
+                uid=metadata.uid,
+                prompt=metadata.prompt_tokens,
+                max_tokens=metadata.max_tokens,
+                num_draft=2,
+                sampling=SelfMTPSampling(temperature=metadata.temperature),
+                prompt_cache=_clone_cache(metadata.prompt_cache),
+                accept_counter=(
+                    _ensure_request_mtp_counter(requests[metadata.lane_id])
+                    if requests is not None and metadata.lane_id in requests
+                    else None
+                ),
+            )
+            active_driver.queue_lanes(
+                [spec], stop_tokens={spec.uid: metadata.stop_tokens}
+            )
+            reserved = True
+            sequence = snapshot
+            return True
+
+        try:
+            transferred = requeue(admit=reserve)
+        except Exception as exc:  # noqa: BLE001 - optional handoff fails closed
+            logger.warning("[MTP-continuous] singleton admission refused: %s", exc)
+            transferred = False
+        if not transferred:
+            if reserved:
+                active_driver.remove_uids([owner])
             return
-        requeue()
+        if reserved:
+            _remove_queued({owner})
+            staged_join_sequences[owner] = sequence
 
     def _continuous_next(self):
         nonlocal driver
@@ -2616,7 +2667,9 @@ def _install_mtp_vendored(
                 offsets.append(value.offset)
         return offsets
 
-    def _requeue_owner_at_boundary() -> bool:
+    def _requeue_owner_at_boundary(
+        *, admit: Callable[[tuple[Any, ...]], bool] | None = None
+    ) -> bool:
         """Hand the singleton back to mlx-lm's queue as a resumable prompt.
 
         The singleton verifier owns the generation batch exclusively, so a
@@ -2715,6 +2768,10 @@ def _install_mtp_vendored(
             _row(getattr(gb, "logits_processors", None), []),
             machine,
         )
+        # Optional cohort admission stages a private cache/specification before
+        # removal; refusal leaves the original verifier and cache untouched.
+        if admit is not None and not admit(sequence):
+            return False
         try:
             # Reaps the request's verifier state and releases the admission
             # lock without emitting anything.

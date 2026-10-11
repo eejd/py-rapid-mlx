@@ -189,8 +189,8 @@ def test_speculative_config_preserves_continuous_auto_and_explicit_values():
     enabled = parse_speculative_config('{"method":"mtp","continuous_batching":true}')
     disabled = parse_speculative_config('{"method":"mtp","continuous_batching":false}')
     assert default is not None and default.continuous_batching is None
-    # Omitted means "follow the resolved continuous route", not "fixed".
-    assert default.allow_dynamic_membership is None
+    # Omitted preserves fixed cohorts; dynamic membership is explicit opt-in.
+    assert default.allow_dynamic_membership is False
     pinned = parse_speculative_config(
         '{"method":"mtp","allow_dynamic_membership":false}'
     )
@@ -1231,6 +1231,10 @@ class _RecordingDriver:
         return self.pending
 
     def remove_uids(self, _uids):
+        self.pending = tuple(uid for uid in self.pending if uid not in _uids)
+        self.joined_specs = [
+            spec for spec in getattr(self, "joined_specs", []) if spec.uid not in _uids
+        ]
         return ()
 
     def discard_all(self):
@@ -1366,10 +1370,10 @@ def test_windowed_or_quantized_layer_anywhere_keeps_the_lane_off_the_cohort(
     [
         # Reserve (8 GiB) + room for exactly two 1 GiB lanes: FIFO prefix of 2.
         (8 * 1024**3 + int(2.5 * 1024**3), (1, 2)),
-        # No headroom telemetry: lane count alone bounds the cohort.
-        (None, (1, 2, 3)),
+        # Unknown telemetry preserves the ordinary queue.
+        (None, None),
         # Unusable telemetry is unknown telemetry, not zero headroom.
-        ("n/a", (1, 2, 3)),
+        ("n/a", None),
         # A known cap with no headroom admits nothing that costs memory.
         (0, None),
     ],
@@ -1413,8 +1417,8 @@ def test_initial_cohort_is_memory_planned_from_lane_estimates(
         # charged, the hard reserve stays intact, and FIFO stops at the first
         # lane that does not fit.
         (8 * 1024**3 + int(2.5 * 1024**3), 8, (3, 4)),
-        # Without telemetry the join is bounded by lane capacity alone.
-        (None, 8, (3, 4, 5)),
+        # Without telemetry the joining requests remain in the ordinary queue.
+        (None, 8, None),
         # A known cap with no headroom admits no joiner.
         (0, 8, None),
         (16 * 1024**3, 3, (3,)),
@@ -1479,11 +1483,8 @@ class _SingletonBatchGenerator(_SchedulerBatchGenerator):
         if with_hook:
             self._mtp_vendored_requeue_owner = self._requeue
 
-    def _requeue(self):
+    def _requeue(self, *, admit=None):
         owner = self._mtp_vendored_admission_owner
-        self.requeued.append(owner)
-        self._generation_batch.uids = []
-        self._mtp_vendored_admission_owner = None
         requeued = list(
             _scheduler_sequence(
                 owner, caches=[SimpleNamespace(offset=40, nbytes=0)], segments=[[99]]
@@ -1491,23 +1492,43 @@ class _SingletonBatchGenerator(_SchedulerBatchGenerator):
         )
         # The verifier hands back the row's processor context with it.
         requeued[4] = list(range(40))
+        requeued[6] = self._generation_batch.logits_processors[0]
+        if admit is not None and not admit(tuple(requeued)):
+            return False
+        if getattr(self, "refuse_removal", False):
+            return False
+        self.requeued.append(owner)
+        self._generation_batch.uids = []
+        self._mtp_vendored_admission_owner = None
         self._unprocessed_sequences.appendleft(tuple(requeued))
         return True
 
 
-def _absorb_setup(monkeypatch, *, owner_request=None, dynamic=True, **batch_changes):
+def _absorb_setup(
+    monkeypatch,
+    *,
+    owner_request=None,
+    dynamic=True,
+    router_changes=None,
+    **batch_changes,
+):
     owner_batch = _OwnerGenerationBatch(
         7, processors=batch_changes.pop("processors", None)
     )
     batch_gen = _SingletonBatchGenerator(owner_batch, **batch_changes)
-    requests, mapping = _requests_for(1, 2)
+    requests, mapping = _requests_for(1, 2, 3)
     requests["req-7"] = owner_request or _scheduler_request()
     mapping[7] = "req-7"
     batch_gen._unprocessed_sequences.extend(
         [_scheduler_sequence(1), _scheduler_sequence(2)]
     )
     created = _install_recording_router(
-        monkeypatch, batch_gen, requests, mapping, dynamic=dynamic
+        monkeypatch,
+        batch_gen,
+        requests,
+        mapping,
+        dynamic=dynamic,
+        **(router_changes or {}),
     )
     batch_gen.next()  # the waiting pair forms a cohort beside the singleton
     assert created[0].lane_uids == (1, 2)
@@ -1622,3 +1643,69 @@ def test_unplannable_lane_is_never_admitted_on_a_guess(monkeypatch):
     # single lane: below the cohort minimum, so the base path keeps them all.
     assert created == []
     assert [seq[0] for seq in batch_gen._unprocessed_sequences] == [1, 2, 3]
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize(
+    "case", ["full", "low", "unknown", "probe_error", "join_error", "remove_refused"]
+)
+def test_singleton_admission_failure_preserves_owner_cache_and_progress(
+    monkeypatch, case
+):
+    headroom = {"free": 16 * 1024**3}
+
+    def probe():
+        if headroom["free"] == "error":
+            raise RuntimeError("telemetry unavailable")
+        return headroom["free"]
+
+    batch_gen, owner, driver = _absorb_setup(
+        monkeypatch,
+        router_changes={
+            "free_bytes": probe,
+            "estimator": lambda request: 1024**3,
+            "max_lanes": 2 if case == "full" else 8,
+        },
+    )
+    cache = owner.prompt_cache
+    if case == "low":
+        headroom["free"] = 8 * 1024**3
+    if case == "unknown":
+        headroom["free"] = None
+    if case == "probe_error":
+        headroom["free"] = "error"
+    if case == "join_error":
+
+        def reject(*args, **kwargs):
+            assert owner.uids == [7]  # reservation precedes any departure
+            raise RuntimeError("join refused")
+
+        driver.queue_lanes = reject
+    if case == "remove_refused":
+        batch_gen.refuse_removal = True
+    batch_gen.next()
+    assert owner.uids == [7]
+    assert owner.prompt_cache is cache and cache[0].offset == 40
+    assert batch_gen._mtp_vendored_admission_owner == 7
+    assert batch_gen.requeued == []
+    assert driver.pending_join_uids == ()
+    assert driver.lane_uids == (1, 2)
+    assert not batch_gen._unprocessed_sequences
+
+
+@pytest.mark.requires_mlx
+def test_singleton_reservation_is_charged_before_other_dynamic_joins(monkeypatch):
+    headroom = {"free": 16 * 1024**3}
+    batch_gen, owner, driver = _absorb_setup(
+        monkeypatch,
+        router_changes={
+            "free_bytes": lambda: headroom["free"],
+            "estimator": lambda request: 1024**3,
+        },
+    )
+    headroom["free"] = 9 * 1024**3
+    batch_gen._unprocessed_sequences.append(_scheduler_sequence(3))
+    batch_gen.next()
+    assert owner.uids == []
+    assert driver.pending_join_uids == (7,)
+    assert [sequence[0] for sequence in batch_gen._unprocessed_sequences] == [3]

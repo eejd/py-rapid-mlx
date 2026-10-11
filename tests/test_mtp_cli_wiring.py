@@ -4973,3 +4973,25 @@ def test_gather_kv_cache_dtype_inputs_reads_local_dir_config(tmp_path):
     assert hf_cfg["text_config"]["mtp_num_hidden_layers"] == 1
     # And the resolved config must clear the MTP eligibility gate.
     assert detect_mtp_eligibility(hf_cfg) is not MTPEligibility.NONE
+
+
+def test_singleton_reservation_uses_real_boundary_snapshot_before_removal(monkeypatch):
+    batch_gen, gb, _requests, _fake = _yielding_setup(monkeypatch)
+    _emit(batch_gen, gb)
+    gb.cache = [SimpleNamespace(offset=10)]
+    snapshots = []
+
+    def refuse(snapshot):
+        assert gb.uids == [7] and batch_gen.removed == []
+        snapshots.append(snapshot)
+        return False
+
+    assert batch_gen._mtp_vendored_requeue_owner(admit=refuse) is False
+    assert snapshots[0][0] == 7 and snapshots[0][1] == [[500]]
+    assert snapshots[0][3] is gb.cache
+    assert gb.uids == [7] and gb.tokens[0] == [500]
+    assert not batch_gen._unprocessed_sequences
+    assert batch_gen.removed == []
+    assert batch_gen._mtp_vendored_requeue_owner(admit=lambda snapshot: True) is True
+    assert batch_gen.removed == [(7,)]
+    assert batch_gen._unprocessed_sequences[0] == snapshots[0]
