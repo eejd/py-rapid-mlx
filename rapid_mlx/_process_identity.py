@@ -175,7 +175,18 @@ def is_same_process(marker: object) -> bool:
     except (psutil.NoSuchProcess, ProcessLookupError):
         return False
     except (psutil.AccessDenied, PermissionError):
-        return True  # retain diagnostics when the extra probe is denied
+        # Retain diagnostics only while the observed process identity remains
+        # stable. It may have exited or its PID may have been reused since the
+        # first probe; a permission denial supplies no evidence of liveness.
+        try:
+            return process_identity(expected.pid) == current
+        except Exception as exc:
+            logger.debug(
+                "could not revalidate denied process identity for pid %s: %r",
+                expected.pid,
+                exc,
+            )
+            return False
     except Exception as exc:
         logger.debug(
             "could not probe raw creation time for pid %s: %r", expected.pid, exc

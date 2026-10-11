@@ -898,6 +898,56 @@ def test_raw_creation_time_probe_keeps_identity_boundaries(monkeypatch, kind, ex
     assert calls == []
 
 
+@pytest.mark.parametrize("denied", ["permission", "access-denied"])
+@pytest.mark.parametrize(
+    "after", ["same", "dead", "reused", "rebooted", "unknown", "error"]
+)
+def test_denied_raw_probe_revalidates_observed_process(monkeypatch, denied, after):
+    from rapid_mlx import _process_identity as identity
+
+    access_denied = type("AccessDenied", (Exception,), {})
+    error = PermissionError() if denied == "permission" else access_denied()
+    observed = identity.ProcessIdentity(123, 102.0, 50.0)
+    refreshed = {
+        "same": observed,
+        "dead": None,
+        "reused": identity.ProcessIdentity(123, 103.0, 50.0),
+        "rebooted": identity.ProcessIdentity(123, 102.0, 51.0),
+        "unknown": identity.ProcessIdentity(123, 0.0, 0.0),
+        "error": PermissionError(),
+    }[after]
+    probes = []
+
+    def probe(pid):
+        assert pid == 123
+        probes.append(pid)
+        result = observed if len(probes) == 1 else refreshed
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def raw_time(*, monotonic):
+        assert monotonic is True
+        raise error
+
+    monkeypatch.setattr(identity.sys, "platform", "darwin")
+    monkeypatch.setattr(identity, "process_identity", probe)
+    monkeypatch.setattr(
+        identity,
+        "psutil",
+        SimpleNamespace(
+            Process=lambda _pid: SimpleNamespace(
+                _proc=SimpleNamespace(create_time=raw_time)
+            ),
+            NoSuchProcess=type("NoSuchProcess", (Exception,), {}),
+            AccessDenied=access_denied,
+        ),
+    )
+    marker = {"pid": 123, "create_time": 100.0, "boot_time": 50.0, "app_version": "1"}
+    assert identity.is_same_process(marker) is (after == "same")
+    assert probes == [123, 123]
+
+
 def test_reported_suffix_collision_is_acknowledged_once(tmp_path, capsys):
     from rapid_mlx import _signal_observability as so
 
