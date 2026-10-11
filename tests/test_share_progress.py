@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from rapid_mlx import _download_gate as gate
-from rapid_mlx.share import cli
+from rapid_mlx.share import cli, ws_tunnel
 from rapid_mlx.share import quicksilver as qs
 
 
@@ -83,6 +83,100 @@ def test_status_disconnect_and_reconnect_are_coalesced(status, clock, capsys):
     clock[0] = 220
     reporter.poll(True)
     assert "connected." in capsys.readouterr().err
+
+
+def test_status_connection_changes_with_unchanged_totals_share_throttle(
+    status, clock, capsys
+):
+    reporter, snapshot = status
+    snapshot[0] = metrics(2, 18, 60, 2)
+    reporter.poll(True)
+    connected = capsys.readouterr().err
+    clock[0] = 159
+    reporter.poll(False)
+    assert capsys.readouterr().err == ""
+    clock[0] = 169
+    reporter.poll(False)
+    assert capsys.readouterr().err == connected.replace(
+        "connected.", "disconnected, reconnecting."
+    )
+    clock[0] = 228
+    reporter.poll(True)
+    assert capsys.readouterr().err == ""
+    clock[0] = 238
+    reporter.poll(True)
+    assert capsys.readouterr().err == connected
+    clock[0] = 298
+    reporter.poll(True)
+    assert capsys.readouterr().err == ""
+
+
+def test_status_late_warmup_accounting_before_pool_traffic(monkeypatch, clock, capsys):
+    snapshot = [metrics()]
+    monkeypatch.setattr(qs, "_open", MagicMock(side_effect=TimeoutError()))
+    qs._warmup(8765, "local-key", "local-model")
+    assert "warm-up failed" in capsys.readouterr().err
+    monkeypatch.setattr(
+        qs.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(snapshot[0].encode())
+    )
+    started = threading.Event()
+    reporter = qs._PoolStatus(8765, lambda: True, requests_started_fn=started.is_set)
+    reporter.poll(True)
+    snapshot[0] = metrics(1, 8, 40, 1)  # Server accounts after client timeout.
+    clock[0] = 110
+    reporter.poll(True)
+    assert reporter.baseline == (1, 8, 40, 1)
+    assert reporter.baseline_at_start
+    assert capsys.readouterr().err == ""
+    started.set()
+    snapshot[0] = metrics(2, 18, 60, 2)
+    clock[0] = 120
+    reporter.poll(True)
+    assert "1 request served, 10 output tokens since start" in capsys.readouterr().err
+    clock[0] = 180
+    reporter.poll(False)  # Reconnecting must retain the pool baseline.
+    assert reporter.baseline == (1, 8, 40, 1)
+    assert "10 output tokens since start" in capsys.readouterr().err
+
+
+def test_status_does_not_rebaseline_traffic_arriving_during_scrape(
+    monkeypatch, clock, capsys
+):
+    monkeypatch.setattr(qs._PoolStatus, "_read", lambda self: (1, 8, 40, 1))
+    started = threading.Event()
+    reporter = qs._PoolStatus(8765, lambda: True, requests_started_fn=started.is_set)
+
+    def read():
+        started.set()
+        return (2, 18, 60, 2)
+
+    monkeypatch.setattr(reporter, "_read", read)
+    reporter.poll(True)
+    assert reporter.baseline == (1, 8, 40, 1)
+    assert capsys.readouterr().err == ""
+    clock[0] += 10
+    reporter.poll(True)
+    assert "1 request served, 10 output tokens" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_tunnel_request_signal_is_shared_across_reconnects():
+    started = threading.Event()
+    client = ws_tunnel.TunnelClient(local_port=1, requests_started_event=started)
+    client._dispatch_inbound({"t": "abort", "id": "absent"})
+    assert not started.is_set()
+
+    async def handle(msg):
+        assert started.is_set()  # Set before the request can reach serve.
+
+    client._handle_request = handle
+    client._dispatch_inbound({"t": "req", "id": "first"})
+    assert started.is_set()
+    import asyncio
+
+    await asyncio.gather(*client._tasks)
+    reconnected = ws_tunnel.TunnelClient(local_port=1, requests_started_event=started)
+    assert reconnected._requests_started.is_set()
 
 
 def test_status_no_empty_node_announcement(status, capsys):
@@ -404,6 +498,35 @@ def test_download_progress_missing_cache_and_permission_failure(
     clock[0] = 160
     reporter.poll()
     assert "model cache size unavailable" in capsys.readouterr().err
+
+
+def test_download_progress_relocated_blobs_and_safe_symlinks(cache, clock, capsys):
+    reporter = cli._DownloadProgress("org/repo", None)
+    capsys.readouterr()
+    reporter.cache_dir.mkdir()
+    blobs = cache / "relocated-blobs"
+    blobs.mkdir()
+    reporter.cache_dir.joinpath("blobs").symlink_to(blobs, target_is_directory=True)
+    weights = blobs / "weights.incomplete"
+    with weights.open("wb") as stream:
+        stream.truncate(2 * 1024**3)
+    snapshot = reporter.cache_dir / "snapshots" / "sha"
+    snapshot.mkdir(parents=True)
+    snapshot.joinpath("weights").symlink_to(weights)
+    cli.os.link(weights, blobs / "hardlink")
+    outside = cache / "unrelated"
+    outside.mkdir()
+    (outside / "secret").write_bytes(b"outside")
+    for base in (reporter.cache_dir, blobs):
+        (base / "outside-dir").symlink_to(outside, target_is_directory=True)
+        (base / "outside-file").symlink_to(outside / "secret")
+    assert reporter._cache_size() == 2 * 1024**3
+    clock[0] += 30
+    reporter.poll()
+    assert "model cache size 2.0 GiB" in capsys.readouterr().err
+    weights.rename(blobs / "weights")
+    # The snapshot is now dangling; the renamed blob and hardlink still count once.
+    assert reporter._cache_size() == 2 * 1024**3
 
 
 def test_download_progress_is_polled_only_while_waiting_for_health(monkeypatch):

@@ -1023,12 +1023,14 @@ def register_node(
 
 
 class _PoolStatus:
-    """Count-only loopback telemetry; baseline after warm-up, before relay-up.
+    """Count-only telemetry; refresh the baseline until pool traffic arrives.
 
     The scheduler's performance ledger accounts terminal requests, including
     batched MTP, for both chat response modes. Decode sum/count is the mean
     per-request post-first-token rate, excluding unmeasurable one-token runs.
     Metrics cannot distinguish a relay readiness probe from customer traffic.
+    After the first served request, changed totals or connection state may emit
+    a line, even when totals are unchanged, at most once per 60 seconds.
     """
 
     _METRICS = (
@@ -1041,9 +1043,16 @@ class _PoolStatus:
         r'^(\w+)(\{(?:[^"{}]|"(?:\\.|[^"\\])*")*\})?\s+(\S+)(?:\s+\d+)?\s*$'
     )
 
-    def __init__(self, port: int, connected_fn: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        port: int,
+        connected_fn: Callable[[], bool],
+        *,
+        requests_started_fn: Callable[[], bool] = lambda: True,
+    ) -> None:
         self.port = port
         self._connected_fn = connected_fn
+        self._requests_started_fn = requests_started_fn
         self.baseline = self._read()
         self.baseline_at_start = self.baseline is not None
         self.next_poll = 0.0
@@ -1110,11 +1119,20 @@ class _PoolStatus:
         if now < self.next_poll or (self._stop is not None and self._stop.is_set()):
             return
         self.next_poll = now + 10
+        requests_started = self._requests_started_fn()
         values = self._read()
         if values is None or (self._stop is not None and self._stop.is_set()):
             return
         # Throttle from emission time, including the scrape's latency.
         now = time.monotonic()
+        if not requests_started:
+            # A timed-out warm-up can be accounted after _warmup returns.
+            # Until the relay delivers traffic, all metrics still belong to
+            # local preparation. Do not absorb traffic arriving during a scrape.
+            if not self._requests_started_fn():
+                self.baseline = values
+                self.baseline_at_start = True
+            return
         if self.baseline is None:
             # Do not count warm-up if the initial scrape failed. A late
             # baseline also omits traffic before metrics recovered; label it.
@@ -1127,8 +1145,9 @@ class _PoolStatus:
         counts = (int(requests), int(tokens), connected)
         if counts == self.last_counts or (not requests and self.last_print is None):
             return
-        # Only actual output advances the throttle. Polling idle/failed
-        # scrapes must not keep postponing the next changed status forever.
+        # Totals and connection-state changes share the 60-second throttle,
+        # including connected ↔ reconnecting with unchanged totals. Only an
+        # emitted line advances it; idle/failed scrapes never postpone output.
         if self.last_print is not None and now - self.last_print < 60:
             return
         average = speed_sum / speed_count if speed_count else 0.0
@@ -1834,6 +1853,9 @@ def _run_share(
         print("Warming up (pages weights into Metal)…", file=sys.stderr)
         _warmup(port, api_key, display_model)
 
+        # Shared across reconnects: once any relay has delivered a request,
+        # subsequent idle connections must not reset contributor totals.
+        requests_started = threading.Event()
         status = _PoolStatus(
             port,
             connected_fn=lambda: (
@@ -1842,6 +1864,7 @@ def _run_share(
                 and not tunnel.closed_event.is_set()
                 and tunnel.error is None
             ),
+            requests_started_fn=requests_started.is_set,
         )
 
         # ``interval`` was validated (finite, 1..3600) before serve
@@ -1872,6 +1895,7 @@ def _run_share(
                 share_key=cache["share_key"],
                 override_authorization=api_key,
                 inject_stream_usage=True,
+                requests_started_event=requests_started,
             )
             print(
                 _redact(

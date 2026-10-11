@@ -3502,16 +3502,19 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
     reporter = MagicMock()
     events = []
 
-    def make_status(port, *, connected_fn):
+    def make_status(port, *, connected_fn, requests_started_fn):
         assert port == 18765
         assert events == ["warmup"]
         assert not connected_fn()  # No tunnel exists until after the baseline.
+        assert not requests_started_fn()
         events.append("baseline")
         reporter.connected_fn = connected_fn
+        reporter.requests_started_fn = requests_started_fn
         return reporter
 
     def tunnel_factory(**kw):
         assert events == ["warmup", "baseline"]
+        kw["requests_started_event"].set()
         return tunnel
 
     ctxs = _run_patches(serve, tunnel_factory, ctrl_c) + (
@@ -3533,6 +3536,7 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
     heartbeat.start.assert_called_once()
     heartbeat.stop.assert_called_once()
     connected_fn = reporter.connected_fn
+    assert reporter.requests_started_fn()
     assert connected_fn()
     tunnel.closed_event.set()
     assert not connected_fn()

@@ -202,6 +202,7 @@ class TunnelClient:
         share_key: str | None = None,
         override_authorization: str | None = None,
         inject_stream_usage: bool = False,
+        requests_started_event: threading.Event | None = None,
     ) -> None:
         """
         QuickSilver-pool mode knobs (all default to the historical plain
@@ -230,6 +231,8 @@ class TunnelClient:
         self._share_key = share_key
         self._override_authorization = override_authorization
         self._inject_stream_usage = inject_stream_usage
+        # Sticky across pool reconnects when supplied by the share supervisor.
+        self._requests_started = requests_started_event or threading.Event()
         # Set by ``run`` on its event loop; used by ``_sync_send`` to
         # post messages back from per-request threads.
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -580,6 +583,7 @@ class TunnelClient:
     def _dispatch_inbound(self, msg: dict[str, Any]) -> None:
         t = msg.get("t")
         if t == "req":
+            self._requests_started.set()
             req_id = msg.get("id")
             if isinstance(req_id, str):
                 # Epoch opens at DISPATCH, on the loop thread that also

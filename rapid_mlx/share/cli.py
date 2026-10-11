@@ -475,8 +475,9 @@ class _DownloadProgress:
         )
 
     def _cache_size(self) -> int | None:
-        # Snapshots symlink to blobs (sometimes shared blobs). Count each file
-        # once, including .incomplete files, without following directory links.
+        # Blobs may be relocated through a directory symlink. Walk both resolved
+        # roots without following further directory links, and only count file
+        # symlink targets inside those roots. De-duplicate snapshots/hardlinks.
         seen: set[tuple[int, int]] = set()
         size = 0
 
@@ -485,18 +486,25 @@ class _DownloadProgress:
                 raise error
 
         try:
-            for root, _, files in os.walk(self.cache_dir, onerror=raise_walk_error):
-                for name in files:
-                    try:
-                        stat = (Path(root) / name).stat()
-                    except FileNotFoundError:
-                        # Downloads rename .incomplete blobs while we scan.
-                        continue
-                    identity = (stat.st_dev, stat.st_ino)
-                    if identity not in seen:
-                        seen.add(identity)
-                        size += stat.st_size
-        except OSError:
+            repo_dir = self.cache_dir.resolve()
+            blob_dir = (repo_dir / "blobs").resolve()
+            roots = {repo_dir, blob_dir}
+            for directory in roots:
+                for root, _, files in os.walk(directory, onerror=raise_walk_error):
+                    for name in files:
+                        try:
+                            path = (Path(root) / name).resolve()
+                            if not any(path.is_relative_to(base) for base in roots):
+                                continue
+                            stat = path.stat()
+                        except FileNotFoundError:
+                            # Downloads rename .incomplete blobs while we scan.
+                            continue
+                        identity = (stat.st_dev, stat.st_ino)
+                        if identity not in seen:
+                            seen.add(identity)
+                            size += stat.st_size
+        except (OSError, RuntimeError):
             return None
         return size
 
