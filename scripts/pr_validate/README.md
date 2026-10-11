@@ -356,7 +356,9 @@ After supply-chain and test-environment checks, import the registered SDK
 prerequisites with the same `python3.12`, working directory and Python path
 used by the model matrix. This check does not install packages or execute
 integration scripts. Missing prerequisites or scripts stop validation before
-full-unit/model work, including when `--fail-fast` is off.
+full-unit/model work, including when `--fail-fast` is off. The documented
+CPU-only partial pipeline that explicitly omits the model matrix also omits
+its SDK prerequisite check; partial runs cannot use `--queue-on-success`.
 
 The SDK matrix requires each registered script's nonempty final test-count
 summary and matching exit status. Missing imports, setup failures, silent

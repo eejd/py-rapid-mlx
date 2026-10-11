@@ -237,3 +237,28 @@ def test_sdk_preflight_matches_model_matrix_gating(
     ctx.files_changed = files
     monkeypatch.setenv("PR_VALIDATE_NO_STRESS", "1" if override else "0")
     assert sdk_env_check.SDKEnvCheckStep().should_run(ctx) is expected
+
+
+def test_cpu_only_partial_pipeline_omits_matrix_prerequisites(ctx):
+    from scripts.pr_validate.runner import run_pipeline
+
+    class SDKProbe(Step):
+        name = "sdk_env_check"
+
+        def run(self, ctx):
+            pytest.fail("CPU-only pipeline must not require the omitted SDK matrix")
+
+    class CPUCheck(Step):
+        name = "cpu_check"
+
+        def run(self, ctx):
+            return StepResult(self.name, "pass", "CPU check ran")
+
+    assert (
+        run_pipeline(
+            123,
+            steps=[SDKProbe(), CPUCheck()],
+            skip_steps=("stress_e2e_bench",),
+        )
+        == 0
+    )

@@ -165,6 +165,12 @@ def run_pipeline(
         pipeline = STEPS if steps is None else steps
         if skip_steps:
             dropped = set(skip_steps)
+            # The SDK prerequisite check belongs to the model matrix. CI's
+            # documented CPU-only partial pipeline omits that matrix and does
+            # not need its SDK environment. Such partial runs still cannot
+            # use --queue-on-success (checked above).
+            if "stress_e2e_bench" in dropped:
+                dropped.add("sdk_env_check")
             pipeline = [s for s in pipeline if s.name not in dropped]
 
     ctx = Context(pr_number=pr_number, verbose=verbose, base_override=base)
