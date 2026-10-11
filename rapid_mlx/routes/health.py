@@ -478,7 +478,13 @@ async def cache_stats():
     """Report cache statistics from the active backend, not optional globals."""
     engine = get_config().engine
     if engine is None:
-        return {"message": "engine not loaded", "model_type": None}
+        return {
+            "message": "engine not loaded",
+            "model_type": None,
+            "multimodal_kv_cache": None,
+            "pixel_values_cache": None,
+            "pil_image_cache": None,
+        }
     if engine.is_mllm:
         # Older optional backends expose image-cache diagnostics independently
         # of the engine-owned KV cache. Their presence does not classify the
@@ -505,6 +511,9 @@ async def cache_stats():
         "message": "Vision cache stats not available (text-only model loaded). "
         "Prompt cache is managed internally by the engine.",
         "model_type": "llm",
+        "multimodal_kv_cache": None,
+        "pixel_values_cache": None,
+        "pil_image_cache": None,
     }
 
 

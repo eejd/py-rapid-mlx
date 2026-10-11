@@ -41,6 +41,13 @@ def test_cache_stats_do_not_infer_model_type_from_installed_packages(
     result = asyncio.run(health.cache_stats())
     assert result["model_type"] == model_type
     assert result["message"]
+    assert result == {
+        "message": result["message"],
+        "model_type": model_type,
+        "multimodal_kv_cache": None,
+        "pixel_values_cache": None,
+        "pil_image_cache": None,
+    }
 
 
 @pytest.mark.parametrize(
