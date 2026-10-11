@@ -509,9 +509,14 @@ async def cache_stats():
                     )
         # BaseEngine supplies get_cache_stats() returning None by default,
         # including for serving backends without reusable-prefix counters.
+        try:
+            kv_stats = engine.get_cache_stats()
+        except Exception:
+            logger.debug("Engine cache statistics unavailable", exc_info=True)
+            kv_stats = None
         return {
             "model_type": "mllm",
-            "multimodal_kv_cache": engine.get_cache_stats(),
+            "multimodal_kv_cache": kv_stats,
             **image_stats,
         }
     return {

@@ -54,6 +54,29 @@ def test_vision_cache_stats_use_active_engine(monkeypatch, stats):
     engine.get_cache_stats.assert_called_once_with()
 
 
+def test_vision_cache_stats_isolate_engine_counter_failure(monkeypatch):
+    from rapid_mlx.routes import health
+
+    utils = SimpleNamespace(
+        get_pixel_values_cache_stats=Mock(return_value={"hits": 7}),
+        get_pil_cache_stats=Mock(return_value={"hits": 11}),
+    )
+    monkeypatch.setitem(sys.modules, "mlx_vlm", SimpleNamespace(utils=utils))
+    engine = SimpleNamespace(
+        is_mllm=True,
+        get_cache_stats=Mock(side_effect=RuntimeError("counter unavailable")),
+    )
+    monkeypatch.setattr(health, "get_config", lambda: SimpleNamespace(engine=engine))
+
+    assert asyncio.run(health.cache_stats()) == {
+        "model_type": "mllm",
+        "multimodal_kv_cache": None,
+        "pixel_values_cache": {"hits": 7},
+        "pil_image_cache": {"hits": 11},
+    }
+    engine.get_cache_stats.assert_called_once_with()
+
+
 @pytest.mark.parametrize(
     "engine,model_type", [(None, None), (SimpleNamespace(is_mllm=False), "llm")]
 )
