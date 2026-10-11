@@ -203,7 +203,16 @@ class AnthropicContentBlock(BaseModel):
                 # engine. Its ClientRequestError is mapped to HTTP 400 or an
                 # invalid_request_error SSE event by the route/disconnect guard.
                 try:
-                    base64.b64decode(self.source["data"], validate=True)
+                    data = self.source["data"]
+                    # 64 KiB is divisible by four, so each non-final chunk
+                    # contains complete base64 groups. Never allocate a second
+                    # full decoded image during request validation.
+                    chunk_size = 64 * 1024
+                    for start in range(0, len(data), chunk_size):
+                        chunk = data[start : start + chunk_size]
+                        if start + len(chunk) < len(data) and "=" in chunk:
+                            raise ValueError("base64 padding before final chunk")
+                        base64.b64decode(chunk, validate=True)
                 except (binascii.Error, ValueError) as error:
                     raise ValueError(
                         "image source.data must be valid base64"
@@ -214,7 +223,7 @@ class AnthropicContentBlock(BaseModel):
                 # Network destinations and redirects are subsequently checked
                 # by the existing pinned-address remote-media fetch guard.
                 # Reject local paths/data/file URIs at this protocol boundary.
-                if not url.startswith(("https://", "http://")) or not parsed.hostname:
+                if parsed.scheme not in ("https", "http") or not parsed.hostname:
                     raise ValueError("image source.url must be an HTTP(S) URL")
         return self
 

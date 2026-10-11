@@ -12,6 +12,7 @@ import json
 import re
 import secrets
 import uuid
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -828,7 +829,7 @@ def _image_content_part(block: AnthropicContentBlock) -> dict:
     source = block.source
     assert source is not None  # Guaranteed by AnthropicContentBlock validation.
     if source["type"] == "url":
-        url = source["url"]
+        url = urlsplit(source["url"]).geturl()
     else:
         url = f"data:{source['media_type']};base64,{source['data']}"
     return {"type": "image_url", "image_url": {"url": url}}

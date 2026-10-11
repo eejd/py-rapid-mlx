@@ -409,3 +409,38 @@ def test_mixed_direct_and_tool_images_keep_reply_adjacency_and_image_order(tool_
     expected = [DATA_URL, URL] if tool_first else [URL, DATA_URL]
     assert extract_multimodal_content(converted)[1] == expected
     assert "Images from tool_result toolu_123:" in str(converted[1].content)
+
+
+def test_base64_validation_uses_bounded_chunks(monkeypatch):
+    import base64
+
+    payload = "A" * (64 * 1024 + 4)
+    original_decode = base64.b64decode
+    sizes = []
+
+    def bounded_decode(data, **kwargs):
+        sizes.append(len(data))
+        assert len(data) <= 64 * 1024
+        return original_decode(data, **kwargs)
+
+    monkeypatch.setattr(base64, "b64decode", bounded_decode)
+    AnthropicContentBlock(type="image", source={**BASE64_SOURCE, "data": payload})
+    assert sizes == [64 * 1024, 4]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "AAAA" * (16 * 1024 - 1) + "AA==AAAA",
+        "A" * (64 * 1024) + "!!!=",
+    ],
+)
+def test_invalid_base64_across_chunk_boundary_is_rejected(payload):
+    with pytest.raises(ValidationError, match="image source.data must be valid base64"):
+        AnthropicContentBlock(type="image", source={**BASE64_SOURCE, "data": payload})
+
+
+def test_url_scheme_is_normalized_for_image_loader():
+    source = {"type": "url", "url": "HTTPS://example.com/screenshot.png"}
+    converted = _convert_message(AnthropicMessage(role="user", content=[image(source)]))
+    assert extract_multimodal_content(converted)[1] == [URL]
