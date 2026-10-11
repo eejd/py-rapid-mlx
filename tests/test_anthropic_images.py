@@ -253,3 +253,46 @@ def test_vision_preparation_decodes_native_tool_arguments():
     assert messages[0]["tool_calls"][0]["function"]["arguments"] == {"screen": 1}
     assert extract_multimodal_content(messages)[1] == ["data:image/png;base64,aGVsbG8="]
     assert not images and not videos
+
+
+@pytest.mark.parametrize("data", ["!!!", "abc", "你好", "aGVs bG8="])
+def test_invalid_base64_payloads_fail_at_schema(data):
+    with pytest.raises(ValidationError, match="image source.data must be valid base64"):
+        AnthropicContentBlock(type="image", source={**BASE64_SOURCE, "data": data})
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///tmp/image.png",
+        "/tmp/image.png",
+        "data:image/png;base64,aGVsbG8=",
+        "https://",
+        "ftp://example.com/a.png",
+    ],
+)
+def test_url_sources_cannot_select_local_file_loader(url):
+    with pytest.raises(ValidationError, match="image source.url must be an HTTP"):
+        AnthropicContentBlock(type="image", source={"type": "url", "url": url})
+
+
+@pytest.mark.parametrize(
+    "url", ["http://127.0.0.1/image.png", "http://169.254.169.254/image.png"]
+)
+def test_image_url_uses_existing_remote_media_safety_guard(monkeypatch, url):
+    import socket
+    from rapid_mlx.models.mllm import RemoteMediaFetchError, process_image_input
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 80))
+        ],
+    )
+    converted = _convert_message(
+        AnthropicMessage(role="user", content=[image({"type": "url", "url": url})])
+    )
+    extracted = extract_multimodal_content(converted)[1]
+    with pytest.raises(RemoteMediaFetchError):
+        process_image_input(extracted[0])

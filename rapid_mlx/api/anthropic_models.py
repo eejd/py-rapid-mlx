@@ -7,8 +7,11 @@ Anthropic-compatible /v1/messages endpoint, enabling clients like
 Claude Code to communicate with rapid-mlx.
 """
 
+import base64
+import binascii
 import uuid
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -195,6 +198,21 @@ class AnthropicContentBlock(BaseModel):
                 raise ValueError(
                     "image source.media_type must be a supported image MIME type"
                 )
+            if source_type == "base64":
+                try:
+                    base64.b64decode(self.source["data"], validate=True)
+                except (binascii.Error, ValueError) as error:
+                    raise ValueError(
+                        "image source.data must be valid base64"
+                    ) from error
+            else:
+                url = self.source["url"]
+                parsed = urlsplit(url)
+                # Network destinations and redirects are subsequently checked
+                # by the existing pinned-address remote-media fetch guard.
+                # Reject local paths/data/file URIs at this protocol boundary.
+                if not url.startswith(("https://", "http://")) or not parsed.hostname:
+                    raise ValueError("image source.url must be an HTTP(S) URL")
         return self
 
 
