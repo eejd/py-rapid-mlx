@@ -855,7 +855,6 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
     messages = []
     text_parts = []
     content_parts = []
-    tool_images = []
     tool_calls_for_assistant = []
     tool_results = []
 
@@ -915,13 +914,13 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
                 result_content = ""
 
             if result_images:
-                tool_images.append(
+                content_parts.append(
                     {
                         "type": "text",
                         "text": f"Images from tool_result {block.tool_use_id}:",
                     }
                 )
-                tool_images.extend(result_images)
+                content_parts.extend(result_images)
             tool_results.append(
                 Message(
                     role="tool",
@@ -946,25 +945,19 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
         else:
             messages.append(Message(role="assistant", content=""))
     elif msg.role == "user":
-        # User messages: collect text parts, then add tool results separately
-        if content_parts:
-            content = (
-                content_parts
-                if any(part["type"] == "image_url" for part in content_parts)
-                else "\n".join(text_parts)
-            )
-            messages.append(Message(role="user", content=content))
-
-        # Tool results become separate tool messages
-        messages.extend(tool_results)
-        # The shared prompt extractor flattens tool content to text. Keep
-        # screenshot results in a user turn after all correlated tool replies.
-        if tool_images:
-            messages.append(Message(role="user", content=tool_images))
-
-        # If no content and no tool results, add empty user message
-        if not content_parts and not tool_results:
-            messages.append(Message(role="user", content=""))
+        if any(part["type"] == "image_url" for part in content_parts):
+            # Keep all tool replies adjacent to the assistant tool calls.
+            # Image/text parts retain their relative input order afterwards;
+            # nested screenshots carry their originating tool_use_id labels.
+            messages.extend(tool_results)
+            messages.append(Message(role="user", content=content_parts))
+        else:
+            # Preserve the established text-only conversion contract.
+            if text_parts:
+                messages.append(Message(role="user", content="\n".join(text_parts)))
+            messages.extend(tool_results)
+            if not text_parts and not tool_results:
+                messages.append(Message(role="user", content=""))
     else:
         # Other roles
         combined_text = "\n".join(text_parts) if text_parts else ""

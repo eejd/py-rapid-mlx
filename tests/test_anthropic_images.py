@@ -396,3 +396,16 @@ def test_decoder_client_errors_keep_existing_http_or_sse_contract(make_client, s
         assert '"type": "invalid_request_error"' in response.text
         assert "data: [DONE]" in response.text
     assert message in response.text
+
+
+@pytest.mark.parametrize("tool_first", [False, True])
+def test_mixed_direct_and_tool_images_keep_reply_adjacency_and_image_order(tool_first):
+    direct = image({"type": "url", "url": URL})
+    tool = {"type": "tool_result", "tool_use_id": "toolu_123", "content": [image()]}
+    blocks = [tool, direct] if tool_first else [direct, tool]
+    converted = _convert_message(AnthropicMessage(role="user", content=blocks))
+    assert [m.role for m in converted] == ["tool", "user"]
+    assert converted[0].tool_call_id == "toolu_123"
+    expected = [DATA_URL, URL] if tool_first else [URL, DATA_URL]
+    assert extract_multimodal_content(converted)[1] == expected
+    assert "Images from tool_result toolu_123:" in str(converted[1].content)
