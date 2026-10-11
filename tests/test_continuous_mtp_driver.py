@@ -421,7 +421,7 @@ def test_remove_covers_staged_held_and_empty_paths():
     batch_driver = driver.ContinuousMTPDriver.create([_spec(1)], runtime)
     assert batch_driver.remove_uids([]) == ()
     batch_driver.queue_lanes([_spec(2), _spec(3)], stop_tokens={2: {202}})
-    batch_driver.remove_uids([2])
+    assert batch_driver.remove_uids([2]) == ()
     assert batch_driver.pending_join_uids == (3,)
     batch_driver.remove_uids([3])
 

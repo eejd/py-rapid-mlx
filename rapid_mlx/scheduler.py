@@ -1149,7 +1149,7 @@ def _install_continuous_mtp_router(
             return None
         try:
             return max(0, int(value))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
     def _clone_cache(caches: Any) -> Any:
@@ -1489,10 +1489,15 @@ def _install_continuous_mtp_router(
                     else None
                 ),
             )
-            active_driver.queue_lanes(
+            accepted = active_driver.queue_lanes(
                 [spec], stop_tokens={spec.uid: metadata.stop_tokens}
             )
-            reserved = True
+            reserved = spec.uid in active_driver.pending_join_uids
+            if spec.uid not in accepted or not reserved:
+                if reserved:
+                    active_driver.remove_uids([spec.uid])
+                    reserved = False
+                return False
             sequence = snapshot
             return True
 
@@ -6767,9 +6772,9 @@ class Scheduler:
         """Best-effort live headroom for continuous-MTP cohort admission.
 
         The router applies its own hard reserve to this value.  ``None`` means
-        the platform cap is unavailable, so admission is bounded by lane count
-        alone rather than by a guessed byte budget; ``0`` means a known cap
-        with no headroom and admits nothing that costs memory.
+        the platform cap is unavailable, so new cohort/join admission retains
+        ordinary queue/singleton ownership. ``0`` means a known cap with no
+        headroom and admits nothing that costs memory.
         """
         cap = self._resolve_metal_cap_bytes()
         if cap <= 0:

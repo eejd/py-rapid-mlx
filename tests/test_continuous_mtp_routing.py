@@ -1652,7 +1652,17 @@ def test_unplannable_lane_is_never_admitted_on_a_guess(monkeypatch):
 
 @pytest.mark.requires_mlx
 @pytest.mark.parametrize(
-    "case", ["full", "low", "unknown", "probe_error", "join_error", "remove_refused"]
+    "case",
+    [
+        "full",
+        "low",
+        "unknown",
+        "probe_error",
+        "infinite",
+        "join_error",
+        "join_refused",
+        "remove_refused",
+    ],
 )
 def test_singleton_admission_failure_preserves_owner_cache_and_progress(
     monkeypatch, case
@@ -1679,6 +1689,10 @@ def test_singleton_admission_failure_preserves_owner_cache_and_progress(
         headroom["free"] = None
     if case == "probe_error":
         headroom["free"] = "error"
+    if case == "infinite":
+        headroom["free"] = float("inf")
+    if case == "join_refused":
+        driver.queue_lanes = lambda *args, **kwargs: ()
     if case == "join_error":
 
         def reject(*args, **kwargs):
@@ -1714,3 +1728,22 @@ def test_singleton_reservation_is_charged_before_other_dynamic_joins(monkeypatch
     assert owner.uids == []
     assert driver.pending_join_uids == (7,)
     assert [sequence[0] for sequence in batch_gen._unprocessed_sequences] == [3]
+
+
+@pytest.mark.requires_mlx
+def test_infinite_lane_estimate_is_unplannable(monkeypatch):
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2)]
+    )
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(
+        monkeypatch,
+        batch_gen,
+        requests,
+        mapping,
+        estimator=lambda request: float("inf"),
+    )
+    batch_gen.next()
+    assert created == []
+    assert [sequence[0] for sequence in batch_gen._unprocessed_sequences] == [1, 2]
