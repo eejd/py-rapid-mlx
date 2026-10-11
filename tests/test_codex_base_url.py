@@ -4,7 +4,11 @@
 from argparse import Namespace
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 from rapid_mlx.agents import get_profile
 from rapid_mlx.agents.adapter import setup_agent_config
