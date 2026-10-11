@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import runpy
 import selectors
 import signal
@@ -1451,7 +1452,9 @@ def test_sigterm_exits_promptly_with_one_partial_report(tmp_path):
         )
         blocked = threading.Event()
         def block_probe(*_args):
-            os.write(2, b"PROBE_READY\\n")
+            # One pipe write can be prefetched by a text wrapper. Keep a line
+            # before readiness to prove the parent consumes raw pipe bytes.
+            os.write(2, b"PROBE_PROGRESS\\nPROBE_READY\\n")
             blocked.wait()
         module._probe_with_metadata = block_probe
         raise SystemExit(module.main([
@@ -1464,26 +1467,31 @@ def test_sigterm_exits_promptly_with_one_partial_report(tmp_path):
         [sys.executable, "-c", child],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
     )
     assert proc.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(proc.stderr, selectors.EVENT_READ)
-    before = []
-    while not any("PROBE_READY" in line for line in before):
-        assert selector.select(timeout=5), "subprocess did not start its probe"
-        line = proc.stderr.readline()
-        assert line, f"subprocess exited before readiness: {''.join(before)}"
-        before.append(line)
-    proc.send_signal(signal.SIGTERM)
+    before = bytearray()
     try:
-        returncode = proc.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=2)
-        pytest.fail("SIGTERM waited for the blocked executor")
-    remainder = proc.stderr.read()
-    error = "".join(before) + remainder
+        while b"PROBE_READY\n" not in before:
+            assert selector.select(timeout=5), "subprocess did not start its probe"
+            chunk = os.read(proc.stderr.fileno(), 4096)
+            assert chunk, (
+                f"subprocess exited before readiness: {before.decode(errors='replace')}"
+            )
+            before.extend(chunk)
+        proc.send_signal(signal.SIGTERM)
+        try:
+            returncode = proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pytest.fail("SIGTERM waited for the blocked executor")
+        remainder = proc.stderr.read()
+    finally:
+        selector.close()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2)
+    error = (bytes(before) + remainder).decode(errors="replace")
     assert returncode == 124
     assert error.count("PARTIAL REPORT") == 1
     assert "partial-alias" in error
@@ -1774,3 +1782,62 @@ def test_uploader_redirect_and_http_helpers(monkeypatch):
     monkeypatch.setattr(mirror, "_PUBLIC_OPENER", Opener(error=TimeoutError()))
     assert mirror._http_head_status("https://example") == 0
     assert mirror._http_range_get_status("https://example") == 0
+
+
+def _non_lfs_report(item, probe, *, sync=False):
+    report = drift.AliasReport("a", "main", "org/a", True, "org/a", "mirrored")
+    drift._apply_probe_result(
+        report, item, probe, None, has_r2=False, sync_in_progress=sync
+    )
+    return {(f.kind, f.severity) for f in report.findings}, report
+
+
+def _oid(body: bytes) -> str:
+    return drift._git_blob_oid(body)
+
+
+def test_same_size_stale_required_config_stays_an_error():
+    """Size-only clients serve this file: it is a real stale-config defect."""
+    fresh, stale = b'{"v":"new"}', b'{"v":"old"}'
+    item = drift.HfFile("config.json", len(fresh), None, _oid(fresh))
+    kinds, _ = _non_lfs_report(
+        item, drift.MirrorProbe(200, len(stale), None, _oid(stale))
+    )
+    assert kinds == {("content_mismatch", "error")}
+
+
+def test_size_differing_required_config_is_a_warning():
+    """No client serves a wrong-size body; size_mismatch still fails the run."""
+    fresh, stale = b'{"v":"newer"}', b'{"v":"old"}'
+    item = drift.HfFile("config.json", len(fresh), None, _oid(fresh))
+    kinds, report = _non_lfs_report(
+        item, drift.MirrorProbe(200, len(stale), None, _oid(stale))
+    )
+    assert kinds == {("size_mismatch", "error"), ("content_mismatch", "warning")}
+    assert drift._fails([report], "error")
+    content = next(f for f in report.findings if f.kind == "content_mismatch")
+    assert "every client falls back to HF" in (content.detail or "")
+
+
+def test_content_mismatch_without_hf_size_stays_an_error():
+    """Without HF's size no client can reject by size, so it may be served."""
+    fresh, stale = b'{"v":"newer"}', b'{"v":"old"}'
+    item = drift.HfFile("config.json", None, None, _oid(fresh))
+    kinds, _ = _non_lfs_report(
+        item, drift.MirrorProbe(200, len(stale), None, _oid(stale))
+    )
+    assert kinds == {("content_mismatch", "error")}
+
+
+def test_readme_and_sync_severities_are_unchanged():
+    fresh, stale = b"# new readme\n", b"# old\n"
+    readme = drift.HfFile("README.md", len(fresh), None, _oid(fresh))
+    kinds, _ = _non_lfs_report(
+        readme, drift.MirrorProbe(200, len(stale), None, _oid(stale))
+    )
+    assert kinds == {("size_mismatch", "info"), ("content_mismatch", "info")}
+    config = drift.HfFile("config.json", len(fresh), None, _oid(fresh))
+    kinds, _ = _non_lfs_report(
+        config, drift.MirrorProbe(200, len(stale), None, _oid(stale)), sync=True
+    )
+    assert kinds == {("size_mismatch", "warning"), ("content_mismatch", "warning")}

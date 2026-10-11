@@ -67,6 +67,7 @@ from rapid_mlx.service.helpers import (
 )
 from rapid_mlx.service.postprocessor import StreamingPostProcessor
 
+from ..request_policy import RequestRefused
 from .eligibility import have_runtime
 from .runtime import load_runtime
 
@@ -685,6 +686,7 @@ def _build_app(
     strict_openai_streaming: bool = False,
     telemetry_model: str | None = None,
     runtime_status_extra: dict[str, Any] | None = None,
+    enforce_model_window: bool = False,
 ) -> FastAPI:
     """Create the FastAPI application for DFlash mode.
 
@@ -824,8 +826,8 @@ def _build_app(
     # F-090/F-091: register CORS only when an explicit origin allowlist is
     # configured. ``cors_origins=[]`` (the new default — see
     # ``rapid_mlx/server.py::configure_cors_from_env``) skips the middleware
-    # entirely so preflight returns 405 and no ``Access-Control-*`` header
-    # leaks. The dflash path mirrors the main server's stance.
+    # entirely; the browser security middleware below rejects foreign
+    # Origins before route dispatch. The dflash path mirrors the main server's stance.
     if cors_policy is not None:
         app.add_middleware(
             CORSMiddleware,
@@ -851,6 +853,13 @@ def _build_app(
             allow_headers=["Content-Type", "Authorization", "X-Rapid-MLX-Internal"],
             max_age=3600,
         )
+
+    from rapid_mlx.middleware.browser_security import install_browser_security
+
+    install_browser_security(
+        app,
+        origins=list(cors_policy.origins) if cors_policy is not None else cors_origins,
+    )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -1229,6 +1238,7 @@ def _build_app(
                 getattr(processor, "tokenizer", processor),
                 prompt,
                 max_tokens,
+                model_window=enforce_model_window,
             )
             temperature = (
                 request.temperature if request.temperature is not None else 0.0
@@ -2321,6 +2331,11 @@ async def _non_stream_completion(
         logger.exception(
             "DFlash non-stream generate raised: %s", result, exc_info=result
         )
+        # A provider marks a request it refused with the status to answer.
+        if isinstance(result, RequestRefused):
+            raise HTTPException(
+                status_code=result.status_code, detail=f"{backend_name}: {result}"
+            )
         raise HTTPException(
             status_code=500,
             detail=f"{backend_name} runtime error: {type(result).__name__}: {result}",
@@ -2361,7 +2376,10 @@ async def _non_stream_completion(
             chat_template = getattr(
                 getattr(processor, "tokenizer", None), "chat_template", None
             )
-        prompt_thinking_active = _should_start_in_thinking(
+        # With thinking off this lane's reply is the answer, as the streaming
+        # path already treats it; a template that always opens a think block
+        # must not turn that answer into reasoning.
+        prompt_thinking_active = bool(enable_thinking) and _should_start_in_thinking(
             chat_template,
             enable_thinking,
             unconditional=bool(

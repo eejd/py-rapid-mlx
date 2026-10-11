@@ -6,6 +6,8 @@ summary statistics, and limitations.
 
 ## Reports
 
+- [GLM-5.3 Flash load-window memory (2026-10-10)](2026-10-10-glm53-shardwise-load.md)
+- [Native MTP cold-loader repair on M5 Max (2026-10-09)](2026-10-09-m5-native-mtp-cold-loader.md)
 - [Mac mini model matrix: Qwen3.5 4B, Gemma 4 26B, and Qwen3.8 27B](2026-08-21-mac-mini-model-matrix.md)
 - [Long-context and service-prefill study (M2 Pro, 2026-08-22)](2026-08-22-long-context-service-prefill.md)
 - [Targeted validation of the August prefill changes](2026-08-23-prefill-pr-targeted-validation.md)
@@ -54,6 +56,7 @@ summary statistics, and limitations.
 - [Qwen Image 2.1 source-environment dogfood (2026-09-21)](2026-09-21-qwen-image-2.1-dogfood.md)
 - [Qwen Image 2.1 8/16 GB feasibility spike (2026-09-25)](2026-09-25-qwen-image-2.1-low-memory-spike.md)
 - [Qwen 27B pool customer experience, 2026-09-30](2026-09-30-qwen-pool-customer-ux.md)
+- [MTP under concurrency on an M4 Pro (2026-10-02)](2026-10-02-mtp-concurrency-m4-pro.md)
 - [Muse-Glimmer 30B 8-bit DFlash qualification](muse-glimmer-30b-dflash-qualification.md)
 - [Contention-aware prompt admission benchmark](scheduler-admission-1950.md)
 - [Telemetry v2 inference-path overhead](telemetry-v2-inference.md)

@@ -507,7 +507,7 @@ def test_operational_prompt_cap_allows_countable_mllm_prompt_under_cap():
     )
 
 
-def test_mllm_prompt_admission_keeps_legacy_skip_without_operational_cap():
+def test_mllm_prompt_admission_defers_missing_template_to_processor():
     from rapid_mlx.service.helpers import enforce_context_length_for_messages
 
     class _MLLMEngine:
@@ -519,6 +519,49 @@ def test_mllm_prompt_admission_keeps_legacy_skip_without_operational_cap():
         )
         is None
     )
+
+
+@pytest.mark.parametrize("prompt_tokens", [99, 100, 101])
+def test_mllm_default_native_window_text_preflight(prompt_tokens):
+    from collections import UserDict
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from rapid_mlx.service.helpers import enforce_context_length_for_messages
+
+    engine = SimpleNamespace(
+        is_mllm=True,
+        _model=_StubModel(
+            args=_StubArgs(text_config=_StubArgs(max_position_embeddings=100))
+        ),
+        tokenizer=SimpleNamespace(
+            apply_chat_template=lambda *args, **kwargs: UserDict(
+                input_ids=[1] * prompt_tokens, attention_mask=[1] * prompt_tokens
+            )
+        ),
+    )
+    messages = [{"role": "user", "content": "prompt"}]
+    if prompt_tokens < 100:
+        assert enforce_context_length_for_messages(engine, messages) == prompt_tokens
+    else:
+        with pytest.raises(HTTPException) as excinfo:
+            enforce_context_length_for_messages(engine, messages)
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail["error"]["code"] == "context_length_exceeded"
+
+
+def test_mllm_default_native_window_raw_prompt_preflight():
+    from fastapi import HTTPException
+
+    from rapid_mlx.service.helpers import enforce_context_length_for_prompt
+
+    engine = _StubEngine(model=_StubModel(args=_StubArgs(max_position_embeddings=100)))
+    engine.is_mllm = True
+    with pytest.raises(HTTPException) as excinfo:
+        enforce_context_length_for_prompt(engine, list(range(101)))
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail["error"]["code"] == "context_length_exceeded"
 
 
 @pytest.mark.parametrize("failure", ["missing", "raises", "empty"])
@@ -552,7 +595,8 @@ def test_operational_prompt_cap_fails_closed_when_mllm_count_unavailable(failure
 
 
 @pytest.mark.parametrize("failure", ["missing", "raises", "empty"])
-def test_explicit_context_mllm_defers_unavailable_text_count_to_processor(failure):
+@pytest.mark.parametrize("context_length", [None, 4096])
+def test_mllm_defers_unavailable_text_count_to_processor(failure, context_length):
     from rapid_mlx.config import get_config
     from rapid_mlx.service.helpers import enforce_context_length_for_messages
 
@@ -567,7 +611,7 @@ def test_explicit_context_mllm_defers_unavailable_text_count_to_processor(failur
         tokenizer = object() if failure == "missing" else _Tokenizer()
 
     cfg = get_config()
-    cfg.context_length = 4096
+    cfg.context_length = context_length
     cfg.max_prompt_tokens = None
     assert (
         enforce_context_length_for_messages(
@@ -739,6 +783,47 @@ def test_serial_inference_uses_the_same_explicit_window():
         with pytest.raises(HTTPException) as excinfo:
             enforce_rendered_context_length(model, tokenizer, "x" * 512, 1)
         assert excinfo.value.detail["error"]["code"] == "context_length_exceeded"
+    finally:
+        reset_config()
+
+
+def test_serial_inference_can_enforce_the_model_window_without_a_flag():
+    from fastapi import HTTPException
+
+    from rapid_mlx.config import reset_config
+    from rapid_mlx.service.helpers import enforce_rendered_context_length
+
+    reset_config()
+    try:
+        model = _StubModel(args=_StubArgs(max_position_embeddings=512))
+        tokenizer = _StubTokenizer(chars_per_token=4)
+        # Off by default: no flag, no opt-in, nothing is counted.
+        assert enforce_rendered_context_length(model, tokenizer, "x" * 4096, 9) == 9
+        assert (
+            enforce_rendered_context_length(
+                model, tokenizer, "x" * 200, 10_000_000, model_window=True
+            )
+            == 462
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            enforce_rendered_context_length(
+                model, tokenizer, "x" * 4096, 1, model_window=True
+            )
+        assert excinfo.value.detail["error"]["code"] == "context_length_exceeded"
+        # A prompt that cannot be counted is only fatal for an explicit window.
+        assert (
+            enforce_rendered_context_length(
+                model, object(), "prompt", 10, model_window=True
+            )
+            == 10
+        )
+        # ... and the reply is still capped at the model's window.
+        assert (
+            enforce_rendered_context_length(
+                model, object(), "prompt", 10_000_000, model_window=True
+            )
+            == 512
+        )
     finally:
         reset_config()
 
@@ -981,11 +1066,12 @@ def test_enforce_over_cap_names_the_remedy_for_a_native_window():
     assert err["code"] == "context_length_exceeded"
     assert "reduce the length of the messages" in err["message"]
     assert "--context-length" not in err["message"]  # native window: no flag
-    assert err["message"] == (
+    assert err["message"].startswith(
         "This model's maximum context length is 2048 tokens. However, your "
         "prompt contains 3000 tokens, leaving no room for generation. "
         "Please reduce the length of the messages."
-    )  # byte-identical to origin/main
+    )  # origin/main's classifier-compatible lead
+    assert "Start a new session or compact" in err["message"]
 
 
 def test_enforce_over_cap_attributes_operator_window_to_the_flag():

@@ -98,6 +98,8 @@ def test_release_one_event_set_is_present():
             "model_pull_failed",
             "model_served",
             "model_serve_failed",
+            "model_imported",
+            "model_import_failed",
             "capability_rejected",
             "inference_bucket_reached",
             "agent_configured",
@@ -505,3 +507,14 @@ def test_v2_debug_log_is_silent_when_disabled(monkeypatch, capsys, value):
     assert debug_log.debug_enabled() is False
     debug_log._log("hello")
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("command", ["chat", "run", "serve", "bare", "help", "other"])
+def test_app_opened_accepts_closed_command(command):
+    assert reg.validate("app_opened", {"command": command}) == {"command": command}
+
+
+def test_app_opened_command_is_optional_and_closed():
+    assert reg.validate("app_opened", {}) == {}
+    assert reg.validate("app_opened", {"command": "chat qwen3.5-4b-4bit"}) is None
+    assert reg.validate("app_opened", {"command": "/Users/me/model"}) is None

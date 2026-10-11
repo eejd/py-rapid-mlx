@@ -115,8 +115,8 @@ def test_serve_parser_exposes_speculative_config() -> None:
     assert "--spec-decode" not in out.stdout
     # Help text mentions the install path so users know how to enable
     # the feature when it's missing.
-    assert "[dflash]" in out.stdout, (
-        "help text should reference the rapid-mlx[dflash] extras"
+    assert "ships in the base" in " ".join(out.stdout.split()), (
+        "help text should name the runtime DFlash uses"
     )
 
 
@@ -288,9 +288,9 @@ def test_programmatic_experimental_4bit_logs_unverified_pair(
     fake_mlx_vlm.load = lambda _repo, **_kwargs: (MagicMock(), MagicMock())
     monkeypatch.setitem(sys.modules, "mlx_vlm", fake_mlx_vlm)
 
-    import uvicorn
-
-    monkeypatch.setattr(uvicorn, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "rapid_mlx._uvicorn._run_server", lambda *_args, **_kwargs: None
+    )
     with caplog.at_level("WARNING"):
         srv.run_dflash_server(
             main_model_repo="user/target-4bit",
@@ -395,7 +395,7 @@ def test_info_dflash_marks_4bit_alias_experimental(capsys) -> None:
     assert "experimental" in captured.out
 
 
-def test_info_recognizes_four_bit_subfolder_in_neutral_repo(capsys) -> None:
+def test_info_recognizes_abliterated_oq4e_build_as_four_bit(capsys) -> None:
     """The oQ4e build must not be presented as an 8-bit-or-higher target."""
 
     from rapid_mlx.cli import info_command
@@ -572,7 +572,7 @@ def test_healthz_and_models_routes() -> None:
         default_max_tokens=512,
         cors_origins=["*"],
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     r = client.get("/healthz")
     assert r.status_code == 200
@@ -620,12 +620,13 @@ def test_explicit_context_is_reported_by_dflash_model_routes() -> None:
         _build_app(
             **options,
             model_info=ModelInfo(id="test-model", context_window=8192),
-        )
+        ),
+        base_url="http://127.0.0.1",
     )
     assert detailed.get("/v1/models").json()["data"][0]["max_model_len"] == 4096
     assert detailed.get("/v1/models/test-model").json()["max_model_len"] == 4096
 
-    fallback = TestClient(_build_app(**options))
+    fallback = TestClient(_build_app(**options), base_url="http://127.0.0.1")
     assert fallback.get("/v1/models").json()["data"][0]["max_model_len"] == 4096
 
 
@@ -658,11 +659,9 @@ def test_run_dflash_server_wires_security_configuration(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "mlx_vlm", fake_mlx_vlm)
 
     captured: dict = {}
-    import uvicorn
 
     monkeypatch.setattr(
-        uvicorn,
-        "run",
+        "rapid_mlx._uvicorn._run_server",
         lambda app, **_kwargs: captured.setdefault("app", app),
     )
 
@@ -684,7 +683,7 @@ def test_run_dflash_server_wires_security_configuration(monkeypatch) -> None:
     )
 
     app = captured["app"]
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     auth = {"Authorization": "Bearer dflash-secret"}
 
     # Probe routes remain available to load balancers, but every /v1 route
@@ -793,7 +792,7 @@ def test_dflash_admission_cap_rejects_before_prompt_rendering() -> None:
     )
     reservation = app.state.dflash_admission.reserve()
     try:
-        response = TestClient(app).post(
+        response = TestClient(app, base_url="http://127.0.0.1").post(
             "/v1/chat/completions",
             json={
                 "model": "qwen3.5-27b-8bit",
@@ -1455,7 +1454,7 @@ def test_dflash_inherits_explicit_cors_policy(monkeypatch) -> None:
         cors_origins=list(policy.origins),
         cors_policy=policy,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     allowed = {
         "Origin": "https://console.example",
         "Access-Control-Request-Method": "POST",
@@ -1499,7 +1498,7 @@ def test_dflash_cors_wildcard_forces_credentials_off(monkeypatch) -> None:
         cors_origins=list(policy.origins),
         cors_policy=policy,
     )
-    response = TestClient(app).options(
+    response = TestClient(app, base_url="http://127.0.0.1").options(
         "/v1/chat/completions",
         headers={
             "Origin": "https://evil.example",
@@ -1565,7 +1564,7 @@ def test_chat_completions_rejects_unparsed_structured_output(
         default_max_tokens=64,
         cors_origins=["*"],
     )
-    response = TestClient(app).post(
+    response = TestClient(app, base_url="http://127.0.0.1").post(
         "/v1/chat/completions",
         json={
             "model": "qwen3.5-27b-8bit",
@@ -1605,7 +1604,7 @@ def test_chat_completions_rejects_unsupported_tool_choice(tool_choice) -> None:
         cors_origins=["*"],
         tool_call_parser="hermes",
     )
-    response = TestClient(app).post(
+    response = TestClient(app, base_url="http://127.0.0.1").post(
         "/v1/chat/completions",
         json={
             "model": "qwen3.5-27b-8bit",
@@ -1668,7 +1667,7 @@ def test_chat_completions_parses_tool_calls(monkeypatch) -> None:
         tool_call_parser="hermes",
         reasoning_parser_name="qwen3",
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     r = client.post(
         "/v1/chat/completions",
@@ -1748,7 +1747,7 @@ def test_chat_completions_streams_tool_calls(monkeypatch) -> None:
         reasoning_parser_name="qwen3",
     )
 
-    with TestClient(app).stream(
+    with TestClient(app, base_url="http://127.0.0.1").stream(
         "POST",
         "/v1/chat/completions",
         json={
@@ -1809,7 +1808,7 @@ def test_chat_completions_rejects_empty_messages() -> None:
         default_max_tokens=512,
         cors_origins=["*"],
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     r = client.post(
         "/v1/chat/completions",
         json={"model": "qwen3.5-27b-8bit", "messages": []},
@@ -1838,7 +1837,7 @@ def test_chat_completions_rejects_logprobs() -> None:
         default_max_tokens=512,
         cors_origins=["*"],
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     r = client.post(
         "/v1/chat/completions",
         json={
@@ -1874,7 +1873,7 @@ def test_chat_completions_rejects_response_format() -> None:
         default_max_tokens=512,
         cors_origins=["*"],
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     r = client.post(
         "/v1/chat/completions",
         json={
@@ -1951,7 +1950,7 @@ def _capture_enable_thinking(
         reasoning_parser_name="qwen3",
         default_reasoning_effort=default_reasoning_effort,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     # Stream=True so the request reaches _render_prompt then exits via
     # the (now-empty) generator without needing a real mlx_vlm runtime.
     with client.stream("POST", "/v1/chat/completions", json=request_body) as resp:
@@ -2273,7 +2272,7 @@ def test_explicit_thinking_is_parsed_into_reasoning_content(
     }
 
     if not stream:
-        response = TestClient(app).post(
+        response = TestClient(app, base_url="http://127.0.0.1").post(
             "/v1/chat/completions",
             json=request_body,
         )
@@ -2285,7 +2284,7 @@ def test_explicit_thinking_is_parsed_into_reasoning_content(
         assert generation_calls[-1]["thinking_budget"] == 23
         return
 
-    with TestClient(app).stream(
+    with TestClient(app, base_url="http://127.0.0.1").stream(
         "POST", "/v1/chat/completions", json=request_body
     ) as response:
         assert response.status_code == 200
@@ -2378,7 +2377,7 @@ def test_stream_completion_surfaces_generator_exception(monkeypatch) -> None:
         default_max_tokens=64,
         cors_origins=["*"],
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     with client.stream(
         "POST",
@@ -2834,7 +2833,7 @@ def test_run_dflash_server_raises_when_mlx_vlm_missing(monkeypatch) -> None:
     from rapid_mlx.speculative.dflash import server as srv
 
     monkeypatch.setattr(srv, "have_runtime", lambda: False)
-    with pytest.raises(RuntimeError, match=r"rapid-mlx\[dflash\]"):
+    with pytest.raises(RuntimeError, match=r"rapid-mlx=="):
         srv.run_dflash_server(
             main_model_repo="mlx-community/Qwen3.5-27B-8bit",
             drafter_repo="z-lab/Qwen3.5-27B-DFlash",
@@ -2886,9 +2885,8 @@ def test_run_dflash_server_loads_models_on_executor_thread(monkeypatch) -> None:
     monkeypatch.setattr(srv, "load_runtime", _fake_load_runtime)
 
     # No-op uvicorn so we don't bind a port; return immediately after load.
-    import uvicorn
 
-    monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: None)
+    monkeypatch.setattr("rapid_mlx._uvicorn._run_server", lambda *a, **kw: None)
 
     srv.run_dflash_server(
         main_model_repo="mlx-community/Qwen3.5-27B-8bit",
@@ -3514,7 +3512,7 @@ def test_dflash_admission_reserved_before_body_parse(monkeypatch) -> None:
     # Occupy the only slot so the incoming request must be rejected.
     reservation = app.state.dflash_admission.reserve()
     try:
-        response = TestClient(app).post(
+        response = TestClient(app, base_url="http://127.0.0.1").post(
             "/v1/chat/completions",
             headers={"Content-Type": "application/json"},
             content=b'{"model": "x", "messages": [ THIS IS NOT VALID JSON',
@@ -3528,7 +3526,10 @@ def test_dflash_admission_reserved_before_body_parse(monkeypatch) -> None:
     assert response.json()["error"]["code"] == "at_capacity"
 
 
-def test_dflash_slow_prompt_render_is_charged_against_deadline(monkeypatch) -> None:
+@pytest.mark.parametrize("setup_delay", [0.0, 0.1], ids=["immediate", "delayed-setup"])
+def test_dflash_slow_prompt_render_is_charged_against_deadline(
+    monkeypatch, setup_delay
+) -> None:
     """codex round-4 #4: prompt rendering time is charged against the request
     ``timeout``, and rendering is offloaded off the event loop.
 
@@ -3544,6 +3545,7 @@ def test_dflash_slow_prompt_render_is_charged_against_deadline(monkeypatch) -> N
     # render pool (offloaded), so the event loop stays free to enforce the
     # deadline via ``asyncio.wait_for``. Uses an event so the test controls
     # exactly when the (uncancellable, already-running) render finishes.
+    import concurrent.futures
     import threading
     import time
 
@@ -3554,12 +3556,57 @@ def test_dflash_slow_prompt_render_is_charged_against_deadline(monkeypatch) -> N
     from rapid_mlx.speculative.dflash.server import _build_app
 
     render_may_finish = threading.Event()
+    render_started = threading.Event()
+    render_clock_started = [None]
+
+    # This case requires an already-running render, not a request whose budget
+    # expired during setup or thread scheduling. Start only the endpoint's test
+    # clock when rendering enters; asyncio's real timeout remains 0.05 seconds.
+    import asyncio as real_asyncio
+
+    class RenderClockLoop:
+        def __init__(self, loop):
+            self.loop = loop
+
+        def __getattr__(self, name):
+            return getattr(self.loop, name)
+
+        def time(self):
+            started = render_clock_started[0]
+            return 0.0 if started is None else time.monotonic() - started
+
+    class RenderClockAsyncio:
+        def __getattr__(self, name):
+            return getattr(real_asyncio, name)
+
+        def get_running_loop(self):
+            return RenderClockLoop(real_asyncio.get_running_loop())
+
+    monkeypatch.setattr(srv, "asyncio", RenderClockAsyncio())
+
+    resolve_thinking = srv._resolve_serial_thinking
+
+    def _delayed_setup(*args, **kwargs):
+        time.sleep(setup_delay)
+        return resolve_thinking(*args, **kwargs)
+
+    monkeypatch.setattr(srv, "_resolve_serial_thinking", _delayed_setup)
 
     def _slow_render(*_args, **_kwargs) -> str:
+        render_clock_started[0] = time.monotonic()
+        render_started.set()
         render_may_finish.wait(timeout=5)
         return "rendered"
 
     monkeypatch.setattr(srv, "_render_prompt", _slow_render)
+    # This assertion is specifically about an already-running render. Give it
+    # a fresh executor so work left by another test cannot keep this render
+    # queued until after its deadline, where cancellation and immediate slot
+    # release are the correct behavior.
+    render_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="dflash-render-test"
+    )
+    monkeypatch.setattr(srv, "_dflash_render_executor", render_executor)
 
     app = _build_app(
         model=MagicMock(),
@@ -3574,7 +3621,7 @@ def test_dflash_slow_prompt_render_is_charged_against_deadline(monkeypatch) -> N
         cors_origins=[],
         max_concurrent_requests=1,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     admission = app.state.dflash_admission
 
     try:
@@ -3586,6 +3633,7 @@ def test_dflash_slow_prompt_render_is_charged_against_deadline(monkeypatch) -> N
                 "timeout": 0.05,
             },
         )
+        assert render_started.is_set(), "test render never entered the worker"
         assert r.status_code == 504, r.text
         # codex round-7 #2: the render is STILL running (uncancellable), so the
         # admission slot is HELD — not freed — until it drains. This is what
@@ -3597,6 +3645,7 @@ def test_dflash_slow_prompt_render_is_charged_against_deadline(monkeypatch) -> N
     finally:
         # Let the render finish; the deferred callback then releases the slot.
         render_may_finish.set()
+        render_executor.shutdown(wait=True, cancel_futures=True)
 
     for _ in range(300):
         if admission._reservations == 0:
@@ -3634,7 +3683,7 @@ def test_dflash_unauthenticated_request_does_not_reserve_slot() -> None:
         api_key="secret",
         max_concurrent_requests=1,
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     admission = app.state.dflash_admission
 
     body = {
@@ -3712,7 +3761,7 @@ def test_dflash_rate_limited_request_does_not_reserve_slot() -> None:
         max_concurrent_requests=1,
     )
     try:
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
         admission = app.state.dflash_admission
 
         # Empty messages → 400, but the request still counts as the single
@@ -3879,7 +3928,7 @@ def test_dflash_e2e_chat_completion_smoke() -> None:
         default_max_tokens=64,
         cors_origins=["*"],
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     r = client.post(
         "/v1/chat/completions",

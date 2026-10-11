@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 
+from .._env import env_falsey
 from ..model_load_errors import (
     IncompatibleWeights,
     TokenizerLoadFailed,
@@ -24,8 +25,6 @@ from .chat_templates import DEFAULT_CHATML_TEMPLATE, NEMOTRON_CHAT_TEMPLATE
 from .model_file_guard import validate_local_model_file
 
 logger = logging.getLogger(__name__)
-
-_FALSE_ENV_VALUES = frozenset({"0", "false", "no", "off"})
 
 
 def apply_remote_code_policy(
@@ -41,8 +40,7 @@ def apply_remote_code_policy(
     configured = tokenizer_config is not None
     config = dict(tokenizer_config or {})
     requested = bool(config.get("trust_remote_code", True))
-    raw = os.environ.get("RAPID_MLX_TRUST_REMOTE_CODE")
-    if raw is not None and raw.strip().lower() in _FALSE_ENV_VALUES:
+    if env_falsey("RAPID_MLX_TRUST_REMOTE_CODE"):
         config["trust_remote_code"] = False
         return config, False
     return (config if configured else None), requested
@@ -622,7 +620,7 @@ def _resolve_model_path(model_name: str) -> Path | None:
     if local.is_dir():
         return local
     try:
-        from huggingface_hub import snapshot_download
+        from rapid_mlx.model_downloads import snapshot_download
 
         return Path(snapshot_download(model_name))
     except Exception as e:
@@ -971,7 +969,7 @@ def _is_vendored_arch_model(model_name: str) -> bool:
         if local.is_dir():
             config_path = local / "config.json"
         else:
-            from huggingface_hub import hf_hub_download
+            from rapid_mlx.model_downloads import hf_hub_download
 
             config_path = Path(
                 hf_hub_download(repo_id=model_name, filename="config.json")
@@ -1122,7 +1120,7 @@ def _local_snapshot_if_cached(model_name: str) -> str:
     except Exception:
         return model_name
     try:
-        from huggingface_hub import snapshot_download
+        from rapid_mlx.model_downloads import snapshot_download
 
         return snapshot_download(model_name, local_files_only=True)
     except Exception:
@@ -1163,7 +1161,7 @@ def _resolve_subfolder_checkpoint(model_name: str) -> str:
     # A malformed aliases.json is a hard error everywhere else too
     # (``resolve_model`` loads the same registry at CLI startup), so this
     # is consistent, not a new failure mode.
-    from huggingface_hub import snapshot_download
+    from rapid_mlx.model_downloads import snapshot_download
 
     from .._download_gate import (
         _escape_variant_glob_literal,
@@ -1597,7 +1595,7 @@ def _read_tokenizer_config_json(model_name: str) -> dict | None:
             if not cfg_path.is_file():
                 return None
         else:
-            from huggingface_hub import hf_hub_download
+            from rapid_mlx.model_downloads import hf_hub_download
 
             try:
                 # Cache-only first: a model that's already downloaded (the
@@ -1637,7 +1635,7 @@ def _read_model_config_json(model_name: str) -> dict | None:
             if not cfg_path.is_file():
                 return None
         else:
-            from huggingface_hub import hf_hub_download
+            from rapid_mlx.model_downloads import hf_hub_download
 
             try:
                 cfg_path = Path(
@@ -1902,7 +1900,7 @@ def _load_strict_false(model_name: str, tokenizer_config: dict = None):
     if local_path.is_dir():
         model_path = local_path
     else:
-        from huggingface_hub import snapshot_download
+        from rapid_mlx.model_downloads import snapshot_download
 
         model_path = Path(snapshot_download(model_name))
 
@@ -1991,7 +1989,7 @@ def _load_with_tokenizer_fallback(
     if local_path.is_dir():
         model_path = local_path
     else:
-        from huggingface_hub import snapshot_download
+        from rapid_mlx.model_downloads import snapshot_download
 
         model_path = Path(snapshot_download(model_name))
 

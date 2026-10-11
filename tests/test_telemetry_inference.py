@@ -2532,6 +2532,9 @@ async def test_embedding_configuration_rejections_emit_capability(monkeypatch, c
     fake_embedding.EMBEDDINGS_EXTRA_INSTALL_HINT = "install embeddings"
     fake_embedding.EMBEDDINGS_EXTRA_HTTP_INSTALL_HINT = "install embeddings"
     fake_embedding.EmbeddingInputTooLongError = RuntimeError
+    fake_embedding.EmbeddingUnsupportedMediaError = type(
+        "EmbeddingUnsupportedMediaError", (ValueError,), {}
+    )
     monkeypatch.setitem(sys.modules, "rapid_mlx.embedding", fake_embedding)
     cfg = SimpleNamespace(
         embedding_engine=object(),
@@ -2687,6 +2690,9 @@ async def test_embedding_runtime_rejection_emits_capability(monkeypatch):
     fake_embedding.EmbeddingInputTooLongError = type(
         "EmbeddingInputTooLongError", (Exception,), {}
     )
+    fake_embedding.EmbeddingUnsupportedMediaError = type(
+        "EmbeddingUnsupportedMediaError", (ValueError,), {}
+    )
     monkeypatch.setitem(sys.modules, "rapid_mlx.embedding", fake_embedding)
     cfg = SimpleNamespace(
         embedding_engine=object(), embedding_model_locked="embeddinggemma-300m-6bit"
@@ -2731,6 +2737,9 @@ async def test_embedding_success_emits_completed_request(monkeypatch):
     fake_embedding.EMBEDDINGS_EXTRA_HTTP_INSTALL_HINT = "install embeddings"
     fake_embedding.EmbeddingInputTooLongError = type(
         "EmbeddingInputTooLongError", (Exception,), {}
+    )
+    fake_embedding.EmbeddingUnsupportedMediaError = type(
+        "EmbeddingUnsupportedMediaError", (ValueError,), {}
     )
     monkeypatch.setitem(sys.modules, "rapid_mlx.embedding", fake_embedding)
     engine = SimpleNamespace(
@@ -3250,7 +3259,7 @@ def test_additional_endpoint_has_completed_request_emit(relative_path, endpoint)
 @pytest.mark.parametrize(
     ("relative_path", "failed_count"),
     [
-        ("rapid_mlx/routes/chat.py", 6),
+        ("rapid_mlx/routes/chat.py", 7),
         ("rapid_mlx/routes/completions.py", 1),
         ("rapid_mlx/routes/anthropic.py", 1),
         ("rapid_mlx/routes/responses.py", 3),

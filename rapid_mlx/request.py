@@ -184,6 +184,9 @@ class Request:
     cached_tokens: int = 0  # Number of tokens retrieved from cache
     remaining_tokens: list[int] | None = None  # Tokens still needing processing
     prefix_boundary: int = 0  # Token count for shared prefix (messages[:-1])
+    # Absolute prompt position where the prefill stores a snapshot because the
+    # prompt shares that span with a stored entry it could not resume from.
+    shared_prefix_snapshot_at: int = 0
 
     # Routing hints used by PFlash to decide whether to compress (#287).
     has_tools: bool = False
@@ -249,6 +252,11 @@ class Request:
     block_table: Optional["BlockTable"] = None  # Block table for paged cache
     shared_prefix_blocks: int = 0  # Number of shared prefix blocks
 
+    # Shared-prefix wait (scheduler admission): the running request whose
+    # prompt state this one is held for, and whether it already waited once.
+    prefix_wait_leader: str | None = None
+    prefix_wait_done: bool = False
+
     # Multimodal content (images, video) - raw inputs
     images: list[Any] | None = None
     videos: list[Any] | None = None
@@ -270,6 +278,15 @@ class Request:
     # Opt-in scheduler-local starvation accounting. ``init=False`` keeps the
     # public and positional Request constructor unchanged.
     _admission_deferrals: int = field(default=0, init=False, repr=False)
+
+    # Monotonic twins of ``arrival_time``/``first_token_time`` for the
+    # per-request timing snapshot, so a wall-clock step during generation
+    # cannot skew or drop the reported durations. ``init=False`` keeps the
+    # public and positional Request constructor unchanged.
+    _arrival_monotonic: float = field(
+        default_factory=time.monotonic, init=False, repr=False
+    )
+    _first_token_monotonic: float | None = field(default=None, init=False, repr=False)
 
     @property
     def num_output_tokens(self) -> int:
@@ -649,6 +666,14 @@ class RequestOutput:
     # output and only when at least one MTP verify call ran. Appended last to
     # preserve positional compatibility for downstream RequestOutput callers.
     spec_decode_metrics: dict[str, int | list[int]] | None = None
+    # PFlash compression applied to this request's prompt (#4092):
+    # ``{"original_tokens": N, "kept_tokens": M}`` on the terminal output
+    # when compression actually dropped tokens, else ``None``. Appended
+    # last to preserve positional compatibility.
+    prompt_compression: dict[str, int] | None = None
+    # Frozen scheduler timings for a successful terminal text generation.
+    # Appended after prompt_compression to preserve its positional index.
+    timing_metrics: dict[str, float] | None = None
 
     @property
     def usage(self) -> dict[str, int]:

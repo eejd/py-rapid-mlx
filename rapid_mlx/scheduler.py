@@ -12,6 +12,7 @@ The scheduler follows vLLM's design with:
 """
 
 import copy
+import gc
 import inspect
 import logging
 import math
@@ -45,12 +46,17 @@ from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer  # noqa: E402
 # in-flight request (#1525).
 _mlx_compat.install_batch_slot_guard()
 
+from ._env import env_truthy  # noqa: E402
 from ._sampler_fast_path import (  # noqa: E402
     is_fused_top_p_eligible,
     make_fused_top_p_temp_sampler,
 )
 from ._seeded_sampler import make_seeded_sampler  # noqa: E402
-from .errors import BackpressureError, PagedCacheUnsupportedLayoutError  # noqa: E402
+from .errors import (  # noqa: E402
+    BackpressureError,
+    MetalMemoryBackpressureError,
+    PagedCacheUnsupportedLayoutError,
+)
 from .kv_estimation import (  # noqa: E402
     KVFootprintEstimate,
     _cfg_get,
@@ -203,6 +209,18 @@ class _RecurrentOutputChainError(RuntimeError):
     """
 
 
+def _common_prefix_len(a: list[int], b: list[int]) -> int:
+    """Length of the longest common prefix of two token lists."""
+    low, high = 0, min(len(a), len(b))
+    while low < high:
+        mid = (low + high + 1) // 2
+        if a[low:mid] == b[low:mid]:
+            low = mid
+        else:
+            high = mid - 1
+    return low
+
+
 def _pflash_compressed(request: Request) -> bool:
     """Whether PFlash replaced this request's prompt with a compressed
     subsequence. Used to gate every prefix-cache store/fetch site so the
@@ -273,6 +291,11 @@ def _assemble_stop_tokens(
 # Rows per tile in MLX's quantized matmuls; see
 # ``Scheduler._prefill_tile_rows`` for the measurements behind it.
 _PREFILL_TILE_ROWS = 32
+# Decode-stall bound: prefill cost samples kept, the smallest chunk that
+# counts as a sample, and the row-tokens assumed before any sample exists.
+_PREFILL_COST_SAMPLES = 4
+_PREFILL_COST_MIN_TOKENS = 32
+_PREFILL_COST_COLD_ROW_TOKENS = 256
 # Agent-session prefix policy (docs/engineering/decisions/
 # 2026-09-27-agent-session-prefix-cache.md).
 #
@@ -281,6 +304,12 @@ _PREFILL_TILE_ROWS = 32
 # (an exact repeat cannot trim-one into it). When that gap is this small the
 # second ~full-size entry is not worth its memory.
 _BOUNDARY_SUPERSEDES_PROMPT_MAX_GAP = 64
+
+# A prompt must share at least this many tokens with a stored entry, beyond
+# what the lookup restored, before the prefill stores a snapshot at the end of
+# the shared span. Below it the stored copy costs more than the prefill it
+# would save.
+_SHARED_PREFIX_SNAPSHOT_MIN_TOKENS = 1024
 # Transient memory of a long prefill beyond its own KV (attention scores,
 # chunk activations, recurrent scratch), as a multiple of the prompt's KV.
 # Measured on Qwen3.5-9B-4bit, 23k-token cold prefill, 2048-token chunks:
@@ -641,7 +670,44 @@ class SchedulerConfig:
     # Appended to preserve the positional SchedulerConfig prefix.
     allow_context_overcommit: bool = False
 
+    # Shared-prefix wait: a request whose prompt shares at least this many
+    # not-yet-cached tokens with a request that is still prefilling waits for
+    # that request's prompt state instead of recomputing the shared part
+    # beside it. ``0`` disables the wait. Appended for positional callers.
+    shared_prefix_wait_tokens: int = 1024
+
+    # Decode-stall bound for prefill beside live decode. mlx-lm runs one
+    # decode step and then one prompt chunk per ``BatchGenerator.next()``, so
+    # a decoding request waits a whole chunk between tokens while a long
+    # prompt prefills next to it. While at least one row is decoding, the
+    # chunk is capped so its predicted time stays near this target; an
+    # uncontended prefill keeps the configured chunk. ``0`` disables the
+    # bound. Appended for positional callers.
+    decode_stall_target_ms: float = 500.0
+    # Smallest chunk the cost estimate may select (per prefilling row). The
+    # last chunk before a grid position can still be shorter.
+    decode_stall_min_chunk_size: int = 64
+
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.shared_prefix_wait_tokens, bool)
+            or not isinstance(self.shared_prefix_wait_tokens, int)
+            or self.shared_prefix_wait_tokens < 0
+        ):
+            raise ValueError("shared_prefix_wait_tokens must be an integer >= 0")
+        if (
+            isinstance(self.decode_stall_target_ms, bool)
+            or not isinstance(self.decode_stall_target_ms, (int, float))
+            or not math.isfinite(self.decode_stall_target_ms)
+            or self.decode_stall_target_ms < 0
+        ):
+            raise ValueError("decode_stall_target_ms must be finite and >= 0")
+        if (
+            isinstance(self.decode_stall_min_chunk_size, bool)
+            or not isinstance(self.decode_stall_min_chunk_size, int)
+            or self.decode_stall_min_chunk_size < 1
+        ):
+            raise ValueError("decode_stall_min_chunk_size must be a positive integer")
         if self.mllm_singleton_fastpath not in ("auto", "off"):
             raise ValueError(
                 "mllm_singleton_fastpath must be 'auto' or 'off', "
@@ -1656,6 +1722,7 @@ def _install_mtp_vendored(
         _prompt_lookup_is_enabled,
         mtp_generate_step,
     )
+    from .spec_decode.mtp.reproducible_depth import greedy_schedule
 
     model_max_k = getattr(mtp_model, "mtp_max_speculative_tokens", max_k)
     if max_k > model_max_k:
@@ -2359,6 +2426,19 @@ def _install_mtp_vendored(
                     # one model's learned costs drive another's depth).
                     model_id=controller_key or _derived_controller_key,
                     max_k=max_k,
+                    # Greedy output must not depend on the run: one depth
+                    # per process and model instead of per-round auto-K.
+                    greedy_schedule=(
+                        greedy_schedule(
+                            mtp_model,
+                            controller_key or _derived_controller_key,
+                            max_k,
+                        )
+                        if sampling_options["temp"] == 0
+                        and not disable_auto_k
+                        and sampling_options["lane_rng"] is None
+                        else None
+                    ),
                     # A process-global adaptive controller can begin two
                     # otherwise identical seeded requests at different K,
                     # changing how many proposal/acceptance draws they
@@ -2390,6 +2470,10 @@ def _install_mtp_vendored(
                         else None
                     ),
                     prompt_lookup_policy=prompt_lookup_policy,
+                    # A step started ahead of delivery puts the cache past the
+                    # token boundary ``_requeue_owner_at_boundary`` needs, so
+                    # parked rounds run ahead only while nobody is waiting.
+                    may_run_ahead=lambda: not _others_waiting(),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
@@ -4719,6 +4803,13 @@ class Scheduler:
         self._last_adaptive_prefill_size = self.config.prefill_step_size
         self._adaptive_prefill_protected_chunks = 0
         self._adaptive_prefill_reduced_chunks = 0
+        self._shared_prefix_waits = 0
+        # Recent prefill cost samples (seconds per row-token) feeding the
+        # decode-stall bound; kept for the scheduler's lifetime so a
+        # contended prefill rarely starts without one.
+        self._prefill_cost_samples: deque[float] = deque(maxlen=_PREFILL_COST_SAMPLES)
+        self._decode_stall_chunk_size: int | None = None
+        self._decode_stall_bounded_chunks = 0
         # D-METAL-CAP: cached per-token KV-cache size for the
         # projection-based admission gate. Auto-derived from the
         # model config on first use (operator override via
@@ -4930,9 +5021,7 @@ class Scheduler:
         # who set ``RAPID_MLX_DISABLE_FUSED_SAMPLER=true`` (the more natural
         # form for a boolean knob) actually get the fast path disabled,
         # instead of silently leaving it on.
-        _fused_disabled = os.environ.get(
-            "RAPID_MLX_DISABLE_FUSED_SAMPLER", "0"
-        ).strip().lower() in ("1", "true", "yes", "on")
+        _fused_disabled = env_truthy("RAPID_MLX_DISABLE_FUSED_SAMPLER")
         key = (
             sampling_params.temperature,
             sampling_params.top_p,
@@ -4998,6 +5087,7 @@ class Scheduler:
         rotating_layers: int
         total_layers: int
         shared_borrower_layers: int = 0
+        recurrent_layers: int = 0
 
     @staticmethod
     def _quantized_attention_incompatibility(model) -> str | None:
@@ -5036,9 +5126,9 @@ class Scheduler:
 
         Asks the model what caches it actually builds — no family names,
         no config heuristics. Returns ``None`` for an all-plain layout or a
-        verified mixture of plain ``KVCache`` and bounded ``RotatingKVCache``;
-        rotating components remain bf16. Returns the offending type name for
-        other layouts (``ArraysCache``/``MambaCache``), or
+        verified mixture of plain ``KVCache``, bounded ``RotatingKVCache``,
+        and recurrent ``ArraysCache`` state; non-KV components stay unchanged.
+        Returns the offending type name for other layouts, or
         :data:`_KV_CACHE_UNPROBEABLE` when no cache list could be built.
         Backstops the config-level safelist for models whose HF config
         was not readable at CLI time (fresh download).
@@ -5054,26 +5144,40 @@ class Scheduler:
         attention_reason = cls._quantized_attention_incompatibility(model)
         if attention_reason is not None:
             return attention_reason, None
-        from .quantized_batch_cache import supported_kv_cache_types
+        from .quantized_batch_cache import (
+            supported_kv_cache_types,
+            supported_recurrent_cache_types,
+        )
 
         plain_kv_types, rotating_types = supported_kv_cache_types()
+        recurrent_types = supported_recurrent_cache_types()
         quantizable = sum(type(c) in plain_kv_types for c in caches)
         rotating = sum(type(c) in rotating_types for c in caches)
+        recurrent = sum(type(c) in recurrent_types for c in caches)
         unsupported = [
             type(c).__name__
             for c in caches
-            if type(c) not in plain_kv_types and type(c) not in rotating_types
+            if type(c) not in plain_kv_types
+            and type(c) not in rotating_types
+            and type(c) not in recurrent_types
         ]
         if unsupported:
             return unsupported[0], None
         if quantizable == 0:
-            reason = "RotatingKVCache" if rotating else cls._KV_CACHE_UNPROBEABLE
+            reason = (
+                "RotatingKVCache"
+                if rotating
+                else "ArraysCache"
+                if recurrent
+                else cls._KV_CACHE_UNPROBEABLE
+            )
             return reason, None
         if cls._has_unsupported_cross_layer_kv_sharing(model):
             return "cross-layer shared KV", None
         return None, cls._QuantizedLiveCacheLayout(
             quantizable_layers=quantizable,
             rotating_layers=rotating,
+            recurrent_layers=recurrent,
             total_layers=len(caches),
             shared_borrower_layers=cls._cross_layer_kv_sharing_count(model),
         )
@@ -5187,6 +5291,15 @@ class Scheduler:
                 self._kv_quant_layout.total_layers,
                 getattr(self.config, "kv_cache_quantization_bits", 8),
                 self._kv_quant_layout.rotating_layers,
+            )
+        if self._kv_quant_layout is not None and self._kv_quant_layout.recurrent_layers:
+            logger.info(
+                "[kv-cache] hybrid partial quantization: %d/%d full-attention "
+                "layers use int%d; %d bounded recurrent layers remain unchanged",
+                self._kv_quant_layout.quantizable_layers,
+                self._kv_quant_layout.total_layers,
+                getattr(self.config, "kv_cache_quantization_bits", 8),
+                self._kv_quant_layout.recurrent_layers,
             )
         if (
             self._kv_quant_layout is not None
@@ -5960,18 +6073,20 @@ class Scheduler:
                 continue
             # A real message boundary is an exact recurrent-state checkpoint,
             # not merely a place to store the KV entry.  On the first cold
-            # turn, discard earlier stride samples and make this stable
-            # system+tools/user prefix the protected session anchor.  Later
-            # turns inherit that anchor and add their boundary within the
-            # same fixed checkpoint count.
+            # turn, make this stable system+tools/user prefix the protected
+            # session anchor and keep the stride samples recorded on the way
+            # to it: a later request that diverges before the boundary can
+            # only resume from one of those.  Later turns inherit the anchor
+            # and add their boundary within the same fixed checkpoint count.
             if self._hybrid_checkpoints_enabled() and not getattr(
                 request, "_cache_snapshot_is_internal", False
             ):
                 holders = self._hybrid_checkpoints.get(uid)
-                if not int(request.cached_tokens or 0):
-                    holders = [None] * len(reconstructed)
-                elif holders is None:
-                    holders = _collect_state_checkpoints(reconstructed)
+                if holders is None:
+                    if int(request.cached_tokens or 0):
+                        holders = _collect_state_checkpoints(reconstructed)
+                    else:
+                        holders = [None] * len(reconstructed)
                 if len(holders) == len(reconstructed) and _record_state_checkpoints(
                     reconstructed,
                     holders,
@@ -6587,6 +6702,21 @@ class Scheduler:
             self._resolve_metal_cap_bytes(), self._current_metal_active_bytes()
         )
 
+    def _log_admission_fallback(self, key: str, message: str) -> None:
+        """Debug-log a memory-estimator fallback once per scheduler.
+
+        The admission estimators below degrade silently (0 bytes, RSS, an
+        fp32 dtype guess) so a rejected or over-admitted request would
+        otherwise be undiagnosable even at ``--log-level DEBUG``. Once per
+        key keeps per-step callers from flooding DEBUG output. Must be
+        called from inside the ``except`` block so ``exc_info`` is attached.
+        """
+        logged = self.__dict__.setdefault("_admission_fallbacks_logged", set())
+        if key in logged:
+            return
+        logged.add(key)
+        logger.debug(message, exc_info=True)
+
     def _current_metal_active_bytes(self) -> int:
         """Best-effort snapshot of MLX-reported Metal active memory.
 
@@ -6596,6 +6726,11 @@ class Scheduler:
         try:
             return int(mx.get_active_memory())
         except Exception:
+            self._log_admission_fallback(
+                "metal_active",
+                "Metal active-memory probe failed; admission treats MLX "
+                "active memory as 0 bytes",
+            )
             return 0
 
     def _current_process_resident_bytes(self) -> int:
@@ -6612,12 +6747,20 @@ class Scheduler:
             if footprint > 0:
                 return footprint
         except Exception:
-            pass
+            self._log_admission_fallback(
+                "phys_footprint",
+                "phys_footprint probe failed; falling back to RSS for "
+                "process memory pressure",
+            )
         try:
             import psutil
 
             return int(psutil.Process().memory_info().rss)
         except Exception:
+            self._log_admission_fallback(
+                "process_rss",
+                "RSS probe failed; admission treats process footprint as 0 bytes",
+            )
             return 0
 
     def _continuous_mtp_free_bytes(self) -> int | None:
@@ -6768,12 +6911,13 @@ class Scheduler:
             return 0
         configured = max(1, int(getattr(self.config, "prefill_step_size", 2048)))
         if not getattr(self.config, "adaptive_prefill", True):
-            bg.prefill_step_size = configured
+            dispatched = self._bound_prefill_chunk_for_decode(configured)
+            bg.prefill_step_size = dispatched
             prompt_batch = getattr(bg, "_prompt_batch", None)
             if prompt_batch is not None:
-                prompt_batch.prefill_step_size = configured
+                prompt_batch.prefill_step_size = dispatched
             self._last_adaptive_prefill_size = configured
-            return configured
+            return dispatched
         selected = self._select_adaptive_prefill_size()
         prompt_tokens = self._active_prefill_token_count()
         minimum_prompt = max(
@@ -6790,10 +6934,14 @@ class Scheduler:
             self._adaptive_prefill_protected_chunks += 1
             if selected < configured:
                 self._adaptive_prefill_reduced_chunks += 1
-        bg.prefill_step_size = selected
+        # The memory policy above is sticky within one prefill; the decode
+        # bound is not, so it is applied to the dispatched size only and
+        # never recorded as the memory-selected chunk.
+        dispatched = self._bound_prefill_chunk_for_decode(selected)
+        bg.prefill_step_size = dispatched
         prompt_batch = getattr(bg, "_prompt_batch", None)
         if prompt_batch is not None:
-            prompt_batch.prefill_step_size = selected
+            prompt_batch.prefill_step_size = dispatched
         previous = getattr(self, "_last_adaptive_prefill_size", None)
         if previous != selected:
             logger.info(
@@ -6807,7 +6955,101 @@ class Scheduler:
                 self._resolve_metal_cap_bytes() / 1e9,
             )
             self._last_adaptive_prefill_size = selected
-        return selected
+        return dispatched
+
+    def _prefill_cost_probe(self) -> tuple[int, float] | None:
+        """Snapshot mlx-lm's prompt counters before a ``next()`` call."""
+        bg: Any = getattr(self, "batch_generator", None)
+        try:
+            return (
+                int(bg._prompt_tokens_counter),
+                float(bg._prompt_time_counter),
+            )
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def _record_prefill_cost(self, before: tuple[int, float] | None) -> None:
+        """Record the seconds-per-row-token cost of the chunk just processed."""
+        after = self._prefill_cost_probe()
+        if before is None or after is None:
+            return
+        tokens = after[0] - before[0]
+        elapsed = after[1] - before[1]
+        # A tiny chunk is dominated by the fixed per-forward cost and would
+        # read as an extreme per-token price.
+        if tokens < _PREFILL_COST_MIN_TOKENS or elapsed <= 0:
+            return
+        samples = getattr(self, "_prefill_cost_samples", None)
+        if samples is not None:
+            samples.append(elapsed / tokens)
+
+    def _bound_prefill_chunk_for_decode(self, selected: int) -> int:
+        """Cap the next prompt chunk so a decoding neighbour is not stalled.
+
+        ``selected`` is the chunk the memory policy would dispatch. While a
+        row is decoding, the chunk is sized so that its predicted time, at the
+        slowest recently observed per-row-token cost, stays near
+        ``decode_stall_target_ms``. Each sample amortizes the fixed
+        per-forward cost over its chunk, so the bound settles at the chunk
+        whose whole forward meets the target rather than collapsing. Chunks
+        still end on the ``selected`` grid, so recurrent-state checkpoints
+        land where an unbounded prefill would put them.
+        """
+        target_ms = getattr(self.config, "decode_stall_target_ms", 0) or 0
+        bg = getattr(self, "batch_generator", None)
+        if target_ms <= 0 or bg is None:
+            return selected
+        try:
+            decoding = len(getattr(bg, "_generation_batch", ()) or ())
+        except TypeError:
+            decoding = 0
+        processing = getattr(bg, "_currently_processing", ()) or ()
+        queued = getattr(bg, "_unprocessed_sequences", ()) or ()
+        rows = len(processing)
+        if queued:
+            slots = max(0, int(getattr(bg, "prefill_batch_size", 1)) - rows)
+            rows += min(len(queued), slots)
+        if decoding <= 0 or rows <= 0:
+            if getattr(self, "_decode_stall_chunk_size", None) is not None:
+                logger.info("[decode_stall] prefill chunk bound released")
+                self._decode_stall_chunk_size = None
+            return selected
+        samples = getattr(self, "_prefill_cost_samples", None)
+        if samples:
+            row_tokens = (target_ms / 1000.0) / max(samples)
+        else:
+            row_tokens = _PREFILL_COST_COLD_ROW_TOKENS
+        floor = max(1, int(getattr(self.config, "decode_stall_min_chunk_size", 64)))
+        per_row = int(min(float(selected), row_tokens / rows))
+        # Whole quantized-matmul tiles: a partial tile costs a full one.
+        per_row -= per_row % _PREFILL_TILE_ROWS
+        bounded = min(selected, max(floor, per_row))
+        # One chunk size serves every row, so it stops at the nearest grid
+        # position of any row: no row steps over one of its own, and each
+        # still ends a chunk on every multiple of ``selected``.
+        # A row admitted from the queue in this dispatch starts at 0, a whole
+        # ``selected`` from its first grid position, so it needs no entry.
+        for item in processing:
+            try:
+                to_grid = selected - int(item[1]) % selected
+            except (IndexError, TypeError, ValueError):
+                continue
+            bounded = min(bounded, to_grid)
+        if bounded < selected:
+            self._decode_stall_bounded_chunks = (
+                getattr(self, "_decode_stall_bounded_chunks", 0) + 1
+            )
+        if getattr(self, "_decode_stall_chunk_size", None) is None:
+            logger.info(
+                "[decode_stall] bounding prefill chunk to ~%d tokens "
+                "(target=%.0fms decoding=%d prefilling=%d)",
+                bounded,
+                target_ms,
+                decoding,
+                rows,
+            )
+        self._decode_stall_chunk_size = bounded
+        return bounded
 
     def _infer_kv_dtype_bytes(self, model_config: Any) -> int:
         """Best-effort KV-cache dtype-bytes inference.
@@ -6888,7 +7130,11 @@ class Scheduler:
                 if n > 0:
                     return n
         except Exception:
-            pass
+            self._log_admission_fallback(
+                "kv_dtype",
+                "KV dtype inference from the model config failed; assuming "
+                "fp32 (4 bytes) for KV admission estimates",
+            )
         # Default: assume the LARGEST plausible dtype (fp32 = 4) so we
         # over-estimate KV usage and err toward rejection rather than
         # admitting a request that exceeds the cap. Reached only when
@@ -7450,7 +7696,11 @@ class Scheduler:
             try:
                 mx.clear_cache()
             except Exception:
-                pass
+                self._log_admission_fallback(
+                    "preflight_clear_cache",
+                    "mx.clear_cache() failed during Metal admission preflight; "
+                    "re-reading active memory without releasing allocator cache",
+                )
             active = self._current_metal_active_bytes()
         if active + smallest_kv < cap:
             return
@@ -7574,6 +7824,22 @@ class Scheduler:
         if active < cap and (active + reserved_kv + projected_kv) < cap:
             return
 
+        # Over the cap: first return memory nothing references any more. A
+        # cache caught in a reference cycle stays resident until a full
+        # cyclic collection, which the server's raised GC thresholds make
+        # rare — #4108 wedged an idle server with an empty prefix cache at
+        # 37 GB this way. Collecting is non-destructive, so it runs before
+        # the warm prefix cache is evicted. It is limited to the cases where
+        # garbage can be the cause and the pause costs nobody much: active
+        # memory itself at the cap, or no request in flight. An ordinary
+        # projection/reservation rejection under load never pauses the
+        # step loop for a full collection.
+        if (active >= cap or not self.requests) and self._reclaim_unreachable_metal():
+            active = self._current_metal_active_bytes()
+            reserved_kv = self._sum_in_flight_kv_bytes()
+            if active < cap and (active + reserved_kv + projected_kv) < cap:
+                return
+
         # The memory-aware prefix cache holds finished requests' KV in Metal
         # memory. It is reclaimable by definition, so it must yield to a live
         # request instead of turning a warm cache into a 503 — this is what
@@ -7678,7 +7944,24 @@ class Scheduler:
                 "length or max_tokens, lower concurrency, or restart "
                 "with a higher --gpu-memory-utilization."
             )
-        raise BackpressureError(
+        if not self.requests and active >= cap:
+            # Nothing is in flight to drain, so "retry after in-flight
+            # requests drain" would never come true (#4108).
+            restart_advice = " Restart the server to release it."
+            if self._metal_cap_effective_utilization < MAX_UTILIZATION:
+                restart_advice = (
+                    " Restart the server to release it, or restart with a "
+                    "higher --gpu-memory-utilization."
+                )
+            raise MetalMemoryBackpressureError(
+                f"Metal memory in use is {active / 1e9:.1f} GB with no "
+                f"request running (reserved KV {reserved_kv / 1e9:.1f} GB + "
+                f"projected KV {projected_kv / 1e9:.1f} GB for this request), "
+                f"but the current limit is {cap / 1e9:.1f} GB (D-METAL-CAP). "
+                "Retrying will not help: the memory is held by the server, "
+                "not by other requests." + restart_advice
+            )
+        raise MetalMemoryBackpressureError(
             f"This request needs approximately "
             f"{(reserved_kv + projected_kv) / 1e9:.1f} GB of Metal memory "
             f"on top of {active / 1e9:.1f} GB already in use "
@@ -7686,6 +7969,44 @@ class Scheduler:
             f"{projected_kv / 1e9:.1f} GB), but the current limit is "
             f"{cap / 1e9:.1f} GB (D-METAL-CAP)." + raise_advice
         )
+
+    # #4108: minimum spacing between two over-cap garbage reclaims. The
+    # collector and the Metal allocator are process-wide, so the limiter is
+    # too (shared by every resident model's scheduler).
+    _METAL_GC_RECLAIM_INTERVAL_S = 1.0
+    _metal_gc_reclaim_lock = threading.Lock()
+    _last_metal_gc_reclaim_at = float("-inf")
+
+    def _reclaim_unreachable_metal(self) -> bool:
+        """Collect cyclic garbage and flush the allocator; True if active fell.
+
+        Rate-limited process-wide so a sustained over-cap admission storm pays
+        for at most one full collection per ``_METAL_GC_RECLAIM_INTERVAL_S``.
+        """
+        cls = type(self)
+        with cls._metal_gc_reclaim_lock:
+            now = time.monotonic()
+            if now - cls._last_metal_gc_reclaim_at < cls._METAL_GC_RECLAIM_INTERVAL_S:
+                return False
+            cls._last_metal_gc_reclaim_at = now
+        before = self._current_metal_active_bytes()
+        collected = gc.collect()
+        try:
+            mx.clear_cache()
+        except Exception:
+            pass
+        after = self._current_metal_active_bytes()
+        if after >= before:
+            return False
+        logger.warning(
+            "[D-METAL-CAP-gc-reclaim] released %.1f GB of unreachable Metal "
+            "memory (%d objects collected, %.0f ms) before admission; it was "
+            "held by garbage, not by live requests or the prefix cache",
+            (before - after) / 1e9,
+            collected,
+            (time.monotonic() - now) * 1000.0,
+        )
+        return True
 
     def _resolve_pressure_evict_fraction(self) -> float:
         """Return the clamped ``(0, 1]`` fraction used for pressure thresholds.
@@ -8257,7 +8578,9 @@ class Scheduler:
                     f"compressed {metadata['original_tokens']} -> "
                     f"{metadata['kept_tokens']} tokens "
                     f"ratio={metadata['compression_ratio']:.3f} "
-                    f"scoring_ms={metadata['scoring_seconds'] * 1000.0:.2f}"
+                    f"scoring_ms={metadata['scoring_seconds'] * 1000.0:.2f} "
+                    "(lossy: middle of prompt dropped, prefix cache bypassed; "
+                    "--pflash off disables)"
                 )
             else:
                 logger.debug(
@@ -8310,31 +8633,7 @@ class Scheduler:
                 request.cache_hit_type = "miss"
                 request.remaining_tokens = request.prompt_token_ids
         elif self.memory_aware_cache is not None:
-            # Use memory-aware prefix cache
-            import time as _time
-
-            _fetch_t0 = _time.monotonic()
-            cache, remaining = self.memory_aware_cache.fetch(request.prompt_token_ids)
-            _fetch_dt = _time.monotonic() - _fetch_t0
-            request.cache_hit_type = self.memory_aware_cache._last_match_type
-            if cache:
-                request.prompt_cache = cache
-                request.cached_tokens = len(request.prompt_token_ids) - len(remaining)
-                request.remaining_tokens = remaining
-                logger.info(
-                    f"[cache_fetch] request={request.request_id[:12]} HIT "
-                    f"prompt_tokens={len(request.prompt_token_ids)} "
-                    f"cached={request.cached_tokens} remaining={len(remaining)} "
-                    f"time={_fetch_dt:.3f}s"
-                )
-            else:
-                request.remaining_tokens = request.prompt_token_ids
-                logger.info(
-                    f"[cache_fetch] request={request.request_id[:12]} MISS "
-                    f"prompt_tokens={len(request.prompt_token_ids)} "
-                    f"time={_fetch_dt:.3f}s entries={len(self.memory_aware_cache._entries)}"
-                )
-            self._reclaim_prefix_cache_for_prefill(request)
+            self._fetch_memory_aware_prefix(request)
         elif self.prefix_cache is not None:
             # Use legacy prefix cache
             cache, remaining = self.prefix_cache.fetch_cache(request.prompt_token_ids)
@@ -8380,6 +8679,37 @@ class Scheduler:
         logger.debug(
             f"Added request {request.request_id} with {request.num_prompt_tokens} prompt tokens"
         )
+
+    def _fetch_memory_aware_prefix(self, request: Request) -> None:
+        """Look the request's prompt up in the memory-aware prefix cache."""
+        import time as _time
+
+        store: Any = self.memory_aware_cache
+        prompt: list[int] = request.prompt_token_ids or []
+        _fetch_t0 = _time.monotonic()
+        cache, remaining = store.fetch(prompt)
+        _fetch_dt = _time.monotonic() - _fetch_t0
+        request.cache_hit_type = store._last_match_type
+        if cache:
+            request.prompt_cache = cache
+            request.cached_tokens = len(prompt) - len(remaining)
+            request.remaining_tokens = remaining
+            logger.info(
+                f"[cache_fetch] request={request.request_id[:12]} HIT "
+                f"prompt_tokens={len(prompt)} "
+                f"cached={request.cached_tokens} remaining={len(remaining)} "
+                f"time={_fetch_dt:.3f}s"
+            )
+        else:
+            request.prompt_cache = None
+            request.cached_tokens = 0
+            request.remaining_tokens = prompt
+            logger.info(
+                f"[cache_fetch] request={request.request_id[:12]} MISS "
+                f"prompt_tokens={len(prompt)} "
+                f"time={_fetch_dt:.3f}s entries={len(store._entries)}"
+            )
+        self._reclaim_prefix_cache_for_prefill(request)
 
     def _commit_request(self, request: Request) -> None:
         """Atomically publish a request to lifecycle truth and the run queue."""
@@ -9125,6 +9455,98 @@ class Scheduler:
             return 0
         return cached + aligned
 
+    def _shared_prefix_local_split(self, request: Request, pending: int) -> int | None:
+        """Where to split the pending prefill so a snapshot can be stored at
+        the end of the span this prompt shares with a stored entry.
+
+        A prompt can share a long prefix with a stored entry and still not
+        resume from it: prompt state that cannot be rewound is only reusable at
+        the exact length it was stored at. Storing a snapshot where the shared
+        span ends lets the next prompt with that prefix resume there. Returns
+        the split as an offset into the pending tokens, or None.
+        """
+        request.shared_prefix_snapshot_at = 0
+        store: Any = getattr(self, "memory_aware_cache", None)
+        prompt = request.prompt_token_ids or []
+        if store is None or _pflash_compressed(request) or pending <= 1:
+            return None
+        cached = int(request.cached_tokens or 0)
+        shared = min(store.shared_prefix_length(prompt), len(prompt) - 1)
+        if shared - cached < _SHARED_PREFIX_SNAPSHOT_MIN_TOKENS:
+            return None
+        # A split at a tile multiple costs the prefill nothing.
+        local = int(shared - cached)
+        local -= local % self._prefill_tile_rows()
+        if not 0 < local < pending:
+            return None
+        request.shared_prefix_snapshot_at = cached + local
+        return local
+
+    def _snapshot_shared_prefix_segments(self, prompt_responses) -> None:
+        """Store a snapshot when a prefill reaches the split armed by
+        ``_shared_prefix_local_split``."""
+        generator: Any = self.batch_generator
+        if self.memory_aware_cache is None or not prompt_responses:
+            return
+        due: dict[int, Request] = {}
+        for resp in prompt_responses:
+            if getattr(resp, "end_of_prompt", False) or not getattr(
+                resp, "end_of_segment", False
+            ):
+                continue
+            request = self.requests.get(self.uid_to_request_id.get(resp.uid, ""))
+            position = int(getattr(request, "shared_prefix_snapshot_at", 0) or 0)
+            progress = getattr(resp, "progress", None)
+            if (
+                request is None
+                or position <= 0
+                or getattr(request, "output_token_ids", None)
+                or not isinstance(progress, tuple)
+                or not progress
+                or progress[0] != position - int(request.cached_tokens or 0)
+            ):
+                continue
+            due[resp.uid] = request
+        if not due:
+            return
+        try:
+            extracted = generator.extract_cache(list(due))
+        except Exception as exc:
+            logger.debug("[shared_prefix_snapshot] extract_cache failed: %s", exc)
+            return
+        for uid, payload in extracted.items():
+            request = due.get(uid)
+            if request is None or not (
+                isinstance(payload, tuple) and len(payload) == 2
+            ):
+                continue
+            position = int(request.shared_prefix_snapshot_at)
+            # One attempt per request, whatever the outcome.
+            request.shared_prefix_snapshot_at = 0
+            states = self._extract_cache_states(payload[0])
+            reconstructed = (
+                self._reconstruct_cache_from_states(states) if states else None
+            )
+            if not reconstructed:
+                continue
+            self._attach_hybrid_checkpoints(uid, reconstructed, length=position)
+            try:
+                stored = self.memory_aware_cache.store(
+                    list((request.prompt_token_ids or [])[:position]),
+                    reconstructed,
+                    evict_prefixes=False,
+                )
+            except Exception as exc:
+                logger.debug("[shared_prefix_snapshot] store failed: %s", exc)
+                continue
+            if stored:
+                logger.info(
+                    "[shared_prefix_snapshot] request=%s saved %d tokens at the "
+                    "end of a shared prefix",
+                    request.request_id[:12],
+                    position,
+                )
+
     def _resolve_snapshot_boundary(self, request: Request) -> int:
         """Return a usable prompt boundary, arming N-1 reuse when needed.
 
@@ -9247,6 +9669,78 @@ class Scheduler:
             return 1
         return self.config.max_num_seqs
 
+    def _prefill_leader_for(self, request: Request) -> Request | None:
+        """A running request whose prompt state this one should wait for.
+
+        Two prompts that share a long prefix and prefill side by side each
+        pay for the shared part, and a prefill batch costs about the sum of
+        its rows. Holding the later one until the earlier one stores its
+        prompt state lets it resume from that state instead. The hold is
+        taken only when it cannot lose: the tokens it saves must cover the
+        extra prompt the earlier request still has to process.
+        """
+        min_tokens = getattr(self.config, "shared_prefix_wait_tokens", 0) or 0
+        prompt = request.prompt_token_ids or []
+        if (
+            min_tokens <= 0
+            or getattr(self, "memory_aware_cache", None) is None
+            or not prompt
+            or _pflash_compressed(request)
+            or request.prefix_wait_done
+        ):
+            return None
+        own_work = (
+            len(prompt)
+            if request.remaining_tokens is None
+            else len(request.remaining_tokens)
+        )
+        cached = len(prompt) - own_work
+        for leader in self.running.values():
+            leader_prompt = leader.prompt_token_ids or []
+            if (
+                leader.num_output_tokens > 0
+                or not leader_prompt
+                or _pflash_compressed(leader)
+            ):
+                continue
+            gain = _common_prefix_len(prompt, leader_prompt) - cached
+            leader_work = (
+                len(leader_prompt)
+                if leader.remaining_tokens is None
+                else len(leader.remaining_tokens)
+            )
+            if gain >= min_tokens and gain > leader_work - own_work:
+                return leader
+        return None
+
+    def _pop_waiting_for_admission(self) -> Request | None:
+        """Next waiting request in arrival order that is not held behind a
+        running prefill of the same prefix (see ``_prefill_leader_for``).
+
+        A held request follows the one request it was held for: it is
+        released when that request emits its first token (its prompt state
+        is stored just before) or leaves, and is never held again.
+        """
+        for request in self.waiting:
+            if request.prefix_wait_leader is not None:
+                leader = self.running.get(request.prefix_wait_leader)
+                if leader is not None and leader.num_output_tokens == 0:
+                    continue
+                request.prefix_wait_leader = None
+                request.prefix_wait_done = True
+                self._fetch_memory_aware_prefix(request)
+            else:
+                leader = self._prefill_leader_for(request)
+                if leader is not None:
+                    request.prefix_wait_leader = leader.request_id
+                    self._shared_prefix_waits = (
+                        getattr(self, "_shared_prefix_waits", 0) + 1
+                    )
+                    continue
+            self.waiting.remove(request)
+            return request
+        return None
+
     def _schedule_waiting(self) -> list[Request]:
         """
         Move requests from waiting queue to running.
@@ -9274,7 +9768,10 @@ class Scheduler:
                     break
                 request, selection_forced = selection
             else:
-                request = self.waiting.popleft()
+                popped = self._pop_waiting_for_admission()
+                if popped is None:
+                    break
+                request = popped
                 selection_forced = False
 
             # Ensure we have a batch generator. The False return means
@@ -9528,8 +10025,32 @@ class Scheduler:
                 if 0 < _local < len(tokens_to_process):
                     boundary_local_split = _local
 
+            shared_local_split = self._shared_prefix_local_split(
+                request, len(tokens_to_process)
+            )
+            if shared_local_split == boundary_local_split:
+                shared_local_split = None
+                request.shared_prefix_snapshot_at = 0
+
             try:
-                if boundary_local_split is not None:
+                if shared_local_split is not None:
+                    splits = sorted(
+                        {shared_local_split, boundary_local_split or 0} - {0}
+                    )
+                    edges = [0, *splits, len(tokens_to_process)]
+                    uids = self.batch_generator.insert_segments(
+                        [
+                            [
+                                tokens_to_process[start:end]
+                                for start, end in zip(edges, edges[1:])
+                            ]
+                        ],
+                        max_tokens=[request.sampling_params.max_tokens],
+                        caches=[cache_to_use] if cache_to_use else None,
+                        samplers=[request_sampler],
+                        logits_processors=request_logits_processors,
+                    )
+                elif boundary_local_split is not None:
                     uids = self.batch_generator.insert_segments(
                         [
                             [
@@ -9561,6 +10082,8 @@ class Scheduler:
                     request.cached_tokens = 0
                     request.remaining_tokens = request.prompt_token_ids
                     tokens_to_process = request.prompt_token_ids
+                    # The retry keeps only the message boundary split.
+                    request.shared_prefix_snapshot_at = 0
                     # Recompute split against the now-full prompt
                     # (cached_tokens=0 so boundary == split).
                     retry_boundary = getattr(
@@ -9708,6 +10231,8 @@ class Scheduler:
 
             # Append token to request
             request.append_output_token(response.token)
+            token_time = time.time()
+            token_monotonic = time.monotonic()
 
             # R15-P1 (task #296): trigger disk-backed KV checkpoint at
             # 256-tok boundaries. Cheap when disabled — the helper
@@ -9725,9 +10250,8 @@ class Scheduler:
 
             # Record first token time for TTFT metric
             if request.first_token_time is None and request.num_output_tokens > 0:
-                import time as _time
-
-                request.first_token_time = _time.time()
+                request.first_token_time = token_time
+                request._first_token_monotonic = token_monotonic
                 prefill_s = request.first_token_time - getattr(
                     request, "_prefill_started_at", request.arrival_time
                 )
@@ -9735,7 +10259,7 @@ class Scheduler:
                     prompt_tps_this_batch += request.num_prompt_tokens / prefill_s
 
             if request.first_token_time is not None and request.num_output_tokens > 0:
-                generation_s = time.time() - request.first_token_time
+                generation_s = token_time - request.first_token_time
                 if generation_s > 0:
                     self._last_generation_tps = request.num_output_tokens / generation_s
 
@@ -9952,11 +10476,25 @@ class Scheduler:
 
                 output.finished = True
                 output.finish_reason = response.finish_reason
+                if response.finish_reason in ("stop", "length"):
+                    output.timing_metrics = self.performance.timing_metrics_for_request(
+                        request, token_monotonic
+                    )
                 request_mtp_counter = getattr(request, "_mtp_accept_counter", None)
                 if request_mtp_counter is not None:
                     output.spec_decode_metrics = (
                         request_mtp_counter.snapshot().response_metrics()
                     )
+                # #4092: surface PFlash compression on the terminal output so
+                # the API layer can tell the client its prompt was shortened.
+                pflash_metadata = request.pflash_metadata
+                if pflash_metadata is not None and pflash_metadata.get(
+                    "compressed", False
+                ):
+                    output.prompt_compression = {
+                        "original_tokens": pflash_metadata["original_tokens"],
+                        "kept_tokens": pflash_metadata["kept_tokens"],
+                    }
                 if repetition_error is not None:
                     output.error = repetition_error
                     # Mark this abort as the graceful repetition-guard stop so
@@ -10154,6 +10692,11 @@ class Scheduler:
         """
         interval = getattr(self.config, "kv_disk_checkpoint_interval", 0)
         if interval is None or interval <= 0:
+            return
+
+        from . import disk_caches
+
+        if disk_caches.disabled():
             return
 
         # Lazy import keeps the module-load cost of rapid_mlx.scheduler
@@ -10571,6 +11114,7 @@ class Scheduler:
                     # Tighten that chunk before dispatch when a long cold or
                     # cache-miss prefill is approaching the unified-memory cap.
                     self._apply_adaptive_prefill_size()
+                    _prefill_cost_before = self._prefill_cost_probe()
                     if self._step_timing_enabled:
                         st = getattr(self, "_steptime", None)
                         if st is None:
@@ -10603,6 +11147,7 @@ class Scheduler:
                             st[0], st[1] = [], []
                     else:
                         raw_next = self.batch_generator.next()
+                    self._record_prefill_cost(_prefill_cost_before)
                     # Bound functional recurrent-state graphs without forcing
                     # a host synchronization on every token. The barrier fires
                     # off the live chain DEPTH (steps since the last barrier),
@@ -10650,6 +11195,7 @@ class Scheduler:
                         # multi-turn hybrid workloads (segment finished
                         # but prompt still has tail to process).
                         self._snapshot_boundary_segments(prompt_responses)
+                        self._snapshot_shared_prefix_segments(prompt_responses)
                     else:
                         self._fallback_from_unobservable_prompt_runtime()
                         responses = raw_next
@@ -11281,6 +11827,11 @@ class Scheduler:
             ),
             "adaptive_prefill_reduced_chunks": getattr(
                 self, "_adaptive_prefill_reduced_chunks", 0
+            ),
+            "shared_prefix_waits": getattr(self, "_shared_prefix_waits", 0),
+            "decode_stall_chunk_size": getattr(self, "_decode_stall_chunk_size", None),
+            "decode_stall_bounded_chunks": getattr(
+                self, "_decode_stall_bounded_chunks", 0
             ),
         }
         # R15-P1 (task #296): disk-backed KV checkpoint counters.

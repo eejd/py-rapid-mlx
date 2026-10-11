@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from typing import Any
 
@@ -74,12 +75,12 @@ def run_native_mtp_server(
     """Load the immutable target/drafter pair and run the serial API server."""
 
     try:
-        import uvicorn
         from mlx_vlm import load
     except ImportError as exc:
         raise RuntimeError(
             "native MTP requires "
-            f"mlx-vlm {QUALIFIED_MLX_VLM_VERSION}; install rapid-mlx[mtp]"
+            f"mlx-vlm {QUALIFIED_MLX_VLM_VERSION}, which ships with rapid-mlx; "
+            "reinstall rapid-mlx"
         ) from exc
 
     # Reuse the established serial speculative server's thread-affine API and
@@ -99,7 +100,14 @@ def run_native_mtp_server(
             )
 
             install_glm5_next_runtime_fix()
-        model, processor = load(pair.target_repo, revision=pair.target_revision)
+        target_loader = load
+        if sys.platform == "darwin" and pair.drafter_model_type == "glm5_next_mtp":
+            from rapid_mlx.models.glm5_shardwise_load import load_glm5_shardwise
+
+            target_loader = load_glm5_shardwise
+        model, processor = target_loader(
+            pair.target_repo, revision=pair.target_revision
+        )
         runtime = load_runtime(
             pair.drafter_repo,
             target_revision=pair.target_revision,
@@ -180,7 +188,6 @@ def run_native_mtp_server(
         log_level=uvicorn_log_level,
         timeout_keep_alive=30,
         on_server_accepting=_print_ready,
-        uvicorn_runner=uvicorn.run,
         port_explicit=port_explicit,
     )
 

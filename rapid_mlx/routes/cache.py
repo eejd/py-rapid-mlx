@@ -53,6 +53,7 @@ from pydantic import BaseModel, Field
 from ..cache.protocol import (
     MANIFEST_FILENAME,
     PROTOCOL_VERSION,
+    CachePersistenceUnsupportedError,
     CommittedIndexUnreadableError,
     EngineNotReadyError,
     InvalidExportPathError,  # noqa: F401 — re-exported for _resolve_or_400 callers
@@ -884,6 +885,17 @@ async def export_cache(req: ExportRequest):
             outcome_obj = await anyio.to_thread.run_sync(
                 engine.save_cache_with_outcome, str(destination)
             )
+        except CachePersistenceUnsupportedError as exc:
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "error": {
+                        "message": "prompt-cache export not supported for vision models",
+                        "type": "invalid_request_error",
+                        "code": "cache_persistence_unsupported",
+                    }
+                },
+            ) from exc
         except EngineNotReadyError as exc:
             logger.warning("cache/export: engine not ready — %s", exc)
             raise HTTPException(
@@ -1297,7 +1309,6 @@ async def import_cache(req: ImportRequest):
         # #1100 BLOCKING-5: report the bytes THIS import actually loaded, not
         # the manifest's full ``total_bytes`` (which overstates when entries
         # are skipped).
-        cache = _prefix_cache(engine)
 
         # Hydrate from disk. #1100 codex round 4 (#2/#3): the entries count AND
         # the loaded-byte total are computed in the SAME step-thread task and
@@ -1316,6 +1327,17 @@ async def import_cache(req: ImportRequest):
             load_result = await anyio.to_thread.run_sync(
                 engine.load_cache_with_result, str(source), replace
             )
+        except CachePersistenceUnsupportedError as exc:
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "error": {
+                        "message": "prompt-cache import not supported for vision models",
+                        "type": "invalid_request_error",
+                        "code": "cache_persistence_unsupported",
+                    }
+                },
+            ) from exc
         except EngineNotReadyError as exc:
             logger.warning("cache/import: engine not ready — %s", exc)
             raise HTTPException(

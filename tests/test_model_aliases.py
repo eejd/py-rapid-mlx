@@ -26,6 +26,17 @@ def test_broken_ministral_3b_alias_is_rejected_before_loading():
         resolve_model(retired)
 
 
+def test_unavailable_qwopus_8bit_alias_is_retired_with_migration_note():
+    """#4141: the upstream repository is gone, so a cold pull can only fail."""
+    retired = "qwopus-27b-8bit"
+    assert retired not in list_aliases()
+    with pytest.raises(RetiredModelAliasError, match="no longer accessible") as exc:
+        resolve_model(retired)
+    assert "'qwopus-27b-4bit'" in str(exc.value)
+    # The migration target must stay a live catalog alias.
+    assert resolve_model("qwopus-27b-4bit") == "Jackrong/MLX-Qwopus3.5-27B-v3-4bit"
+
+
 def test_retired_alias_full_hf_path_remains_available_for_text_only_testing():
     hf_path = "mlx-community/Ministral-3-3B-Instruct-2512-4bit"
     assert resolve_model(hf_path) == hf_path
@@ -51,9 +62,10 @@ def test_unknown_name_passes_through():
 
 
 def test_local_path_takes_priority_over_alias(tmp_path):
-    """A local directory matching an alias name should win."""
+    """A local model directory matching an alias name should win."""
     local_dir = tmp_path / "qwen3.5-9b-4bit"
     local_dir.mkdir()
+    (local_dir / "config.json").write_text("{}")
     old_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
@@ -471,6 +483,7 @@ def test_draft_gate_never_refuses_an_existing_local_path(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "mlx-community" / "Qwen3.6-27B-MTP-4bit").mkdir(parents=True)
     (tmp_path / "qwen3.6-35b-mtp-4bit").mkdir()
+    (tmp_path / "qwen3.6-35b-mtp-4bit" / "config.json").write_text("{}")
 
     assert draft_only_conflict("mlx-community/Qwen3.6-27B-MTP-4bit") is None
     assert draft_only_conflict("qwen3.6-35b-mtp-4bit") is None

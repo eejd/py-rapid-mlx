@@ -150,6 +150,10 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Explicit opt-in for returning CUA screenshots to an authenticated
         # client. This is a privacy boundary, not model or parser routing.
         "RAPID_MLX_CUA_EXPOSE_SCREENSHOTS",
+        # CUA input transport (pid-routed background events vs global HID).
+        # It picks how an already-approved GUI action is delivered on the
+        # local Mac; it does not select a model, parser, tier, or engine route.
+        "RAPID_MLX_CUA_INPUT_DELIVERY",
         # MLLM media policy controls. These constrain which already-selected
         # request media sources may be read; they do not select a model,
         # parser, tier, or engine route.
@@ -414,6 +418,12 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # eviction activity. Pure capacity knob — never selects a model,
         # parser, or routing tier.
         "RAPID_MLX_PREFIX_CACHE_MAX_BYTES",
+        # Free-disk reserve (bytes) the prefix-cache persist must leave on
+        # the volume; ``0`` disables the check. Read by
+        # ``MemoryAwarePrefixCache.save_to_disk``, which skips entries whose
+        # write would cross it. Pure disk-safety knob — never selects a
+        # model, parser, or routing tier.
+        "RAPID_MLX_PREFIX_CACHE_MIN_FREE_DISK_BYTES",
         # Sandbox root for the KV cache export/import HTTP API (issue #476).
         # Default ``~/.cache/rapid-mlx/cache_exports/``. All caller-supplied
         # paths to ``/v1/cache/{export,import,info}`` must resolve inside
@@ -620,6 +630,15 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         # rapid_mlx/cli.py's banner gate (--no-banner flag is the primary
         # mechanism; the env var exists for non-interactive launchers).
         "RAPID_MLX_NO_BANNER",
+        # Disk-write and logging preferences: keep optional caches off disk
+        # and choose the log level and destination. None selects a model,
+        # parser, tier, or engine route.
+        "RAPID_MLX_DISABLE_DISK_CACHES",
+        "RAPID_MLX_LOG_LEVEL",
+        "RAPID_MLX_LOG_FILE",
+        # Fallback for --disable-model-downloads; refuses uncached models and
+        # selects no model, parser, tier, or route.
+        "RAPID_MLX_DISABLE_MODEL_DOWNLOADS",
     }
 )
 

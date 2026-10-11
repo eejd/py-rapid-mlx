@@ -3,8 +3,9 @@
 How a release actually happens, what gates it, and what to do when things go
 wrong. If you only read one thing: **you cut a release by merging a
 `chore: bump version to X.Y.Z` commit to `main`** — automation then does the
-work and presents one **reviewer approval** (the only manual transaction step)
-before anything is tagged or published.
+work and presents one **reviewer approval** before anything is tagged or
+published. Preparation and incident recovery are separate operator steps; the
+resumable preparation CLI below automates metadata and preflight coordination.
 
 This file is the **canonical** release-flow reference (as
 `scripts/pr_validate/README.md` is for the PR-validation pipeline). The
@@ -33,8 +34,9 @@ extended operational guide, `docs/development/releasing.md`, defers to it.
 
 There is **no separate manual tag or publish command** — no button, no
 hand-run script. The reviewer's approval at the protected environment gate is
-the **only manual transaction step** a release requires; everything else is
-automated.
+the manual authorization inside the publishing transaction. Preparation,
+platform security approvals and incident recovery may still need operator
+action; they must not be described as already fully automated.
 
 ## Pre-bump auto-release dry run (no publication)
 
@@ -172,8 +174,8 @@ signed/notarised/DMG-validated lane, and which is still the live `main` head**:
   validates the exact release commit **before** the tag claim, producing a
   Desktop manifest bound to the source SHA, embedded app versions and DMG digest.
 - The tag claim runs inside the **`rapid-mac-tag`** environment (required
-  reviewer, `prevent_self_review=false`, deployment-branch policy exactly
-  `main`), after the pre-approval `release-prep` job has printed the exact
+  reviewer, `prevent_self_review=false`, deployment-branch inventory exactly
+  `main`, or `main` plus the already-authorized retained `release/0.16.0` policy), after the pre-approval `release-prep` job has printed the exact
   validated SHA + live main head + live release-blocker evidence.
 - Release-blocker evidence and the live main-head identity are re-queried
   **immediately before** the immutable claim. This is a **freshness/cutoff
@@ -418,3 +420,84 @@ delete the tag.
 - `landing/runbooks/agent-release-verification.md` (rapidmlx.com repo) — the
   operational runbook + the freshness-stamp bump for the website.
 - `.github/workflows/publish.yml` — PyPI publish on `release: published`.
+
+## Resumable preparation (operator CLI)
+
+The publication transaction is automated; preparing its PR and collecting the
+exact-head evidence used to require separate hand-run commands. Use the operator
+below to assemble the metadata and advance those existing workflows:
+
+```bash
+python scripts/release_control.py prepare \
+  --version X.Y.Z --source <full-live-main-sha> \
+  --notes /path/to/curated-release-notes.md \
+  --highlights /path/to/desktop-highlights.md \
+  --worktree /private/tmp/harbor-desk-release-X.Y.Z
+python scripts/release_control.py run --version X.Y.Z
+python scripts/release_control.py status --version X.Y.Z
+```
+
+`prepare` makes one **local** metadata-only commit on `release/prepare-X.Y.Z`.
+It does not push or run Actions. It checks existing tag reservations, allocates
+an integer Desktop build above every published Desktop baseline (including RCs),
+preserves other plist keys/comments, and generates the required comparison
+links. When a frozen release has published ahead of main's version metadata,
+missing published changelog sections are retained in the next bump.
+Curated notes and highlights remain explicit inputs; generated commit subjects
+are not a substitute for useful release notes.
+
+`resume` advances at most the next unfinished stage:
+
+1. Find or dispatch the **canonical non-publishing** parent dry run.
+2. After its required jobs succeed and publication jobs are skipped, push the
+   prepared branch without force and create/reconcile its one bump PR.
+3. Find or dispatch exact-head `release-preflight.yml` for that PR.
+4. After all required preflight jobs succeed, replace the `Release-Preflight:`
+   evidence line while preserving the rest of the PR body.
+
+`run` performs those steps automatically, waiting for ordinary queued/running
+jobs between transitions. It requires no agent or repeated `resume` commands.
+Run it in a persistent terminal; it is a foreground process, not an installed
+service. By default it polls every 30 seconds with a six-hour wait budget:
+
+```bash
+python scripts/release_control.py run --version X.Y.Z \
+  --poll-seconds 30 --timeout-seconds 21600
+```
+
+It emits one JSON line per state transition. Exit code 0 means preparation
+completed; 2 means a failed/invalid run or platform approval needs operator
+action; 3 means the wait budget expired. Errors (including source drift or a
+concurrent active mutation) exit 1; Ctrl-C exits 130. Restart the same `run`
+command after interruption to reconcile saved state, rather than starting a new
+transaction. A missing dispatch response is only observed while waiting, never
+resent. The state lock is released between polls, so `status` and another
+operator can inspect/reconcile the transaction without duplicate requests.
+
+Use `resume` for a single advancement, or `status` for run, attempt, failure-job
+links and approval-required state. No polling daemon or scheduled agent is
+started. Plans and mutation intents are in the common Git
+directory, `release-preparation/X.Y.Z.json`, with a per-version file lock.
+All worktrees of this checkout share that state. Preserve it across an operator
+handoff; another clone does not have its local dispatch receipts.
+
+An ambiguous dispatch/PR-creation response is recorded **before** issuance.
+Subsequent calls inspect GitHub instead of issuing it again. If GitHub has no
+matching result, the state stays `dispatch-unconfirmed`/creation-unconfirmed:
+inspect the actual request outcome before an explicitly diagnosed recovery.
+Failed workflows are reported with their jobs; the tool does not automatically
+rerun failed tests. It never selects an older successful run over a newer red
+run. Skipped required jobs and duplicate job identities are invalid evidence.
+
+This first operator supports the existing **main** release preparation policy.
+It pins the source SHA and stops if main advances; it does not silently rebase,
+change the release scope, create a frozen-branch authorization or widen protected
+environments. The release/0.16.0 exception remains version-specific in the
+canonical policy until a separately reviewed generic frozen-release route is
+available. A new version does not inherit that exception automatically.
+
+Preparation completion is not merge readiness or publication approval. Required
+source/candidate CI, review, actual packaged dogfood, signing/notarization,
+protected publication approval and final channel verification still apply. The
+operator never merges, queues, tags, approves deployments, changes protection or
+publishes. Continue through the canonical pipeline after normal bump-PR merge.

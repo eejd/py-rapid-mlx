@@ -47,6 +47,8 @@ from pydantic import ValidationError as PydanticValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
+from ..model_downloads import ModelDownloadsDisabledError
+
 logger = logging.getLogger("rapid_mlx.exception_handlers")
 
 
@@ -730,7 +732,9 @@ def _is_anthropic_path(request: Request | None) -> bool:
     return False
 
 
-def _wrap_for_anthropic(response: JSONResponse) -> JSONResponse:
+def _wrap_for_anthropic(
+    response: JSONResponse, exc: StarletteHTTPException | None = None
+) -> JSONResponse:
     """Rewrap an OpenAI-shaped error envelope to the Anthropic shape.
 
     Input:  ``{"error":{...}}``
@@ -764,6 +768,22 @@ def _wrap_for_anthropic(response: JSONResponse) -> JSONResponse:
     if "error" not in body:
         return response
     wrapped = {"type": "error", "error": body["error"]}
+    # Claude Code recognizes Anthropic's prompt-too-long wording and can
+    # compact the conversation. The shared admission guard retains the
+    # OpenAI error code for the other routes; only this wire format changes.
+    prompt_tokens = getattr(exc, "prompt_tokens", None)
+    limit = getattr(exc, "limit", None)
+    if (
+        body["error"].get("code") == "context_length_exceeded"
+        and isinstance(prompt_tokens, int)
+        and isinstance(limit, int)
+    ):
+        wrapped["error"] = {
+            "type": "invalid_request_error",
+            "message": (
+                f"prompt is too long: {prompt_tokens} tokens > {limit} maximum"
+            ),
+        }
     # Preserve any non-error sibling keys (none expected today but
     # forward-compatible) by surfacing them at the top level.
     for k, v in body.items():
@@ -1063,7 +1083,7 @@ def install_exception_handlers(app: FastAPI) -> None:
     ):
         response = _http_error_response(exc)
         if _is_anthropic_path(request):
-            response = _wrap_for_anthropic(response)
+            response = _wrap_for_anthropic(response, exc)
         return response
 
     @app.exception_handler(_json.JSONDecodeError)
@@ -1136,6 +1156,29 @@ def install_exception_handlers(app: FastAPI) -> None:
             response = _wrap_for_anthropic(response)
         return response
 
+    @app.exception_handler(ModelDownloadsDisabledError)
+    async def _model_downloads_disabled_handler(
+        request: Request,
+        exc: ModelDownloadsDisabledError,
+    ):
+        response = JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "message": (
+                        f"The model `{exc.model}` is not available on this "
+                        "server, and model downloads are disabled."
+                    ),
+                    "type": "not_found_error",
+                    "code": "model_not_found",
+                    "param": "model",
+                }
+            },
+        )
+        if _is_anthropic_path(request):
+            response = _wrap_for_anthropic(response)
+        return response
+
     @app.exception_handler(RecursionError)
     async def _recursion_handler(
         request: Request,
@@ -1180,7 +1223,7 @@ def install_exception_handlers(app: FastAPI) -> None:
             return _wrap_for_anthropic(response) if anthropic else response
         if isinstance(exc, StarletteHTTPException):
             response = _http_error_response(exc)
-            return _wrap_for_anthropic(response) if anthropic else response
+            return _wrap_for_anthropic(response, exc) if anthropic else response
         if isinstance(exc, RecursionError):
             # ``isinstance(RecursionError) before isinstance(Exception)``:
             # the dedicated handler above SHOULD catch this first, but

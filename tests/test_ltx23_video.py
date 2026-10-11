@@ -71,12 +71,15 @@ def test_video_runtime_preflight_fails_before_download(
     monkeypatch.setattr("importlib.util.find_spec", lambda _: None)
     monkeypatch.setattr("shutil.which", lambda _: None)
     monkeypatch.setattr(video_lane, "_FFMPEG_FALLBACK_PATHS", ())
+    # The base install bundles an ffmpeg binary; this case has none anywhere.
+    monkeypatch.setattr(video_lane, "_resolve_imageio_ffmpeg", lambda: None)
 
     with pytest.raises(OptionalRuntimeMissing) as exc:
         require_video_runtime_or_exit()
 
     error = exc.value.format_user_message()
-    assert "rapid-mlx[video]" in error
+    assert "the mlx-video runtime" in error
+    assert "rapid-mlx==" in error
     assert "brew install ffmpeg" in error
 
 
@@ -228,7 +231,10 @@ def test_video_extra_marks_every_dependency_python_311_or_newer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_video_multipart_gate_authenticates_before_reading_body() -> None:
+@pytest.mark.parametrize("path", ["/v1/videos", "/v1/videos/extend"])
+async def test_video_multipart_gate_authenticates_before_reading_body(
+    path: str,
+) -> None:
     from rapid_mlx.config import get_config
 
     cfg = get_config()
@@ -254,7 +260,7 @@ async def test_video_multipart_gate_authenticates_before_reading_body() -> None:
             {
                 "type": "http",
                 "method": "POST",
-                "path": "/v1/videos",
+                "path": path,
                 "headers": [],
             },
             receive,
@@ -268,7 +274,10 @@ async def test_video_multipart_gate_authenticates_before_reading_body() -> None:
 
 
 @pytest.mark.asyncio
-async def test_video_multipart_gate_rejects_content_length_before_read() -> None:
+@pytest.mark.parametrize("path", ["/v1/videos", "/v1/videos/extend"])
+async def test_video_multipart_gate_rejects_content_length_before_read(
+    path: str,
+) -> None:
     from rapid_mlx.config import get_config
 
     cfg = get_config()
@@ -294,7 +303,7 @@ async def test_video_multipart_gate_rejects_content_length_before_read() -> None
             {
                 "type": "http",
                 "method": "POST",
-                "path": "/v1/videos",
+                "path": path,
                 "headers": [
                     (
                         b"content-length",
@@ -987,6 +996,49 @@ async def test_failed_generation_removes_partial_artifacts(
         "Video generation failed; check the server logs for details."
     )
     assert not (video._jobs_root / created["id"]).exists()
+    await video.delete_video(created["id"])
+
+
+@pytest.mark.asyncio
+async def test_failed_status_is_published_only_after_artifact_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client that observes ``failed`` must never still see partial files.
+
+    Slow cleanup makes the old order (publish ``failed``, then rmtree)
+    deterministically observable instead of a timing-dependent flake.
+    """
+
+    class FailingEngine:
+        model_name = "notapalindrome/ltx23-mlx-av-q4"
+
+        def generate(self, *, output_path: Path, **kwargs) -> None:
+            output_path.write_bytes(b"partial")
+            raise RuntimeError("boom")
+
+    real_rmtree = video.shutil.rmtree
+
+    def slow_rmtree(path, *args, **kwargs):
+        threading.Event().wait(0.3)
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(video, "_video_engine", lambda: FailingEngine())
+    monkeypatch.setattr(video.shutil, "rmtree", slow_rmtree)
+    created = await video.create_video(
+        prompt="fail",
+        model="ltx-2.3-mlx-q4",
+        seconds="1",
+        size="512x512",
+        seed=4,
+        input_reference=None,
+    )
+    for _ in range(400):
+        current = await video.retrieve_video(created["id"])
+        if current["status"] == "failed":
+            assert not (video._jobs_root / created["id"]).exists()
+            break
+        await asyncio.sleep(0.005)
+    assert current["status"] == "failed"
     await video.delete_video(created["id"])
 
 

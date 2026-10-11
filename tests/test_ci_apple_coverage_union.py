@@ -43,6 +43,7 @@ def test_changed_lines_gate_unions_linux_and_apple_coverage() -> None:
     )
     assert "coverage-apple.data" in text
     assert "--cov=rapid_mlx" in apple["steps"][-2]["run"]
+    assert any("--cov=rapid_mlx" in step.get("run", "") for step in linux["steps"])
     assert set(gate["needs"]) == {
         "changes",
         "linux-coverage",
@@ -177,6 +178,12 @@ def test_qwen4_fused_gdn_coverage_runs_on_apple_silicon() -> None:
     assert "tests/test_qsa_stage1.py" in apple_run
 
 
+def test_embedding_gemma2_native_contracts_run_on_apple_silicon() -> None:
+    _, workflow = _workflow()
+    apple_run = workflow["jobs"]["test-apple-silicon"]["steps"][-2]["run"]
+    assert "tests/test_embedding_gemma2.py" in apple_run
+
+
 def test_qwen36_dual_lane_coverage_runs_on_apple_silicon() -> None:
     """Qwen3.6 routing and disconnect ownership must reach the MLX lane."""
     _, workflow = _workflow()
@@ -274,6 +281,37 @@ def test_coverage_data_is_commit_bound_and_fail_closed() -> None:
     assert str(jobs["linux-coverage"]["steps"][0]["uses"]).startswith(
         "actions/checkout@"
     )
+
+
+def test_codecov_is_advisory_while_local_coverage_gates_fail_closed() -> None:
+    _, workflow = _workflow()
+    jobs = workflow["jobs"]
+    linux_steps = jobs["linux-coverage"]["steps"]
+
+    combine = next(
+        step
+        for step in linux_steps
+        if step.get("name") == "Combine Linux shard coverage"
+    )
+    codecov = next(
+        step
+        for step in linux_steps
+        if step.get("name") == "Upload combined coverage to Codecov"
+    )
+    artifact = next(
+        step
+        for step in linux_steps
+        if step.get("name") == "Upload combined Linux coverage data"
+    )
+
+    assert codecov["continue-on-error"] is True
+    assert "continue-on-error" not in combine
+    assert "continue-on-error" not in artifact
+    assert artifact["with"]["if-no-files-found"] == "error"
+
+    changed_lines = jobs["changed-lines-coverage"]
+    assert "continue-on-error" not in changed_lines
+    assert "--fail-under 100" in changed_lines["steps"][-1]["run"]
 
 
 def test_coverage_paths_are_portable_across_runner_operating_systems() -> None:

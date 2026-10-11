@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ..api.anthropic_adapter import (
+    AnthropicContentError,
     AnthropicOutputConfigError,
     anthropic_to_openai,
     openai_to_anthropic,
@@ -34,6 +35,7 @@ from ..api.utils import (
     StreamingThinkRouter,
     StreamingToolCallFilter,
     clean_output_text,
+    decode_inline_tool_call_arguments,
     extract_multimodal_content,
     sanitize_output,
     sanitize_reasoning_for_stream,
@@ -53,6 +55,7 @@ from ..service.helpers import (
     _TOOL_USE_REQUIRED_SUFFIX,
     SSE_RESPONSE_HEADERS,
     _apply_reasoning_cutoff_notice,
+    _build_response_metrics,
     _build_usage,
     _check_admission_or_503,
     _disconnect_guard,
@@ -74,6 +77,8 @@ from ..service.helpers import (
     _validate_tool_call_params,
     _wait_with_disconnect,
     build_extended_sampling_kwargs,
+    context_overflow_from_client_error,
+    context_window_exhausted,
     count_prompt_tokens,
     enforce_context_length,
     enforce_context_length_for_messages,
@@ -81,6 +86,7 @@ from ..service.helpers import (
     get_engine,
     maybe_auto_disable_thinking_for_casual_chat,
     maybe_auto_disable_thinking_for_tools,
+    prompt_compression_headers,
     reasoning_stop_scope_kwargs,
 )
 
@@ -619,6 +625,23 @@ def _estimate_anthropic_prompt_tokens(engine, messages, tools) -> int:
         return 0
 
 
+def _prepare_anthropic_engine_messages(openai_request, engine, **telemetry):
+    """Keep vision placeholders and bytes together, without duplicating images."""
+    messages, images, videos = extract_multimodal_content(
+        openai_request.messages,
+        preserve_native_format=engine.preserve_native_tool_format,
+        **telemetry,
+    )
+    if getattr(engine, "is_mllm", False) and images:
+        # The vision template needs the original image parts to emit image
+        # placeholders. The engine extracts their bytes itself, as on /chat.
+        messages = [m.model_dump(exclude_none=True) for m in openai_request.messages]
+        if engine.preserve_native_tool_format:
+            decode_inline_tool_call_arguments(messages)
+        images, videos = [], []
+    return messages, images, videos
+
+
 @router.post(
     "/v1/messages",
     dependencies=[
@@ -702,13 +725,8 @@ async def create_anthropic_message(
             )
 
         # Reject image/document content blocks when the loaded model has
-        # no multimodal head (M-16). The Anthropic adapter
-        # (``anthropic_adapter._convert_message_to_openai``) only carries
-        # ``text``/``tool_use``/``tool_result`` blocks forward — every other
-        # block type (``image``, ``document``) is silently dropped. Without
-        # this guard the caller sees HTTP 200 with a hallucinated answer
-        # about the missing media (mirrors the OpenAI-route R9P1 fix in
-        # ``routes/chat.py``: text-only models never silently drop media).
+        # no multimodal head (M-16). Keep the lane-specific guidance;
+        # converted nested tool-result images are checked below as well.
         cfg_pre = get_config()
         # ``getattr`` default-True: tests with minimal engine stubs that
         # never carry image blocks shouldn't trigger this guard, and the
@@ -786,8 +804,22 @@ async def create_anthropic_message(
                 caller_agent=_caller_agent,
                 caller_client=_caller_client,
             )
-        except AnthropicOutputConfigError as e:
+        except (AnthropicOutputConfigError, AnthropicContentError) as e:
             raise HTTPException(status_code=400, detail=str(e))
+        from rapid_mlx.api.utils import validate_content_blocks_for_capabilities
+
+        try:
+            validate_content_blocks_for_capabilities(
+                openai_request.messages,
+                model_name=cfg_pre.model_name or anthropic_request.model,
+                allow_image=getattr(engine, "is_mllm", True),
+                allow_video=False,
+                telemetry_model=_served_telemetry_id,
+                caller_agent=_caller_agent,
+                caller_client=_caller_client,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         _apply_anthropic_thinking_defaults(openai_request)
 
         # D-ANTHRO-TOOL-USAGE F3 (codex r3 BLOCKING #1+#2): suffix
@@ -807,9 +839,9 @@ async def create_anthropic_message(
         # threading) + #2 (let extract errors propagate so a malformed
         # request body 400s here instead of crossing the streaming
         # SSE boundary mid-response).
-        messages, images, videos = extract_multimodal_content(
-            openai_request.messages,
-            preserve_native_format=engine.preserve_native_tool_format,
+        messages, images, videos = _prepare_anthropic_engine_messages(
+            openai_request,
+            engine,
             telemetry_model=_served_telemetry_id,
             caller_agent=_caller_agent,
             caller_client=_caller_client,
@@ -1001,6 +1033,9 @@ async def create_anthropic_message(
                     e, abort_first=False
                 ),
             )
+            _context_error = context_overflow_from_client_error(e)
+            if _context_error is not None:
+                raise _context_error from e
             err_msg = str(e)
             if is_chat_template_error(e):
                 raise HTTPException(
@@ -1021,6 +1056,12 @@ async def create_anthropic_message(
 
         if is_cancellation_finish_reason(output.finish_reason):
             return Response(status_code=499)
+
+        _window_error = context_window_exhausted(
+            engine, output.prompt_tokens, output.completion_tokens, output.finish_reason
+        )
+        if _window_error is not None:
+            raise _window_error
 
         elapsed = time.perf_counter() - start_time
         tokens_per_sec = output.completion_tokens / elapsed if elapsed > 0 else 0
@@ -1276,6 +1317,9 @@ async def create_anthropic_message(
         response = Response(
             content=anthropic_response.model_dump_json(exclude_none=True),
             media_type="application/json",
+            # #4092: the Anthropic schema has no extension slot, so a
+            # PFlash-compressed prompt is announced by header only.
+            headers=prompt_compression_headers(_build_response_metrics(output)) or None,
         )
         _telemetry_inference.emit_completed_request(
             model=_served_telemetry_id or "<custom>",
@@ -1480,7 +1524,7 @@ async def count_anthropic_tokens(request: Request):
             caller_agent=_caller_agent,
             caller_client=_caller_client,
         )
-    except AnthropicOutputConfigError as e:
+    except (AnthropicOutputConfigError, AnthropicContentError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     _apply_anthropic_thinking_defaults(openai_request)
     # Codex r2 BLOCKING #2: ``preserve_native_tool_format`` is an
@@ -1742,9 +1786,8 @@ async def _stream_anthropic_messages(
         images = prepared_images if prepared_images is not None else []
         videos = prepared_videos if prepared_videos is not None else []
     else:
-        messages, images, videos = extract_multimodal_content(
-            openai_request.messages,
-            preserve_native_format=engine.preserve_native_tool_format,
+        messages, images, videos = _prepare_anthropic_engine_messages(
+            openai_request, engine
         )
 
         # D-ANTHRO-TOOL-USAGE F3: forced ``tool_choice`` levers — same
@@ -2925,6 +2968,23 @@ async def _stream_anthropic_messages(
                 # doesn't double-synthesize a second empty block.
                 streamed_any_content_block = True
                 block_index += 1
+
+    _window_error = context_window_exhausted(
+        engine, prompt_tokens, completion_tokens, stream_finish_reason
+    )
+    if _window_error is not None:
+        error_event = {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": (
+                    f"prompt is too long: {_window_error.prompt_tokens} tokens > "
+                    f"{_window_error.limit} maximum"
+                ),
+            },
+        }
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+        return
 
     # Check for tool calls — prefer engine-surfaced structured payload
     # (HarmonyStreamingRouter via openai-harmony's StreamableParser)

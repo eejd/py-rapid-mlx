@@ -7,6 +7,8 @@ extension SidecarStartupFailure {
     var message: String {
         let extraName = extra?.displayName ?? "Optional"
         switch reason {
+        case .runtimeExtraMissing where extra?.isBundled == true:
+            return "The bundled \(extraName) runtime is missing from this copy of Rapid-MLX Desktop. Reinstall Rapid-MLX Desktop to restore it."
         case .runtimeExtraMissing:
             return "The installed engine doesn't include \(extraName) support. Open Startup Log for installation details."
         case .runtimeDependencyMissing:
@@ -3151,7 +3153,8 @@ final class ServerManager {
                     // directory right now (external drive unplugged), so
                     // this transparently falls back to the default
                     // location — the model still loads, no crash.
-                    modelsFolderOverride: modelsFolderOverride
+                    modelsFolderOverride: modelsFolderOverride,
+                    modelDownloadEndpoint: ModelDownloadEndpointPreference.storedEndpoint()
                 ),
                 replaceEnvironment: true,
                 startMonitorImmediately: false
@@ -5185,7 +5188,8 @@ final class ServerManager {
         physicalRAMBytes: UInt64 = 0,
         availableRAMBytes: UInt64 = 0,
         supervisorPID: Int32 = -1,
-        modelsFolderOverride: String? = nil
+        modelsFolderOverride: String? = nil,
+        modelDownloadEndpoint: String? = nil
     ) -> [String: String] {
         // Layer 1: allowlisted ambient. The cache-root keys
         // (``HF_HOME`` / ``HF_HUB_CACHE`` / ``XDG_CACHE_HOME``)
@@ -5200,6 +5204,8 @@ final class ServerManager {
             }
             env[key] = value
         }
+
+        ModelDownloadEndpointPreference.apply(modelDownloadEndpoint, env: &env)
 
         // Layer 1b: append user-toolchain directories to PATH.
         //

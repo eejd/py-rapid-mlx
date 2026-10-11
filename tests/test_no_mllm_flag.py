@@ -213,6 +213,13 @@ NON_ROUTING_FLAGS_ALLOWLIST: frozenset[str] = frozenset(
         # tier, or engine route (no auto-detection). Sibling of the
         # RAPID_MLX_NO_BANNER allowlist entry in test_no_out_of_band_routing.py.
         "--no-banner",
+        # Disk-write opt-outs: keep optional caches off disk and skip the
+        # release check. Neither selects a model, parser, tier, or route.
+        "--disable-disk-caches",
+        "--disable-version-check",
+        # Refuses to fetch a model that is not on disk; selects no model,
+        # parser, tier, or route.
+        "--disable-model-downloads",
         # ``rapid-mlx feedback --no-open`` suppresses the browser launch
         # so the command only prints the community invite URL. Pure UX
         # knob on a read-only subcommand: it selects no model, parser,
@@ -249,6 +256,25 @@ def _pkg_root() -> pathlib.Path:
     return pathlib.Path(
         str(importlib.resources.files("rapid_mlx").joinpath(""))
     ).resolve()
+
+
+# Entrypoints whose argparse surface lives in a companion module. The
+# routing-flag gates check the union, so the escape-hatch requirement still
+# holds for the entrypoint as a whole.
+ENTRYPOINT_ARGPARSE_FILES: dict[str, tuple[str, ...]] = {
+    "cli.py": ("cli.py", "cli_parser.py"),
+}
+
+
+def _entrypoint_argparse_sources(pkg_root: pathlib.Path, rel: str) -> tuple[str, ...]:
+    files = ENTRYPOINT_ARGPARSE_FILES.get(rel, (rel,))
+    return tuple((pkg_root / f).read_text() for f in files)
+
+
+def _entrypoint_registers_flag(sources: tuple[str, ...], flag: str) -> bool:
+    # Parse each file on its own: concatenated modules are not valid Python
+    # once either one has a ``from __future__`` import.
+    return any(_flag_in_add_argument_calls(src, flag) for src in sources)
 
 
 def test_force_text_overrides_auto_detection(monkeypatch):
@@ -1762,9 +1788,9 @@ def test_auto_routing_flags_have_force_on_and_force_off_pair():
     # A future pair could add a new entrypoint to `required_files`; the
     # prior dict-lookup would raise a bare KeyError, this loop now
     # raises a descriptive failure (or silently includes the new file).
-    sources_by_file: dict[str, str] = {}
+    sources_by_file: dict[str, tuple[str, ...]] = {}
 
-    def _read_required(fname: str) -> str:
+    def _read_required(fname: str) -> tuple[str, ...]:
         if fname not in sources_by_file:
             path = pkg_root / fname
             assert path.exists(), (
@@ -1772,21 +1798,21 @@ def test_auto_routing_flags_have_force_on_and_force_off_pair():
                 f"file does not exist at {path}. Fix the registry or "
                 "restore the entrypoint."
             )
-            sources_by_file[fname] = path.read_text()
+            sources_by_file[fname] = _entrypoint_argparse_sources(pkg_root, fname)
         return sources_by_file[fname]
 
     missing: list[str] = []
     for pair in AUTO_ROUTING_FLAG_PAIRS:
         for fname in pair.required_files:
             src = _read_required(fname)
-            if not _flag_in_add_argument_calls(src, pair.force_on):
+            if not _entrypoint_registers_flag(src, pair.force_on):
                 missing.append(
                     f"force-on flag {pair.force_on} not registered via "
                     f"add_argument() in {fname} ({pair.desc}) — every "
                     "entrypoint that takes a model name needs the same "
                     "routing escape hatches (SOP §10)."
                 )
-            if not _flag_in_add_argument_calls(src, pair.force_off):
+            if not _entrypoint_registers_flag(src, pair.force_off):
                 missing.append(
                     f"force-off flag {pair.force_off} not registered via "
                     f"add_argument() in {fname} ({pair.desc}) — every binary "
@@ -1883,9 +1909,9 @@ def test_load_model_callers_register_every_routing_flag():
     for rel in sorted(load_model_callers):
         if rel in LOAD_MODEL_ENTRYPOINT_EXEMPTIONS:
             continue
-        source = (pkg_root / rel).read_text()
+        source = _entrypoint_argparse_sources(pkg_root, rel)
         for pair in AUTO_ROUTING_FLAG_PAIRS:
-            if not _flag_in_add_argument_calls(source, pair.force_on):
+            if not _entrypoint_registers_flag(source, pair.force_on):
                 missing.append(
                     f"{rel} calls load_model() but does NOT register the "
                     f"`{pair.force_on}` flag (force-on of {pair.desc}). "
@@ -1894,7 +1920,7 @@ def test_load_model_callers_register_every_routing_flag():
                     "or add a one-line exemption in "
                     "LOAD_MODEL_ENTRYPOINT_EXEMPTIONS with a reason."
                 )
-            if not _flag_in_add_argument_calls(source, pair.force_off):
+            if not _entrypoint_registers_flag(source, pair.force_off):
                 missing.append(
                     f"{rel} calls load_model() but does NOT register the "
                     f"`{pair.force_off}` flag (force-off of {pair.desc}). "
@@ -2560,9 +2586,7 @@ def test_server_main_no_mllm_skips_routing_config_fail_fast(monkeypatch):
     monkeypatch.setattr(server, "load_model", _stub_load_model)
     monkeypatch.setattr(_cli, "_port_preflight_or_die", lambda *_a, **_kw: None)
 
-    import uvicorn
-
-    monkeypatch.setattr(uvicorn, "run", lambda *_a, **_kw: None)
+    monkeypatch.setattr("rapid_mlx._uvicorn._run_server", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "rapid_mlx._version_check.prompt_upgrade_if_available", lambda: False
     )

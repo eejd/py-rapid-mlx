@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from ..api.errors import GuidedGenerationCancelledError
+from ..api.errors import GuidedGenerationCancelledError, GuidedTokenLimitError
 from ..api.tool_calling import convert_tools_for_template
 from ..api.utils import (
     clean_output_text,
@@ -36,6 +36,7 @@ from ..api.utils import (
 )
 from ..output_router import Channel, OutputRouter
 from ..prompt_host_cache import PromptHostCache
+from ..prompt_token_reuse import added_token_markers, encode_sharing_head
 from ..utils.chat_template import apply_chat_template as shared_apply_chat_template
 from .base import BaseEngine, GenerationOutput
 
@@ -162,6 +163,8 @@ _LANE_PARITY_SAMPLING_KEYS = (
     "presence_penalty",
     "frequency_penalty",
     "reasoning_stop_scope",
+    # Fixed-length benchmarks also use the shared-weight native text lane.
+    "ignore_eos",
 )
 _TEXT_ONLY_SAMPLING_KEYS = ("top_k", "min_p", "seed")
 _LANE_PARITY_PROCESSOR_KEYS = (
@@ -941,7 +944,7 @@ def _qwen36_text_arrays_cache_type() -> type:
 
 
 class Qwen36NativeCacheTextWrapper(MLLMModelWrapper):
-    """Expose MLX-LM caches for qualified Qwen3.6 text-only scheduling.
+    """Expose MLX-LM caches for qualified Qwen hybrid text-only scheduling.
 
     The vision runtime's language module and the text runtime share the same
     cache semantics, but their cache container classes take materially
@@ -1029,10 +1032,50 @@ def _should_start_qwen36_native_text_cache(
     return bool(
         arrays_cache_compat
         and not no_hybrid
-        and config_model_type == "qwen3_5_moe"
         and spec_decode == "none"
-        and _supports_qwen36_native_text_cache(language_model)
+        and (
+            config_model_type == "qwen3_5_moe"
+            and _supports_qwen36_native_text_cache(language_model)
+            or config_model_type == "qwen3_5"
+            and _supports_qwen38_dense_native_text_cache(language_model)
+        )
     )
+
+
+def _supports_qwen38_dense_native_text_cache(language_model: Any) -> bool:
+    """Qualify the dense 27B geometry without enabling unknown hybrid models.
+
+    Reuse the shared-weight/cache-namespace bridge already qualified for the
+    MoE backbone. Media retains the serialized vision scheduler and its cache
+    snapshots; only text uses native batching. Marketing versions share this
+    architecture, so eligibility depends on loaded geometry, not repo names.
+    """
+    expected = {
+        "model_type": "qwen3_5_text",
+        "hidden_size": 5120,
+        "intermediate_size": 17408,
+        "num_hidden_layers": 64,
+        "num_attention_heads": 24,
+        "num_key_value_heads": 4,
+        "head_dim": 256,
+        "full_attention_interval": 4,
+        "linear_conv_kernel_dim": 4,
+        "linear_num_value_heads": 48,
+        "linear_num_key_heads": 16,
+        "linear_key_head_dim": 128,
+        "linear_value_head_dim": 128,
+    }
+    try:
+        args = language_model.args
+        if any(getattr(args, key, None) != value for key, value in expected.items()):
+            return False
+        layers = list(language_model.layers)
+        return len(layers) == 64 and all(
+            layer.is_linear is ((index + 1) % 4 != 0)
+            for index, layer in enumerate(layers)
+        )
+    except (AttributeError, TypeError):
+        return False
 
 
 class BatchedEngine(BaseEngine):
@@ -1168,6 +1211,7 @@ class BatchedEngine(BaseEngine):
         self._engine = None  # AsyncEngineCore for LLM
         self._mllm_scheduler = None  # MLLMScheduler for MLLM
         self._mllm_native_text_engine = False
+        self._mllm_dense_singleton_fastpath = False
         self._model_load_executor = None  # mlx-step worker (#170)
         self._mllm_instance = None  # MLXMultimodalLM instance
         # The MLLM lane has no text EngineCore/model_config to query. Set this
@@ -1894,7 +1938,8 @@ class BatchedEngine(BaseEngine):
         if arrays_cache_compat:
             logger.warning(
                 "Model '%s' uses ArraysCache; enabling serialized hybrid MLLM "
-                "compatibility (one active request, additional requests queued).",
+                "compatibility (one active media request; qualified text requests "
+                "may use the shared-weight text scheduler).",
                 self._model_name,
             )
         # ``prefill_step_size`` for MLLM is the per-request budget that
@@ -1979,6 +2024,7 @@ class BatchedEngine(BaseEngine):
             else getattr(config, "model_type", None)
         )
         spec_decode = getattr(self._scheduler_config, "spec_decode", "none")
+        self._mllm_dense_singleton_fastpath = False
         if _should_start_qwen36_native_text_cache(
             language_model,
             config_model_type=config_model_type,
@@ -1987,6 +2033,9 @@ class BatchedEngine(BaseEngine):
             no_hybrid=getattr(self, "_no_hybrid", False),
         ):
             await self._start_qwen36_native_text_engine(language_model)
+            self._mllm_dense_singleton_fastpath = bool(
+                config_model_type == "qwen3_5" and self._mllm_native_text_engine
+            )
 
         logger.info(
             f"MLLM Scheduler started with continuous batching: "
@@ -2000,7 +2049,7 @@ class BatchedEngine(BaseEngine):
         )
 
     async def _start_qwen36_native_text_engine(self, language_model: Any) -> None:
-        """Share qualified Qwen3.6 weights with a native-cache text scheduler.
+        """Share qualified Qwen hybrid weights with a native-cache text scheduler.
 
         This is an optional optimization. Any dependency or scheduler drift
         leaves the already-started MLLM scheduler authoritative for every
@@ -2043,7 +2092,7 @@ class BatchedEngine(BaseEngine):
             await candidate.engine.start(executor=self._model_load_executor)
         except Exception:
             logger.warning(
-                "Qwen3.6 native-cache text lane unavailable; "
+                "Qwen hybrid native-cache text lane unavailable; "
                 "keeping all requests on the MLLM scheduler",
                 exc_info=True,
             )
@@ -2069,7 +2118,7 @@ class BatchedEngine(BaseEngine):
         self._mllm_native_text_engine = True
         self._engine_started = True
         logger.info(
-            "Qwen3.6 text-only requests will use native caches with "
+            "Qwen hybrid text-only requests will use native caches with "
             "the already-loaded MLLM language weights"
         )
 
@@ -2510,6 +2559,7 @@ class BatchedEngine(BaseEngine):
         self._loaded = False
         self._engine_started = False
         self._mllm_native_text_engine = False
+        self._mllm_dense_singleton_fastpath = False
         logger.info("BatchedEngine stopped")
 
     def _prepare_harmony_no_thinking_prompt(
@@ -2597,6 +2647,23 @@ class BatchedEngine(BaseEngine):
         if as_token_ids:
             return [*prompt_ids, *suffix_ids], suffix_ids
         return prompt + "".join(_HARMONY_NO_THINKING_SUFFIX_TOKENS), suffix_ids
+
+    def encode_prompt_text(self, prompt: str) -> list[int] | None:
+        """Tokenize a rendered prompt exactly as the text scheduler will.
+
+        Delegates to the scheduler's host-cached encoder so every caller that
+        tokenizes the same rendered prompt for one request (context-length
+        guard, prefix-boundary probe, admission) shares a single encode.
+        Returns ``None`` when there is no text scheduler; callers then keep
+        their own tokenizer call unchanged.
+        """
+        scheduler = getattr(
+            getattr(getattr(self, "_engine", None), "engine", None), "scheduler", None
+        )
+        encode = getattr(scheduler, "_encode_prompt_string", None)
+        if callable(encode):
+            return list(encode(prompt))
+        return None
 
     def build_prompt(
         self,
@@ -2796,6 +2863,34 @@ class BatchedEngine(BaseEngine):
             and (getattr(self, "_engine", None) is None or images or videos)
         )
 
+    def _select_mllm_request_path(
+        self,
+        images: list[str] | None,
+        videos: list[str] | None,
+        admission_token: str,
+    ) -> bool:
+        """Pin dense singleton routing using existing request ownership.
+
+        A sole admitted dense text request retains the vision scheduler's
+        singleton fast path. Concurrent text uses the shared native-cache
+        scheduler. The admission token covers preparation until scheduler
+        insertion; scheduler IDs cover committed and deferred-abort work.
+        No request cache moves between lanes.
+        """
+        if self._uses_mllm_request_path(images, videos):
+            return True
+        if not getattr(self, "_mllm_dense_singleton_fastpath", False):
+            return False
+        # Same lock order as pause_generation(). Both schedulers publish
+        # ownership before on_request_committed consumes the admission token.
+        with self._admission_lock:
+            tokens = self._admission_tokens
+            return bool(
+                admission_token in tokens
+                and tokens == {admission_token}
+                and not self._lifecycle_request_ids()
+            )
+
     async def generate(
         self,
         prompt: str | list[int],
@@ -2832,7 +2927,7 @@ class BatchedEngine(BaseEngine):
                 admission_token, clear_context=owns_admission
             )
 
-        if self._uses_mllm_request_path(images, videos):
+        if self._select_mllm_request_path(images, videos, admission_token):
             mllm_scheduler = self._mllm_scheduler
             assert mllm_scheduler is not None
             # Media requests always use the MLLM scheduler. Qualified hybrid
@@ -2861,7 +2956,6 @@ class BatchedEngine(BaseEngine):
                 for key in (
                     *_LANE_PARITY_SAMPLING_KEYS,
                     *_TEXT_ONLY_SAMPLING_KEYS,
-                    "ignore_eos",
                 )
                 if key in kwargs
             }
@@ -3033,6 +3127,8 @@ class BatchedEngine(BaseEngine):
             # ``finish_reason="stop"``).
             matched_stop=getattr(output, "matched_stop", None),
             spec_decode_metrics=getattr(output, "spec_decode_metrics", None),
+            prompt_compression=getattr(output, "prompt_compression", None),
+            timing_metrics=getattr(output, "timing_metrics", None),
         )
 
     async def stream_generate(
@@ -3105,7 +3201,7 @@ class BatchedEngine(BaseEngine):
             if owns_admission and not request_committed:
                 self.release_admission_reservation()
 
-        if self._uses_mllm_request_path(images, videos):
+        if self._select_mllm_request_path(images, videos, admission_token):
             mllm_scheduler = self._mllm_scheduler
             assert mllm_scheduler is not None
             # Media always stays on MLLMScheduler; only qualified text-only
@@ -3117,7 +3213,6 @@ class BatchedEngine(BaseEngine):
                 for key in (
                     *_LANE_PARITY_SAMPLING_KEYS,
                     *_TEXT_ONLY_SAMPLING_KEYS,
-                    "ignore_eos",
                 )
                 if key in kwargs
             }
@@ -3187,6 +3282,7 @@ class BatchedEngine(BaseEngine):
                     # stop string for the Anthropic adapter.
                     matched_stop=getattr(output, "matched_stop", None),
                     spec_decode_metrics=getattr(output, "spec_decode_metrics", None),
+                    timing_metrics=getattr(output, "timing_metrics", None),
                 )
             return
 
@@ -3291,6 +3387,8 @@ class BatchedEngine(BaseEngine):
                     # stop string for the Anthropic adapter.
                     matched_stop=getattr(output, "matched_stop", None),
                     spec_decode_metrics=getattr(output, "spec_decode_metrics", None),
+                    prompt_compression=getattr(output, "prompt_compression", None),
+                    timing_metrics=getattr(output, "timing_metrics", None),
                 )
         finally:
             # Best-effort defensive abort. Codex r2 P1 #2 concern: this
@@ -3583,11 +3681,39 @@ class BatchedEngine(BaseEngine):
             if hasattr(tokenizer, "tokenizer"):
                 tokenizer = tokenizer.tokenizer
 
-            real_tokens = (
-                list(real_prompt)
-                if isinstance(real_prompt, list)
-                else tokenizer.encode(real_prompt)
-            )
+            # The scheduler tokenizes this exact string next; going through
+            # its host-cached encoder lets that call (and the route's
+            # context-length count before it) reuse one encode.
+            real_text: str | None
+            if isinstance(real_prompt, str):
+                real_text = real_prompt
+                encoded = self.encode_prompt_text(real_prompt)
+                real_tokens = (
+                    encoded if encoded is not None else tokenizer.encode(real_prompt)
+                )
+            else:
+                real_text = None
+                real_tokens = list(real_prompt)
+            markers = () if real_text is None else added_token_markers(tokenizer)
+
+            def encode_variant(text: str) -> list[int]:
+                # Variants share all but their last message or two with the
+                # real prompt; re-encode only the differing tail when that
+                # is provably equivalent, else encode in full as before.
+                reused = (
+                    None
+                    if real_text is None
+                    else encode_sharing_head(
+                        real_text,
+                        real_tokens,
+                        text,
+                        encode_tail=lambda tail: tokenizer.encode(
+                            tail, add_special_tokens=False
+                        ),
+                        markers=markers,
+                    )
+                )
+                return reused if reused is not None else tokenizer.encode(text)
 
             if transient_message_start is not None:
                 future_prompt = self._apply_chat_template(
@@ -3603,7 +3729,7 @@ class BatchedEngine(BaseEngine):
                     enable_thinking=enable_thinking,
                     chat_template_kwargs=chat_template_kwargs,
                 )
-                future_tokens = tokenizer.encode(future_prompt)
+                future_tokens = encode_variant(future_prompt)
                 transient_lcp = 0
                 for real_token, future_token in zip(real_tokens, future_tokens):
                     if real_token != future_token:
@@ -3632,8 +3758,8 @@ class BatchedEngine(BaseEngine):
                 chat_template_kwargs=chat_template_kwargs,
             )
 
-            stable_tokens = tokenizer.encode(stable_prompt)
-            next_turn_tokens = tokenizer.encode(next_turn_prompt)
+            stable_tokens = encode_variant(stable_prompt)
+            next_turn_tokens = encode_variant(next_turn_prompt)
             stable_lcp = 0
             for real_token, stable_token in zip(real_tokens, stable_tokens):
                 if real_token != stable_token:
@@ -3668,7 +3794,7 @@ class BatchedEngine(BaseEngine):
                 chat_template_kwargs=chat_template_kwargs,
             )
 
-            dummy_tokens = tokenizer.encode(dummy_prompt)
+            dummy_tokens = encode_variant(dummy_prompt)
 
             # Find LCP — the point where the two diverge is the boundary
             lcp = 0
@@ -3957,6 +4083,8 @@ class BatchedEngine(BaseEngine):
             # for /v1/messages stop_sequence surfacing.
             matched_stop=source.matched_stop,
             spec_decode_metrics=source.spec_decode_metrics,
+            prompt_compression=source.prompt_compression,
+            timing_metrics=source.timing_metrics if finished else None,
         )
 
     def _routed_finish_sentinel(self, source: GenerationOutput) -> GenerationOutput:
@@ -3976,6 +4104,8 @@ class BatchedEngine(BaseEngine):
             # streams (harmony / gemma4).
             matched_stop=source.matched_stop,
             spec_decode_metrics=source.spec_decode_metrics,
+            prompt_compression=source.prompt_compression,
+            timing_metrics=source.timing_metrics,
         )
 
     def _finalize_output_router(
@@ -4111,6 +4241,7 @@ class BatchedEngine(BaseEngine):
                         routed_outputs[-1],
                         finished=True,
                         finish_reason=output.finish_reason,
+                        timing_metrics=output.timing_metrics,
                     )
                 else:
                     routed_outputs.append(finalized)
@@ -4515,7 +4646,9 @@ class BatchedEngine(BaseEngine):
         lying empty manifest. (The bare ``save_cache_to_disk`` keeps its
         no-op-False for lifespan persistence, where "no engine, nothing to
         persist" is legitimate — only the export/import outcome path must fail
-        loudly.)
+        loudly.) A loaded vision backend instead raises
+        ``CachePersistenceUnsupportedError``: its in-memory cache has no
+        persistence implementation, even when a text lane is also loaded.
         """
         if self._engine and not self._is_mllm:
             return self._engine.save_cache_with_outcome(
@@ -4523,6 +4656,12 @@ class BatchedEngine(BaseEngine):
             )
         from ..cache.protocol import EngineNotReadyError
 
+        if self._is_mllm and self._loaded:
+            from ..cache.protocol import CachePersistenceUnsupportedError
+
+            raise CachePersistenceUnsupportedError(
+                "prompt-cache export not supported for vision models"
+            )
         raise EngineNotReadyError("cannot export cache: inner engine is not loaded")
 
     def load_cache_with_result(
@@ -4544,6 +4683,12 @@ class BatchedEngine(BaseEngine):
             )
         from ..cache.protocol import EngineNotReadyError
 
+        if self._is_mllm and self._loaded:
+            from ..cache.protocol import CachePersistenceUnsupportedError
+
+            raise CachePersistenceUnsupportedError(
+                "prompt-cache import not supported for vision models"
+            )
         raise EngineNotReadyError("cannot import cache: inner engine is not loaded")
 
     # ------------------------------------------------------------------
@@ -4904,13 +5049,11 @@ class BatchedEngine(BaseEngine):
                 temperature=temperature,
                 should_abort=should_abort,
             )
-        except GuidedGenerationCancelledError:
+        except (GuidedGenerationCancelledError, GuidedTokenLimitError):
             raise
         except Exception as e:
-            # ``generate_json`` already degrades every failure — compile-reject
-            # (structural validity is settled at the route boundary) and
-            # transient guided failure alike — to ``None``. This stays only as a
-            # last-resort guard for a wiring failure in the setup above.
+            # ``generate_json`` degrades operational decode failures to
+            # ``None``. This remains a guard for generator setup failures.
             logger.error(f"Guided generation error: {e}")
             return None
 

@@ -51,6 +51,146 @@ The converter uses `torch.load(..., weights_only=True)` and writes
 files. Use the BF16 reference encoder for calibrated output. Quantized Qwen3
 backbones have not been qualified for ranking or probability parity.
 
+## Decider
+
+Decider is a compact typed-decision model on a Qwen3.5 2B text backbone. It
+reads the state and one question, then scores the answer labels at the last
+position with the checkpoint's own per-type calibration. It does not generate
+text. Rapid runs it on native MLX with the text backbone it already ships, so
+no extra install is needed.
+
+```bash
+rapid-mlx system-one decider-2b --port 8700
+# A converted or fine-tuned checkpoint directory:
+rapid-mlx system-one /path/to/decider --backend decider --port 8700
+```
+
+The first start downloads the pinned `nativ-community/decider-2b` weights
+(Apache-2.0, 3.8 GB, bf16) into the normal Hugging Face cache. A local
+directory must be a prepared checkpoint: its root `config.json` says
+`model_type: "decider2"` and carries the published calibration under
+`decision_config`. Decider is text-only; requests with `images` or `videos`
+are rejected.
+
+On one M3 Ultra Mac the server was ready 5 seconds after launch with the
+weights cached, and held about 4.3 GB of memory. Four questions over the same
+state took 0.2 s at 200 input tokens, 1.1 s at 1,300, 4.9 s at 5,200 and 22 s
+at 21,000. Other Mac sizes are unmeasured.
+
+## OpenJev
+
+OpenJev is a 27B Qwen3.8 chat model fine-tuned for typed decisions. For each
+question it reads which option letter the model would answer first, then
+applies the release's calibration. It does not generate text. Rapid runs the
+published MLX conversion on native MLX with no extra install.
+
+> **License.** The OpenJev weights are CC BY-NC 4.0: non-commercial use only.
+> Rapid does not redistribute them; the first start downloads them from
+> Hugging Face under that license. Commercial use needs a licence from the
+> OpenJev authors. The server prints this notice at startup and reports
+> `"license": "CC-BY-NC-4.0"` at `/v1/models`.
+
+```bash
+rapid-mlx system-one openjev --port 8700
+# Another conversion of the same model, such as a 4-bit build:
+rapid-mlx system-one /path/to/openjev-mlx --backend openjev --port 8700
+```
+
+The first start downloads the pinned `openjev/openjev-MLX` weights (27 GB,
+8-bit). That conversion carries the language model only, so OpenJev here is
+text-only: requests with `images` or `videos` receive HTTP 422. So does a
+`state.screenshot` or `state.image` that the release would read as an image:
+a `data:image` URL, or a string longer than 2,000 characters (raw base64).
+Any other value in those fields is state text, as in the release.
+
+On one M3 Ultra Mac the server was ready 5 seconds after launch with the
+weights cached, and held about 27 GB of memory, 33 GB at peak. Four questions
+over the same state took 1.3 s for a one-line state, 1.8 s at 240 state
+tokens, 4.8 s at 1,200 and 17 s at 5,000. Other Mac sizes are unmeasured. On
+six test cases with 14 questions, Rapid sent the model the same tokens as the
+OpenJev release helper and picked the same answer for every question;
+probabilities agreed within 0.004, apart from one undecided `score` level
+that differed by 0.02 (see the limits below).
+
+## Cloudflare Clef
+
+Clef is a joint-schema decision model. `clef-flash` uses a 9B Qwen3.5
+backbone; `clef` uses a 27B Qwen3.8 backbone. Both score every allowed option
+through Cloudflare's trained joint head in one forward pass. They do not
+generate chat text. Rapid uses the official Apache-2.0 head implementation
+with Torch on Apple Metal/MPS for this backend; Laya and CLM remain native MLX.
+
+```bash
+pip install 'rapid-mlx[clef]'
+rapid-mlx system-one clef-flash --port 8700
+# Larger model on a high-memory Mac:
+rapid-mlx system-one clef --port 8700
+```
+
+The first start downloads pinned Cloudflare weights into the normal Hugging
+Face cache. `--device cpu` is available for diagnosis. Cloudflare validated
+its reference runtime on an H200. Both checkpoints have been dogfooded on one
+M3 Ultra Mac with Metal; see the [local measurements](../engineering/performance/2026-10-03-clef-family-m3-ultra-dogfood.md).
+Other Mac sizes and sustained concurrent traffic remain unqualified. A Clef
+request accepts `state`, `questions`, and optional `images` or `videos`; the
+same `/v1/rank` endpoint ranks free-form candidates. `model` may be the short
+name or the corresponding `Cloudflare/...` identifier.
+
+For media, send `images` as PNG/JPEG/WebP base64 data URLs. Send `videos` as
+arrays of frame data URLs. A request has no frame-rate field: frames are
+read as 24 fps footage, the Clef release's default for bare frames. Remote
+URLs and filesystem paths are rejected;
+each image is capped at 4 MiB and 16 MP, with at most eight images or 32
+video frames per request, with at least two frames in each video. All images
+and frames together are capped at 16 MP of decoded pixels. The complete JSON
+request also has an 8 MiB body limit, including base64 overhead; the per-item
+and item-count maxima cannot all be reached in one request. Requests over the
+body limit receive HTTP 413. Example:
+
+```json
+{
+  "state": {"task": "Review the attached receipt"},
+  "images": ["data:image/png;base64,<base64 bytes>"],
+  "questions": {
+    "legible": {"type": "noul", "instructions": "Is the total legible?"}
+  }
+}
+```
+
+### Clef on native MLX
+
+`clef-flash-mlx` and `clef-mlx` serve the same two models without Torch. They
+load prepared 4-bit (MXFP4) MLX conversions of the Clef release and run the
+backbone, the vision tower and the joint head on MLX. Requests, media limits
+and the response shape are the same as above.
+
+```bash
+rapid-mlx system-one clef-flash-mlx --port 8700
+# Larger model:
+rapid-mlx system-one clef-mlx --port 8700
+# Another prepared conversion (8-bit, NVFP4) from a local directory:
+rapid-mlx system-one /path/to/clef-flash-MLX-8bit --backend clef-mlx
+```
+
+The first start downloads pinned weights from `nativ-community` into the
+normal Hugging Face cache: about 6 GB for `clef-flash-mlx` and 16 GB for
+`clef-mlx`. A local directory must be a prepared checkpoint whose
+`config.json` says `model_type: "clef"` and carries the release's
+`head_config`; the original `Cloudflare/...` repositories are not in that
+layout and stay on the Torch backend.
+
+Measured on one M3 Ultra, one request at a time: `clef-flash-mlx` is ready in
+about 10 seconds and holds about 6.4 GB; three questions over a 320-token
+prompt take about 0.3 seconds and one question over a 6,400-token prompt about
+5.5 seconds. `clef-mlx` holds about 15.3 GB. On the same five text requests
+(13 questions) the Torch backend for `clef-flash` took about four times as
+long per request and held about 20 GB. Both picked the same answer for every
+question. The weights are 4-bit here and bf16 there, so probabilities differ:
+one uncertain yes/no question scored 0.37 with Torch and 0.50 here, and every
+other probability was within 0.06. Use the Torch backend when you need the
+release's exact probabilities, or when a decision hinges on a threshold near
+an uncertain score. Other Mac sizes and concurrent traffic are unqualified.
+
 ## Request examples
 
 ```bash
@@ -99,6 +239,25 @@ nesting-depth protection.
 
 - One service process hosts one decision backend.
 - Laya uses checkpoint calibration and accepts `temperature=1` only.
+- Decider requires `temperature=1` too. It accepts `choice` questions with
+  2 to 255 options and `score` questions with 2 to 10 levels; other shapes
+  receive HTTP 422. Each `score` level is judged on its own and the fits are
+  normalized, as the checkpoint was calibrated. State longer than 32,768
+  tokens is truncated. Every question is one full forward pass over the state,
+  so latency grows with both state length and question count.
+- OpenJev requires `temperature=1` as well and is text-only. Each question
+  is its own readout; a list of more than 52 options is read in groups, plus
+  one readout over the group winners. The state shared by a request's
+  questions is read once. The model's output numbers are coarse, so reusing
+  that shared state can move an undecided probability by about 0.02 compared
+  with reading each question from scratch; the chosen answer was unchanged in
+  every case tested. One readout is limited to 32,768 tokens; a longer prompt
+  receives HTTP 422 rather than being truncated.
+- Clef also requires `temperature=1` for checkpoint calibration. Its input
+  encoder follows Cloudflare's 16,384-token default and may truncate a long
+  state to leave room for the schema.
+- Native MLX Clef has the same limits. Its probabilities come from 4-bit
+  weights and are close to, not equal to, the Torch backend's.
 - CLM input is capped at 2,048 tokens by default, matching the upstream
   vLLM `truncate_prompt_tokens` behavior: longer inputs are left-truncated so
   the final 2,048 tokens reach last-token pooling. `--max-tokens` can lower or

@@ -320,6 +320,21 @@ def test_pi_plan_fresh_file_is_owner_only(pi_dir):
     assert [m["id"] for m in written["providers"]["rapid-mlx"]["models"]] == [MODEL]
 
 
+def test_pi_setup_uses_environment_auth_and_can_switch_to_unkeyed(pi_dir, monkeypatch):
+    monkeypatch.setenv("RAPID_MLX_API_KEY", "private-test-key")
+    keyed = build_setup_plan("pi", BASE_URL, MODEL)
+
+    assert keyed.after["providers"]["rapid-mlx"]["apiKey"] == "$RAPID_MLX_API_KEY"
+    assert "private-test-key" not in keyed.diff()
+    apply_setup_plan(keyed)
+    assert "private-test-key" not in (pi_dir / "models.json").read_text()
+
+    monkeypatch.delenv("RAPID_MLX_API_KEY")
+    unkeyed = build_setup_plan("pi", BASE_URL, MODEL)
+
+    assert unkeyed.after["providers"]["rapid-mlx"]["apiKey"] == "not-needed"
+
+
 @pytest.mark.parametrize("content", ["{not json", "[1, 2]"])
 def test_pi_plan_refuses_an_unmergeable_models_json(pi_dir, content):
     pi_dir.mkdir()
@@ -448,6 +463,17 @@ def _run_harness(profile_name, isolated_home, model_id=MODEL, *, setup_fails=Fal
     profile = get_profile(profile_name)
     assert profile is not None
     with ExitStack() as stack:
+        # Version detection invokes the host CLI, which can create state under
+        # the operator's XDG dirs before the harness installs its child env.
+        # This fixture tests config isolation, not installed-version discovery.
+        stack.enter_context(
+            patch(
+                "rapid_mlx.agents.opencode_version.installed_version", return_value=None
+            )
+        )
+        stack.enter_context(
+            patch("rapid_mlx.agents.testing.installed_version", return_value=None)
+        )
         stack.enter_context(
             patch(
                 "rapid_mlx.agents.testing.tempfile.TemporaryDirectory",

@@ -56,6 +56,12 @@ AX_DRIVER=""
 RESULT_WRITTEN=0
 RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_STARTED_EPOCH="$(date +%s)"
+JOURNEY=""
+JOURNEY_STARTED_MS=0
+JOURNEY_STARTED_AT=""
+LAUNCH_STARTED_MS=0
+LAUNCH_DURATION_MS=0
+LAUNCH_COUNT=0
 PERSONA_ENV=()
 
 usage() {
@@ -389,6 +395,65 @@ stop_app() {
     APP_PID=""
 }
 
+monotonic_ms() {
+    # macOS's system Python 3.9 gives monotonic() a per-process origin.
+    # clock_gettime uses the same system clock across these short processes.
+    python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1_000_000)'
+}
+
+begin_launch() {
+    LAUNCH_STARTED_MS="$(monotonic_ms)"
+    LAUNCH_COUNT=$((LAUNCH_COUNT + 1))
+}
+
+finish_launch() {
+    if [[ "$LAUNCH_STARTED_MS" -ne 0 ]]; then
+        local now
+        now="$(monotonic_ms)"
+        LAUNCH_DURATION_MS=$((LAUNCH_DURATION_MS + now - LAUNCH_STARTED_MS))
+        LAUNCH_STARTED_MS=0
+    fi
+}
+
+write_journey_result() {
+    [[ -n "$JOURNEY" ]] || return 0
+    local status="$1" exit_code="$2" now duration_ms
+    finish_launch
+    now="$(monotonic_ms)"
+    duration_ms=$((now - JOURNEY_STARTED_MS))
+    mkdir -p "$OUT_ROOT/journeys"
+    jq -n --arg flow "$JOURNEY" --arg status "$status" \
+        --arg started_at "$JOURNEY_STARTED_AT" --arg artifact_path "$OUT_ROOT" \
+        --argjson duration_ms "$duration_ms" --argjson launch_ms "$LAUNCH_DURATION_MS" \
+        --argjson launch_count "$LAUNCH_COUNT" --argjson exit_code "$exit_code" \
+        '{flow: $flow, status: $status, started_at: $started_at,
+          duration_seconds: ($duration_ms / 1000),
+          launch_duration_seconds: ($launch_ms / 1000),
+          execution_duration_seconds: (($duration_ms - $launch_ms) / 1000),
+          launch_count: $launch_count, exit_code: $exit_code,
+          artifact_path: $artifact_path}' > "$OUT_ROOT/journeys/$JOURNEY.json"
+}
+
+# Invoke as a plain command, never as an if/|| condition: Bash must keep
+# errexit enabled INSIDE the journey so failed assertions cannot become PASS.
+run_journey() {
+    JOURNEY="$1"
+    shift
+    JOURNEY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    JOURNEY_STARTED_MS="$(monotonic_ms)"
+    LAUNCH_STARTED_MS=0
+    LAUNCH_DURATION_MS=0
+    LAUNCH_COUNT=0
+    "$@"
+    # Publish success only after all owned fixtures have stopped. These
+    # helpers are idempotent (journeys and EXIT already share them).
+    cleanup_persona
+    cleanup_operator_server
+    cleanup_telemetry_sink
+    write_journey_result pass 0
+    JOURNEY=""
+}
+
 write_result() {
     local status="$1" exit_code="$2" finished_epoch duration_seconds
     finished_epoch="$(date +%s)"
@@ -405,11 +470,22 @@ write_result() {
 finish() {
     local status=$? cleanup_failed=0
     set +e
+    finish_launch || cleanup_failed=1
     cleanup_persona || cleanup_failed=1
     cleanup_operator_server || cleanup_failed=1
     cleanup_telemetry_sink || cleanup_failed=1
     if [[ "$status" -eq 0 && "$cleanup_failed" -ne 0 ]]; then
         status=1
+    fi
+    if [[ -n "$JOURNEY" ]]; then
+        # A journey that exits before returning to its wrapper did not finish,
+        # even if that premature exit selected zero.
+        [[ "$status" -ne 0 ]] || status=1
+        local journey_status=fail
+        if [[ "$status" -eq 130 || "$status" -eq 143 ]]; then
+            journey_status=cancelled
+        fi
+        write_journey_result "$journey_status" "$status" || status=1
     fi
     if [[ "$status" -ne 0 ]]; then
         mkdir -p "$OUT_ROOT" 2>/dev/null || true
@@ -811,10 +887,12 @@ require_tools() {
 }
 
 launch_persona_app() {
+    begin_launch
     local log_mode="$1"
     shift
     if [[ "$log_mode" == "append" ]]; then
         env RAPID_BIN="$ROOT/scripts/fake-rapid-mlx.sh" \
+            RAPIDMLX_NO_UPDATE_CHECK=1 \
             DOGFOOD_WORKING_SET_GB=0.1 \
             FAKE_EVENT_LOG="$OUT/fake-events.jsonl" \
             "${PERSONA_ENV[@]+"${PERSONA_ENV[@]}"}" \
@@ -823,6 +901,7 @@ launch_persona_app() {
             "$PERSONA/launch.sh" "$@" >> "$OUT/app.log" 2>&1 &
     else
         env RAPID_BIN="$ROOT/scripts/fake-rapid-mlx.sh" \
+            RAPIDMLX_NO_UPDATE_CHECK=1 \
             DOGFOOD_WORKING_SET_GB=0.1 \
             FAKE_EVENT_LOG="$OUT/fake-events.jsonl" \
             "${PERSONA_ENV[@]+"${PERSONA_ENV[@]}"}" \
@@ -934,6 +1013,7 @@ wait_for_window() {
                     continue
                 fi
             fi
+            finish_launch
             return
         fi
         sleep 0.25
@@ -1887,13 +1967,15 @@ start_model() {
     [[ -n "$selected_alias" ]] \
         || die "the readiness action exposed no selected model alias"
     press "$OUT/readiness-start.json" Readiness.Action "$OUT/start-model.json"
-    if [[ "$initial_action" == "Download" ]]; then
+    # The zh-Hans persona reads the same actions in Simplified Chinese; the
+    # labels are matched in both languages wherever a journey can run localized.
+    if [[ "$initial_action" == "Download" || "$initial_action" == "下载" ]]; then
         local download_ready=0
         for _ in {1..240}; do
             see_main "$OUT/readiness-after-download.json"
             if jq -e '.data.ui_elements[]?
                       | select(.identifier == "Readiness.Action"
-                               and .description == "Start"
+                               and (.description == "Start" or .description == "启动")
                                and .enabled == true)' \
                 "$OUT/readiness-after-download.json" >/dev/null; then
                 download_ready=1
@@ -2019,7 +2101,7 @@ wait_send_idle() {
         if [[ "$deferred_start_attempted" == 0 ]] \
            && jq -e '.data.ui_elements[]?
                       | select(.identifier == "Readiness.Action"
-                               and .description == "Start"
+                               and (.description == "Start" or .description == "启动")
                                and .enabled == true)' \
                 "$destination" >/dev/null; then
             "$AX_DRIVER" click-center "$APP_PID" Readiness.Action \
@@ -2050,7 +2132,8 @@ wait_send_idle() {
             continue
         fi
         if jq -e '.data.ui_elements[]? | select(.identifier == "ChatView.SendOrStopButton"
-                  and has("description") and .description == "Send message"
+                  and has("description")
+                  and (.description == "Send message" or .description == "发送消息")
                   and has("enabled") and (has("help") | not))' \
             "$destination" >/dev/null; then
             stable=$((stable + 1))
@@ -2874,10 +2957,12 @@ flow_model_crash_recovery() {
         || die "server did not respawn after the simulated crash"
     for _ in {1..80}; do
         see_main "$OUT/crash-ready.json"
-        if [[ "$(element_field "$OUT/crash-ready.json" ChatView.SendOrStopButton description)" == "Send message" ]]; then break; fi
+        crash_send_label="$(element_field "$OUT/crash-ready.json" ChatView.SendOrStopButton description)"
+        if [[ "$crash_send_label" == "Send message" || "$crash_send_label" == "发送消息" ]]; then break; fi
         sleep 0.25
     done
-    [[ "$(element_field "$OUT/crash-ready.json" ChatView.SendOrStopButton description)" == "Send message" ]] \
+    crash_send_label="$(element_field "$OUT/crash-ready.json" ChatView.SendOrStopButton description)"
+    [[ "$crash_send_label" == "Send message" || "$crash_send_label" == "发送消息" ]] \
         || die "model was not ready after crash recovery"
     jq -n --argjson starts "$(grep -c '"event": "server_started"' "$OUT/fake-events.jsonl")" \
         '{success: true, assertion: "sidecar crashed once, respawned, and returned to ready", server_starts: $starts}' \
@@ -2922,12 +3007,11 @@ flow_low_memory_choice() {
 flow_update_state() {
     # Settings > App must name the version the app actually IS.
     #
-    # This is the cheap end of a real failure: the update manifest the app
-    # falls back on (dl.rapidmlx.com/latest.json) sat at 0.11.0 for four
-    # releases (#1612). Anything consuming a stale manifest reports a version
-    # that disagrees with CFBundleShortVersionString, and this assertion
-    # catches exactly that mismatch without needing network state.
-    start_persona update-state
+    # Assert the running version comes from CFBundleShortVersionString and
+    # drive the real checker/UI with this bundle's fixed manifest. A newer
+    # published release must not change the state during an unrelated CI run.
+    start_persona update-state RAPID_GUI_GOLDEN_MODE=1 \
+        RAPID_GUI_UPDATE_CURRENT_FIXTURE=1 RAPIDMLX_NO_UPDATE_CHECK=0 DO_NOT_TRACK=0
     dismiss_first_run
     open_settings
     see_main "$OUT/update-settings.json"
@@ -2995,10 +3079,28 @@ flow_update_state() {
 # background. Sparkle rejects a second foreground check in this state. The UI
 # must expose the real busy state instead of leaving an enabled orange button
 # whose click is silently ignored.
+# The offered update and the model action must occupy disjoint screen regions.
+# Missing/empty AX geometry is not evidence that a control is unobscured.
+assert_update_does_not_cover_readiness() {
+    jq -e '
+      def box($id): [.data.ui_elements[]? | select(.identifier == $id)]
+        | if length == 1 then .[0].bounds else null end;
+      def valid: . != null and (.x | type) == "number"
+        and (.y | type) == "number" and (.width | type) == "number"
+        and (.height | type) == "number" and .width > 0 and .height > 0;
+      box("UpdateCard") as $card | box("Readiness.Action") as $action
+      | ($card | valid) and ($action | valid)
+        and ($card.x + $card.width <= $action.x
+          or $action.x + $action.width <= $card.x
+          or $card.y + $card.height <= $action.y
+          or $action.y + $action.height <= $card.y)
+    ' "$1" >/dev/null || die "update offer covers model readiness or has missing geometry"
+}
+
 flow_update_busy() {
     start_persona update-busy \
         RAPID_GUI_GOLDEN_MODE=1 \
-        RAPID_GUI_UPDATE_BUSY_FIXTURE=1
+        RAPID_GUI_UPDATE_BUSY_FIXTURE=1 RAPIDMLX_NO_UPDATE_CHECK=0 DO_NOT_TRACK=0
     dismiss_first_run
     open_settings
     see_main "$OUT/settings.json"
@@ -3017,6 +3119,21 @@ flow_update_busy() {
     fi
     baseline "update-busy.app-panel" "$OUT/app-panel.json"
     log "  background update replaces the no-op CTA with truthful progress"
+    # Preserve the existing idle-state snapshot, then exercise the user path.
+    "$AX_DRIVER" close-window "$APP_PID" Settings > "$OUT/close-settings.json"
+    wait_identifier UpdateCard "$OUT/update-card.json"
+    wait_identifier_enabled Readiness.Action "$OUT/update-card-readiness.json"
+    assert_update_does_not_cover_readiness "$OUT/update-card-readiness.json"
+    local original_size
+    original_size="$(jq -er '.data.ui_elements[] | select(.identifier == "main" and .role == "AXWindow")
+        | (.bounds.width | tostring) + "x" + (.bounds.height | tostring)' "$OUT/update-card-readiness.json")"
+    "$AX_DRIVER" set-window-size "$APP_PID" Rapid-MLX 720x700 > "$OUT/update-card-compact-size.json"
+    wait_identifier_enabled Readiness.Action "$OUT/update-card-compact.json"
+    assert_update_does_not_cover_readiness "$OUT/update-card-compact.json"
+    start_model
+    assert_fake_server_starts "$OUT/fake-events.jsonl" 1 "$FAKE_ALIAS" update-card-readiness
+    wait_identifier UpdateCard "$OUT/update-card-after-start.json"
+    "$AX_DRIVER" set-window-size "$APP_PID" Rapid-MLX "$original_size" > "$OUT/update-card-restored-size.json"
     cleanup_persona
 }
 
@@ -3120,6 +3237,8 @@ flow_no_dead_controls() {
     # switch for this persona and point it at the loopback sink instead.
     start_telemetry_sink "$OUT_ROOT/no-dead-controls"
     start_persona no-dead-controls \
+        RAPID_GUI_GOLDEN_MODE=1 RAPID_GUI_UPDATE_CURRENT_FIXTURE=1 \
+        RAPIDMLX_NO_UPDATE_CHECK=0 DO_NOT_TRACK=0 \
         "${TELEMETRY_SINK_ENV[@]}" \
         RAPID_MLX_TELEMETRY_ENDPOINT="http://127.0.0.1:$TELEMETRY_SINK_PORT/v1/events"
     dismiss_first_run
@@ -5838,60 +5957,60 @@ fi
 mkdir -p "$OUT_ROOT"
 require_tools
 case "$FLOW" in
-    fresh-install) flow_fresh_install ;;
-    cached-quickstart) flow_cached_quickstart ;;
-    cached-curated-tradeup) flow_cached_curated_tradeup ;;
-    cached-variant-collapse) flow_cached_variant_collapse ;;
-    download-progress) flow_download_progress ;;
-    settings-persistence) flow_settings_persistence ;;
-    settings-mtp) flow_settings_mtp ;;
-    chat-restore) flow_chat_restore ;;
-    chat-depth) flow_chat_depth ;;
-    model-switch-active-request) flow_model_switch_active_request ;;
-    model-crash-recovery) flow_model_crash_recovery ;;
-    low-memory-choice) flow_low_memory_choice ;;
-    update-state) flow_update_state ;;
-    update-busy) flow_update_busy ;;
-    campaign-banner) flow_campaign_banner ;;
-    window-close-prompt) flow_window_close_prompt ;;
-    no-dead-controls) flow_no_dead_controls ;;
-    catalog-integrity) flow_catalog_integrity ;;
-    browse-all-destination) flow_browse_all_destination ;;
-    chat-document-attachment) flow_chat_document_attachment ;;
-    chat-multimodal-attachments) flow_chat_multimodal_attachments ;;
-    image-generation) flow_image_generation ;;
-    dictation) flow_dictation ;;
-    dictation-rc2-upgrade) flow_dictation_rc2_upgrade ;;
-    audio-readiness) flow_audio_readiness ;;
-    resident-load-rejected) flow_resident_load_rejected ;;
-    launch-integrations) flow_launch_integrations ;;
+    fresh-install) run_journey fresh-install flow_fresh_install ;;
+    cached-quickstart) run_journey cached-quickstart flow_cached_quickstart ;;
+    cached-curated-tradeup) run_journey cached-curated-tradeup flow_cached_curated_tradeup ;;
+    cached-variant-collapse) run_journey cached-variant-collapse flow_cached_variant_collapse ;;
+    download-progress) run_journey download-progress flow_download_progress ;;
+    settings-persistence) run_journey settings-persistence flow_settings_persistence ;;
+    settings-mtp) run_journey settings-mtp flow_settings_mtp ;;
+    chat-restore) run_journey chat-restore flow_chat_restore ;;
+    chat-depth) run_journey chat-depth flow_chat_depth ;;
+    model-switch-active-request) run_journey model-switch-active-request flow_model_switch_active_request ;;
+    model-crash-recovery) run_journey model-crash-recovery flow_model_crash_recovery ;;
+    low-memory-choice) run_journey low-memory-choice flow_low_memory_choice ;;
+    update-state) run_journey update-state flow_update_state ;;
+    update-busy) run_journey update-busy flow_update_busy ;;
+    campaign-banner) run_journey campaign-banner flow_campaign_banner ;;
+    window-close-prompt) run_journey window-close-prompt flow_window_close_prompt ;;
+    no-dead-controls) run_journey no-dead-controls flow_no_dead_controls ;;
+    catalog-integrity) run_journey catalog-integrity flow_catalog_integrity ;;
+    browse-all-destination) run_journey browse-all-destination flow_browse_all_destination ;;
+    chat-document-attachment) run_journey chat-document-attachment flow_chat_document_attachment ;;
+    chat-multimodal-attachments) run_journey chat-multimodal-attachments flow_chat_multimodal_attachments ;;
+    image-generation) run_journey image-generation flow_image_generation ;;
+    dictation) run_journey dictation flow_dictation ;;
+    dictation-rc2-upgrade) run_journey dictation-rc2-upgrade flow_dictation_rc2_upgrade ;;
+    audio-readiness) run_journey audio-readiness flow_audio_readiness ;;
+    resident-load-rejected) run_journey resident-load-rejected flow_resident_load_rejected ;;
+    launch-integrations) run_journey launch-integrations flow_launch_integrations ;;
     all)
-        flow_fresh_install
-        flow_cached_quickstart
-        flow_cached_curated_tradeup
-        flow_cached_variant_collapse
-        flow_download_progress
-        flow_settings_persistence
-        flow_settings_mtp
-        flow_chat_restore
-        flow_chat_depth
-        flow_model_switch_active_request
-        flow_model_crash_recovery
-        flow_low_memory_choice
-        flow_update_state
-        flow_update_busy
-        flow_campaign_banner
-        flow_window_close_prompt
-        flow_no_dead_controls
-        flow_catalog_integrity
-        flow_browse_all_destination
-        flow_chat_document_attachment
-        flow_chat_multimodal_attachments
-        flow_image_generation
-        flow_dictation
-        flow_audio_readiness
-        flow_resident_load_rejected
-        flow_launch_integrations
+        run_journey fresh-install flow_fresh_install
+        run_journey cached-quickstart flow_cached_quickstart
+        run_journey cached-curated-tradeup flow_cached_curated_tradeup
+        run_journey cached-variant-collapse flow_cached_variant_collapse
+        run_journey download-progress flow_download_progress
+        run_journey settings-persistence flow_settings_persistence
+        run_journey settings-mtp flow_settings_mtp
+        run_journey chat-restore flow_chat_restore
+        run_journey chat-depth flow_chat_depth
+        run_journey model-switch-active-request flow_model_switch_active_request
+        run_journey model-crash-recovery flow_model_crash_recovery
+        run_journey low-memory-choice flow_low_memory_choice
+        run_journey update-state flow_update_state
+        run_journey update-busy flow_update_busy
+        run_journey campaign-banner flow_campaign_banner
+        run_journey window-close-prompt flow_window_close_prompt
+        run_journey no-dead-controls flow_no_dead_controls
+        run_journey catalog-integrity flow_catalog_integrity
+        run_journey browse-all-destination flow_browse_all_destination
+        run_journey chat-document-attachment flow_chat_document_attachment
+        run_journey chat-multimodal-attachments flow_chat_multimodal_attachments
+        run_journey image-generation flow_image_generation
+        run_journey dictation flow_dictation
+        run_journey audio-readiness flow_audio_readiness
+        run_journey resident-load-rejected flow_resident_load_rejected
+        run_journey launch-integrations flow_launch_integrations
         ;;
     *) die "unknown flow: $FLOW" ;;
 esac

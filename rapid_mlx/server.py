@@ -404,6 +404,8 @@ _pin_system_prompt: bool = False  # Auto-pin system prompt prefix cache blocks
 _pinned_system_prompt_hash: str | None = None  # Hash of pinned system prompt
 
 
+from . import disk_caches
+from ._env import env_falsey, env_truthy, is_falsey, is_truthy
 from .runtime.cache import (
     load_prefix_cache_from_disk as _load_prefix_cache_from_disk,
 )
@@ -419,8 +421,9 @@ def _automatic_prefix_cache_persistence_enabled() -> bool:
     disk snapshot at shutdown would discard entries this process never loaded.
     Explicit cache import/export endpoints do not use this lifecycle gate.
     """
-    raw = os.environ.get("RAPID_MLX_PREFIX_CACHE_AUTOLOAD", "1")
-    return raw.strip().lower() not in ("0", "false", "no", "off")
+    if disk_caches.disabled():
+        return False
+    return not env_falsey("RAPID_MLX_PREFIX_CACHE_AUTOLOAD")
 
 
 async def _shutdown_save_prefix_cache() -> None:
@@ -444,10 +447,16 @@ async def _shutdown_save_prefix_cache() -> None:
     (...)`` line below with a direct call, the regression fires.
     """
     if not _automatic_prefix_cache_persistence_enabled():
-        logger.info(
-            "[lifespan] Prefix-cache auto-save disabled with auto-load by "
-            "RAPID_MLX_PREFIX_CACHE_AUTOLOAD"
-        )
+        if disk_caches.disabled():
+            logger.info(
+                "[lifespan] Prefix-cache auto-save skipped: disk caches disabled by %s",
+                disk_caches.source(),
+            )
+        else:
+            logger.info(
+                "[lifespan] Prefix-cache auto-save disabled with auto-load by "
+                "RAPID_MLX_PREFIX_CACHE_AUTOLOAD"
+            )
         return
     if _engine is None or not hasattr(_engine, "save_cache_to_disk"):
         return
@@ -470,10 +479,16 @@ async def _deferred_load_prefix_cache() -> None:
     costs a few early prefix recomputes, never a wedged server.
     """
     if not _automatic_prefix_cache_persistence_enabled():
-        logger.info(
-            "[lifespan] Prefix-cache auto-load disabled by "
-            "RAPID_MLX_PREFIX_CACHE_AUTOLOAD"
-        )
+        if disk_caches.disabled():
+            logger.info(
+                "[lifespan] Prefix-cache auto-load skipped: disk caches disabled by %s",
+                disk_caches.source(),
+            )
+        else:
+            logger.info(
+                "[lifespan] Prefix-cache auto-load disabled by "
+                "RAPID_MLX_PREFIX_CACHE_AUTOLOAD"
+            )
         return
     if _engine is None or not hasattr(_engine, "load_cache_from_disk"):
         return
@@ -1017,8 +1032,7 @@ async def lifespan(app: FastAPI):
     # ``RAPID_MLX_AUDIO_DEEP_PROBE=False`` (capital F) and ``NO``
     # (uppercase) are treated as falsy, not truthy. Mirrors the
     # convention used by every other ``RAPID_MLX_*`` boolean knob.
-    _audio_deep_probe = os.environ.get("RAPID_MLX_AUDIO_DEEP_PROBE", "").strip().lower()
-    if _audio_deep_probe and _audio_deep_probe not in ("0", "false", "no"):
+    if env_truthy("RAPID_MLX_AUDIO_DEEP_PROBE"):
         try:
             from .audio.probe import deep_probe_audio_lane as _deep_probe
 
@@ -1456,40 +1470,17 @@ def _parse_csv(value: str) -> list[str]:
 
 
 def configure_trusted_hosts(cli_hosts: list[str] | None = None) -> list[str]:
-    """OPT-IN Host-header allowlist (DNS-rebinding / Host-header-spoofing
-    hardening) via Starlette's ``TrustedHostMiddleware``.
-
-    Resolution:
-      1. ``--trusted-hosts`` CLI flag (comma-separated) — takes precedence.
-      2. ``RAPID_MLX_TRUSTED_HOSTS`` env var (comma-separated).
-      3. Unset / empty → middleware is NOT registered. This is the default:
-         restricting the Host header would break ``rapid-mlx share`` (which
-         forwards the public-facing Host header into the local server) and
-         LAN access via machine hostname, so an operator opts in deliberately.
-
-    ``allowed_hosts`` (Starlette) values cross-match the request ``Host``
-    header against glob patterns; ``*`` and ``localhost``/``127.0.0.1`` are
-    typical. A request whose Host matches nothing is rejected with 400.
-    """
-    hosts: list[str] = []
-    if cli_hosts is not None:
-        # argparse's nargs="+" accepts both ``a b`` and values users commonly
-        # write as ``a,b``. Normalize each entry so CLI and env semantics match.
-        hosts = [host for entry in cli_hosts for host in _parse_csv(entry)]
-    else:
-        env_raw = os.environ.get("RAPID_MLX_TRUSTED_HOSTS")
-        if env_raw:
-            hosts = _parse_csv(env_raw)
-    if not hosts:
-        return []
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
-
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
-    logger.info(
-        "TrustedHostMiddleware enabled (allowed_hosts=%s): requests with a "
-        "non-matching Host header are rejected.",
-        hosts,
+    """Enforce local-only Hosts by default; explicit CLI/env values override."""
+    from .middleware import browser_security
+    from .middleware.browser_security import (
+        BrowserSecurityMiddleware,
+        resolve_trusted_hosts,
     )
+
+    hosts = resolve_trusted_hosts(cli_hosts)
+    browser_security._configured_hosts = hosts
+    app.add_middleware(BrowserSecurityMiddleware, hosts=hosts)
+    logger.info("Host-header allowlist enabled (allowed_hosts=%s)", hosts)
     return hosts
 
 
@@ -1497,7 +1488,7 @@ def configure_cors_from_env(
     cli_origins: list[str] | None = None,
 ) -> list[str]:
     """Resolve CORS configuration from CLI args + env vars and conditionally
-    register the middleware.
+    register browser transport middleware.
 
     Resolution order:
       1. ``cli_origins`` (CLI ``--cors-origins`` flag) — when supplied,
@@ -1506,7 +1497,7 @@ def configure_cors_from_env(
       2. ``RAPID_MLX_CORS_ALLOW_ORIGINS`` env var (comma-separated).
       3. Unset / empty → CORS middleware is NOT registered. Cross-origin
          requests get no ``Access-Control-Allow-Origin`` header and the
-         preflight ``OPTIONS`` returns 405 (no leak of allowed methods).
+         foreign Origin requests are rejected with 403 before route dispatch.
          This is the production-friendly default (F-090).
 
     Method / header / max-age / credentials overrides come from the rest
@@ -1528,28 +1519,18 @@ def configure_cors_from_env(
     # ``RAPID_MLX_CORS_ALLOW_METHODS`` / ``_HEADERS``.
     origins: list[str] = []
     came_from_cli = False
-    came_from_default = False
-    env_present_but_empty = False
-    if cli_origins:
+    if cli_origins is not None:
         origins = list(cli_origins)
         came_from_cli = True
     else:
-        # Codex round-2 BLOCKING (#758): distinguish "env var absent" from
-        # "env var present but parsed empty". The friendly default-wildcard
-        # is for operators who never set the var (single-machine local
-        # dev). An operator who DID set the var to a templating-broken
-        # value like ``" , ,, "`` clearly intended a real allowlist — the
-        # safest interpretation is the literal empty list (no CORS, fail
-        # closed) plus a startup WARNING so the typo is visible. Falling
-        # through to wildcard would silently fail open for a deployment
-        # bug, which is the failure mode codex was flagging.
+        # An explicitly empty environment allowlist stays closed and logs
+        # a warning, making broken deployment templates visible.
         env_raw = os.environ.get("RAPID_MLX_CORS_ALLOW_ORIGINS")
         if env_raw is not None:
             parsed = _parse_csv(env_raw)
             if parsed:
                 origins = parsed
             else:
-                env_present_but_empty = True
                 # Format via %s/%r placeholders so the env-var name only
                 # appears in the args tuple (test_no_out_of_band_routing
                 # treats inline ``RAPID_MLX_<X>=...`` literals as routing
@@ -1559,32 +1540,13 @@ def configure_cors_from_env(
                     "%s=%r parsed to an empty list (whitespace / "
                     "trailing commas only). Treating as fail-closed "
                     "(no CORS middleware) so a deployment templating "
-                    "bug is visible. Unset the env var entirely to use "
-                    "the friendly default wildcard, or set it to a real "
+                    "bug is visible. Set the env var to a real "
                     "comma-separated origin list.",
                     "RAPID_MLX_CORS_ALLOW_ORIGINS",
                     env_raw,
                 )
 
-    if not origins and not env_present_but_empty:
-        # Default-allow wildcard for friendly single-machine UX. rapid-mlx
-        # is primarily run locally — defaulting to deny would break any
-        # browser-based frontend ("CORS error" in the console) without an
-        # obvious server-side signal. Operators on multi-tenant or
-        # production deployments lock down via
-        # ``RAPID_MLX_CORS_ALLOW_ORIGINS=https://your.app`` (the existing
-        # env-var family still applies).
-        origins = ["*"]
-        came_from_default = True
-        logger.info(
-            "CORS allow-origin defaulting to wildcard '*' (no "
-            "RAPID_MLX_CORS_ALLOW_ORIGINS set). Set the env var to an "
-            "explicit origin list (e.g. "
-            "'https://chat.openai.com,https://claude.ai') to lock down "
-            "for production / multi-tenant deployments."
-        )
-
-    if "*" in origins and not came_from_default:
+    if "*" in origins:
         logger.warning(
             "CORS allow-origin set to wildcard '*' — any origin can call this "
             "server from a browser. Set RAPID_MLX_CORS_ALLOW_ORIGINS to an "
@@ -1667,12 +1629,12 @@ def configure_cors_from_env(
     # ``configure_cors(origins)`` callers in tests / share / dflash still
     # see the legacy behavior — those callers don't go through this
     # resolver.
-    creds_env = os.environ.get("RAPID_MLX_CORS_ALLOW_CREDENTIALS", "").strip().lower()
+    creds_env = os.environ.get("RAPID_MLX_CORS_ALLOW_CREDENTIALS", "").strip()
     allow_credentials: bool = False
     if creds_env:
-        if creds_env in ("1", "true", "yes", "on"):
+        if is_truthy(creds_env):
             allow_credentials = True
-        elif creds_env in ("0", "false", "no", "off"):
+        elif is_falsey(creds_env):
             allow_credentials = False
         else:
             logger.warning(
@@ -1701,6 +1663,9 @@ def configure_cors_from_env(
     # lambda — we never call ``configure_cors(...)`` on the fail-closed
     # path, so the stub's signature doesn't matter.
     if not origins:
+        from .middleware.browser_security import BrowserSecurityMiddleware
+
+        app.add_middleware(BrowserSecurityMiddleware, deny_cross_origin=True)
         _last_resolved_cors_policy = None
         return []
 
@@ -2107,7 +2072,7 @@ def _prefetch_config_for_text_lane_guard(model_ref: str) -> None:
     if os.path.exists(model_ref) or hub_offline_mode_active():
         return
     try:
-        from huggingface_hub import hf_hub_download
+        from rapid_mlx.model_downloads import hf_hub_download
 
         hf_hub_download(model_ref, "config.json")
     except Exception:  # noqa: BLE001 — best-effort probe, never fatal
@@ -2615,32 +2580,14 @@ def load_model(
                 "(alias pins is_text_only=True but --mllm was also given)"
             )
 
-    # Hybrid/linear-attention VLM checkpoints (e.g. Qwen3.5/3.6/3.8 GatedDeltaNet
-    # with a vision tower) auto-route to the MLLM lane on their vision weights.
-    # Post-#1798 the MLLM engine CAN serve an ArraysCache backbone, but only in
-    # a serialized one-request-at-a-time lane (a BatchKVCache cannot be built
-    # over ArraysCache, so concurrent batching stays off — GitHub #352). Left
-    # alone, the naive ``rapid-mlx serve <flagship>`` command would boot the
-    # whole model into that B=1 lane, capping text throughput for every request.
-    # Auto-fall-back to the text-only mlx-lm lane HERE, at the routing layer,
-    # with one clear INFO line, so the common text path keeps full batching and
-    # --mllm opts into the serialized vision lane. The dense text lane serves the
-    # GatedDeltaNet backbone coherently and keeps ``is_hybrid=False`` (avoiding
-    # the metal::malloc throttle wedge the 4B/9B/27B dense variants hit under
-    # the hybrid scheduler path — see model_auto_config r6-A R6-C1).
-    #
-    # The fallback is tracked in ``_auto_text_fallback`` — a state DISTINCT
-    # from the explicit ``force_text`` / ``--no-mllm`` flag — so diagnostics say
-    # "auto-downgraded" and never falsely claim the user passed ``--no-mllm``
-    # (codex #2 on #1178). The materialize-then-probe order is load-bearing:
-    # ``_ensure_routing_config`` must run BEFORE ``resolve_serving_lane`` so a
-    # first-time uncached hybrid VLM has real config evidence and is routed on
-    # fact, not on a missing config (codex BLOCKING on #1178). Only fires in
-    # auto mode: an explicit ``--mllm`` (force_mllm) is respected so the
-    # operator who wants vision gets the serialized MLLM lane (#1798) — for a
-    # hybrid backbone that serves vision at B=1; for an arch mlx-vlm cannot
-    # drive it still errors — rather than a silent override. #352 dogfood
-    # P1-② (0.10.16).
+    # Hybrid vision checkpoints retain the MLLM lane when the installed
+    # runtime supports their architecture. Lane resolution may still choose
+    # text for a requested speculative decoder or an unavailable vision
+    # runtime. After loading, qualified backbones share their language weights
+    # with a native-cache text scheduler; media keeps the serialized vision
+    # scheduler. This preserves image input without loading weights twice.
+    # Materialize routing evidence before resolving an uncached checkpoint.
+    # An explicit --mllm continues to request vision rather than a text fallback.
     #
     # The generative-media lanes are exempt. An ``image-gen`` / ``video-gen``
     # alias never reaches ``resolve_serving_lane``'s question at all — it
@@ -3025,6 +2972,9 @@ async def _load_dynamic_resident_model(
     resolved_path = resolve_model(
         model_path or (profile.hf_path if profile is not None else model_name)
     )
+    from . import model_downloads
+
+    model_downloads.require_local(resolved_path)
     modality = profile.modality if profile is not None else "text"
     profile_force_text = bool(profile is not None and profile.is_text_only)
     load_path = resolved_path
@@ -3657,7 +3607,7 @@ def _capture_start_failures(func):
 def _build_parser() -> argparse.ArgumentParser:
     """Build the parser for the standalone ``python -m rapid_mlx.server`` CLI."""
 
-    from .cli import _PortContextArgumentParser, positive_int
+    from .cli_parser import _PortContextArgumentParser, positive_int
 
     parser = _PortContextArgumentParser(
         description="Rapid-MLX OpenAI-compatible server for LLM and MLLM inference",
@@ -3702,7 +3652,7 @@ Examples:
             "8000-8009; an explicit port never falls back)"
         ),
     )
-    from .cli import _add_video_job_args as _add_video_job_args_to_server_parser
+    from .cli_parser import _add_video_job_args as _add_video_job_args_to_server_parser
 
     _add_video_job_args_to_server_parser(parser)
     parser.add_argument(
@@ -3788,7 +3738,7 @@ Examples:
     # unified ``rapid-mlx serve`` CLI exposes the same surface; we mirror
     # it here so the standalone ``python -m rapid_mlx.server`` path is
     # not a silent gap (SOP §10).
-    from .cli import _add_pflash_args as _add_pflash_args_to_server_parser
+    from .cli_parser import _add_pflash_args as _add_pflash_args_to_server_parser
 
     _add_pflash_args_to_server_parser(parser)
     import argparse as _ap
@@ -3963,6 +3913,26 @@ Examples:
         help="Starvation bound for shortest_validated_tail (default: 8 grants).",
     )
     parser.add_argument(
+        "--shared-prefix-wait-tokens",
+        type=int,
+        default=1024,
+        metavar="N",
+        help=(
+            "Uncached prompt tokens a request must share with a prefilling "
+            "request to wait for its prompt state (default: 1024). 0 disables."
+        ),
+    )
+    parser.add_argument(
+        "--decode-stall-target-ms",
+        type=float,
+        default=500.0,
+        metavar="MS",
+        help=(
+            "Target wait between a decoding request's tokens while another "
+            "prompt prefills (default: 500). 0 disables the bound."
+        ),
+    )
+    parser.add_argument(
         "--vision-prefill-token-budget",
         type=int,
         default=None,
@@ -4078,8 +4048,12 @@ def main():
     # error first with nothing else on stderr/stdout before it.
     if getattr(args, "embedding_model", None):
         from .embedding import require_mlx_embeddings_or_exit
+        from .embedding_backend import is_native_embedding_model
 
-        require_mlx_embeddings_or_exit()
+        if is_native_embedding_model(args.embedding_model):
+            require_mlx_embeddings_or_exit(args.embedding_model)
+        else:
+            require_mlx_embeddings_or_exit()
 
     uvicorn_log_level = configure_logging(args.log_level)
 
@@ -4280,9 +4254,9 @@ def main():
     from .pflash import validate_model_support as _server_pflash_validate
     from .scheduler import SchedulerConfig
 
-    # Per-alias PFlash default (#287): verified Qwen3.5 / Qwen3.6 aliases
-    # switch to ``always`` when the user passes no ``--pflash`` flag; all
-    # other aliases keep the conservative ``off``. Explicit overrides win.
+    # PFlash default (#287, #4092): ``off`` for every alias when the user
+    # passes no ``--pflash`` flag; verified aliases only get an opt-in hint
+    # and their pinned keep ratio. Explicit overrides win.
     #
     # Resolve the FINAL serving lane once. PFlash defaulting and
     # ``validate_model_support`` must both see the effective lane, NOT the raw
@@ -4417,6 +4391,8 @@ def main():
         prefill_step_size=args.prefill_step_size,
         scheduling_policy=args.scheduling_policy,
         scheduling_max_deferrals=args.scheduling_max_deferrals,
+        shared_prefix_wait_tokens=args.shared_prefix_wait_tokens,
+        decode_stall_target_ms=args.decode_stall_target_ms,
         vision_prefill_token_budget=vision_prefill_token_budget,
         vision_min_pixels=args.vision_min_pixels,
         vision_max_pixels=args.vision_max_pixels,

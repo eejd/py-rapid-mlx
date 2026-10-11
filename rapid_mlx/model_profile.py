@@ -196,8 +196,9 @@ class ModelProfile:
     # without the user asking.  Independent of the qualification tier above:
     # the tier is a correctness claim, this is the product default.  A
     # verified artifact whose measured speedup is negative for the typical
-    # single-stream user keeps its tier (explicit ``--speculative-config mtp``
-    # still runs the qualified continuous route) but ships default-off (#3115).
+    # single-stream user keeps its tier (an explicit
+    # ``{"method":"mtp","continuous_batching":true}`` still runs the qualified
+    # continuous route) but ships default-off (#3115).
     mtp_default_enabled: bool = True
     default_max_tokens: int | None = None  # Per-model default when user omits
     # Bench-verified service prefill chunk.  This is deliberately an explicit
@@ -238,6 +239,9 @@ class ModelProfile:
     # Qualified target-only TensorFold MTP lane. Unlike DFlash this uses the
     # checkpoint's embedded MTP head and therefore has no drafter repository.
     tensorfold_mtp: bool = False
+    # Qualified target-only TensorFold kernel lane for a checkpoint without an
+    # MTP head. It shares the target and runtime revision pins.
+    tensorfold_kernel: bool = False
     tensorfold_target_revision: str | None = None
     tensorfold_runtime_revision: str | None = None
     # Recommended sampling defaults — curated per-family overrides that
@@ -266,11 +270,11 @@ class ModelProfile:
     # PFlash long-prompt compression eligibility (#287). Default
     # ``"unknown"`` keeps the engine's PFlash mode at ``"off"`` so a
     # brand-new alias never silently enables compression on an
-    # unbenched architecture. ``"verified"`` flips the engine's default
-    # to ``"always"`` — used only for aliases where we've measured both
-    # the TTFT speedup AND the needle-recall floor (Qwen3.5 / Qwen3.6
-    # families per #287). Explicit CLI ``--pflash {off,auto,always}``
-    # still wins; this only changes the no-flag default.
+    # unbenched architecture. ``"verified"`` marks aliases where we've
+    # measured both the TTFT speedup AND the needle-recall floor (Qwen3.5 /
+    # Qwen3.6 families per #287), so an explicit ``--pflash auto|always``
+    # opt-in is bench-backed. PFlash stays off by default for every alias
+    # (#4092).
     pflash_tier: str = "unknown"
     # Per-alias PFlash keep_ratio override (#287 follow-up). ``None`` means
     # "use the engine default 0.20". Set to a float in (0, 1] when an alias
@@ -359,6 +363,10 @@ class ModelProfile:
     # out-of-tree caller and quiets the recurring "mid-dataclass insert"
     # review flag.
     is_text_only: bool = False
+    # Release coverage capability. Missing/true keeps an alias in voluntary
+    # agentic sampling; literal false records a measured model-side inability.
+    # This is harness metadata only and does not alter serving or parser routing.
+    agentic_coverage: bool = True
 
     @property
     def speedup_dict(self) -> dict[str, float]:

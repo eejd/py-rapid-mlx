@@ -9,7 +9,24 @@ import types
 
 import pytest
 
-from rapid_mlx.computer_use import ax_driver, backend, errors
+from rapid_mlx.computer_use import ax_driver, backend, background_input, errors
+
+
+@pytest.fixture(autouse=True)
+def _foreground_input_delivery(monkeypatch):
+    # These tests pin the global-HID contract; on a Mac with SkyLight the
+    # default "auto" mode would route through background delivery instead.
+    # Background routing has its own tests in test_computer_use_background.py.
+    monkeypatch.setenv(background_input.DELIVERY_ENV, "foreground")
+    # Activation of the exact process is covered in test_cua_observe_safety.py;
+    # these fakes model an app that is already frontmost.
+    monkeypatch.setattr(backend, "_borrow_foreground", lambda snapshot: None)
+    # Off-Space window discovery and the one-time AX exposure poke keep
+    # process-wide state and query the live AX server; they have their own
+    # tests in test_computer_use_offspace.py.
+    monkeypatch.setattr(backend, "_offscreen_ax_windows", lambda app, seen: [])
+    monkeypatch.setattr(ax_driver, "_EXPOSED", {})
+    monkeypatch.setattr(ax_driver, "_REMOTE_IDS", {})
 
 
 def _window(window_id=101, index=0, x=0, y=0, width=100, height=100):
@@ -336,6 +353,8 @@ def test_textedit_plain_text_save_rejects_symlink_non_txt_and_oversize(
 @pytest.mark.parametrize(
     "value",
     ["x" * (backend.TEXTEDIT_SAVE_MAX_BYTES + 1), "bad-surrogate-\ud800"],
+    # The oversize input exceeds 1 MiB; never print it as a pytest node ID in CI.
+    ids=["oversize", "non-utf8"],
 )
 def test_textedit_ax_value_rejects_oversize_or_non_utf8(monkeypatch, value):
     monkeypatch.setattr(
@@ -1013,7 +1032,7 @@ def test_hotkey_and_scroll_activate_target_before_posting(monkeypatch):
     monkeypatch.setattr(
         backend,
         "_prepare_synthetic_action",
-        lambda app, window_id: calls.append(app) or snapshot,
+        lambda app, window_id, **_kwargs: calls.append(app) or snapshot,
     )
     monkeypatch.setattr(backend, "get_app_state", lambda *a, **k: snapshot)
     monkeypatch.setattr(
@@ -1048,7 +1067,10 @@ def test_get_app_state_uses_requested_window_without_screenshot(monkeypatch):
     monkeypatch.setattr(
         backend,
         "_resolve_app",
-        lambda app: (object(), {"name": "Target App", "bundleId": "x", "pid": 7}),
+        lambda app, **kwargs: (
+            object(),
+            {"name": "Target App", "bundleId": "x", "pid": 7},
+        ),
     )
 
     def fake_collect(app, **kwargs):
@@ -1088,7 +1110,9 @@ def test_get_app_state_merges_only_verified_transient_targets(monkeypatch):
     app_info = {"name": "Finder", "bundleId": "com.apple.finder", "pid": 716}
     anchor = _window(window_id=1647, index=1, x=986, y=538, width=920, height=436)
     popup = _window(window_id=1803, index=0, x=1288, y=926, width=88, height=21)
-    monkeypatch.setattr(backend, "_resolve_app", lambda app: (object(), app_info))
+    monkeypatch.setattr(
+        backend, "_resolve_app", lambda app, **kwargs: (object(), app_info)
+    )
     monkeypatch.setattr(backend, "_select_window", lambda *a, **k: anchor)
     monkeypatch.setattr(backend, "_window_records", lambda app: [popup, anchor])
     monkeypatch.setattr(backend, "_focused_transient_window", lambda *a, **k: popup)
@@ -1138,7 +1162,9 @@ def test_get_app_state_discovers_detached_focused_finder_editor(monkeypatch):
     app_info = {"name": "Finder", "bundleId": "com.apple.finder", "pid": 716}
     anchor = _window(window_id=1647, index=1, x=986, y=538, width=920, height=436)
     popup = _window(window_id=1803, index=0, x=1288, y=926, width=88, height=21)
-    monkeypatch.setattr(backend, "_resolve_app", lambda app: (application, app_info))
+    monkeypatch.setattr(
+        backend, "_resolve_app", lambda app, **kwargs: (application, app_info)
+    )
     monkeypatch.setattr(backend, "_select_window", lambda *a, **k: anchor)
     monkeypatch.setattr(backend, "_window_records", lambda app: [popup, anchor])
     monkeypatch.setattr(backend, "_focused_ax_window", lambda app: None)
@@ -1188,7 +1214,9 @@ def test_get_app_state_bounds_transient_and_total_target_counts(monkeypatch):
     app_info = {"name": "Finder", "bundleId": "com.apple.finder", "pid": 716}
     anchor = _window(window_id=1647, index=1)
     popup = _window(window_id=1803, index=0, x=10, y=10, width=20, height=20)
-    monkeypatch.setattr(backend, "_resolve_app", lambda app: (object(), app_info))
+    monkeypatch.setattr(
+        backend, "_resolve_app", lambda app, **kwargs: (object(), app_info)
+    )
     monkeypatch.setattr(backend, "_select_window", lambda *a, **k: anchor)
     monkeypatch.setattr(backend, "_window_records", lambda app: [popup, anchor])
     monkeypatch.setattr(backend, "_focused_transient_window", lambda *a, **k: popup)
@@ -1327,8 +1355,11 @@ def test_cli_capabilities_and_error_envelope(capsys):
     )
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
+    # Runs against the real desktop: which structured refusal comes back
+    # depends on whether some app matches the name and has a window.
     assert payload["error"]["code"] in {
         "app_not_found",
+        "window_not_found",
         "element_not_found",
         "ax_set_failed",
         "unsupported_platform",
@@ -1365,6 +1396,9 @@ class _RunningApp:
 
     def processIdentifier(self):
         return self._pid
+
+    def launchDate(self):
+        return None
 
     def isActive(self):
         return self._active
@@ -1478,7 +1512,7 @@ def test_cli_dispatches_every_command(monkeypatch, capsys, tmp_path):
     }
 
 
-def test_cli_stdin_empty_and_mouse_button_guards(monkeypatch, capsys):
+def test_cli_stdin_empty_guards(monkeypatch, capsys):
     from rapid_mlx.computer_use import cli
 
     monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(read=lambda: "stdin-value"))
@@ -1494,12 +1528,25 @@ def test_cli_stdin_empty_and_mouse_button_guards(monkeypatch, capsys):
     for command in (
         ["set-value", "--app", "A", "--element-index", "1"],
         ["type-text", "--app", "A"],
-        ["click", "--app", "A", "--x", "1", "--y", "2", "--mouse-button", "right"],
     ):
         assert cli.main(command) == 1
         assert (
             json.loads(capsys.readouterr().out)["error"]["code"] == "invalid_argument"
         )
+
+
+@pytest.mark.parametrize("button", ["left", "right", "middle"])
+def test_cli_click_forwards_mouse_button(monkeypatch, capsys, button):
+    from rapid_mlx.computer_use import cli
+
+    calls = []
+    monkeypatch.setattr(
+        backend, "click", lambda *a, **k: calls.append(k) or {"mode": "click"}
+    )
+    command = ["click", "--app", "A", "--x", "1", "--y", "2"]
+    assert cli.main([*command, "--mouse-button", button]) == 0
+    capsys.readouterr()
+    assert calls[0]["mouse_button"] == button
 
 
 def test_snapshot_payload_encodes_png():
@@ -1571,7 +1618,7 @@ def test_get_app_state_cache_snapshot_and_window_errors(monkeypatch):
     monkeypatch.setattr(
         backend,
         "_resolve_app",
-        lambda app: (object(), {"name": "A", "bundleId": "b", "pid": 4}),
+        lambda app, **kwargs: (object(), {"name": "A", "bundleId": "b", "pid": 4}),
     )
     monkeypatch.setattr(backend.ax_driver, "collect", lambda *a, **k: [_target()])
     monkeypatch.setattr(backend, "_select_window", lambda *a, **k: _window())
@@ -1593,7 +1640,7 @@ def test_get_app_state_cache_snapshot_and_window_errors(monkeypatch):
     monkeypatch.setattr(
         backend,
         "_resolve_app",
-        lambda app: (object(), {"name": "A", "bundleId": "b", "pid": 4}),
+        lambda app, **kwargs: (object(), {"name": "A", "bundleId": "b", "pid": 4}),
     )
     monkeypatch.setattr(
         backend,
@@ -1612,7 +1659,9 @@ def test_get_app_state_cache_snapshot_and_window_errors(monkeypatch):
 def test_get_app_state_cache_revalidates_reorder_and_closed_window(monkeypatch):
     backend._CACHE.clear()
     app_info = {"name": "A", "bundleId": "b", "pid": 4}
-    monkeypatch.setattr(backend, "_resolve_app", lambda app: (object(), app_info))
+    monkeypatch.setattr(
+        backend, "_resolve_app", lambda app, **kwargs: (object(), app_info)
+    )
     selected = {"window": _window(window_id=101, index=0)}
     monkeypatch.setattr(backend, "_select_window", lambda *a, **k: selected["window"])
     monkeypatch.setattr(backend, "_window_records", lambda app: [selected["window"]])
@@ -2598,7 +2647,9 @@ def test_collect_watchdog_translates_missing_pid_to_typed_error(monkeypatch):
     monkeypatch.setattr(
         backend.ax_driver,
         "collect",
-        lambda *a, **k: (_ for _ in ()).throw(SystemExit("pid missing")),
+        lambda *a, **k: (_ for _ in ()).throw(
+            backend.ax_driver.AppNotFoundError("pid missing")
+        ),
     )
     with pytest.raises(errors.ComputerUseError) as excinfo:
         backend._collect_with_timeout("A", expected_pid=42, timeout_s=1)
@@ -5529,6 +5580,9 @@ def test_anchor_editable_focus_drift_keeps_occlusion_fail_closed(monkeypatch):
     monkeypatch.setattr(backend, "_focused_ax_element", lambda *a, **k: object())
     monkeypatch.setattr(backend.ax_driver, "_get", lambda *a, **k: False)
     monkeypatch.setattr(
+        backend.ax_driver, "AXUIElementSetAttributeValue", lambda *a: -25205
+    )
+    monkeypatch.setattr(
         backend,
         "_validate_snapshot_window",
         lambda *a, **k: (_ for _ in ()).throw(
@@ -5544,7 +5598,9 @@ def test_anchor_editable_focus_drift_keeps_occlusion_fail_closed(monkeypatch):
     with pytest.raises(errors.ComputerUseError) as excinfo:
         backend.click("pid:4", 0, expected_snapshot=snapshot, focus_only=True)
 
-    assert excinfo.value.code == "target_occluded"
+    # focus_only never falls back to a pixel click, so focus drift is refused
+    # before occlusion is even consulted; either way nothing is dispatched.
+    assert excinfo.value.code == "synthetic_input_blocked"
 
 
 def test_set_value_and_synthetic_fill_paths(monkeypatch):
@@ -5559,6 +5615,8 @@ def test_set_value_and_synthetic_fill_paths(monkeypatch):
         AXUIElementSetAttributeValue=lambda *a: 0,
     )
     monkeypatch.setattr(backend, "_read_value", lambda _: "wanted")
+    # A role-less control is read first to see whether it holds a number.
+    monkeypatch.setattr(backend.ax_driver, "_get", lambda *a: "old")
     assert backend.set_value("A", 0, "wanted")["verified"] is True
     module.AXUIElementSetAttributeValue = lambda *a: 1
     monkeypatch.setattr(backend, "_synthetic_fill", lambda *a: {"mode": "fallback"})
@@ -6044,7 +6102,9 @@ def test_ax_driver_tree_collect_and_events(monkeypatch):
     )
     monkeypatch.setattr(ax_driver, "AXUIElementSetAttributeValue", lambda *a: None)
     monkeypatch.setattr(
-        ax_driver, "_walk", lambda e, d, out, c: out.append(dict(_target(element=e)))
+        ax_driver,
+        "_walk",
+        lambda e, d, out, c, *_, **__: out.append(dict(_target(element=e))),
     )
     assert ax_driver.collect("A", keep_elements=False)[0]["center"] == [6, 12]
     assert "element" not in ax_driver.collect("A", keep_elements=False)[0]
@@ -6155,7 +6215,7 @@ def test_ax_driver_app_collect_retries_and_press(monkeypatch):
         ax_driver._MANUAL_ACCESSIBILITY,
         ax_driver._ENHANCED_UI,
     ]
-    with pytest.raises(SystemExit, match="not found"):
+    with pytest.raises(ax_driver.AppNotFoundError, match="not found"):
         ax_driver._app_element("missing")
     monkeypatch.setattr(ax_driver, "AS", None)
     with pytest.raises(RuntimeError, match="macOS"):
@@ -6167,14 +6227,12 @@ def test_ax_driver_app_collect_retries_and_press(monkeypatch):
         ax_driver, "_get", lambda e, a: ["window"] if a == "AXWindows" else None
     )
 
-    def walk(e, d, out, c):
+    def walk(e, d, out, c, seen=None, **_kw):
         attempts["n"] += 1
-        out.append(
-            {
-                **_target(element=e),
-                "role": "AXWebArea" if attempts["n"] > 1 else "AXButton",
-            }
-        )
+        role = "AXWebArea" if attempts["n"] > 1 else "AXButton"
+        if seen is not None:
+            seen.add(role)
+        out.append({**_target(element=e), "role": role})
         c[0] += 1
 
     monkeypatch.setattr(ax_driver, "_walk", walk)
@@ -6202,7 +6260,7 @@ def test_ax_driver_app_collect_retries_and_press(monkeypatch):
     monkeypatch.setattr(ax_driver, "_cg_click", lambda *a: None)
     assert ax_driver.press([_target()], "t000", "A")["mode"] == "CGEvent-click"
     assert ax_driver.press([_target()], "t999", "A")["ok"] is False
-    monkeypatch.setattr(ax_driver, "_walk", lambda *a: None)
+    monkeypatch.setattr(ax_driver, "_walk", lambda *a, **k: None)
     assert ax_driver.press([_target()], "t000", "A")["ok"] is False
 
 
@@ -6214,7 +6272,9 @@ def test_ax_driver_press_rejects_missing_geometry(monkeypatch):
     monkeypatch.setattr(
         ax_driver,
         "_walk",
-        lambda e, d, out, c: out.append(_target(rect=None, actions=[], element="live")),
+        lambda e, d, out, c, *_, **__: out.append(
+            _target(rect=None, actions=[], element="live")
+        ),
     )
     # Override helper's default rect explicitly after construction.
     original = [_target()]
@@ -6288,11 +6348,16 @@ def test_ax_walk_keeps_blank_editable_control_without_adding_empty_structure(
         "_get",
         lambda element, attribute: attributes.get(element, {}).get(attribute),
     )
+    monkeypatch.setattr(
+        ax_driver,
+        "_get_checked",
+        lambda element, attribute: (True, attributes.get(element, {}).get(attribute)),
+    )
     monkeypatch.setattr(ax_driver, "_action_names", lambda _element: [])
     monkeypatch.setattr(
         ax_driver,
-        "_point_size",
-        lambda element: (10, 20, 300, 200) if element == "editor" else None,
+        "_frame_of",
+        lambda node: (10, 20, 300, 200) if node.get("AXRole") == "AXTextArea" else None,
     )
 
     targets = []
@@ -6432,11 +6497,15 @@ def test_ax_driver_limits_menu_bar_and_old_unicode(monkeypatch):
     assert len(out) == 1
 
     monkeypatch.setattr(ax_driver, "_app_element", lambda _: "app")
-    monkeypatch.setattr(ax_driver, "_get", lambda *a: [])
+    monkeypatch.setattr(
+        ax_driver, "_get", lambda e, a: [] if a == "AXWindows" else None
+    )
     monkeypatch.setattr(ax_driver, "AXUIElementCreateSystemWide", lambda: "system")
     monkeypatch.setattr(ax_driver, "AXUIElementSetAttributeValue", lambda *a: None)
     monkeypatch.setattr(
-        ax_driver, "_walk", lambda e, d, out, c: out.append(_target(element=e))
+        ax_driver,
+        "_walk",
+        lambda e, d, out, c, *_, **__: out.append(_target(element=e)),
     )
     assert ax_driver.collect("A", keep_elements=True)[0]["element"] == "system"
 
@@ -6447,7 +6516,7 @@ def test_ax_driver_limits_menu_bar_and_old_unicode(monkeypatch):
     monkeypatch.setattr(
         ax_driver,
         "_walk",
-        lambda e, d, out, c: (
+        lambda e, d, out, c, *_, **__: (
             out.append({**_target(element=e), "role": "AXWebArea"}),
             c.__setitem__(0, 1),
         ),
@@ -6472,6 +6541,8 @@ def test_ax_driver_limits_menu_bar_and_old_unicode(monkeypatch):
 def test_ax_driver_cli_main_modes(monkeypatch, capsys, tmp_path):
     target = {k: v for k, v in _target().items() if k != "element"}
     monkeypatch.setattr(ax_driver, "collect", lambda app: [target])
+    # ``main`` sets the module-global cap from ``--max-nodes``; restore it.
+    monkeypatch.setattr(ax_driver, "MAX_NODES", ax_driver.MAX_NODES)
 
     monkeypatch.setattr(sys, "argv", ["ax_driver", "--app", "A", "--dump", "-"])
     ax_driver.main()
@@ -6593,11 +6664,11 @@ def test_ax_selector_rejects_stale_pid_and_unrelated_name(monkeypatch):
     unrelated_name = _RunningApp("Other App", pid=42)
     monkeypatch.setattr(ax_driver, "AS", object())
     monkeypatch.setattr(ax_driver, "_application_for_pid", lambda pid: mismatched_pid)
-    with pytest.raises(SystemExit, match="not found"):
+    with pytest.raises(ax_driver.AppNotFoundError, match="not found"):
         ax_driver._app_element("Target App", expected_pid=42)
 
     monkeypatch.setattr(ax_driver, "_running_applications", lambda: [unrelated_name])
-    with pytest.raises(SystemExit, match="not found"):
+    with pytest.raises(ax_driver.AppNotFoundError, match="not found"):
         ax_driver._app_element("Target App")
 
 
@@ -6624,7 +6695,7 @@ def test_ax_running_apps_filters_terminated_cached_entry(monkeypatch):
 def test_ax_selector_ignores_unresolved_expected_pid(monkeypatch):
     monkeypatch.setattr(ax_driver, "AS", object())
     monkeypatch.setattr(ax_driver, "_application_for_pid", lambda pid: None)
-    with pytest.raises(SystemExit, match="not found"):
+    with pytest.raises(ax_driver.AppNotFoundError, match="not found"):
         ax_driver._app_element("Target App", expected_pid=42)
 
 

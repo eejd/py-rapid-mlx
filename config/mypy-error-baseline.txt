@@ -28,7 +28,7 @@ rapid_mlx/bench/pflash_replication.py 1
 rapid_mlx/bench/tier_runner.py 2
 rapid_mlx/benchmark.py 8
 rapid_mlx/chat_mcp.py 2
-rapid_mlx/cli.py 23
+rapid_mlx/cli.py 15
 rapid_mlx/community_bench/submission.py 1
 rapid_mlx/disk_stream_patch.py 2
 rapid_mlx/doctor/env_health.py 1
@@ -40,7 +40,7 @@ rapid_mlx/first_run.py 1
 rapid_mlx/gdn_in_proj_fusion.py 1
 rapid_mlx/gdn_prefill.py 2
 rapid_mlx/gradio_app.py 5
-rapid_mlx/image/engine.py 2
+rapid_mlx/image/engine.py 1
 rapid_mlx/kernels/turboquant_fused.py 5
 rapid_mlx/launch/_common.py 1
 rapid_mlx/launch/cli.py 9
@@ -147,7 +147,7 @@ rapid_mlx/tool_parsers/minimax_tool_parser.py 1
 rapid_mlx/tool_parsers/mistral_tool_parser.py 1
 rapid_mlx/tool_parsers/muse_tool_parser.py 4
 rapid_mlx/tool_parsers/nemotron_tool_parser.py 1
-rapid_mlx/tool_parsers/qwen3coder_tool_parser.py 3
+rapid_mlx/tool_parsers/qwen3coder_tool_parser.py 2
 rapid_mlx/tool_parsers/qwen_tool_parser.py 1
 rapid_mlx/tool_parsers/seed_oss_tool_parser.py 3
 rapid_mlx/tool_parsers/ui_tars_tool_parser.py 1
@@ -155,7 +155,7 @@ rapid_mlx/tool_parsers/xlam_tool_parser.py 1
 rapid_mlx/turboquant.py 1
 rapid_mlx/utils/chat_template.py 6
 rapid_mlx/utils/decode.py 2
-rapid_mlx/utils/tokenizer.py 18
+rapid_mlx/utils/tokenizer.py 17
 rapid_mlx/video/engine.py 2
 rapid_mlx/video/wan.py 1
 videox_fun_mlx/models/cogvideox_transformer3d.py 2

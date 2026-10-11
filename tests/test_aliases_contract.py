@@ -35,6 +35,7 @@ from rapid_mlx.model_aliases import (
     VALID_PFLASH_TIERS,
     VALID_SUFFIX_TIERS,
     list_profiles,
+    resolve_profile,
 )
 from rapid_mlx.model_auto_config import detect_model_config
 from rapid_mlx.reasoning import list_parsers as list_reasoning_parsers
@@ -103,8 +104,10 @@ ALLOWED_PROFILE_KEYS: frozenset[str] = frozenset(
         "pflash_keep_ratio",
         "turboquant_tier",
         "tensorfold_mtp",
+        "tensorfold_kernel",
         "tensorfold_target_revision",
         "tensorfold_runtime_revision",
+        "agentic_coverage",
     }
 )
 
@@ -241,8 +244,8 @@ def test_qwen38_27b_abliterated_alias_is_scoped_and_conservative() -> None:
     alias = "qwen3.8-27b-abliterated-4bit"
     profile = list_profiles()[alias]
 
-    assert profile.hf_path == ("windowsxp811203/Qwen3.8-27B-Abliterated-MLX-MTP")
-    assert profile.subfolder == "oQ4e"
+    assert profile.hf_path == ("windowsxp811203/Qwen3.8-27B-Abliterated-MLX-oQ4e-mtp")
+    assert profile.subfolder is None
     assert profile.supports_image_input is True
     assert profile.experimental is True
     assert profile.tool_call_parser == "qwen3_coder_xml"
@@ -334,6 +337,26 @@ def test_experimental_alias_flag_requires_a_boolean(bad_value) -> None:
         _coerce(
             "bad-experimental-alias",
             {"hf_path": "publisher/model", "experimental": bad_value},
+        )
+
+
+def test_agentic_coverage_metadata_loads_and_preserves_defaults() -> None:
+    """The normal catalog loader retains the G12 capability metadata."""
+    profiles = list_profiles()
+
+    assert profiles["deepseek-r1-8b-4bit"].agentic_coverage is False
+    assert profiles["qwen3.5-9b-4bit"].agentic_coverage is True
+    assert resolve_profile("deepseek-r1-8b-4bit").agentic_coverage is False
+
+
+@pytest.mark.parametrize("bad_value", [0, 1, "false", None])
+def test_agentic_coverage_alias_flag_requires_a_boolean(bad_value) -> None:
+    from rapid_mlx.model_aliases import _coerce
+
+    with pytest.raises(ValueError, match="agentic_coverage"):
+        _coerce(
+            "bad-agentic-coverage-alias",
+            {"hf_path": "publisher/model", "agentic_coverage": bad_value},
         )
 
 
@@ -564,9 +587,9 @@ def test_pflash_verified_aliases_are_qwen35_or_qwen36() -> None:
     """``pflash_tier="verified"`` is reserved for the Qwen3.5 / Qwen3.6 family
     (bench-validated at the keep_ratio=0.20 default in PR #649) PLUS an explicit
     allowlist of other families we've since benched. Promoting a new alias to
-    ``"verified"`` should be a deliberate review-blocking change: it flips the
-    engine's default ``--pflash`` mode to ``"always"``, silently shifting the
-    quality/speed tradeoff for every user who hadn't passed an explicit flag.
+    ``"verified"`` should be a deliberate review-blocking change: it tells
+    users an explicit ``--pflash auto|always`` opt-in is bench-backed on that
+    alias (PFlash itself stays off by default since #4092).
     A non-Qwen3.5/3.6 verified alias MUST also pin a ``pflash_keep_ratio``
     override — bench evidence showed at least one such arch (Ternary-Bonsai-27B)
     is NOT recall-safe at the 0.20 default, so bare-verifying it would ship a

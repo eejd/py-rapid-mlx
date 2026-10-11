@@ -5,6 +5,30 @@ pay the full release-grade macOS cost.
 
 ## PR gate
 
+### Release preparation source feedback
+
+With `RAPID_MLX_SOURCE_PREFLIGHT=true`, same-repository ordinary PRs changing
+only `scripts/release_control.py`, `scripts/release_prepare.py`,
+`scripts/release_version.py`, their corresponding `tests/test_release_*.py`
+files (those three exact names), and recognized documentation can use the
+existing CPU source preflight. It runs all three Python 3.11 unit shards,
+Linux coverage aggregation, lint, type checking and repository guards. It
+defers Apple tests, model smokes and final changed-line coverage to the full
+combined integration candidate. `RELEASE.md` is recognized documentation.
+
+This is source feedback, not full qualification or permission to merge.
+Promoted queue/train candidates, main and release pushes retain full validation
+inside the selected lanes. Forks, disabled preflight, publishing/signing or
+authority helpers, workflow/collection/dependency changes and unknown paths
+retain their full source route; adding an eligible release path never makes a
+mixed control change eligible. The existing flag disables this preflight
+expansion without changing candidate gates. No separate controller is needed.
+
+The expected benefit is fewer duplicate Python-version and Apple runs before
+integration. It does not shorten the full candidate itself or guarantee a
+particular merge time. Measure source duration, Mac runner allocation and
+push-to-merge latency separately.
+
 `scripts/classify_ci_changes.py` assigns changed paths to the engine and desktop
 lanes. The policy fails closed: an empty diff, workflow change, or unknown
 product area selects all applicable lanes.
@@ -40,6 +64,22 @@ dependency-bound guard on pull requests, and all selected engine test lanes;
 runs for every pull request, passing quickly when the version is unchanged.
 
 ### Type-error budget
+
+The existing source-preflight route also accepts the exact
+`config/mypy-error-baseline.txt` debt file and ordinary direct
+`tests/headless_mlx/test_*.py` regression files alongside eligible engine
+changes. This does not bypass the type-error ratchet: the same pinned type job
+and its shrink-only budget remain required. Headless CPU contracts still run
+once each across all three Python 3.11 shards in their separate pytest process;
+fake MLX modules do not leak into ordinary collection.
+
+Collection support (`conftest.py`, package initializers and nested fixtures),
+headless control/workflow tests, interpreter/dependency pins and unknown mixed
+paths keep full source checks. Source preflight is only earlier feedback; the
+combined queue candidate retains complete applicable compatibility, Apple/model
+and changed-line coverage gates. Disable `RAPID_MLX_SOURCE_PREFLIGHT` to restore
+the previous full source behavior. Neither eligibility nor fewer allocated jobs
+alone proves shorter push-to-merge time; record actual hosted timings.
 
 Engine changes run a shrink-only mypy debt ratchet. The checked-in
 `config/mypy-error-baseline.txt` records the current error count for each dirty
@@ -104,6 +144,19 @@ marker, so a mistaken human label cannot route a Mac-dependent change into the
 no-Mac queue. The singleton candidate still runs only the union selected by its
 real diff: an engine-only candidate does not acquire GUI work, and a
 Desktop-only candidate does not acquire engine work.
+
+On a normal main push, the Desktop workflow also classifies the complete
+`before..after` diff when identical-tree Mac evidence is unavailable. An
+Engine-only or documentation-only landing therefore does not allocate Swift
+or GUI runners. This is a Desktop policy exemption, not reusable full Mac
+evidence. Engine main validation and release validation are unchanged.
+
+The before and after commits must be exact nonzero commit IDs, the checkout
+must match the after commit, the before commit must be its ancestor, and the
+push must not rewrite history. Missing, invalid, empty or rewritten diffs and
+merge groups retain full Desktop validation. Any selected Desktop lane still
+runs the complete main GUI inventory; it does not narrow journeys using the
+push diff. Unknown and workflow paths continue to select both product lanes.
 
 Labeling writes a `merge-ready-head` success status onto that exact pull-request
 head. Both queues require the status before admission, while their synthetic

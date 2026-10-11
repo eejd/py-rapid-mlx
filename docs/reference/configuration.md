@@ -29,8 +29,8 @@ category. The exhaustive flag list (every flag visible in
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--api-key` | API key for authentication (falls back to `RAPID_MLX_API_KEY`) | None |
-| `--cors-origins` | Allowed CORS origins (space-separated; also via `RAPID_MLX_CORS_ALLOW_ORIGINS`) | `*` (all origins) |
-| `--trusted-hosts` | Opt-in Host-header allowlist; non-matching requests get HTTP 400 (also via `RAPID_MLX_TRUSTED_HOSTS`) | None (not enforced) |
+| `--cors-origins` | Allowed CORS origins (space-separated; also via `RAPID_MLX_CORS_ALLOW_ORIGINS`) | Disabled (explicit opt-in) |
+| `--trusted-hosts` | Host-header allowlist; non-matching requests get HTTP 400 (also via `RAPID_MLX_TRUSTED_HOSTS`) | `localhost`, `127.0.0.1`, `[::1]`, `*.localhost` |
 | `--rate-limit` | Requests per minute per client (0 = disabled) | `0` |
 | `--max-request-bytes` | Max HTTP request body size in bytes; oversized requests get HTTP 413 before parsing. 0 disables. (also via `RAPID_MLX_MAX_REQUEST_BYTES`) | 8 MiB (8388608) |
 | `--timeout` | Default request timeout in seconds; per-request `timeout: null` or `timeout: 0` uses this value | `1800` |
@@ -69,6 +69,8 @@ needed by the application; leave it unset for URL/base64-only deployments.
 | `--prefill-batch-size` | Max prompts prefilled together in one cold wave; lower for better first-token latency under concurrent cold load | `8` |
 | `--completion-batch-size` | Completion batch size | `32` |
 | `--prefill-step-size` | Chunk size for prompt prefill processing | `2048` |
+| `--shared-prefix-wait-tokens` | A request sharing at least this many uncached prompt tokens with a request that is still prefilling waits for that prompt state instead of recomputing it; `0` disables | `1024` |
+| `--decode-stall-target-ms` | Target wait between a decoding request's tokens while another prompt prefills; `0` disables | `500` |
 | `--gpu-memory-utilization` | Fraction of device memory for the Metal allocation limit (0.0-1.0); advanced override of the automatic per-model budget | `auto` |
 | `--image-weight-precision` | Explicit FLUX.2 Klein weight source (`q4` or `bf16`); bf16 requires a 32 GB Mac and is not selected automatically | alias default |
 
@@ -102,8 +104,17 @@ needed by the application; leave it unset for URL/base64-only deployments.
 | `--kv-cache-turboquant` | TurboQuant KV compression (experimental): bare = `v4` (V-only), `k8v4` (K 8-bit + V 4-bit mix), `none` (explicit off overriding alias auto-resolution). Mutually exclusive with `--kv-cache-quantization`. | None (alias-driven) |
 | `--kv-cache-turboquant-bits` | V-side bit width (3 or 4); ignored in `k8v4` mode | Auto by head_dim |
 | `--kv-cache-turboquant-group-size` | Group size for TurboQuant V-side quantization | `32` |
-| `--kv-disk-checkpoint-interval` | Token interval for KV snapshots to `~/.cache/rapid-mlx/kv_checkpoints/`; write-only, blocks decode per snapshot — external tooling only. `0` disables. | `0` |
+| `--kv-disk-checkpoint-interval` | Token interval for KV snapshots to `~/.cache/rapid-mlx/kv_checkpoints/`; each snapshot writes the whole KV cache of every running request, nothing reads it back, and it blocks decode — external tooling only. `0` disables. Overruled by `--disable-disk-caches`. | `0` |
 | `--metal-cap-kv-bytes-per-token` | Override the projected per-token KV size (bytes) in the admission gate; set when running a quantized KV cache. `0` auto-derives an fp16 figure. | `0` (auto) |
+
+For text hybrid models with full-attention `KVCache` layers and bounded
+recurrent `ArraysCache` state (including Qwen3-Coder-Next), `--kv-cache-dtype int8`
+or `int4` quantizes only attention KV. Recurrent state keeps its original dtype
+and behavior. Startup logs report the attention and recurrent layer counts;
+unknown cache implementations and layouts with no quantizable attention KV
+remain unsupported. Memory savings apply to attention KV, not model weights or
+recurrent state, and do not guarantee a particular maximum context length.
+
 
 ### Model Loading and Residency Options
 
@@ -120,11 +131,15 @@ needed by the application; leave it unset for URL/base64-only deployments.
 
 ### PFlash Options
 
-PFlash long-prompt prefill compression. Defaults to `always` for verified
-aliases (Qwen3.5 / Qwen3.6 family) and `off` otherwise; tune with
-`--pflash off|auto|always`, `--pflash-threshold` (32768), and the
-`--pflash-*` keep/scoring knobs — see the
-[CLI reference](cli.md#pflash-long-prompt-compression) for the full table.
+PFlash long-prompt prefill compression is off by default for every model. It
+is lossy: a compressed prompt keeps its first and last tokens plus the
+highest-scoring middle blocks, about 20% of the prompt by default (50% on
+`bonsai-27b-2bit`), and skips the prefix cache. It is an opt-in for a faster
+cold prefill. `--pflash auto` compresses only prompts of at least
+`--pflash-threshold` tokens (32768). `--pflash always` compresses every
+eligible long prompt. Tune the trade-off with the `--pflash-*` keep/scoring
+knobs. The [CLI reference](cli.md#pflash-long-prompt-compression) has the full
+table and shows how a compressed response is marked.
 
 ### Tool Calling Options
 
@@ -329,7 +344,10 @@ you turn it on.
 > that way — a fresh process per checkpoint — when you read the ratio.
 
 For request-level diagnosis, successful MTP requests also include an
-experimental `metrics.speculative_decoding` object in the terminal response:
+experimental `metrics.speculative_decoding` object in the terminal response.
+A request whose prompt PFlash compressed carries `metrics.prompt_compression`
+in the same envelope. See
+[PFlash long-prompt compression](cli.md#pflash-long-prompt-compression).
 
 ```json
 {
@@ -349,9 +367,47 @@ The counters belong only to that HTTP request, so concurrent traffic cannot
 mix their values. Multi-prompt Completions sum the counters across their
 choices. They appear on non-streaming Chat Completions, Completions, and
 Responses payloads, or on the single terminal event for their streaming forms.
-The `metrics` field is omitted when MTP did not perform a verification round,
-including ordinary decoding and response-cache hits. The process-wide
+The `speculative_decoding` block is omitted when MTP did not perform a
+verification round, including ordinary decoding and response-cache hits. The
+whole `metrics` field is omitted when neither block applies. The process-wide
 `/metrics` series remain the right surface for service dashboards.
+
+#### Request timing metrics
+
+Successful requests through the text scheduler report experimental server-side
+`metrics.time_to_first_token_ms` and, when measurable, `metrics.mean_itl_ms`
+on Chat Completions, single-prompt Completions, and Responses. Streaming emits
+these fields once on the terminal event, independently of
+`stream_options.include_usage`.
+
+```json
+{
+  "metrics": {
+    "time_to_first_token_ms": 250.0,
+    "mean_itl_ms": 20.0
+  }
+}
+```
+
+TTFT runs from the engine request's scheduler arrival to its first output
+token. It includes queueing and prefill, including any prefix-cache reuse;
+it is not a pure prefill measurement or HTTP end-to-end latency. Mean ITL is
+`(last_token_time - first_token_time) * 1000 / (completion_tokens - 1)`;
+`1000 / mean_itl_ms` gives the request's post-first-token decode tokens/second.
+All instants are read from a monotonic clock, so wall-clock adjustments
+during generation do not affect the durations. Times are frozen at the scheduler's observation of the final engine token,
+before output decoding, cache finalization, buffering, or response delivery.
+Counts include engine-generated reasoning and stop tokens, even when those
+are not visible in the response text. Concurrent requests have independent
+windows; the rate is per-request wall time, not aggregate batch throughput.
+
+A one-token generation reports only TTFT. Zero-token, failed/cancelled,
+response-cache replay, and unmeasured engine paths omit timing fields.
+Non-positive or non-finite decode windows omit mean ITL. Multi-prompt generations,
+transparent retries, and aggregated repair attempts omit timing rather than combine incompatible
+windows. Anthropic Messages does not expose this experimental extension.
+These fields can coexist with `metrics.speculative_decoding`; existing
+`usage` fields and Prometheus aggregates are unchanged.
 
 #### MTP sidecar heads are not standalone models
 
@@ -461,19 +517,24 @@ flag always wins over its env-var fallback when both are set.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RAPID_MLX_API_KEY` | unset (no auth) | Bearer API key fallback for `serve --api-key`; the inline flag value wins. `rapid-mlx share` uses the env form so the key never lands in `argv`. |
-| `RAPID_MLX_TRUSTED_HOSTS` | unset (not enforced) | Comma-separated Host-header allowlist fallback for `--trusted-hosts`; non-matching requests get HTTP 400 |
-| `RAPID_MLX_CORS_ALLOW_ORIGINS` | unset (wildcard `*`) | Comma-separated CORS origin allowlist; `--cors-origins` wins when both are set. Unset = friendly wildcard default with a startup notice; set-but-empty parses fail closed (no CORS middleware). |
+| `RAPID_MLX_TRUSTED_HOSTS` | local loopback hosts | Comma-separated Host-header allowlist fallback for `--trusted-hosts`; explicit values replace local defaults. Non-matching requests get HTTP 400 |
+| `RAPID_MLX_CORS_ALLOW_ORIGINS` | unset (cross-origin disabled) | Comma-separated CORS origin allowlist; `--cors-origins` wins when both are set. Unset or empty disables cross-origin access; foreign Origin requests are rejected before routes run. Explicit wildcard logs a startup warning. |
 | `RAPID_MLX_CORS_ALLOW_METHODS` / `_HEADERS` / `_MAX_AGE` / `_CREDENTIALS` | `POST,GET,OPTIONS` / `Content-Type,Authorization,X-Rapid-MLX-Internal` / `3600` / off | Fine-tune the CORS policy when origins come from the env var (the CLI `--cors-origins` path keeps legacy wide-open methods/headers). Credentials are always forced off with a wildcard origin, per the Fetch spec. |
 | `RAPID_MLX_MAX_REQUEST_BYTES` | 8388608 (8 MiB) | Request-body size cap fallback for `--max-request-bytes`; oversized bodies get HTTP 413 before parsing. 0 disables. |
 | `RAPID_MLX_SSE_KEEPALIVE_SECONDS` | 20 | Interval for SSE keepalive comment lines during silent prefill (defeats proxy idle timeouts). 0 disables the heartbeat. |
 | `RAPID_MLX_BODY_RECEIVE_TIMEOUT_SECONDS` | 15 | Max idle seconds between request-body chunks (slowloris defense); exceeded connections get HTTP 408. 0 disables. |
 | `RAPID_MLX_IDLE_CACHE_CLEAR_SECONDS` | 0 (disabled) | Fallback for `--idle-cache-clear-seconds`: clear reusable KV state after this many idle seconds, keeping model weights loaded. An explicit CLI value (including 0) wins. |
+| `RAPID_MLX_DISABLE_DISK_CACHES` | unset | `1` / `true` / `yes` / `on` / `enable` / `enabled` has the effect of `serve --disable-disk-caches` for every server, including those started by `chat`, `start`, and `share` |
+| `RAPID_MLX_DISABLE_MODEL_DOWNLOADS` | unset | `1` / `true` / `yes` / `on` / `enable` / `enabled` has the effect of `serve --disable-model-downloads` for every command and server except `pull` |
+| `RAPID_MLX_LOG_FILE` | unset (stderr) | Fallback for `--log-file`. Commands run with `--json` reject `-`, because stdout carries their JSON output. |
+| `RAPID_MLX_LOG_LEVEL` | unset (INFO) | Fallback for `serve --log-level`. When set, `chat` and `share` no longer force their own level on the server they start. |
 | `RAPID_MLX_WATCHDOG_PPID` | unset (disabled) | Fallback for `--watchdog-ppid`: self-terminate when the parent with this PID dies |
 | `RAPID_MLX_TELEMETRY` | unset (reporting defaults on) | Telemetry kill switch: `0` / `false` / `no` / `off` / empty force-disables telemetry regardless of stored consent. Truthy values do not force-enable. |
 | `DO_NOT_TRACK` | unset | Cross-tool opt-out convention: `1` / `true` force-disables telemetry regardless of stored consent (other values are ignored). Same precedence as `RAPID_MLX_TELEMETRY=0`; `rapid-mlx telemetry status` reports it as the reason. |
 | `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `CIRCLECI`, `TRAVIS`, `BUILDKITE`, `JENKINS_URL`, `TEAMCITY_VERSION` | unset | Any of these set to a non-empty value marks a build machine and force-disables telemetry (build machines are never users). `rapid-mlx telemetry status` reports `ci (<VAR> is set)`. |
 | `RAPID_MLX_KV_CHECKPOINT_MAX_BYTES` | 21474836480 (20 GiB) | Disk cap for `~/.cache/rapid-mlx/kv_checkpoints/` when `--kv-disk-checkpoint-interval` is enabled; oldest files evicted first. Read at scan time, so it can change without a restart. |
 | `RAPID_MLX_PREFIX_CACHE_MAX_BYTES` | unset (heuristic) | Hard byte cap on prefix-cache memory (positive integer). Unset, blank, or invalid values fall back to the heuristic limit (logged once). |
+| `RAPID_MLX_PREFIX_CACHE_MIN_FREE_DISK_BYTES` | `5368709120` (5 GiB) | Free disk space the prefix-cache persist (shutdown save and `/v1/cache/export`) aims to leave on the volume. Free space is read before each entry and entries whose write would cross the reserve are skipped with a warning; the check is best effort, since other writers can use the space while an entry is being written. `0` disables the check; other invalid values fall back to the default. |
 | `RAPID_MLX_MAX_GENERATION_TOKENS` | unset (no ceiling) | Opt-in hard ceiling on per-request `max_tokens`; requests above it are rejected at validation. Invalid or non-positive values are treated as unset. Read per request. |
 | `RAPID_MLX_STRICT_JSON_SCHEMA` | enabled | Strict post-generate `json_schema` enforcement; set `0`/`off`/`false`/`no`/`disable`/`disabled` to fall back to legacy prompt-injection-only behavior |
 | `RAPID_MLX_CONSTRAIN_TOOLS` | on (`1`) | Grammar-constrained tool calling (best-effort). Set to `0`/`off`/`false` to opt out. When enabled AND a `--tool-call-parser` is set AND a request sends `tools` with `tool_choice="required"` or a named function, the server compiles a grammar that constrains generation so a completed tool call names a real tool with schema-valid arguments in the family wire format. Requests without tools, or with `tool_choice="auto"`/`"none"`, are always unaffected. **Best-effort fallback:** the request silently falls back to the free-form-then-parse path (no hard error, no structural guarantee) when the `[guided]` extra (`llguidance`) is not installed, the model's tokenizer cannot back an `LLTokenizer`, the grammar fails to compile, or the parser family declares no structural info. `parallel_tool_calls=false` narrows the grammar to exactly one call. Note: the structural guarantee holds only for a call the model runs to a grammar-accepted completion — a `max_tokens` cutoff mid-call can still truncate the arguments and yield invalid JSON. |
@@ -482,7 +543,7 @@ flag always wins over its env-var fallback when both are set.
 | `RAPID_MLX_MODEL_MIRROR` | `https://models.rapidmlx.com` | Model download mirror base URL; set to an empty string to force downloads from Hugging Face |
 | `RAPID_MLX_EXTRA_MODEL_ROOTS` | unset | Extra local directories to resolve models from, separated by `os.pathsep` (`:` on macOS/Linux), or a JSON array of paths |
 | `RAPID_MLX_DEFAULT_MODEL` | `qwen3.5-4b-4bit` | Default model alias used by `rapid-mlx launch` when `--model` is not given |
-| `RAPID_MLX_DISABLE_VERSION_CHECK` | unset | Set to any non-empty value to skip new-version checks, including the passive `serve` startup-log notice |
+| `RAPID_MLX_DISABLE_VERSION_CHECK` | unset | Any non-empty value other than `0` / `false` / `no` / `off` / `disable` / `disabled` skips new-version checks, including the passive `serve` startup-log notice. Same as the global `--disable-version-check` flag. |
 | `RAPID_MLX_TRUST_REMOTE_CODE` | unset | Set `0`/`false`/`no`/`off` to force `trust_remote_code=False` process-wide for tokenizer loading |
 | `RAPID_MLX_TEST_MODEL` | unset | Default model for tests (legacy `VLLM_MLX_TEST_MODEL` still honored) |
 | `HF_TOKEN` | unset | HuggingFace authentication token |
@@ -552,3 +613,26 @@ rapid-mlx serve qwen3.5-27b-4bit \
   --stream-interval 5 \
   --max-num-seqs 256
 ```
+
+### Hugging Face download endpoint
+
+In Desktop, open **Settings → Model Management → Model download address**,
+enter a Hugging Face compatible base URL (for example `https://hf-mirror.com`),
+and choose **Save**. New downloads use that endpoint instead of the default
+model CDN. Restart the server to apply it to model loading; downloads already
+in progress continue with their original address. **Use default** removes the
+saved override and restores the launch environment and normal download defaults.
+The saved Desktop choice takes precedence over `HF_ENDPOINT` and
+`RAPID_MLX_MODEL_MIRROR` inherited from the launch environment. A download's
+explicit retry with the Rapid mirror can still select that source.
+
+For the CLI, set the endpoint before starting the process and disable the
+flat-file model CDN so downloads go directly through the Hub API:
+
+```sh
+HF_ENDPOINT=https://hf-mirror.com RAPID_MLX_MODEL_MIRROR= rapid-mlx pull <model>
+```
+
+The endpoint must be an HTTP or HTTPS base URL without credentials, query
+parameters, or fragments. Model identifiers and the existing model cache stay
+the same.

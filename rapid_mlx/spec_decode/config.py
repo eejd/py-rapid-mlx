@@ -32,9 +32,10 @@ class SpeculativeConfig:
     # Select an alternate execution backend only when the operator explicitly
     # asks for it. ``None`` preserves the standard scheduler-owned MTP path.
     backend: str | None = None
-    # ``None`` means artifact-qualified auto selection.  Preserve the
-    # distinction between an omitted key and an explicit ``false`` so users
-    # retain a stable ordinary-MTP opt-out after a target is promoted.
+    # ``None`` (omitted) serves ordinary MTP: a lone request uses the singleton
+    # verifier and concurrent requests batch through ordinary decode; verified
+    # artifacts additionally keep their qualified BF16 cache contract.  Only an
+    # explicit ``true`` selects the continuous self-MTP cohort.
     continuous_batching: bool | None = None
     # Dynamic membership is opt-in; omitted/false preserves fixed cohorts.
     allow_dynamic_membership: bool = False
@@ -72,6 +73,7 @@ _METHOD_KEYS = {
             "max_suffix_len",
             "min_confidence",
             "min_draft_len",
+            "backend",
         }
     ),
 }
@@ -205,15 +207,15 @@ def parse_speculative_config(value: str | None) -> SpeculativeConfig | None:
         raise SpeculativeConfigError(
             "allow_dynamic_membership requires continuous_batching=true"
         )
-    allowed_backends = (
-        (None, "native", "tensorfold")
-        if method in {"dflash", "mtp"}
-        else (None, "native")
-    )
-    if config.backend not in allowed_backends:
-        expected = (
-            "'native' or 'tensorfold'" if method in {"dflash", "mtp"} else "'native'"
-        )
+    named_backends: tuple[str, ...]
+    if method == "suffix":
+        named_backends, expected = ("tensorfold",), "'tensorfold'"
+    elif method in {"dflash", "mtp"}:
+        named_backends = ("native", "tensorfold")
+        expected = "'native' or 'tensorfold'"
+    else:
+        named_backends, expected = ("native",), "'native'"
+    if config.backend is not None and config.backend not in named_backends:
         raise SpeculativeConfigError(f"backend must be {expected} when specified")
     if config.backend == "native" and config.continuous_batching is True:
         raise SpeculativeConfigError(

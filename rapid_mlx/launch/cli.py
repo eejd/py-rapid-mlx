@@ -119,6 +119,27 @@ def _start_server_background(model: str, port: int, api_key: str | None = None) 
     return proc.pid
 
 
+def _print_preview(
+    name: str, adapter: object, server_url: str, model: str, api_key: str | None
+) -> None:
+    """Print the redacted diff ``launch <client>`` would apply (dry run).
+
+    Only adapters that can compute their change without side effects expose
+    ``preview``; the rest keep the path-only dry-run line above.
+    """
+    preview = getattr(adapter, "preview", None)
+    if preview is None:
+        return
+    try:
+        _path, diff, notes = preview(server_url, model, api_key or "sk-noop")
+    except (OSError, ValueError) as exc:
+        print(f"[dry-run] {name}: cannot preview — {exc}")
+        return
+    for note in notes:
+        print(f"[dry-run] {name}: note: {note}")
+    print(diff if diff else f"[dry-run] {name}: already configured; no changes")
+
+
 def launch_command(args: argparse.Namespace) -> None:
     """Argparse entry point for ``rapid-mlx launch``.
 
@@ -231,6 +252,7 @@ def launch_command(args: argparse.Namespace) -> None:
             path = adapter.current_config_path()
             installed = adapter.detect()
             print(f"[dry-run] {name}: detected={installed} would-patch={path}")
+            _print_preview(name, adapter, server_url, model, api_key)
         if args.start_server:
             print(f"[dry-run] would spawn: rapid-mlx serve {model} --port {args.port}")
         return
@@ -239,6 +261,18 @@ def launch_command(args: argparse.Namespace) -> None:
     # if any single client failed even when others succeeded — the user
     # gets the partial-success line plus a final summary.
     failures: list[str] = []
+    claude_context_length = None
+    if "claude-code" in targets:
+        from rapid_mlx.agents.adapter import fetch_context_window
+        from rapid_mlx.run.cli import _cached_context_window
+
+        # --start-server patches the client before the detached server boots;
+        # probing it now only adds a guaranteed timeout to first run.
+        if not args.start_server:
+            claude_context_length = fetch_context_window(
+                f"{server_url.rstrip('/').removesuffix('/v1')}/v1", model
+            )
+        claude_context_length = claude_context_length or _cached_context_window(model)
     for name in targets:
         adapter = ADAPTERS[name]
         if not adapter.detect():
@@ -256,12 +290,18 @@ def launch_command(args: argparse.Namespace) -> None:
             }
             if api_key:
                 config_kwargs["api_key"] = api_key
+            if name == "claude-code":
+                config_kwargs["context_length"] = claude_context_length
             path = adapter.write_or_patch_config(**config_kwargs)
         except Exception as exc:
             print(f"  {name}: FAILED — {exc}", file=sys.stderr)
             failures.append(name)
             continue
         print(f"  Patched {name} config at {path}")
+        notes = getattr(adapter, "post_setup_notes", None)
+        if notes is not None:
+            for line in notes(server_url, model, api_key):
+                print(f"    {line}")
 
     succeeded = [n for n in targets if n not in failures]
 
@@ -301,7 +341,7 @@ def register(subparsers) -> None:
     # port validator so `launch --port 99999` argparse-rejects up front
     # instead of failing inside the detached child after the parent has
     # already written a PID and printed "Started".
-    from ..cli import _port_arg
+    from ..cli_parser import _port_arg
 
     p = subparsers.add_parser(
         "launch",

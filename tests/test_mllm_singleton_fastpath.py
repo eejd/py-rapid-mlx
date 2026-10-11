@@ -106,7 +106,11 @@ def _lm_kv_leaves(n_layers: int = 2):
 
 
 def _stub_generator(leaves, singleton_fastpath: str = "auto"):
+    from types import SimpleNamespace
+
     gen = MLLMBatchGenerator.__new__(MLLMBatchGenerator)
+    gen.model = SimpleNamespace(args=SimpleNamespace(max_position_embeddings=8192))
+    gen.processor = SimpleNamespace(tokenizer=object())
     gen._stats = MLLMBatchStats()
     gen._stream = mx.default_stream(mx.cpu)
     gen.allow_arrays_cache = True
@@ -305,7 +309,6 @@ class TestProcessPromptsPathSelection:
     def test_unknown_leaf_fails_closed_into_merge(self, monkeypatch):
         from mlx_vlm.models.cache import ArraysCache
 
-        merges = []
         monkeypatch.setattr(
             ArraysCache, "merge", classmethod(lambda cls, caches: caches[0])
         )
@@ -366,7 +369,6 @@ class TestQueuedAdmission:
         gen.insert([_make_request(0), _make_request(1)])
 
         admitted = []
-        original = MLLMBatchGenerator._process_prompts
 
         def capture(self, requests):
             admitted.extend(r.uid for r in requests)

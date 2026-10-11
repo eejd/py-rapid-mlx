@@ -49,18 +49,42 @@ def test_explicit_context_counts_expanded_media_tokens():
         _enforce_preprocessed_context_window([request], 160)
 
 
-def test_process_prompts_checks_expanded_tokens_before_vision(monkeypatch):
+@pytest.mark.parametrize("prompt_tokens, budget", [(120, 40), (159, 1)])
+def test_preprocessed_context_reserves_only_remaining_decode_tokens(
+    prompt_tokens, budget
+):
+    from types import SimpleNamespace
+
+    request = MLLMBatchRequest(uid=1, request_id="decode-budget", prompt="hi")
+    request.input_ids = SimpleNamespace(size=prompt_tokens)
+    request.max_tokens = 100
+    _enforce_preprocessed_context_window([request], 160)
+    assert request.max_tokens == budget
+    request.max_tokens = 1
+    _enforce_preprocessed_context_window([request], 160)
+    assert request.max_tokens == 1
+
+
+@pytest.mark.parametrize("configured_context", [None, 100, 200])
+@pytest.mark.parametrize("prompt_tokens", [100, 120])
+def test_process_prompts_checks_expanded_tokens_before_vision(
+    monkeypatch, configured_context, prompt_tokens
+):
     from types import SimpleNamespace
 
     from rapid_mlx.config import get_config
 
     generator = MLLMBatchGenerator.__new__(MLLMBatchGenerator)
+    generator.model = SimpleNamespace(
+        args=SimpleNamespace(text_config=SimpleNamespace(max_position_embeddings=100))
+    )
+    generator.processor = SimpleNamespace(tokenizer=object())
     generator._media_mrope_restore = lambda: None
     generator._preprocess_request = lambda req: setattr(
-        req, "input_ids", SimpleNamespace(size=120)
+        req, "input_ids", SimpleNamespace(size=prompt_tokens)
     )
     request = MLLMBatchRequest(uid=1, request_id="media-overflow", prompt="hi")
-    monkeypatch.setattr(get_config(), "context_length", 100)
+    monkeypatch.setattr(get_config(), "context_length", configured_context)
 
     with pytest.raises(ClientRequestError, match="context_length_exceeded"):
         generator._process_prompts([request])
@@ -2131,6 +2155,36 @@ def test_generator_preserves_explicit_apc_disk_setting(monkeypatch):
         gen.close()
 
 
+def test_generator_disable_disk_caches_overrules_apc_disk_setting(monkeypatch):
+    from rapid_mlx import disk_caches
+    from rapid_mlx.models.mlx_vlm_vendored import apc
+
+    manager = _ExactPrefixCache()
+    seen_overrides = None
+
+    def _from_env(*, overrides):
+        nonlocal seen_overrides
+        seen_overrides = overrides
+        return manager
+
+    monkeypatch.setenv("APC_DISK_ENABLED", "1")
+    monkeypatch.setattr(apc, "model_apc_mode", lambda _model: "exact")
+    monkeypatch.setattr(apc, "from_env", _from_env)
+    monkeypatch.setattr(apc, "semantic_extra_hash", lambda **_kwargs: 41)
+    monkeypatch.setattr(disk_caches, "_cli_disabled", True)
+
+    gen = _make_generator(_RecordingModel())
+    try:
+        assert gen._prefix_cache is manager
+        assert seen_overrides == {
+            "enabled": True,
+            "num_blocks": 0,
+            "disk_enabled": False,
+        }
+    finally:
+        gen.close()
+
+
 def test_generator_keeps_mllm_available_when_exact_apc_init_fails(monkeypatch):
     from rapid_mlx.models.mlx_vlm_vendored import apc
 
@@ -2807,3 +2861,287 @@ def test_rewind_exact_entry_refuses_layers_it_cannot_rewind():
     stubborn.update_and_fetch(mx.zeros((1, 1, 100, 4)), mx.zeros((1, 1, 100, 4)))
     stubborn.trim = lambda n: 0
     assert rewind([stubborn], 50) is None
+
+
+def test_lookup_marks_the_end_of_a_long_shared_prefix(monkeypatch):
+    """A prompt that shares a long span with a stored entry it cannot resume
+    from records where the shared span ends; a short one does not."""
+    from rapid_mlx import mllm_batch_generator as module
+
+    monkeypatch.setattr(module, "_SHARED_PREFIX_STORE_MIN_TOKENS", 50)
+    gen = _make_real_apc_generator(monkeypatch)
+    # Recurrent state without a checkpoint: the entry cannot be rewound.
+    _store_entry_with_checkpoints(gen, list(range(100)), [])
+
+    request = _make_ids_request(100)
+    request.input_ids = mx.array(list(range(90)) + [999] * 10, dtype=mx.int32)
+    assert gen._lookup_exact_text_prefix(request) is None
+    assert request.shared_prefix_store_at == 90
+
+    short = _make_ids_request(100)
+    short.input_ids = mx.array(list(range(40)) + [999] * 60, dtype=mx.int32)
+    assert gen._lookup_exact_text_prefix(short) is None
+    assert short.shared_prefix_store_at == 0
+
+    # A prompt wholly contained in the stored entry keeps a suffix to prefill.
+    contained = _make_ids_request(80)
+    assert gen._lookup_exact_text_prefix(contained) is None
+    assert contained.shared_prefix_store_at == 79
+
+
+def test_lookup_counts_only_what_a_restore_leaves_uncovered(monkeypatch):
+    from rapid_mlx import mllm_batch_generator as module
+
+    monkeypatch.setattr(module, "_SHARED_PREFIX_STORE_MIN_TOKENS", 50)
+    gen = _make_real_apc_generator(monkeypatch)
+    _store_entry_with_checkpoints(gen, list(range(100)), [80])
+
+    # Resumes at the checkpoint at 80; the 10 tokens beyond it are too few.
+    request = _make_ids_request(100)
+    request.input_ids = mx.array(list(range(90)) + [999] * 10, dtype=mx.int32)
+    assert gen._lookup_exact_text_prefix(request) is not None
+    assert request.cached_tokens == 80
+    assert request.shared_prefix_store_at == 0
+
+    # An entry stored under other request semantics is not a shared prefix.
+    gen._prefix_cache_extra_hash = 12345
+    other = _make_ids_request(100)
+    other.input_ids = mx.array(list(range(90)) + [999] * 10, dtype=mx.int32)
+    assert gen._lookup_exact_text_prefix(other) is None
+    assert other.shared_prefix_store_at == 0
+    assert gen._longest_shared_prefix(object(), list(range(9)), 0) == 0
+
+
+def test_text_prefill_stores_a_snapshot_where_the_shared_prefix_ends(monkeypatch):
+    from mlx_vlm.models.cache import ArraysCache
+
+    gen = _make_real_apc_generator(monkeypatch)
+    model = _RecurrentRecordingModel()
+    gen.model = model
+    gen.language_model = model.language_model
+    gen.prefill_step_size = 10
+    request = _make_ids_request(60)
+    request.full_prompt_token_ids = list(range(60))
+    request.prefix_boundary = 50
+    request.shared_prefix_store_at = 24
+    cache = [ArraysCache(1)]
+
+    gen._run_vision_encoding(request, cache=cache)
+
+    # The chunk that would cross position 24 ends there; the rest is unchanged.
+    assert [seqlen for seqlen, _ in model.calls] == [10, 10, 4, 10, 10, 6, 9, 1]
+    stored = {entry.token_ids for entry in _stored_entries(gen)}
+    assert stored == {tuple(range(24)), tuple(range(50))}
+
+    # The next prompt with that shared span resumes from the new snapshot.
+    follow = _make_ids_request(60)
+    follow.input_ids = mx.array(list(range(24)) + [777] * 36, dtype=mx.int32)
+    assert gen._lookup_exact_text_prefix(follow) is not None
+    assert follow.cached_tokens == 24
+    assert follow.shared_prefix_store_at == 0
+
+
+def test_text_prefill_shared_prefix_position_alone_selects_the_chunked_path(
+    monkeypatch,
+):
+    from mlx_vlm.models.cache import ArraysCache
+
+    gen = _make_real_apc_generator(monkeypatch)
+    model = _RecurrentRecordingModel()
+    gen.model = model
+    gen.language_model = model.language_model
+    gen.prefill_step_size = 100
+    # Resumed at 10 of 40 tokens; the shared span ends at 24, and the position
+    # that coincides with the conversation boundary is stored once.
+    request = _make_ids_request(40)
+    request.full_prompt_token_ids = list(range(40))
+    request.cached_tokens = 10
+    request.input_ids = request.input_ids[10:]
+    request.shared_prefix_store_at = 24
+    cache = [ArraysCache(1)]
+    cache[0].cache = [mx.full((1, 2), 10.0)]
+
+    gen._run_vision_encoding(request, cache=cache)
+
+    assert [seqlen for seqlen, _ in model.calls] == [14, 15, 1]
+    assert {e.token_ids for e in _stored_entries(gen)} == {tuple(range(24))}
+
+    same = _make_ids_request(40)
+    same.full_prompt_token_ids = list(range(40))
+    same.prefix_boundary = 24
+    same.shared_prefix_store_at = 24
+    model.calls.clear()
+    gen._run_vision_encoding(same, cache=[ArraysCache(1)])
+    assert [seqlen for seqlen, _ in model.calls] == [24, 15, 1]
+
+
+@pytest.mark.parametrize("metadata_key", ["mm_token_type_ids", "token_type_ids"])
+@pytest.mark.parametrize("with_cache", [False, True])
+def test_gemma4_unified_image_prefill_preserves_modality_metadata(
+    metadata_key, with_cache
+):
+    """The unified wrapper drops token types; prefill must reach the LM directly."""
+    from types import SimpleNamespace
+
+    model = _RecordingModel()
+    model.config = SimpleNamespace(model_type="gemma4_unified")
+    embeds = mx.ones((1, 3, 4))
+    per_layer = mx.ones((1, 3, 2, 4))
+    model.get_input_embeddings = MagicMock(
+        return_value=SimpleNamespace(
+            to_dict=lambda: {
+                "inputs_embeds": embeds,
+                "per_layer_inputs": per_layer,
+                "mask": None,
+            }
+        )
+    )
+    model.language_model = MagicMock(return_value=mx.zeros((1, 3, 8)))
+    gen = _make_generator(model)
+    gen.prefill_step_size = 1  # Must not split a bidirectional image span.
+    metadata = mx.array([[0, 1, 1]])
+    positions = mx.array([[[0, 0], [0, 1]]])
+    pixels = mx.ones((1, 2, 4))
+    request = _make_request(
+        pixel_values=pixels,
+        extra_kwargs={metadata_key: metadata, "image_position_ids": positions},
+    )
+    cache = [] if with_cache else None
+    logits = gen._run_vision_encoding(request, cache=cache)
+
+    assert logits.shape == (1, 3, 8)
+    assert model.last_call_kwargs is None  # The lossy wrapper was bypassed.
+    model.get_input_embeddings.assert_called_once()
+    merge = model.get_input_embeddings.call_args.kwargs
+    assert merge["pixel_values"] is pixels
+    assert merge["image_position_ids"] is positions
+    model.language_model.assert_called_once()
+    call = model.language_model.call_args
+    assert call.args[0].shape == (1, 3)
+    assert call.kwargs[metadata_key] is metadata
+    assert call.kwargs["inputs_embeds"] is embeds
+    assert call.kwargs["per_layer_inputs"] is per_layer
+    assert call.kwargs["cache"] is cache
+    assert "pixel_values" not in call.kwargs
+    assert "image_position_ids" not in call.kwargs
+    assert request.vision_encoded and request.pixel_values is None
+    assert request.extra_kwargs == {}
+
+
+def test_gemma4_unified_text_keeps_wrapper_path():
+    from types import SimpleNamespace
+
+    model = _RecordingModel()
+    model.config = SimpleNamespace(model_type="gemma4_unified")
+    model.get_input_embeddings = MagicMock()
+    gen = _make_generator(model)
+    gen._run_vision_encoding(_make_request(pixel_values=None))
+    assert model.last_call_kwargs == {"pixel_values": None}
+    model.get_input_embeddings.assert_not_called()
+
+
+@pytest.mark.parametrize("metadata_key", ["mm_token_type_ids", "token_type_ids"])
+def test_gemma4_unified_prefill_uses_bidirectional_image_attention(
+    monkeypatch, metadata_key
+):
+    """Exercise real attention masks: future pixels attend, future text does not."""
+    from types import SimpleNamespace
+
+    from rapid_mlx.models.gemma4_vendored.config import TextConfig
+    from rapid_mlx.models.gemma4_vendored.language import LanguageModel
+
+    config = TextConfig(
+        hidden_size=16,
+        num_hidden_layers=2,
+        intermediate_size=32,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        global_head_dim=8,
+        vocab_size=16,
+        vocab_size_per_layer_input=16,
+        hidden_size_per_layer_input=0,
+        num_kv_shared_layers=0,
+        use_bidirectional_attention="vision",
+        layer_types=["sliding_attention", "full_attention"],
+    )
+    lm = LanguageModel(config)
+    ids = mx.array([[2, 3, 4, 5, 6]])
+    types = mx.array([[0, 1, 1, 0, 0]])
+    embeddings = lm.model.embed_tokens(ids) * lm.model.embed_scale
+    observed = []
+    original = type(lm.model)._make_masks
+
+    def record_masks(self, h, cache, mm_token_type_ids=None):
+        masks = original(self, h, cache, mm_token_type_ids)
+        observed.extend(masks)
+        return masks
+
+    monkeypatch.setattr(type(lm.model), "_make_masks", record_masks)
+    wrapper = _RecordingModel()
+    wrapper.config = SimpleNamespace(model_type="gemma4_unified")
+    wrapper.language_model = lm
+    wrapper.get_input_embeddings = MagicMock(
+        return_value=SimpleNamespace(
+            to_dict=lambda: {"inputs_embeds": embeddings, "per_layer_inputs": None}
+        )
+    )
+    generator = _make_generator(wrapper)
+    generator.prefill_step_size = 1
+    request = _make_request(
+        pixel_values=mx.ones((1, 2, 4)),
+        extra_kwargs={metadata_key: types},
+    )
+    request.input_ids = ids
+    output = generator._run_vision_encoding(request, cache=lm.make_cache())
+    mx.eval(output)
+
+    assert output.shape == (1, 5, 16)
+    assert len(observed) == 2
+    for mask in observed:
+        assert bool(mask[..., 1, 2].item())  # Same-image future token.
+        assert not bool(mask[..., 0, 1].item())  # Text stays causal.
+        assert not bool(mask[..., 1, 3].item())  # No access to future text.
+    assert wrapper.last_call_kwargs is None
+
+
+def test_image_prefill_cleanup_preserves_cached_modality_metadata(tmp_path):
+    from types import SimpleNamespace
+
+    from rapid_mlx.vision_embedding_cache import VisionEmbeddingCache
+
+    model = _RecordingModel()
+    model.config = SimpleNamespace(model_type="gemma4_unified")
+    model.get_input_embeddings = MagicMock(
+        return_value=SimpleNamespace(
+            to_dict=lambda: {"inputs_embeds": mx.ones((1, 3, 4))}
+        )
+    )
+    model.language_model = MagicMock(return_value=mx.zeros((1, 3, 8)))
+    generator = _make_generator(model)
+    pixels = mx.ones((1, 2, 4))
+    types = mx.array([[0, 1, 1]])
+    positions = mx.array([[[0, 0], [0, 1]]])
+    cold = _make_request(
+        pixel_values=pixels,
+        extra_kwargs={"mm_token_type_ids": types, "image_position_ids": positions},
+    )
+    image = tmp_path / "image.png"
+    image.write_bytes(b"cache-key-image-content")
+    images = [str(image)]
+    cache = VisionEmbeddingCache()
+    cache.set_pixel_cache(
+        images, cold.prompt, pixels, cold.input_ids, extra_kwargs=cold.extra_kwargs
+    )
+    generator._run_vision_encoding(cold)
+    assert cold.extra_kwargs == {}
+    cached = cache.get_pixel_cache(images, cold.prompt)
+    assert cached.extra_kwargs["mm_token_type_ids"] is types
+    assert cached.extra_kwargs["image_position_ids"] is positions
+    warm = _make_request(
+        pixel_values=cached.pixel_values, extra_kwargs=dict(cached.extra_kwargs)
+    )
+    generator._run_vision_encoding(warm)
+    assert model.language_model.call_count == 2
+    assert model.language_model.call_args.kwargs["mm_token_type_ids"] is types
+    assert cached.extra_kwargs["mm_token_type_ids"] is types

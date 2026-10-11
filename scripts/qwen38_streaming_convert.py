@@ -473,7 +473,7 @@ def _convert_into(
                 f"{max_rss_bytes / 1024**3:.1f} GiB"
             )
 
-    quant_shards = writer.finalize()
+    writer.finalize()  # renames shards to their final names
 
     # Canonical output index. total_size = original model byte total (loader's
     # semantic "model size"), NOT source *.safetensors file sizes (which carry
@@ -525,6 +525,14 @@ def convert(
         raise RuntimeError("Extreme SSD is outside this task")
     if output.exists():
         raise RuntimeError(f"output already exists: {output}")
+
+    # Validate the complete Qwen4-Exp tensor contract before creating the
+    # output parent or a private staging tree.  ``_convert_into`` validates
+    # individual tensors as it reaches them, which is too late for an
+    # unrelated or incomplete checkpoint: conversion may already have written
+    # quantized payloads by the time a structural mismatch is discovered.
+    inspect_manifest(source)
+
     output.parent.mkdir(parents=True, exist_ok=True)
     available = shutil.disk_usage(output.parent).free
     if available < min_free_bytes:
@@ -633,7 +641,7 @@ def repair_quantized_aux_names(output: Path) -> dict:
     old_sums = sums_path.read_bytes() if sums_path.is_file() else None
     applied: list[tuple[Path, bytes]] = []
     try:
-        for shard, header_len, original, repaired, _ in plans:
+        for shard, _header_len, original, repaired, _ in plans:
             # Register rollback before the first mutable write so even a short
             # or failed header write restores this shard.
             applied.append((shard, original))

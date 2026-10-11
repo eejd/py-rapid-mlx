@@ -4,35 +4,37 @@
 from __future__ import annotations
 
 import functools
+import gc
 import importlib.metadata
 import json
 import os
 import platform
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
+from .tensorfold_families import _prompt_cache_bytes
 from .tensorfold_qwen27 import TensorFoldQwen27Backend, TensorFoldUnavailable
+from .tensorfold_runtime import (
+    INSTALL_HINT as INSTALL_HINT,
+)
+from .tensorfold_runtime import (
+    SUPPORTED_MLX_VERSION,
+    SUPPORTED_VERSION,
+)
+from .tensorfold_runtime import SUPPORTED_REVISION as SUPPORTED_RUNTIME_REVISION
 
-SUPPORTED_VERSION = "0.6.0"
-SUPPORTED_MLX_VERSION = "0.32.3"
 SUPPORTED_TARGET = "Vontra/GLM-5.3-Flash-MLX-4bit-MTP"
 SUPPORTED_TARGET_REVISION = "76add2a341a1cd90ad0e86bb69839ea9c35827c6"
-SUPPORTED_RUNTIME_REVISION = "c4646171139ee8a3c38103eaa1699dad226ec12b"
-INSTALL_HINT = (
-    "Install the qualified TensorFold runtime from its vetted revision with:\n"
-    '    python -m pip install "tensorfold @ '
-    "git+https://github.com/ashhart/TensorFold.git@"
-    f'{SUPPORTED_RUNTIME_REVISION}"'
-)
 
 
 def download_qualified_target() -> str:
     """Resolve the immutable target through the process-wide Hub cache."""
 
-    from huggingface_hub import snapshot_download
+    from .._mirror import pinned_snapshot_download
 
-    target = snapshot_download(SUPPORTED_TARGET, revision=SUPPORTED_TARGET_REVISION)
+    target = pinned_snapshot_download(SUPPORTED_TARGET, SUPPORTED_TARGET_REVISION)
     validate_target(Path(target))
     return str(target)
 
@@ -175,38 +177,74 @@ class TensorFoldGLM53Backend(TensorFoldQwen27Backend):
         from tensorfold.server.residency import wire_resident
 
         memory_limit = configure_mlx(mx, 8 * 1024**3, fraction=0.85)
-        model, tokenizer = package.load(target, mtp_drafts=3)
-        settings = dict(package.engine_settings(model))
-        getattr(model, "release_rounds", lambda: None)()
-        wire_resident(mx, memory_limit - PROCESS_BYTES)
-        openers, assistant = message_markers(tokenizer)
-        plan = PrefillPlan(2048, openers, 256, assistant)
-        engine_factory = functools.partial(
-            LaneEngine,
-            prefill_plan=plan,
-            prefill_pass=8,
-            pass_cache=16 * 1024**3,
-        )
-        app = ChatApp(
-            model,
-            tokenizer,
-            served_name=served_name,
-            engine_factory=engine_factory,
-            lanes=1,
-            max_rows=int(settings.get("max_rows", 16)),
-            max_draft=int(settings.get("max_draft", 15)),
-            default_max_tokens=int(max_tokens),
-            context_window=int(context_window),
-            enable_thinking=True,
-            checkpoint_slots=0,
-            checkpoint_budget_bytes=None,
-            memory_budget_bytes=memory_limit,
-            use_proposer=True,
-            snapshot_dir=None,
-            model_id=f"{target.resolve()}|tensorfold={SUPPORTED_VERSION}",
-            model_dir=target,
-        )
-        return cls(app)
+        model = tokenizer = app = None
+        try:
+            model, tokenizer = package.load(target, mtp_drafts=3)
+            settings = dict(package.engine_settings(model))
+            getattr(model, "release_rounds", lambda: None)()
+            wire_resident(mx, memory_limit - PROCESS_BYTES)
+            openers, assistant = message_markers(tokenizer)
+            plan = PrefillPlan(2048, openers, 256, assistant)
+            engine_factory = functools.partial(
+                LaneEngine,
+                prefill_plan=plan,
+                prefill_pass=8,
+                pass_cache=16 * 1024**3,
+            )
+            # The pinned pure-Python constructor starts its scheduler. Retain the
+            # instance first so even an interrupted constructor has an owner.
+            app = ChatApp.__new__(ChatApp)
+            ChatApp.__init__(
+                app,
+                model,
+                tokenizer,
+                served_name=served_name,
+                engine_factory=engine_factory,
+                lanes=1,
+                max_rows=int(settings.get("max_rows", 16)),
+                max_draft=int(settings.get("max_draft", 15)),
+                default_max_tokens=int(max_tokens),
+                context_window=int(context_window),
+                enable_thinking=True,
+                checkpoint_slots=None,
+                checkpoint_budget_bytes=_prompt_cache_bytes(),
+                memory_budget_bytes=memory_limit,
+                use_proposer=True,
+                snapshot_dir=None,
+                model_id=f"{target.resolve()}|tensorfold={SUPPORTED_VERSION}",
+                model_dir=target,
+            )
+            return cls(app)
+        except BaseException as error:
+            # Preserve the startup error even if teardown itself fails.
+            try:
+                scheduler = getattr(app, "scheduler", None)
+                if scheduler is not None:
+                    scheduler.stop()
+            except BaseException:
+                pass
+            scheduler = model = tokenizer = app = None
+            # A logged/retained exception can otherwise keep weights alive in
+            # completed load/constructor frames, including chained failures.
+            pending = [error]
+            visited = set()
+            while pending:
+                failure = pending.pop()
+                if id(failure) in visited:
+                    continue
+                visited.add(id(failure))
+                traceback.clear_frames(failure.__traceback__)
+                pending.extend(
+                    cause
+                    for cause in (failure.__cause__, failure.__context__)
+                    if cause is not None
+                )
+            try:
+                gc.collect()
+                mx.clear_cache()
+            except BaseException:
+                pass
+            raise
 
 
 def run_tensorfold_glm53_server(**kwargs: Any) -> None:

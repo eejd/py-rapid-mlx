@@ -17,6 +17,7 @@ from typing import Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from .._env import env_falsey
 from ..api.errors import CHAT_RESPONSE_FORMAT_PARAM, GuidedGenerationCancelledError
 from ..api.models import (
     AssistantMessage,
@@ -123,6 +124,9 @@ from ..service.helpers import (
     _validate_tool_call_params,
     _wait_with_disconnect,
     build_extended_sampling_kwargs,
+    context_overflow_from_client_error,
+    context_overflow_from_guided_limit,
+    context_window_exhausted,
     dry_sampling_kwargs,
     enable_thinking_warning_header,
     enforce_context_length,
@@ -134,6 +138,7 @@ from ..service.helpers import (
     maybe_apply_reasoning_effort,
     maybe_auto_disable_thinking_for_casual_chat,
     maybe_auto_disable_thinking_for_tools,
+    prompt_compression_headers,
     reasoning_stop_scope_kwargs,
     repair_messages_fit_context,
     served_chat_template,
@@ -340,7 +345,7 @@ def _forced_tool_call_prefix(parser_name: str | None, function_name: str) -> str
     return None
 
 
-def _compute_forced_tool_prefix(cfg, request) -> str | None:
+def _compute_forced_tool_prefix(cfg, request, engine=None) -> str | None:
     """The forced-function assistant-turn prefix for a forced/named ``tool_choice``,
     or ``None`` when the request is not a forced single/named choice or the parser
     has no audited wire opener.
@@ -366,6 +371,68 @@ def _compute_forced_tool_prefix(cfg, request) -> str | None:
         _forced_name = request.tools[0].function.get("name")
     if not _forced_name:
         return None
+    # A permissive parser can accept both JSON and XML, but the prefill must
+    # agree with the template the model was trained to continue (#4428).
+    template = served_chat_template(engine) if engine is not None else None
+    if isinstance(template, dict):
+        template = template.get("tool_use") or template.get("default")
+    if (
+        cfg.tool_call_parser in {"hermes", "nous", "qwen3_coder"}
+        and isinstance(template, str)
+        and "<function=" in template
+        and "<parameter=" in template
+    ):
+        # XML names are literal wire bytes, unlike JSON-escaped names.
+        if not _SAFE_DEEPSEEK_TOOL_NAME_RE.fullmatch(_forced_name):
+            return None
+        # Templates can contain inactive XML branches. Probe the rendered
+        # assistant call with this request's template kwargs rather than
+        # choosing a format solely from source literals.
+        from jinja2 import TemplateError
+        from transformers.utils.chat_template_utils import render_jinja_template
+
+        from ..utils.chat_template import _normalize_assistant_tool_call_arguments
+
+        probe_messages = [m.model_dump(exclude_none=True) for m in request.messages]
+        probe_messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {"name": _forced_name, "arguments": {}},
+                    }
+                ],
+            }
+        )
+        probe_messages = _normalize_assistant_tool_call_arguments(probe_messages)
+        probe_kwargs = dict(request.chat_template_kwargs or {})
+        resolved_thinking = _resolve_enable_thinking(request)
+        if resolved_thinking is not None:
+            probe_kwargs["enable_thinking"] = resolved_thinking
+        try:
+            rendered, _ = render_jinja_template(
+                [probe_messages[:-1], probe_messages],
+                tools=[t.model_dump(exclude_none=True) for t in request.tools],
+                chat_template=template,
+                **probe_kwargs,
+            )
+        except (TypeError, ValueError, TemplateError):
+            # An unprobeable template has no verified forced wire format.
+            # Let native generation choose it rather than guess JSON.
+            return None
+        # Inspect only bytes added by the synthetic assistant turn. A marker
+        # in user/tool history cannot establish the assistant wire format.
+        if len(rendered) != 2 or not rendered[1].startswith(rendered[0]):
+            return None
+        assistant_render = rendered[1][len(rendered[0]) :]
+        if (
+            assistant_render.rsplit("<tool_call>", 1)[-1]
+            .lstrip()
+            .startswith(f"<function={_forced_name}>")
+        ):
+            return f"<tool_call>\n<function={_forced_name}>\n"
     return _forced_tool_call_prefix(cfg.tool_call_parser, _forced_name)
 
 
@@ -691,17 +758,13 @@ def _constrain_tools_opted_out() -> bool:
     """True iff the operator has EXPLICITLY disabled constrained tool-calling.
 
     #558 PR-5 flips the default to ON. ``RAPID_MLX_CONSTRAIN_TOOLS`` is now an
-    OPT-OUT toggle: only the explicit values ``0`` / ``off`` / ``false`` (case-
-    insensitive, whitespace-trimmed) disable the feature; an absent var — or any
+    OPT-OUT toggle: only a falsey value (``rapid_mlx._env.FALSEY_VALUES``, case-
+    insensitive, whitespace-trimmed) disables the feature; an absent var — or any
     other value — leaves it ON. When opted out the chat route restores the
     legacy free-form-then-parse behavior for tool calls, including the #561
     oversized-schema free-form fallback (no HTTP 400).
     """
-    return os.environ.get("RAPID_MLX_CONSTRAIN_TOOLS", "1").strip().lower() in (
-        "0",
-        "off",
-        "false",
-    )
+    return env_falsey("RAPID_MLX_CONSTRAIN_TOOLS")
 
 
 def _tool_parser_supports_grammar(cfg) -> bool:
@@ -4913,7 +4976,7 @@ async def _create_chat_completion_impl(
     # the grammar is the stronger, self-sufficient lever.
     _forced_prefix = None
     if _glp is None:
-        _forced_prefix = _compute_forced_tool_prefix(cfg, request)
+        _forced_prefix = _compute_forced_tool_prefix(cfg, request, engine)
     if _forced_prefix:
         chat_kwargs["forced_assistant_prefix"] = _forced_prefix
 
@@ -5008,7 +5071,7 @@ async def _create_chat_completion_impl(
         _glp = None
         _line1_gate_engaged = False
         _line1_prefix = _LINE1_SEED_UNSET
-        _restored_prefix = _compute_forced_tool_prefix(cfg, request)
+        _restored_prefix = _compute_forced_tool_prefix(cfg, request, engine)
         if _restored_prefix:
             chat_kwargs["forced_assistant_prefix"] = _restored_prefix
 
@@ -5049,7 +5112,7 @@ async def _create_chat_completion_impl(
         chat_kwargs.pop("grammar_logits_processor", None)
         _glp = None
         _line1_gate_engaged = False
-        _restored_prefix = _compute_forced_tool_prefix(cfg, request)
+        _restored_prefix = _compute_forced_tool_prefix(cfg, request, engine)
         if _restored_prefix:
             chat_kwargs["forced_assistant_prefix"] = _restored_prefix
 
@@ -5652,6 +5715,9 @@ async def _create_chat_completion_impl(
                     timeout=request.timeout or cfg.default_timeout,
                 )
             except ClientRequestError as exc:
+                _context_error = context_overflow_from_client_error(exc)
+                if _context_error is not None:
+                    raise _context_error from exc
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except InferenceAbortedError as exc:
                 # #3564: the MLLM preflight runs BEFORE StreamingResponse
@@ -5821,6 +5887,11 @@ async def _create_chat_completion_impl(
                 # unchanged so the 408 / 499 / 503 mapping kicks in.
                 raise
             except Exception as guided_err:
+                _guided_context_error = context_overflow_from_guided_limit(
+                    engine, guided_err
+                )
+                if _guided_context_error is not None:
+                    raise _guided_context_error from guided_err
                 # Codex r6 BLOCKING parity (non-streaming chat path):
                 # under strict=true, falling back to ``engine.chat``
                 # IS the H-06 hole — the buffered post-decode validator
@@ -5899,6 +5970,9 @@ async def _create_chat_completion_impl(
             result="failed",
             error_class=_telemetry_inference.classify_inference_failure(e),
         )
+        _context_error = context_overflow_from_client_error(e)
+        if _context_error is not None:
+            raise _context_error from e
         err_msg = str(e)
         if isinstance(e, InferenceAbortedError):
             # Engine aborted the request (e.g. Metal runtime error caught
@@ -5935,6 +6009,12 @@ async def _create_chat_completion_impl(
 
     if output is None:
         return Response(status_code=499)
+
+    _window_error = context_window_exhausted(
+        engine, output.prompt_tokens, output.completion_tokens, output.finish_reason
+    )
+    if _window_error is not None:
+        raise _window_error
 
     elapsed = time.perf_counter() - start_time
     tokens_per_sec = output.completion_tokens / elapsed if elapsed > 0 else 0
@@ -6138,6 +6218,11 @@ async def _create_chat_completion_impl(
                 except (TimeoutError, asyncio.TimeoutError, asyncio.CancelledError):
                     raise
                 except Exception as repair_err:
+                    _repair_context_error = context_overflow_from_guided_limit(
+                        engine, repair_err
+                    ) or context_overflow_from_client_error(repair_err)
+                    if _repair_context_error is not None:
+                        raise _repair_context_error from repair_err
                     # Codex r1 #3: a non-timeout, non-disconnect engine
                     # exception during the repair turn is a SERVER failure
                     # (the engine couldn't produce ANY output for the
@@ -6829,6 +6914,11 @@ async def _create_chat_completion_impl(
     response_headers = enable_thinking_warning_header(
         request, getattr(cfg, "reasoning_parser_name", None)
     )
+    # #4092: tell the client when PFlash shortened its prompt.
+    response_headers = {
+        **response_headers,
+        **prompt_compression_headers(chat_response.metrics),
+    }
 
     # Serialize the response FIRST so a serialization failure surfaces as an
     # error the client sees — not as a "successful inference" we already
@@ -6916,6 +7006,18 @@ async def _stream_buffered_chat_response(
     terminal.finish_reason = choice.finish_reason
     terminal.prompt_tokens = response.usage.prompt_tokens
     terminal.completion_tokens = response.usage.completion_tokens
+    if response.metrics is not None:
+        terminal.timing_metrics = (
+            response.metrics.model_dump(
+                exclude_none=True,
+                exclude={"speculative_decoding", "prompt_compression"},
+            )
+            or None
+        )
+        if response.metrics.prompt_compression is not None:
+            terminal.prompt_compression = (
+                response.metrics.prompt_compression.model_dump()
+            )
     if response.usage.prompt_tokens_details is not None:
         terminal.cached_tokens = response.usage.prompt_tokens_details.cached_tokens
     if (
@@ -7341,6 +7443,20 @@ async def stream_chat_completion(
                 prompt_tokens = output.prompt_tokens
             if hasattr(output, "completion_tokens") and output.completion_tokens:
                 completion_tokens = output.completion_tokens
+            _window_error = context_window_exhausted(
+                engine,
+                prompt_tokens,
+                completion_tokens,
+                getattr(output, "finish_reason", None),
+            )
+            if _window_error is not None:
+                yield (
+                    "event: chat.completion.error\ndata: "
+                    + json.dumps(_window_error.detail, separators=(",", ":"))
+                    + "\n\n"
+                )
+                yield "data: [DONE]\n\n"
+                return
             # ``cached_tokens`` is a single per-request value (the
             # prefix-cache hit count set once when the request is
             # scheduled), so re-reading it on every chunk just
@@ -7665,21 +7781,17 @@ async def stream_chat_completion(
                 # #1256: on the streaming surface headers are already on the
                 # wire so we cannot 422 mid-flight. If the synthesised call's
                 # arguments fail the target tool's schema, DON'T fabricate it —
-                # leave ``fallback_tool_calls`` empty so the turn finishes with
-                # its REAL terminal reason (``stop`` normally, or ``length`` if
-                # the model truncated — we deliberately don't mask that) instead
-                # of shipping a ``tool_calls`` chunk the client would execute as
-                # a broken call. Mirrors the non-stream 422 in spirit within the
-                # route's "no mid-stream 422" constraint.
+                # leave ``fallback_tool_calls`` empty. The terminal gate below
+                # reports a forced-choice error unless generation hit ``length``;
+                # never ship a broken call that the client might execute.
                 _synth_err = _forced_synth_schema_error(
                     _synth_target, _synth_call.function.arguments, request.tools
                 )
                 if _synth_err:
                     logger.warning(
                         "[SSE-FORCED-SYNTH-#1256] refusing to synthesize a "
-                        "schema-invalid forced call to %r: %s; finishing "
-                        "without a fabricated tool_call (real terminal reason "
-                        "preserved).",
+                        "schema-invalid forced call to %r: %s; "
+                        "no fabricated tool_call will be emitted.",
                         _synth_target,
                         _synth_err,
                     )
@@ -7748,6 +7860,39 @@ async def stream_chat_completion(
                             continue
                         yield _content_sse_chunk(_text, _logprobs)
                 _forced_content_pending.clear()
+
+        # Required/named requests must never report a successful stop after
+        # dropping every call. Headers are already sent, so signal a stream
+        # error rather than fabricating arguments.
+        if (
+            _stream_tool_choice
+            and _stream_tool_choice.get("mode") in {"required", "named"}
+            and processor._tool_calls_emitted_to_wire == 0
+            and not fallback_tool_calls
+            and (
+                buffered_finish is None or buffered_finish[0].finish_reason != "length"
+            )
+        ):
+            error = {
+                "error": {
+                    "message": "Forced tool choice produced no valid tool call.",
+                    "type": "server_error",
+                    "code": "tool_choice_violation",
+                }
+            }
+            yield f"data: {json.dumps(error)}\n\n"
+            yield "data: [DONE]\n\n"
+            from rapid_mlx.telemetry import inference as _telemetry_inference
+
+            _telemetry_inference.emit_completed_request(
+                model=served_telemetry_id or "<custom>",
+                endpoint="/v1/chat/completions",
+                caller_agent=caller_agent,
+                caller_client=caller_client,
+                result="failed",
+                error_class="output_contract_unmet",
+            )
+            return
 
         # Emit the terminal chunk. Three cases:
         #   (a) Streaming parser already emitted tool_calls during the
@@ -8473,6 +8618,17 @@ async def stream_chat_completion_guided(
                 yield event
             return
         except Exception as guided_err:
+            _context_error = context_overflow_from_client_error(
+                guided_err
+            ) or context_overflow_from_guided_limit(engine, guided_err)
+            if _context_error is not None:
+                yield (
+                    "event: chat.completion.error\ndata: "
+                    + json.dumps(_context_error.detail, separators=(",", ":"))
+                    + "\n\n"
+                )
+                yield "data: [DONE]\n\n"
+                return
             # Log only the schema's top-level shape, not the full body —
             # user-supplied schemas may embed PII (default values),
             # internal endpoint names, or be megabytes large. Keys +
@@ -8593,6 +8749,21 @@ async def stream_chat_completion_guided(
                 admission_task.cancel()
             if not guided_task.done():
                 guided_task.cancel()
+
+        _window_error = context_window_exhausted(
+            engine,
+            output.prompt_tokens,
+            output.completion_tokens,
+            output.finish_reason,
+        )
+        if _window_error is not None:
+            yield (
+                "event: chat.completion.error\ndata: "
+                + json.dumps(_window_error.detail, separators=(",", ":"))
+                + "\n\n"
+            )
+            yield "data: [DONE]\n\n"
+            return
 
         content = output.text or ""
 
@@ -8948,6 +9119,13 @@ async def stream_chat_completion_strict_postgen(
     )
     try:
         async for chunk_text in upstream_agen:
+            if chunk_text.startswith("event: chat.completion.error\n"):
+                # The upstream already diagnosed a context failure. Keep its
+                # terminal error instead of replacing it with a schema error.
+                validation_emitted = True
+                yield chunk_text
+                await cast(AsyncGenerator[str, None], upstream_agen).aclose()
+                return
             # Swallow the upstream [DONE] sentinel — we emit our own
             # [DONE] at the END of validation (codex r6 #1,
             # unconditional) so post-validation chunks land BEFORE the
@@ -9318,6 +9496,7 @@ async def stream_chat_completion_strict_postgen(
             # can branch, same envelope shape so handler code is
             # reusable.
             if upstream_raised is not None and not validation_emitted:
+                context_error = context_overflow_from_client_error(upstream_raised)
                 # Codex r12 #2: do NOT leak ``str(upstream_raised)``
                 # into the client-visible SSE payload. Exception
                 # messages from the inference stack can include
@@ -9330,22 +9509,26 @@ async def stream_chat_completion_strict_postgen(
                 # entry). The full ``str(exc)`` was already logged
                 # in the except arm above for server-side
                 # diagnostics — that's where operators look.
-                upstream_envelope = {
-                    "error": {
-                        "type": "upstream_error",
-                        "code": "strict_stream_upstream_error",
-                        "message": (
-                            "strict json_schema streaming generation "
-                            "aborted before validation. See server logs "
-                            f"for response_id={response_id}."
-                        ),
-                        "param": "response_format.json_schema",
-                        "details": {
-                            "exception_type": type(upstream_raised).__name__,
-                            "response_id": response_id,
-                        },
+                upstream_envelope = (
+                    {"error": context_error.error_payload}
+                    if context_error is not None
+                    else {
+                        "error": {
+                            "type": "upstream_error",
+                            "code": "strict_stream_upstream_error",
+                            "message": (
+                                "strict json_schema streaming generation "
+                                "aborted before validation. See server logs "
+                                f"for response_id={response_id}."
+                            ),
+                            "param": "response_format.json_schema",
+                            "details": {
+                                "exception_type": type(upstream_raised).__name__,
+                                "response_id": response_id,
+                            },
+                        }
                     }
-                }
+                )
                 err_obj = {
                     "id": response_id,
                     "object": "chat.completion.error",

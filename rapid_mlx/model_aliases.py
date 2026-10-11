@@ -56,16 +56,15 @@ VALID_SUFFIX_TIERS: frozenset[str] = frozenset({"unknown", "neutral", "good", "a
 # (#287) is a per-model decision: the bench evidence showed 3.87x-8.5x
 # TTFT speedups with 100% needle recall on the Qwen3.5 / Qwen3.6 family
 # at keep_ratio=0.20, but we have no evidence for other families. To
-# avoid a silent quality regression on an unbenched arch, an alias must
-# be explicitly tagged ``"verified"`` before the engine defaults
-# ``--pflash`` to ``always`` for it; everything else stays ``"unknown"``
-# and the engine keeps PFlash off (preserving v0.7.x behaviour). Any
-# explicit ``--pflash {off,auto,always}`` flag on the CLI still wins
-# over the tier-based default.
+# record that evidence, an alias is tagged ``"verified"``; everything else
+# stays ``"unknown"``. Since #4092 PFlash is off by default for EVERY
+# alias (it is lossy), so the tier no longer enables compression on its
+# own: it marks aliases where an explicit ``--pflash auto|always`` opt-in
+# is bench-backed, and gates the ``pflash_keep_ratio`` pin below.
 #
-# - ``unknown``:  not benched / no decision (default, engine keeps PFlash off)
-# - ``verified``: bench-validated speedup + recall on this alias; engine
-#                 defaults PFlash to ``always`` unless the user overrides
+# - ``unknown``:  not benched / no decision (default)
+# - ``verified``: bench-validated speedup + recall on this alias; PFlash
+#                 still defaults to off, opt in with ``--pflash auto|always``
 #
 # The recall validation is AT the keep_ratio the alias will actually run:
 # by default 0.20, or the per-alias ``pflash_keep_ratio`` override when set.
@@ -116,6 +115,11 @@ _RETIRED_MODEL_ALIASES: dict[str, str] = {
         "multimodal route can hang on the first text completion. For explicit "
         "text-only testing, use 'mlx-community/Ministral-3-3B-Instruct-2512-4bit' "
         "with --no-mllm."
+    ),
+    "qwopus-27b-8bit": (
+        "The 'qwopus-27b-8bit' alias was retired because its upstream "
+        "repository is no longer accessible. Use 'qwopus-27b-4bit' for the "
+        "same Qwopus3.5 27B v3 model from the same publisher."
     ),
 }
 
@@ -210,6 +214,7 @@ def _coerce(alias: str, value: object) -> AliasProfile:
             "dflash_algorithm",
             "dflash_backend",
             "tensorfold_mtp",
+            "tensorfold_kernel",
             "tensorfold_target_revision",
             "tensorfold_runtime_revision",
             "supports_ddtree",
@@ -224,6 +229,7 @@ def _coerce(alias: str, value: object) -> AliasProfile:
             "pflash_tier",
             "pflash_keep_ratio",
             "turboquant_tier",
+            "agentic_coverage",
         }
     )
     unknown_keys = set(value.keys()) - _ALLOWED_PROFILE_KEYS
@@ -428,13 +434,23 @@ def _coerce(alias: str, value: object) -> AliasProfile:
         "tensorfold_target_revision": tensorfold_target_revision,
         "tensorfold_runtime_revision": tensorfold_runtime_revision,
     }
-    if tensorfold_mtp and any(v is None for v in tensorfold_revisions.values()):
+    tensorfold_kernel = _strict_bool("tensorfold_kernel", False)
+    if tensorfold_mtp and tensorfold_kernel:
         raise ValueError(
-            f"alias {alias!r}: tensorfold_mtp=true requires immutable target and runtime revisions"
+            f"alias {alias!r}: tensorfold_mtp and tensorfold_kernel are mutually exclusive"
         )
-    if not tensorfold_mtp and any(v is not None for v in tensorfold_revisions.values()):
+    tensorfold_target_only = tensorfold_mtp or tensorfold_kernel
+    if tensorfold_target_only and any(v is None for v in tensorfold_revisions.values()):
+        flag = "tensorfold_kernel" if tensorfold_kernel else "tensorfold_mtp"
+        raise ValueError(
+            f"alias {alias!r}: {flag}=true requires immutable target and runtime revisions"
+        )
+    if not tensorfold_target_only and any(
+        v is not None for v in tensorfold_revisions.values()
+    ):
         raise ValueError(
             f"alias {alias!r}: TensorFold revisions require tensorfold_mtp=true"
+            " or tensorfold_kernel=true"
         )
     for key, revision in tensorfold_revisions.items():
         if revision is not None and (
@@ -767,6 +783,7 @@ def _coerce(alias: str, value: object) -> AliasProfile:
         dflash_algorithm=dflash_algorithm,
         dflash_backend=dflash_backend,
         tensorfold_mtp=tensorfold_mtp,
+        tensorfold_kernel=tensorfold_kernel,
         tensorfold_target_revision=tensorfold_target_revision,
         tensorfold_runtime_revision=tensorfold_runtime_revision,
         supports_ddtree=supports_ddtree,
@@ -781,6 +798,7 @@ def _coerce(alias: str, value: object) -> AliasProfile:
         enforce_min_memory=_strict_bool("enforce_min_memory", False),
         vision_min_memory_gb=vision_min_memory_gb,
         experimental=_strict_bool("experimental", False),
+        agentic_coverage=_strict_bool("agentic_coverage", True),
     )
 
 
@@ -897,6 +915,57 @@ def resolve_subfolder(name: str) -> str | None:
     return profile.subfolder if profile is not None else None
 
 
+# Files whose presence makes a directory a model checkpoint the user may mean
+# to serve in place (text/vision ``config.json``, diffusers ``model_index.json``,
+# video ``split_model.json``, Mistral-native ``params.json``).
+_LOCAL_MODEL_MARKER_FILES = (
+    "config.json",
+    "model_index.json",
+    "split_model.json",
+    "params.json",
+)
+_LOCAL_MODEL_WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".npz")
+
+
+def _is_explicit_path_spelling(name: str) -> bool:
+    """Whether ``name`` is spelled as a path rather than a bare token."""
+    separators = [os.sep, "/"] + ([os.altsep] if os.altsep else [])
+    return any(sep in name for sep in separators) or name.startswith(("~", "."))
+
+
+def _looks_like_local_model_dir(path: str) -> bool:
+    try:
+        names = os.listdir(path)
+    except OSError:
+        # Could not inspect it: keep the historical local-path precedence
+        # rather than silently swapping in (and downloading) the catalog model.
+        return True
+    return any(
+        name in _LOCAL_MODEL_MARKER_FILES or name.endswith(_LOCAL_MODEL_WEIGHT_SUFFIXES)
+        for name in names
+    )
+
+
+def local_dir_shadows_alias(name: object) -> bool:
+    """True when a bare catalog-alias token names a non-model local directory.
+
+    A local path keeps precedence over the catalog (#4097): an explicit path
+    (``./name``, ``~/m``, ``/abs``, ``org/repo``) always means the filesystem,
+    and so does a bare token whose directory actually holds a model. But a
+    stray folder that merely shares an alias's name — a bench output directory
+    named after the alias — must not hijack ``rapid-mlx serve <alias>`` into
+    a ``config.json not found`` failure; the catalog alias wins instead.
+    """
+    if not isinstance(name, str) or not name or _is_explicit_path_spelling(name):
+        return False
+    if not os.path.isdir(name) or _looks_like_local_model_dir(name):
+        return False
+    try:
+        return name in _load()
+    except Exception:  # noqa: BLE001 — the probe must never break resolution
+        return False
+
+
 class DraftModelNotServableError(ValueError):
     """Raised when a spec-decode draft checkpoint is served as a primary."""
 
@@ -917,7 +986,7 @@ def draft_only_conflict(model_ref: object) -> str | None:
     # ``resolve_model`` gives an existing local file/directory precedence over
     # every catalog spelling; a local model is whatever is on disk, never the
     # catalog checkpoint whose name it happens to share.
-    if os.path.exists(model_ref):
+    if os.path.exists(model_ref) and not local_dir_shadows_alias(model_ref):
         return None
     try:
         profiles = _load()
@@ -962,7 +1031,9 @@ def raise_if_draft_only_model(model_ref: object) -> None:
 def resolve_model(name: str) -> str:
     """Resolve a model alias to its full HuggingFace path.
 
-    If a local file/directory with the name exists, prefer that.
+    If a local file/directory with the name exists, prefer that — unless it
+    is a non-model directory merely sharing a catalog alias's bare name
+    (:func:`local_dir_shadows_alias`, #4097).
     If a configured external-model root contains the repo, serve it in place.
     If name is a curated Hugging Face path, return its catalog spelling so
     revision pins and lane-specific download checks see the same identity as
@@ -971,7 +1042,7 @@ def resolve_model(name: str) -> str:
     If name matches an alias, return the mapped HF path.
     Otherwise return unchanged.
     """
-    if os.path.exists(name):
+    if os.path.exists(name) and not local_dir_shadows_alias(name):
         return name
     if reason := _RETIRED_MODEL_ALIASES.get(name):
         raise RetiredModelAliasError(reason)

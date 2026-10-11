@@ -1062,7 +1062,8 @@ def test_product_server_reuses_guarded_serial_boundary(monkeypatch):
         lambda **kwargs: calls.setdefault("app", kwargs) or object(),
     )
     monkeypatch.setattr(
-        "uvicorn.run", lambda app, **kwargs: calls.update(uvicorn=(app, kwargs))
+        "rapid_mlx._uvicorn._run_server",
+        lambda app, **kwargs: calls.update(uvicorn=(app, kwargs)),
     )
 
     server.run_server(
@@ -1141,7 +1142,7 @@ def test_shared_serial_app_invokes_product_callbacks_and_generators():
         "temperature": 0,
         "top_p": 1,
     }
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         response = client.post("/v1/chat/completions", json=payload)
         streamed = client.post("/v1/chat/completions", json={**payload, "stream": True})
     assert response.status_code == 200
@@ -1189,7 +1190,7 @@ def test_shared_serial_app_builds_legacy_draft_kwargs_when_no_callback():
         render_prompt_fn=lambda *_a, **_k: "prompt",
         generate_fn=generate_fn,
     )
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         response = client.post(
             "/v1/chat/completions",
             json={

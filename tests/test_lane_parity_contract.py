@@ -424,6 +424,7 @@ class _TextScheduler:
             finish_reason="stop",
             cached_tokens=1,
             matched_stop="END",
+            prompt_compression={"original_tokens": 9, "kept_tokens": 3},
         )
 
     async def add_request(self, **kwargs):
@@ -443,6 +444,7 @@ class _TextScheduler:
             logprobs=[{"token": "text-result"}],
             cached_tokens=1,
             matched_stop="END",
+            prompt_compression={"original_tokens": 9, "kept_tokens": 3},
         )
 
     def abort_request(self, _request_id) -> None:
@@ -519,6 +521,7 @@ def _request_semantics() -> tuple[dict[str, Any], tuple[object, object, object]]
         "presence_penalty": 0.3,
         "frequency_penalty": -0.2,
         "reasoning_stop_scope": _STOP_SCOPE,
+        "ignore_eos": True,
         "grammar_logits_processor": processors[0],
         "reasoning_budget_logits_processor": processors[1],
         "suppressed_tokens_logits_processor": processors[2],
@@ -541,6 +544,7 @@ def _assert_shared_semantics(
             "presence_penalty": 0.3,
             "frequency_penalty": -0.2,
             "reasoning_stop_scope": _STOP_SCOPE,
+            "ignore_eos": True,
         }
         assert {key: captured[key] for key in _TEXT_ONLY_SAMPLING_KEYS} == {
             "top_k": 17,
@@ -556,6 +560,7 @@ def _assert_shared_semantics(
         "presence_penalty": 0.3,
         "frequency_penalty": -0.2,
         "reasoning_stop_scope": _STOP_SCOPE,
+        "ignore_eos": True,
     }
     assert {key: getattr(params, key) for key in _TEXT_ONLY_SAMPLING_KEYS} == {
         "top_k": 17,
@@ -637,6 +642,11 @@ async def test_engine_dispatch_preserves_shared_request_semantics(
     result = outputs[-1]
     assert result.finish_reason == "stop"
     assert result.matched_stop == "END"
+    # #4092: PFlash only runs on the text scheduler; its terminal
+    # compression block must survive both text-lane engine paths.
+    assert result.prompt_compression == (
+        None if is_mllm else {"original_tokens": 9, "kept_tokens": 3}
+    )
     if not stream:
         assert result.raw_text.startswith("<tool-prefix>")
     if stream:

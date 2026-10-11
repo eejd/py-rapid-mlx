@@ -36,6 +36,7 @@ from .common import (
     DEFAULT_DOMAIN,
     DEFAULT_LABEL,
     LAUNCH_DAEMONS_DIR,
+    http_probe_authority,
     log_dir_for,
     user_uid,
 )
@@ -155,6 +156,47 @@ def refuse_secret_flags(serve_args: tuple[str, ...]) -> None:
             )
 
 
+def log_file_from_serve_args(serve_args: tuple[str, ...]) -> str | None:
+    """The ``--log-file`` value among serve args, or None when absent."""
+    target = None
+    for index, token in enumerate(serve_args):
+        if token == "--log-file":
+            if index + 1 >= len(serve_args):
+                raise ServiceInstallError("--log-file requires a value.")
+            target = serve_args[index + 1]
+        elif token.startswith("--log-file="):
+            target = token.split("=", 1)[1]
+    return target
+
+
+def refuse_unbootable_log_file(
+    serve_args: tuple[str, ...], *, require_directory: bool = False
+) -> None:
+    """Reject a ``--log-file`` the daemon could not open when launchd boots it."""
+    target = log_file_from_serve_args(serve_args)
+    if target is None or target in ("-", "/dev/null", "/dev/stderr", "/dev/stdout"):
+        return
+    if target.startswith("/dev/"):
+        raise ServiceInstallError(
+            f"--log-file {target!r} is not a supported device target; use "
+            "/dev/null, /dev/stderr or /dev/stdout."
+        )
+    if not os.path.isabs(target):
+        raise ServiceInstallError(
+            f"--log-file {target!r} must be an absolute path for the service."
+        )
+    if target == "/Volumes" or target.startswith("/Volumes/"):
+        raise ServiceInstallError(
+            f"--log-file {target!r} is under /Volumes: external disks and RAM "
+            "disks are mounted after launchd starts the service at boot."
+        )
+    if require_directory and not os.path.isdir(os.path.dirname(target)):
+        raise ServiceInstallError(
+            f"--log-file {target!r}: directory {os.path.dirname(target)} "
+            "does not exist."
+        )
+
+
 def _cache_root_present(home: Path, model: str) -> bool:
     """Best-effort: is the HF cache dir for ``model`` present under ``home``?"""
     cache_root = home / ".cache" / "huggingface" / "hub"
@@ -178,7 +220,7 @@ def _build_plist_bytes(
     label: str,
     user: str,
     executable: str,
-    model: str,
+    model: str | None,
     home: Path,
     host: str,
     port: int,
@@ -303,9 +345,13 @@ def _readyz_ready(
     import socket
 
     try:
-        with socket.create_connection((_probe_host(host), port), timeout=1.0) as sock:
+        probe_host = _probe_host(host)
+        with socket.create_connection((probe_host, port), timeout=1.0) as sock:
             sock.settimeout(1.0)
-            sock.sendall(b"GET /readyz HTTP/1.1\r\nHost: x\r\n\r\n")
+            authority = http_probe_authority(probe_host, port)
+            sock.sendall(
+                f"GET /readyz HTTP/1.1\r\nHost: {authority}\r\n\r\n".encode("ascii")
+            )
             data = sock.recv(4096)
     except OSError:
         return False
@@ -435,7 +481,10 @@ def install_command(args) -> int:
     from .common import home_for_user
 
     label = getattr(args, "label", None) or DEFAULT_LABEL
-    model = getattr(args, "model", None) or "qwen3.5-4b-4bit"
+    model = getattr(args, "model", None)
+    embedding_model = getattr(args, "embedding_model", None)
+    if model is None and embedding_model is None:
+        model = "qwen3.5-4b-4bit"
     user = getattr(args, "service_user", None)
     host = getattr(args, "host", None) or "127.0.0.1"
     port = getattr(args, "port", None) or 8000
@@ -459,6 +508,7 @@ def install_command(args) -> int:
     try:
         validate_service_account(user)
         refuse_secret_flags(serve_args)
+        refuse_unbootable_log_file(serve_args, require_directory=True)
         home = home_for_user(user)
         assert home is not None
         # Resolve the binary against the SERVICE account's home, not the
@@ -485,6 +535,7 @@ def install_command(args) -> int:
             service_user=user,
             executable=executable,
             model=model,
+            embedding_model=embedding_model,
             host=host,
             port=port,
             serve_args=serve_args,
@@ -534,15 +585,17 @@ def install_command(args) -> int:
         )
         return 1
 
-    # Model-cache check: warn (not fail) if the model isn't cached under the
+    # Model-cache check: warn (not fail) if a model isn't cached under the
     # service account's HOME — the documented workflow pre-downloads it.
-    if not _cache_root_present(home, model):
-        print(
-            f"warning: model {model!r} not found in the service account's HF "
-            f"cache ({home}/.cache/huggingface/hub). Pre-download it as the "
-            "service account so the daemon can boot offline at first start.",
-            file=sys.stderr,
-        )
+    for cached_model in (model, embedding_model):
+        if cached_model and not _cache_root_present(home, cached_model):
+            print(
+                f"warning: model {cached_model!r} not found in the service "
+                f"account's HF cache ({home}/.cache/huggingface/hub). "
+                "Pre-download it as the service account so the daemon can "
+                "boot offline at first start.",
+                file=sys.stderr,
+            )
 
     if dry_run:
         print("Dry run — would perform these steps (no changes made):")
@@ -556,7 +609,9 @@ def install_command(args) -> int:
             print(f"  [DRY-RUN] {step}")
         print(f"  service account: {user} (uid {user_uid(user)})")
         print(f"  executable: {executable}")
-        print(f"  model: {model}")
+        print(f"  model: {model or '(none)'}")
+        if embedding_model:
+            print(f"  embedding model: {embedding_model}")
         return 0
 
     if not is_root():
@@ -687,7 +742,12 @@ def install_command(args) -> int:
         except OSError:
             pass
 
-    print(f"Installed and running: {label} (model {model}, {host}:{port}).")
+    served = ", ".join(
+        f"{kind} {name}"
+        for kind, name in (("model", model), ("embedding model", embedding_model))
+        if name
+    )
+    print(f"Installed and running: {label} ({served}, {host}:{port}).")
     print(
         "Verify with `rapid-mlx service status` and after a reboot "
         "`./scripts/headless_service_smoke.sh`."

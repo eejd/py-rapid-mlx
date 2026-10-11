@@ -30,6 +30,7 @@ import json
 import logging
 import math
 import os
+import stat
 import struct
 import threading
 from collections import OrderedDict
@@ -661,6 +662,85 @@ def _probe_write_bytes_per_sec(directory: str) -> float:
     return _THROUGHPUT_PROBE_BYTES / max(elapsed, 1e-6) * _THROUGHPUT_PROBE_SAFETY
 
 
+# Free-disk reserve for prefix-cache persistence. The save loop used to write
+# every live entry with no look at the volume, so a normal restart could take
+# a tight disk to 0 bytes free (multi-GB snapshots are routine). Each entry is
+# now admitted only if writing it leaves at least this much free; the default
+# matches the "very low" disk threshold ``rapid-mlx doctor`` reports. ``0``
+# disables the check. Best effort: space is measured before each write, not
+# reserved, so another writer can still take it while an entry is written.
+PREFIX_CACHE_MIN_FREE_DISK_BYTES_ENV = "RAPID_MLX_PREFIX_CACHE_MIN_FREE_DISK_BYTES"
+_DEFAULT_PERSIST_MIN_FREE_DISK_BYTES = 5 * 1024 * _BYTES_PER_MB
+
+
+def _resolve_persist_min_free_disk_bytes() -> int:
+    """Free-disk reserve a persist must leave; ``0`` disables the check."""
+    raw = os.environ.get(PREFIX_CACHE_MIN_FREE_DISK_BYTES_ENV)
+    if raw is None or not raw.strip():
+        return _DEFAULT_PERSIST_MIN_FREE_DISK_BYTES
+    try:
+        value = int(raw.strip())
+        if value < 0:
+            raise ValueError(raw)
+        return value
+    except ValueError:
+        logger.warning(
+            f"[cache_persist] invalid {PREFIX_CACHE_MIN_FREE_DISK_BYTES_ENV}="
+            f"{raw!r}; falling back to default "
+            f"{_DEFAULT_PERSIST_MIN_FREE_DISK_BYTES}"
+        )
+        return _DEFAULT_PERSIST_MIN_FREE_DISK_BYTES
+
+
+# Bytes an entry puts on disk beyond its cache arrays: safetensors header,
+# tokens.bin header, its ``index.json`` row and filesystem block rounding.
+_PERSIST_ENTRY_OVERHEAD_BYTES = _BYTES_PER_MB
+
+
+def _persist_entry_disk_bytes(persist_cache: list[Any], num_tokens: int) -> int:
+    """Conservative on-disk size of one persisted entry (all of its files).
+
+    ``estimate_kv_cache_memory`` already charges the entry its hybrid
+    recurrent-state checkpoints, so the checkpoint sidecar is covered.
+    """
+    return (
+        estimate_kv_cache_memory(persist_cache)
+        + 4 * num_tokens
+        + _PERSIST_ENTRY_OVERHEAD_BYTES
+    )
+
+
+def _persist_index_row_bytes(row: dict[str, Any]) -> int:
+    """Upper bound on what one entry row adds to ``index.json``.
+
+    The index is written once, after every entry, so the rows of entries
+    already admitted are still owed to the volume while later entries are
+    being checked. Serialising at the row's nesting depth plus slack for
+    the separator keeps this at or above the bytes the final dump emits.
+    """
+    return len(json.dumps(row, indent=6)) + 16
+
+
+def _free_disk_bytes(directory: str) -> int | None:
+    """Free bytes on the volume holding ``directory``; ``None`` if unknown."""
+    import shutil
+
+    try:
+        return shutil.disk_usage(directory).free
+    except OSError as exc:
+        logger.debug(f"[cache_persist] free-space probe failed: {exc}")
+        return None
+
+
+def _remove_entry_files(*paths: str) -> None:
+    """Best-effort removal of one entry's (possibly partial) files."""
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _fsync_file(path: str) -> None:
     """Flush a file's contents to disk.
 
@@ -1061,6 +1141,40 @@ def _state_memory(state: Any) -> int:
     return _array_memory(state)
 
 
+def _flatten_state(state: Any) -> list[Any]:
+    if state is None:
+        return []
+    if isinstance(state, (list, tuple)):
+        return [a for s in state for a in _flatten_state(s)]
+    return [state]
+
+
+def _shared_state_arrays(cache: list[Any]) -> tuple[tuple[tuple[Any, int], ...], int]:
+    """Recurrent-state arrays of ``cache`` that other entries may also hold.
+
+    MLX arrays are immutable, so the recurrent state of a hybrid layer and
+    its checkpoints are held by reference: an entry stored at a later
+    position of the same prompt carries the very same checkpoint arrays, and
+    an entry's own state can be one of its checkpoints. Returns the distinct
+    ``(array, bytes)`` pairs and the bytes :func:`estimate_kv_cache_memory`
+    charged for all their occurrences, so the cache ledger can charge each
+    array once however many entries hold it.
+    """
+    distinct: dict[int, tuple[Any, int]] = {}
+    charged = 0
+    for layer, holder in zip(cache, collect_checkpoints(cache), strict=True):
+        if not is_recurrent_layer(layer):
+            continue
+        arrays = _flatten_state(layer.state)
+        if holder is not None:
+            arrays.extend(holder.arrays())
+        for arr in arrays:
+            size = _array_memory(arr)
+            charged += size
+            distinct.setdefault(id(arr), (arr, size))
+    return tuple(distinct.values()), charged
+
+
 def estimate_kv_cache_memory(cache: list[Any]) -> int:
     """
     Estimate memory usage of a KV cache in bytes.
@@ -1389,6 +1503,16 @@ class _CacheEntry:
     # or token depth, this remains meaningful after a fetch, context truncation,
     # and process restart.
     message_boundary_sequence: int = 0
+    # Distinct recurrent-state arrays this entry holds by reference, and the
+    # part of ``memory_bytes`` charged for them. ``memory_bytes`` stays the
+    # entry's standalone size; the cache ledger charges each shared array once.
+    shared_arrays: tuple[tuple[Any, int], ...] = ()
+    shared_bytes: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.shared_arrays:
+            self.shared_arrays, shared_bytes = _shared_state_arrays(self.cache)
+            self.shared_bytes = min(shared_bytes, self.memory_bytes)
 
     @classmethod
     def create(
@@ -2072,6 +2196,9 @@ class MemoryAwarePrefixCache:
         # Memory tracking
         self._max_memory = self._config.compute_memory_limit()
         self._current_memory = 0
+        # id(array) -> [holders, bytes, array]: recurrent-state arrays held by
+        # resident entries. The array reference keeps the id from being reused.
+        self._shared_refs: dict[int, list[Any]] = {}
 
         # Statistics
         self._stats = CacheStats(max_memory_bytes=self._max_memory)
@@ -2140,6 +2267,30 @@ class MemoryAwarePrefixCache:
 
         with self._lock:
             return self._fetch_locked(tokens, tokens_key)
+
+    def shared_prefix_length(self, tokens: list[int]) -> int:
+        """Most leading tokens ``tokens`` shares with any stored entry.
+
+        A read-only probe: it neither counts as a lookup nor touches recency.
+        The entries sharing the longest prefix with a key sort next to it, so
+        only the two neighbours of its insertion point are compared.
+        """
+        key = tuple(tokens)
+        best = 0
+        with self._lock:
+            keys = self._sorted_keys
+            idx = bisect.bisect_left(keys, key)
+            for neighbour in keys[max(idx - 1, 0) : idx + 1]:
+                # Bisect on slice equality so the comparisons run in C.
+                low, high = 0, min(len(key), len(neighbour))
+                while low < high:
+                    mid = (low + high + 1) // 2
+                    if key[low:mid] == neighbour[low:mid]:
+                        low = mid
+                    else:
+                        high = mid - 1
+                best = max(best, low)
+        return best
 
     def _fetch_locked(
         self, tokens: list[int], tokens_key: tuple[int, ...]
@@ -2591,7 +2742,7 @@ class MemoryAwarePrefixCache:
                                 f"[radix] remove failed for {len(key)} tokens: {exc}"
                             )
                     old = self._entries.pop(key)
-                    self._current_memory -= old.memory_bytes
+                    self._ledger_remove(old)
                     self._stats.evictions += 1
                     logger.debug(
                         f"[prefix_evict] removed {len(key)} tokens, "
@@ -2604,7 +2755,7 @@ class MemoryAwarePrefixCache:
 
             # Evict until we have room
             while (
-                self._current_memory + entry.memory_bytes > self._max_memory
+                self._current_memory + self._ledger_cost(entry) > self._max_memory
                 or len(self._entries) >= self._config.max_entries
             ) and self._entries:
                 self._evict_lru()
@@ -2616,7 +2767,7 @@ class MemoryAwarePrefixCache:
                 self._message_boundary_sequence += 1
                 entry.message_boundary_sequence = self._message_boundary_sequence
             self._entries[tokens_key] = entry
-            self._current_memory += entry.memory_bytes
+            self._ledger_add(entry)
             bisect.insort(self._sorted_keys, tokens_key)
             self._stats.entry_count = len(self._entries)
             self._stats.current_memory_bytes = self._current_memory
@@ -2653,6 +2804,40 @@ class MemoryAwarePrefixCache:
         if idx < len(self._sorted_keys) and self._sorted_keys[idx] == key:
             self._sorted_keys.pop(idx)
 
+    def _ledger_cost(self, entry: _CacheEntry) -> int:
+        """Bytes storing ``entry`` adds: arrays a resident entry already
+        holds are not charged again. Caller must hold ``self._lock``."""
+        refs = self._shared_refs
+        return (
+            entry.memory_bytes
+            - entry.shared_bytes
+            + sum(size for arr, size in entry.shared_arrays if id(arr) not in refs)
+        )
+
+    def _ledger_add(self, entry: _CacheEntry) -> None:
+        """Charge ``entry`` to the ledger. Caller must hold ``self._lock``."""
+        self._current_memory += self._ledger_cost(entry)
+        for arr, size in entry.shared_arrays:
+            ref = self._shared_refs.get(id(arr))
+            if ref is None:
+                self._shared_refs[id(arr)] = [1, size, arr]
+            else:
+                ref[0] += 1
+
+    def _ledger_remove(self, entry: _CacheEntry) -> None:
+        """Release ``entry`` from the ledger; an array another resident entry
+        still holds stays charged. Caller must hold ``self._lock``."""
+        freed = entry.memory_bytes - entry.shared_bytes
+        for arr, size in entry.shared_arrays:
+            ref = self._shared_refs.get(id(arr))
+            if ref is None:
+                continue
+            ref[0] -= 1
+            if ref[0] <= 0:
+                del self._shared_refs[id(arr)]
+                freed += size
+        self._current_memory -= freed
+
     def _evict_lru(self) -> None:
         """Evict the least recently used entry.
 
@@ -2681,7 +2866,7 @@ class MemoryAwarePrefixCache:
                     f"[radix] {reason} remove failed for {len(tokens_key)} tokens: {exc}"
                 )
         entry = self._entries.pop(tokens_key)
-        self._current_memory -= entry.memory_bytes
+        self._ledger_remove(entry)
         self._stats.evictions += 1
         self._stats.entry_count = len(self._entries)
         self._stats.current_memory_bytes = self._current_memory
@@ -2774,7 +2959,7 @@ class MemoryAwarePrefixCache:
                         f"[radix] explicit-remove failed for {len(tokens_key)} tokens: {exc}"
                     )
             entry = self._entries.pop(tokens_key)
-            self._current_memory -= entry.memory_bytes
+            self._ledger_remove(entry)
             self._stats.entry_count = len(self._entries)
             self._stats.current_memory_bytes = self._current_memory
         return True
@@ -2805,6 +2990,7 @@ class MemoryAwarePrefixCache:
                 except Exception as exc:  # pragma: no cover — defensive
                     logger.warning(f"[radix] clear failed: {exc}")
             self._current_memory = 0
+            self._shared_refs.clear()
             previous = self._stats
             if reset_stats:
                 self._stats = CacheStats(
@@ -3030,7 +3216,14 @@ class MemoryAwarePrefixCache:
                 )
                 return False
 
-        os.makedirs(new_dir, exist_ok=True)
+        # Token IDs and KV tensors can disclose the entire prompt. Protect the
+        # staging directory before writing the first byte, regardless of umask.
+        os.makedirs(new_dir, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(new_dir, 0o700)
+        except OSError as exc:
+            logger.warning("[cache_persist] cannot protect staging directory: %s", exc)
+            return False
 
         # Single source of truth for per-entry on-disk filenames. Used
         # by both the save loop and the post-loop "did the files
@@ -3085,7 +3278,17 @@ class MemoryAwarePrefixCache:
         # original incident) ~6× safety margin while still catching
         # genuinely-too-large entries.
         _BOOTSTRAP_BYTES_PER_SEC: float = 150 * _BYTES_PER_MB
-        if should_abort is not None:
+        min_free_disk = _resolve_persist_min_free_disk_bytes()
+        # The probe is a real write: skip it when it would itself cross the
+        # free-disk reserve (the fixed floor then stands in for it).
+        probe_fits = should_abort is not None
+        if probe_fits and min_free_disk > 0:
+            probe_free = _free_disk_bytes(new_dir)
+            probe_fits = (
+                probe_free is None
+                or probe_free - _THROUGHPUT_PROBE_BYTES >= min_free_disk
+            )
+        if probe_fits:
             # Budgeted (shutdown) save: calibrate the first prediction
             # against the real disk instead of the fixed floor. The floor
             # still wins on a disk slower than it (the historical contract).
@@ -3125,6 +3328,11 @@ class MemoryAwarePrefixCache:
             )
         total_bytes_written = 0
         total_write_seconds = 0.0
+        disk_skipped = 0
+        disk_skipped_bytes = 0
+        # ``index.json`` rows owed for entries already written (the index
+        # itself lands after the loop); later admissions must leave room.
+        index_owed_bytes = 0
         for i, (tokens_key, entry) in enumerate(entries_to_save):
             if total_write_seconds > 0:
                 observed_bps = total_bytes_written / total_write_seconds
@@ -3165,6 +3373,57 @@ class MemoryAwarePrefixCache:
                     if any(isinstance(c, QuantizedKVCache) for c in entry.cache)
                     else entry.cache
                 )
+                # Record the per-layer cache class names so loaders can
+                # gate on cache-type compatibility (#198 BUG B). Read from
+                # ``persist_cache`` (post-dequantize), not ``entry.cache``,
+                # so the index reflects what's actually on disk — otherwise
+                # a saved-while-quantized entry would be rejected on a
+                # subsequent unquantized startup despite being loadable.
+                cache_types = [
+                    type(layer).__name__ for layer in persist_cache if layer is not None
+                ]
+                # Built before anything is written so admission can charge
+                # this entry its own ``index.json`` row; ``checkpoints`` is
+                # settled once the sidecar write has run (``false`` is the
+                # longer spelling, so the size below is an upper bound).
+                index_row: dict[str, Any] = {
+                    "index": i,
+                    "num_tokens": len(tokens_key),
+                    "memory_bytes": entry.memory_bytes,
+                    "cache_types": cache_types,
+                    "message_boundary": entry.message_boundary,
+                    "message_boundary_sequence": (entry.message_boundary_sequence),
+                    "checkpoints": False,
+                }
+                index_row_bytes = _persist_index_row_bytes(index_row)
+                # Free-disk admission. Sized from ``persist_cache`` (what
+                # lands on disk — dequantized entries are larger than
+                # ``entry.memory_bytes``) and re-measured per entry, so the
+                # old snapshot still sitting in ``cache_dir`` and anything
+                # else filling the volume are both accounted for. A skipped
+                # entry does not end the loop: a smaller one may still fit.
+                if min_free_disk > 0:
+                    persist_bytes = _persist_entry_disk_bytes(
+                        persist_cache, len(tokens_key)
+                    )
+                    free_bytes = _free_disk_bytes(new_dir)
+                    if (
+                        free_bytes is not None
+                        and free_bytes
+                        - persist_bytes
+                        - index_row_bytes
+                        - index_owed_bytes
+                        < min_free_disk
+                    ):
+                        disk_skipped += 1
+                        disk_skipped_bytes += persist_bytes
+                        logger.debug(
+                            f"[cache_persist] skipping entry {i}: "
+                            f"{persist_bytes / _BYTES_PER_MB:.1f}MB would leave "
+                            f"less than the free-disk reserve "
+                            f"({free_bytes / _BYTES_PER_MB:.0f}MB free)"
+                        )
+                        continue
                 _save_prompt_cache_compat(
                     entry_path,
                     persist_cache,
@@ -3201,30 +3460,8 @@ class MemoryAwarePrefixCache:
                 has_checkpoints = _save_checkpoints_sidecar(
                     _checkpoints_sidecar_path(entry_path), persist_cache
                 )
-
-                # Record the per-layer cache class names so loaders can
-                # gate on cache-type compatibility (#198 BUG B). Read from
-                # ``persist_cache`` (post-dequantize), not ``entry.cache``,
-                # so the index reflects what's actually on disk — otherwise
-                # a saved-while-quantized entry would be rejected on a
-                # subsequent unquantized startup despite being loadable.
-                cache_types = [
-                    type(layer).__name__ for layer in persist_cache if layer is not None
-                ]
-
-                index["entries"].append(
-                    {
-                        "index": i,
-                        "num_tokens": len(tokens_key),
-                        "memory_bytes": entry.memory_bytes,
-                        "cache_types": cache_types,
-                        "message_boundary": entry.message_boundary,
-                        "message_boundary_sequence": (entry.message_boundary_sequence),
-                        "checkpoints": has_checkpoints,
-                    }
-                )
-                saved_lru_rank[i] = lru_rank[tokens_key]
-                saved += 1
+                index_row["checkpoints"] = has_checkpoints
+                entry_lru_rank = lru_rank[tokens_key]
                 # Feed the throughput estimator. We measure including
                 # both the safetensors write and the tokens sidecar so
                 # the next entry's prediction reflects the full per-
@@ -3239,8 +3476,31 @@ class MemoryAwarePrefixCache:
                     f"{entry.memory_bytes / _BYTES_PER_MB:.1f}MB KV, "
                     f"file={entry_path}"
                 )
+                # Bookkeeping last: nothing after this point can raise, so
+                # the cleanup below never removes files of a recorded entry.
+                index["entries"].append(index_row)
+                saved_lru_rank[i] = entry_lru_rank
+                index_owed_bytes += index_row_bytes
+                saved += 1
             except Exception as e:
                 logger.warning(f"[cache_persist] failed to save entry {i}: {e}")
+                # Drop the partial files now rather than at the orphan sweep:
+                # after a failed write (typically a full disk) they would
+                # otherwise hold space the remaining entries are measured
+                # against.
+                _remove_entry_files(
+                    entry_path, tokens_path, _checkpoints_sidecar_path(entry_path)
+                )
+
+        if disk_skipped:
+            logger.warning(
+                f"[cache_persist] skipped {disk_skipped}/{total_entries} entries "
+                f"({disk_skipped_bytes / _BYTES_PER_MB:.0f}MB): writing them "
+                f"would leave less than {min_free_disk // _BYTES_PER_MB}MB "
+                f"free on the volume holding {cache_dir}. Free up disk space, "
+                f"or set {PREFIX_CACHE_MIN_FREE_DISK_BYTES_ENV} (bytes, 0 "
+                f"disables the check) to change the reserve."
+            )
 
         if saved == 0:
             shutil.rmtree(new_dir, ignore_errors=True)
@@ -3412,7 +3672,12 @@ class MemoryAwarePrefixCache:
         # filter above proves at least one entry's files exist, so the
         # dir must too, but a stat-cache delay or NFS-style coherence
         # window could still trip the open() below. Cheap insurance.
-        os.makedirs(new_dir, exist_ok=True)
+        os.makedirs(new_dir, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(new_dir, 0o700)
+        except OSError as exc:
+            logger.warning("[cache_persist] cannot protect staging directory: %s", exc)
+            return False
 
         # TOCTOU re-check: between the filter above and the index.json
         # write below, the same external process could clobber new_dir
@@ -3503,6 +3768,23 @@ class MemoryAwarePrefixCache:
         # Atomic-ish directory swap. If we crash between the two renames,
         # load_from_disk's recovery path (see below) handles it.
         rename_committed = False
+        # The directory is already private while files are being written.
+        # Give each published artifact an explicit private mode as well.
+        try:
+            for name in os.listdir(new_dir):
+                fd = os.open(
+                    os.path.join(new_dir, name),
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                )
+                try:
+                    if not stat.S_ISREG(os.fstat(fd).st_mode):
+                        raise OSError("snapshot artifact is not a regular file")
+                    os.fchmod(fd, 0o600)
+                finally:
+                    os.close(fd)
+        except OSError as exc:
+            logger.warning("[cache_persist] cannot protect snapshot files: %s", exc)
+            return False
         try:
             if os.path.exists(cache_dir):
                 os.rename(cache_dir, old_dir)
@@ -3562,6 +3844,8 @@ class MemoryAwarePrefixCache:
 
         dt = _time.monotonic() - t0
         tail = " (partial — shutdown deadline hit)" if aborted_early else ""
+        if disk_skipped:
+            tail += " (partial — free-disk reserve)"
         if rename_committed:
             logger.info(
                 f"[cache_persist] SAVED {saved}/{total_entries} entries "
@@ -4182,6 +4466,7 @@ class MemoryAwarePrefixCache:
                     list(self._sorted_keys),
                     self._current_memory,
                     self._stats,
+                    {key: list(ref) for key, ref in self._shared_refs.items()},
                 )
                 self._entries.clear()
                 self._sorted_keys.clear()
@@ -4191,6 +4476,7 @@ class MemoryAwarePrefixCache:
                     except Exception as exc:  # pragma: no cover — defensive
                         logger.warning(f"[radix] clear failed: {exc}")
                 self._current_memory = 0
+                self._shared_refs.clear()
                 self._stats = CacheStats(
                     max_memory_bytes=self._max_memory,
                     load_skipped=self._stats.load_skipped,
@@ -4216,7 +4502,7 @@ class MemoryAwarePrefixCache:
                 # memory`` and ``_sorted_keys`` never double-count or duplicate.
                 existing = self._entries.get(tokens_key)
                 if existing is not None:
-                    self._current_memory -= existing.memory_bytes
+                    self._ledger_remove(existing)
                     idx = bisect.bisect_left(self._sorted_keys, tokens_key)
                     if (
                         idx < len(self._sorted_keys)
@@ -4230,7 +4516,7 @@ class MemoryAwarePrefixCache:
                             pass
 
                 self._entries[tokens_key] = entry
-                self._current_memory += entry.memory_bytes
+                self._ledger_add(entry)
                 bisect.insort(self._sorted_keys, tokens_key)
                 # #1100 codex round 4 (#3): keep the radix lookup index in sync
                 # with ``_entries``. The replace path clears the radix above and
@@ -4268,11 +4554,13 @@ class MemoryAwarePrefixCache:
                                 _snap_sorted,
                                 _snap_mem,
                                 _snap_stats,
+                                _snap_shared_refs,
                             ) = replace_snapshot
                             self._entries.clear()
                             self._entries.update(_snap_entries)
                             self._sorted_keys[:] = _snap_sorted
                             self._current_memory = _snap_mem
+                            self._shared_refs = _snap_shared_refs
                             self._stats = _snap_stats
                             if self._radix_index is not None:
                                 try:
@@ -4294,8 +4582,8 @@ class MemoryAwarePrefixCache:
                                 len(self._entries),
                             )
                             return 0
-                        self._entries.pop(tokens_key, None)
-                        self._current_memory -= entry.memory_bytes
+                        if self._entries.pop(tokens_key, None) is not None:
+                            self._ledger_remove(entry)
                         idx = bisect.bisect_left(self._sorted_keys, tokens_key)
                         if (
                             idx < len(self._sorted_keys)

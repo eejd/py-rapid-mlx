@@ -75,6 +75,14 @@ enum FileDropRetryPolicy {
             && transportFailed
             && attempt < maximumAttempts
     }
+
+    static func shouldFinishObservation(
+        completedDrop: Bool,
+        chipSettled: Bool,
+        transportResult: DragTransportFile.Result?
+    ) -> Bool {
+        completedDrop || chipSettled || transportResult == .copy
+    }
 }
 
 enum DragTransportFile {
@@ -231,6 +239,9 @@ final class RapidUITestHarness {
             "RAPID_XCUI_DROP_EVENT_FILE": dropEventFile.path,
             "RAPID_DESKTOP_PORT": String(reservedPort.port),
             "RAPID_DESKTOP_NO_PORT_SWEEP": "1",
+            // A live release card can cover Readiness.Action and intercept
+            // the native click. These journeys test attachments, not updates.
+            "RAPIDMLX_NO_UPDATE_CHECK": "1",
         ].merging(fakeSettings) { _, fixture in fixture }
         reservationTransferred = true
     }
@@ -444,21 +455,25 @@ final class RapidUITestHarness {
                 Date() >= completionObservationStart
                     && FileManager.default.fileExists(atPath: self.dropEventFile.path)
             }
-            let transportResultIsVisible = {
-                FileManager.default.fileExists(atPath: transportResultFile.path)
+            let visibleTransportResult = {
+                try? DragTransportFile.result(at: transportResultFile)
             }
 
             // The drop-completion marker and the product render arrive
             // independently. First wait briefly for either authoritative
-            // signal, then spend the rest of the original budget on an
-            // observed drop's chip.
+            // acceptance signal, then spend the rest of the original budget
+            // on an observed drop's chip. A source-side `.none` or
+            // `.notStarted` is not proof the destination did not consume the
+            // drop, so it cannot end destination observation early.
             let observationTimeout = FileDropRetryPolicy.observationTimeout(
                 settleTimeout: settleDeadline.timeIntervalSinceNow
             )
             _ = waitUntil(timeout: observationTimeout) {
-                chipIsSettled()
-                    || completionIsVisible()
-                    || transportResultIsVisible()
+                FileDropRetryPolicy.shouldFinishObservation(
+                    completedDrop: completionIsVisible(),
+                    chipSettled: chipIsSettled(),
+                    transportResult: visibleTransportResult()
+                )
             }
             if chipIsSettled() {
                 guard terminateFileDragSource(dragSource) else { return attempt }

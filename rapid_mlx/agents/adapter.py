@@ -244,6 +244,11 @@ def setup_agent_config(
         if not dry_run:
             track_agent_configure_failed(error_class, profile.name)
 
+    if profile.name == "opencode" and agent_version is None:
+        from .opencode_version import installed_version
+
+        agent_version = installed_version()
+
     try:
         rendered = profile.render_config(
             base_url, model_id, agent_version, context_length=context_length
@@ -290,6 +295,7 @@ def setup_agent_config(
             raise
 
         catalog_changed = False
+        catalog_path = None
         if profile.name == "codex" and isinstance(rendered, str):
             import json
 
@@ -333,6 +339,20 @@ def setup_agent_config(
                 "Fix or remove it manually, then re-run --setup."
             )
 
+        if profile.name == "opencode":
+            import json
+
+            from .opencode_config import reconcile
+
+            try:
+                before = json.loads(merged_text)
+                merged = reconcile(json.loads(merged_text), agent_version)
+            except ValueError as exc:
+                track_failure("config_invalid")
+                return str(exc)
+            if merged != before:
+                merged_text = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+
         if dry_run:
             if merged_text == rendered:
                 return f"Would write config to {config_path} (nothing written)"
@@ -349,6 +369,12 @@ def setup_agent_config(
                 f"Cannot write config to {config_path} ({exc}). Check file permissions."
             )
 
+        if not config_changed and not catalog_changed:
+            return f"Already configured at {config_path}; no file changes needed"
+        if not config_changed and catalog_path is not None:
+            return (
+                f"Updated Codex model catalog at {catalog_path}; config already current"
+            )
         if merged_text == rendered:
             summary = f"Wrote config to {config_path}"
         else:
@@ -358,13 +384,84 @@ def setup_agent_config(
                 # every key but drops comments, and a user who hand-wrote
                 # notes into ~/.codex/config.toml should hear that from us
                 # rather than discover it.
-                summary += "; comments were not"
+                summary += "; comments were not preserved"
         if config_changed or catalog_changed:
             track_agent_configured(profile.name)
         return summary
 
     track_failure("other")
     return "No config to write (template not specified)"
+
+
+def codex_setup_report(profile: AgentProfile, agent_version: str | None = None) -> str:
+    """Read back saved defaults, without claiming to resolve every Codex layer."""
+    import json
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+        import tomli as tomllib
+
+    cfg = profile.get_config_for_version(agent_version)
+    path = _resolve_config_path(cfg)
+    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    model = config.get("model")
+    provider_id = config.get("model_provider")
+    if not isinstance(model, str) or not isinstance(provider_id, str):
+        raise ValueError("saved Codex config has no model or model_provider")
+    providers = config.get("model_providers", {})
+    provider = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
+    endpoint = provider.get("base_url") if isinstance(provider, dict) else None
+    if not isinstance(endpoint, str):
+        raise ValueError("saved Codex provider has no base_url")
+    # Authentication is never part of a setup report, including URL credentials.
+    url = urlsplit(endpoint)
+    safe_endpoint = urlunsplit(
+        (url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", "")
+    )
+    lines = [
+        f"Saved Codex defaults (read back from {path}):",
+        f"  Model: {model}",
+        f"  Provider: {provider_id}",
+        f"  Endpoint: {safe_endpoint}",
+    ]
+    catalog_name = config.get("model_catalog_json")
+    if isinstance(catalog_name, str):
+        catalog_path = Path(catalog_name).expanduser()
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        models = catalog.get("models", []) if isinstance(catalog, dict) else []
+        entry = (
+            next(
+                (
+                    item
+                    for item in models
+                    if isinstance(item, dict) and item.get("slug") == model
+                ),
+                None,
+            )
+            if isinstance(models, list)
+            else None
+        )
+        if entry is None:
+            raise ValueError(
+                f"saved model {model!r} is missing from its Codex model catalog; "
+                "rerun agents codex --setup against the running server"
+            )
+        lines.append(f"  Model catalog: {catalog_path} (model ID matches)")
+    else:
+        lines.append(
+            "  Model catalog: not configured; Codex may use fallback model metadata."
+        )
+    if config.get("profile"):
+        lines.append(
+            f"  Default profile: {config['profile']} (preserved; may override these defaults)"
+        )
+    lines.append(
+        "Project settings, profiles and Codex --model/--config flags can override "
+        "these defaults. Use the same model ID as the catalog when overriding."
+    )
+    return "\n  ".join(lines)
 
 
 def _merge_file_config(
@@ -441,7 +538,27 @@ def _merge_toml(existing_text: str, rendered: str) -> str:
         template = tomllib.loads(rendered)
     except Exception as exc:
         raise _MergeParseError(f"rendered template is not valid TOML: {exc}") from exc
+    # A fresh Rapid config needs workspace write access to be useful for coding,
+    # but an operator's explicit sandbox choice is a security preference rather
+    # than endpoint metadata. Keep it authoritative when refreshing the model
+    # and provider fields.
+    if "sandbox_mode" in existing:
+        template["sandbox_mode"] = existing["sandbox_mode"]
     merged = _deep_merge(existing, template)
+    rendered_provider = template.get("model_providers", {}).get("rapid-mlx")
+    merged_provider = merged.get("model_providers", {}).get("rapid-mlx")
+    if (
+        isinstance(rendered_provider, dict)
+        and isinstance(merged_provider, dict)
+        and "env_key" not in rendered_provider
+        and merged_provider.get("env_key") == "RAPID_MLX_API_KEY"
+    ):
+        # This key is generated only for keyed Rapid servers. When setup
+        # switches to an unkeyed server, absent template fields alone cannot
+        # remove it through deep merge. Keep explicitly custom env keys.
+        merged_provider.pop("env_key")
+    if merged == existing:
+        return existing_text
     return tomli_w.dumps(merged)
 
 
@@ -519,6 +636,8 @@ def _merge_json(existing_text: str, rendered: str) -> str:
     if not isinstance(template, dict):
         raise _MergeParseError("rendered template is not a JSON object")
     merged = _deep_merge(existing, template)
+    if merged == existing:
+        return existing_text
     return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -538,9 +657,12 @@ def _fetch_models(base_url: str) -> list[dict]:
     import json
     import urllib.request
 
+    from rapid_mlx.http_auth import rapid_mlx_auth_headers
+
     try:
         url = base_url.rstrip("/") + "/models"
-        with urllib.request.urlopen(url, timeout=2) as resp:
+        request = urllib.request.Request(url, headers=rapid_mlx_auth_headers())
+        with urllib.request.urlopen(request, timeout=2) as resp:
             body = json.loads(resp.read())
             entries = body.get("data") if isinstance(body, dict) else None
             if not isinstance(entries, list):
@@ -654,6 +776,11 @@ def get_setup_instructions(
             model_id = detected_model
         if context_length is None and detected_ctx is not None:
             context_length = detected_ctx
+
+    if profile.name == "opencode" and agent_version is None:
+        from .opencode_version import installed_version
+
+        agent_version = installed_version()
 
     cfg = profile.get_config_for_version(agent_version)
     rendered = profile.render_config(

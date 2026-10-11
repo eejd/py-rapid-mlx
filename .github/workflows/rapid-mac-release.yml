@@ -116,14 +116,16 @@ jobs:
       SIGNED: ${{ secrets.MACOS_DEVID_CERT_P12_BASE64 != '' && secrets.MACOS_DEVID_CERT_PASSWORD != '' && secrets.AC_API_KEY_P8_BASE64 != '' && secrets.AC_API_KEY_ID != '' && secrets.AC_API_ISSUER_ID != '' }}
       # Absolute .app size ceiling — enforced by the "Bundle size gate"
       # step. The bundled sidecar (Contents/Resources/rapid-mlx) dominates.
-      # Signed v0.15.2 measured 549 MiB; Computer Use adds a separate 19 MiB
-      # TCC-stable helper and ~7 MiB of native macOS bridge packages (575 MiB
-      # total). Keep 15 MiB measured headroom. The independent compressed-DMG
-      # delta gate below still caps per-release growth at +50 MiB.
-      BUNDLE_SIZE_CAP_MB: "590"
+      # The sidecar now ships the base vision/image/video runtimes (torch,
+      # mflux, mlx-video; OpenCV excluded pending a licensing decision):
+      # measured 2026-10-07 on an Apple Silicon builder, the .app went
+      # 578 -> 1293 MiB (sidecar 502 -> 1211 MiB). Keep ~20 MiB headroom.
+      BUNDLE_SIZE_CAP_MB: "1315"
       # Per-release DMG growth ceiling — enforced by the "Bundle size delta
-      # gate" step against the previous rapid-mac release.
-      BUNDLE_SIZE_DELTA_CAP_MB: "50"
+      # gate" step against the previous rapid-mac release. The full-runtime
+      # release grows the compressed DMG 133 -> 239 MiB (+106 MiB); restore
+      # this to "50" once a stable release carrying the full runtimes ships.
+      BUNDLE_SIZE_DELTA_CAP_MB: "125"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -602,6 +604,8 @@ jobs:
               && inputs.promote_run_id != ''
               && inputs.promote_sha != ''))
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
       - name: Download the notarised DMG artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
@@ -663,8 +667,8 @@ jobs:
           VERSIONED_KEY="rapid-mac/${VERSION}/rapid-mlx-desktop-${DMG_SHA256}.dmg"
           DMG_URL="${CDN_BASE%/}/${VERSIONED_KEY}"
 
-          npx --yes wrangler@4.120.0 r2 object put "${R2_BUCKET}/${VERSIONED_KEY}" \
-            --file "$DMG" --content-type application/x-apple-diskimage --remote
+          python3 scripts/upload_release_r2.py "$DMG" "$R2_BUCKET" "$VERSIONED_KEY" \
+            application/x-apple-diskimage
 
           if [[ "${{ needs.desktop-ready.outputs.signed }}" == "true" ]]; then
             SPARKLE_ZIP="$(find sparkle -maxdepth 1 -type f -name '*.zip' -print -quit)"
@@ -673,8 +677,8 @@ jobs:
               exit 1
             }
             SPARKLE_KEY="rapid-mac/${VERSION}/$(basename "$SPARKLE_ZIP")"
-            npx --yes wrangler@4.120.0 r2 object put "${R2_BUCKET}/${SPARKLE_KEY}" \
-              --file "$SPARKLE_ZIP" --content-type application/zip --remote
+            python3 scripts/upload_release_r2.py "$SPARKLE_ZIP" "$R2_BUCKET" "$SPARKLE_KEY" \
+              application/zip
           fi
 
           # The GitHub Release does not exist yet — it is created only once this

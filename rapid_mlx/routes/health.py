@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from ..config import get_config
 from ..middleware.auth import verify_api_key, verify_api_key_or_x_api_key
+from ..runtime.model_switching import ModelSwitchingError, primary_switching
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +102,9 @@ async def health():
     model_loaded = (
         bool(primary_status["model_loaded"])
         if primary_status is not None
-        else engine is not None
+        else cfg.model_loaded
     )
+    switching = primary_switching()
 
     if getattr(engine, "is_image_gen", False):
         model_type = "image-gen"
@@ -110,12 +112,23 @@ async def health():
         model_type = "video-gen"
     elif getattr(engine, "is_mllm", False):
         model_type = "mllm"
+    elif cfg.embeddings_only:
+        model_type = "embedding"
     else:
         model_type = "llm"
 
     return {
         "status": "healthy",
-        "ready": cfg.ready,
+        "ready": cfg.ready and not switching,
+        "state": (
+            "switching"
+            if switching
+            else primary_status["state"]
+            if primary_status is not None
+            else "ready"
+            if cfg.ready
+            else "loading"
+        ),
         "model_loaded": model_loaded,
         "model_name": cfg.model_name,
         "model_type": model_type,
@@ -137,6 +150,8 @@ async def health_ready():
     (which returns 200 the moment the FastAPI app binds).
     """
     cfg = get_config()
+    if primary_switching():
+        raise ModelSwitchingError()
     if not cfg.ready:
         raise HTTPException(status_code=503, detail="model loading")
     lifecycle = cfg.primary_model_lifecycle
@@ -148,9 +163,7 @@ async def health_ready():
         "model": cfg.model_name,
         "state": status["state"] if status is not None else "ready",
         "model_loaded": (
-            bool(status["model_loaded"])
-            if status is not None
-            else cfg.engine is not None
+            bool(status["model_loaded"]) if status is not None else cfg.model_loaded
         ),
     }
 
@@ -197,7 +210,7 @@ async def healthz():
     model_loaded = (
         bool(lifecycle_status["model_loaded"])
         if lifecycle_status is not None
-        else cfg.engine is not None
+        else cfg.model_loaded
     )
     if cfg.draining:
         # Mirror the JSON shape the healthy path emits so operators /
@@ -432,6 +445,11 @@ async def status():
             "protected_chunks": stats.get("adaptive_prefill_protected_chunks", 0),
             "reduced_chunks": stats.get("adaptive_prefill_reduced_chunks", 0),
         },
+        "shared_prefix_waits": stats.get("shared_prefix_waits", 0),
+        "decode_stall": {
+            "chunk_size": stats.get("decode_stall_chunk_size"),
+            "bounded_chunks": stats.get("decode_stall_bounded_chunks", 0),
+        },
         "mtp_prompt_lookup": stats.get("mtp_vendored", {}),
         "idle_cache_clear": stats.get(
             "idle_cache_clear",
@@ -457,25 +475,58 @@ async def status():
 
 @router.get("/v1/cache/stats")
 async def cache_stats():
-    """Get cache statistics."""
-    try:
-        from mlx_vlm.utils import (
-            get_multimodal_kv_cache_stats,
-            get_pil_cache_stats,
-            get_pixel_values_cache_stats,
-        )
-
+    """Describe the installed backend; readiness is exposed by /health/ready."""
+    engine = get_config().engine
+    if engine is None:
         return {
-            "multimodal_kv_cache": get_multimodal_kv_cache_stats(),
-            "pixel_values_cache": get_pixel_values_cache_stats(),
-            "pil_image_cache": get_pil_cache_stats(),
+            "message": "engine not loaded",
+            "model_type": None,
+            "multimodal_kv_cache": None,
+            "pixel_values_cache": None,
+            "pil_image_cache": None,
         }
-    except ImportError:
+    if engine.is_mllm:
+        # Older optional backends expose image-cache diagnostics independently
+        # of the engine-owned KV cache. Their presence does not classify the
+        # active model, and a missing API must not hide the other statistics.
+        image_stats = {"pixel_values_cache": None, "pil_image_cache": None}
+        try:
+            from mlx_vlm import utils as vlm_utils
+        except Exception:
+            logger.debug("Optional image-cache statistics unavailable", exc_info=True)
+        else:
+            for field, api in (
+                ("pixel_values_cache", "get_pixel_values_cache_stats"),
+                ("pil_image_cache", "get_pil_cache_stats"),
+            ):
+                try:
+                    getter = getattr(vlm_utils, api, None)
+                    if callable(getter):
+                        image_stats[field] = getter()
+                except Exception:
+                    logger.debug(
+                        "Optional %s statistics unavailable", field, exc_info=True
+                    )
+        # BaseEngine supplies get_cache_stats() returning None by default,
+        # including for serving backends without reusable-prefix counters.
+        try:
+            kv_stats = engine.get_cache_stats()
+        except Exception:
+            logger.debug("Engine cache statistics unavailable", exc_info=True)
+            kv_stats = None
         return {
-            "message": "Vision cache stats not available (text-only model loaded). "
-            "Prompt cache is managed internally by the engine.",
-            "model_type": "llm",
+            "model_type": "mllm",
+            "multimodal_kv_cache": kv_stats,
+            **image_stats,
         }
+    return {
+        "message": "Vision cache stats not available (text-only model loaded). "
+        "Prompt cache is managed internally by the engine.",
+        "model_type": "llm",
+        "multimodal_kv_cache": None,
+        "pixel_values_cache": None,
+        "pil_image_cache": None,
+    }
 
 
 @admin_router.delete("/v1/cache")

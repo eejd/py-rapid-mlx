@@ -10,11 +10,12 @@ Supports:
 """
 
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .._env import env_falsey
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,8 @@ _SENSEVOICE_LANGUAGES = frozenset({"auto", "zh", "en", "ja", "ko", "yue", "nospe
 #
 # Gating (both must be true for the guard to run):
 #   * The engine kwarg ``enable_vad_pretrim`` (default ``True``).
-#   * The env override ``RAPID_MLX_STT_VAD_PRETRIM`` is not one of
-#     ``{"0", "false", "no", "off"}`` (case-insensitive).
+#   * The env override ``RAPID_MLX_STT_VAD_PRETRIM`` is not falsey
+#     (see ``rapid_mlx._env.FALSEY_VALUES``).
 #
 # If the VAD model fails to load (missing extras, network error, etc.),
 # the guard logs a warning once and every subsequent call transparently
@@ -195,14 +196,10 @@ class _VADTrimResult:
 def _vad_pretrim_disabled_by_env() -> bool:
     """Return ``True`` if ``RAPID_MLX_STT_VAD_PRETRIM`` opts out.
 
-    Truthy defaults ("", "1", "true", "yes", "on") leave the guard on;
-    only the explicit disable strings turn it off. This matches the
-    ``env_truthy`` convention used elsewhere in the repo (see
-    ``scripts/pr_validate/context.py``) — inverted here because the
-    default is on.
+    Unset, empty, and truthy values leave the guard on; only the
+    falsey strings in ``rapid_mlx._env.FALSEY_VALUES`` turn it off.
     """
-    val = os.environ.get("RAPID_MLX_STT_VAD_PRETRIM", "").strip().lower()
-    return val in {"0", "false", "no", "off"}
+    return env_falsey("RAPID_MLX_STT_VAD_PRETRIM")
 
 
 def _get_vad_model() -> Any | None:
@@ -649,6 +646,9 @@ class STTEngine:
         if self._loaded:
             return
 
+        from .. import model_downloads
+
+        model_downloads.require_local(self.model_name)
         try:
             from mlx_audio.stt.utils import load_model
 
@@ -734,7 +734,12 @@ class STTEngine:
             return
 
         try:
-            processor = WhisperProcessor.from_pretrained(processor_source)
+            from .. import model_downloads
+
+            local_only = (
+                {"local_files_only": True} if model_downloads.disabled() else {}
+            )
+            processor = WhisperProcessor.from_pretrained(processor_source, **local_only)
         except Exception as e:  # noqa: BLE001
             # Network failure, gated repo, unsupported revision — log
             # and bail. The upstream ValueError surfaces at first

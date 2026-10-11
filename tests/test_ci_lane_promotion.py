@@ -308,16 +308,19 @@ def test_required_aggregates_do_not_publish_shadow_commit_statuses():
     assert not (ROOT / ".github/workflows/full-ci-label-gate.yml").exists()
 
 
-def test_main_pushes_keep_full_engine_and_desktop_validation():
+def test_main_and_frozen_release_pushes_keep_full_engine_and_desktop_validation():
     for workflow in (ENGINE_WORKFLOW, DESKTOP_WORKFLOW):
         triggers = _workflow_strings(workflow)["on"]
-        assert triggers["push"]["branches"] == ["main"]
+        assert triggers["push"]["branches"] == ["main", "release/0.16.0"]
+        assert all("*" not in branch for branch in triggers["push"]["branches"])
 
     engine = _step_run(ENGINE_WORKFLOW, "changes", "Classify validation lanes")
     desktop = _step_run(DESKTOP_WORKFLOW, "changes", "Classify desktop lane")
     assert "else" in engine and "echo 'full_gate=true'" in engine
+    assert "refs/heads/release/0.16.0" not in engine
     assert 'if [ "$EVENT_NAME" != "pull_request" ]' in desktop
     assert "echo 'full_gate=true'" in desktop
+    assert "refs/heads/release/0.16.0" not in desktop
 
 
 def test_all_strict_required_workflows_emit_on_merge_group():
@@ -375,7 +378,7 @@ def test_engine_jobs_follow_fail_closed_engine_classification():
         job = _job(ENGINE_WORKFLOW, job_name)
         assert job["needs"] == "changes"
         assert _condition(ENGINE_WORKFLOW, job_name) == (
-            "always() && needs.changes.result == 'success' && "
+            "!cancelled() && needs.changes.result == 'success' && "
             "needs.changes.outputs.engine == 'true' && "
             "needs.changes.outputs.reuse_ci != 'true'"
         )
@@ -383,7 +386,7 @@ def test_engine_jobs_follow_fail_closed_engine_classification():
     bound_guard = _job(ENGINE_WORKFLOW, "mlx-bound-guard")
     assert bound_guard["needs"] == "changes"
     assert _condition(ENGINE_WORKFLOW, "mlx-bound-guard") == (
-        "always() && needs.changes.result == 'success' && "
+        "!cancelled() && needs.changes.result == 'success' && "
         "github.event_name == 'pull_request' && "
         "needs.changes.outputs.engine == 'true' && "
         "needs.changes.outputs.reuse_ci != 'true'"

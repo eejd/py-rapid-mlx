@@ -140,7 +140,11 @@ def _failure_code(error: Exception) -> str:
         return "runtime_oom"
     if "unsupported" in message:
         return "unsupported_task"
-    if "timeout" in message or "timed out" in message:
+    if (
+        isinstance(error, (TimeoutError, asyncio.TimeoutError))
+        or "timeout" in message
+        or "timed out" in message
+    ):
         return "timeout"
     if "model" in message and ("invalid" in message or "not found" in message):
         return "invalid_model"
@@ -264,7 +268,10 @@ def _probe_video_artifact_unbounded(path: str) -> tuple[int, int, int, float]:
             return _probe_video_with_ffmpeg(
                 path, ffmpeg, desktop_bundle=_is_sidecar_bundled_ffmpeg(ffmpeg)
             )
-        raise RuntimeError("video artifact validation requires rapid-mlx[video]")
+        raise RuntimeError(
+            "video artifact validation requires ffmpeg "
+            "(bundled with rapid-mlx's video runtime)"
+        )
 
     try:
         reader = imageio.get_reader(path, format="ffmpeg")
@@ -495,6 +502,10 @@ def _video_download_worker(
         _download_video_artifact_unbounded(base_url, job_id, destination_path)
         sender.send(("ok", None))
     except BaseException as exc:
+        try:
+            os.unlink(destination_path)
+        except OSError:
+            pass
         message = (
             str(exc)
             if isinstance(exc, RuntimeError)
@@ -980,14 +991,13 @@ class _ServingBenchmarkAdapter:
                 completed = True
                 return
 
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + timeout
+            # Match AsyncEngineCore: bound each wait for output, not the
+            # total round. A healthy long decode can take over 180 seconds.
             while True:
                 try:
-                    remaining = deadline - loop.time()
-                    if remaining <= 0:
+                    if timeout <= 0:
                         raise asyncio.TimeoutError
-                    output = await asyncio.wait_for(anext(stream), timeout=remaining)
+                    output = await asyncio.wait_for(anext(stream), timeout=timeout)
                 except StopAsyncIteration:
                     completed = True
                     return

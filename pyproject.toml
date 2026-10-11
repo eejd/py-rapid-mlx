@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rapid-mlx"
-version = "0.15.4"
-description = "Rapid-MLX is an open-source (Apache 2.0) OpenAI- and Anthropic-compatible LLM inference server and Mac app for Apple Silicon, built on MLX, focused on reliable tool calling for coding agents."
+version = "0.15.7"
+description = "Rapid-MLX is an open-source (Apache 2.0) OpenAI- and Anthropic-compatible LLM inference server for Apple Silicon, built on MLX, focused on reliable tool calling for coding agents; up to 4× faster decoding than Apple's MLX (mlx-lm) on the same weights."
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 authors = [
     {name = "Rapid-MLX contributors"}
 ]
-keywords = ["llm", "mlx", "apple-silicon", "inference", "transformers"]
+keywords = ["llm", "mlx", "mlx-lm", "apple-silicon", "inference-server", "openai-compatible", "anthropic", "tool-calling", "coding-agents", "local-llm", "macos"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -53,7 +53,6 @@ dependencies = [
     # is a gated coherence event — see scripts/check_mlx_bound_move.py.
     "mlx>=0.32.1,<0.33",
     "mlx-lm>=0.31.3,<0.32",  # 0.31.1+ required for presence_penalty/frequency_penalty kwargs on make_logits_processors (#512); 0.31.3 added thread-local generation_stream but cross-thread eval is still broken (see shim sites). Upper cap <0.32 (#1248).
-    # mlx-vlm is opt-in via [vision] extras (saves ~322 MB for text-only users)
     #
     # transformers 5.13.0 tightened
     # ``AutoTokenizer.register`` to dereference ``key.__module__`` while mlx-lm
@@ -85,8 +84,6 @@ dependencies = [
     "huggingface-hub>=1.1.0",
     "numpy>=1.24.0",
     "tqdm>=4.66.0",
-    # pillow is opt-in via [vision] extras — only the MLLM paths (mllm.py,
-    # benchmark.py image mode) touch PIL, and mlx-vlm requires it anyway.
     "pyyaml>=6.0",
     # Writing TOML, so ``rapid-mlx agents codex --setup`` can deep-merge into
     # an existing ~/.codex/config.toml instead of replacing it (#1532).
@@ -101,6 +98,7 @@ dependencies = [
     # existed, so every fresh-write test would still have passed.
     'tomli>=2.0.1; python_version < "3.11"',
     "requests>=2.28.0",
+    "certifi>=2024.2.2",
     "rich>=13.8.0",
     "tabulate>=0.9.0",
     "psutil>=5.9.0",
@@ -155,6 +153,36 @@ dependencies = [
     # are RETAINED as defense-in-depth (a broken/incompatible install still
     # degrades gracefully rather than crashing).
     "llguidance>=1.7.6",
+    # Vision, image- and video-generation runtimes ship in the base install so
+    # the first serve of a multimodal alias (Qwen3.5+/Gemma 4) accepts images
+    # and an image/video-gen alias starts without an extra-install round trip.
+    # The historical [vision]/[image]/[video]/[dflash]/[mtp] extras stay valid
+    # aliases (see rapid_mlx/runtime/base_runtime.py). Every module here is
+    # imported lazily; tests/test_base_runtime_lazy_imports.py guards the CLI
+    # front door.
+    #
+    # Markers are carried over unchanged from the extras they came from: the
+    # [vision] requirements were never platform-gated (so the vision runtime is
+    # base on every platform and its repair is always a base reinstall), while
+    # the [image]/[video] requirements keep their Darwin and Python >=3.11
+    # gates (the image/video preflight gives 3.10 users an upgrade diagnostic;
+    # SDXL/SD3.5 still run on 3.10 with Pillow + sentencepiece).
+    #
+    # mlx-vlm stays exactly pinned to the signed Desktop sidecar's validated
+    # runtime; moving it is a gated coherence event (#1248).
+    "mlx-vlm==0.7.2",
+    "opencv-python>=4.8.0",
+    "torch>=2.3.0",
+    "torchvision>=0.18.0",
+    "pillow>=10.0.0",
+    "mflux>=0.20.0,<0.21; platform_system == 'Darwin' and python_version >= '3.11'",
+    "sentencepiece>=0.2.0; platform_system == 'Darwin'",
+    # Video-generation runtime (LTX-2.3 / Wan). Upstream requires Python
+    # >=3.11; the video-lane preflight gives 3.10 users an upgrade diagnostic.
+    # imageio[ffmpeg] brings a self-contained ffmpeg wheel — no system ffmpeg.
+    "mlx-video-with-audio==0.1.36; platform_system == 'Darwin' and python_version >= '3.11'",
+    "mlx-arsenal>=0.10.1; platform_system == 'Darwin' and python_version >= '3.11'",
+    "imageio[ffmpeg]>=2.34.0; platform_system == 'Darwin' and python_version >= '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -164,9 +192,9 @@ computer-use = [
     "pyobjc-framework-ApplicationServices==12.2.2; platform_system == 'Darwin'",
     "pyobjc-framework-Quartz==12.2.2; platform_system == 'Darwin'",
 ]
-# Vision/multimodal models (Gemma 4, Qwen-VL, etc.) — adds ~322 MB
-# Required for any model with vision input. Text-only models work without this.
-# 0.5.0+ also unlocks DFlash speculative decoding (see [dflash] extras).
+# Vision/multimodal runtime. These requirements already ship in the base
+# install, so ``rapid-mlx[vision]`` is an accepted no-op alias kept for
+# existing docs, scripts and installers.
 vision = [
     # Keep the optional runtime identical to the signed Desktop sidecar.
     # A floating 0.6.x range backtracks to 0.6.3 under older Transformers
@@ -218,6 +246,17 @@ embeddings = [
 # 3.10 floor so the native CLM backend and protocol remain available there.
 system-one = [
     "laya-mlx>=0.2,<0.3; python_version >= '3.11'",
+]
+# Cloudflare Clef's joint-schema head currently uses the official Torch
+# implementation on Metal. Keep this separate from the native MLX decision
+# backends so the default install stays small.
+clef = [
+    "packaging>=24.0",
+    "torch>=2.11.0; platform_system == 'Darwin'",
+    "torchvision>=0.26.0; platform_system == 'Darwin'",
+    "accelerate>=1.4.0",
+    "transformers>=5.10.2,!=5.13.0,<5.16",
+    "pillow>=10.0.0",
 ]
 # HF → Cloudflare R2 mirror tooling (scripts/mirror_to_r2.py).
 # Off the hot path — only maintainers who seed models.rapidmlx.com need
@@ -507,6 +546,8 @@ audio-desktop = [
     # rapid_mlx.audio.tts encodes the in-memory result with libsndfile.
     "soundfile>=0.12.0",
 ]
+# Video-generation runtime. Already part of the base install on macOS
+# (Python 3.11+); kept as an accepted no-op alias for existing docs/scripts.
 video = [
     # MLX-native LTX-2.3 T2V/I2V with synchronized audio. 0.1.36 is the
     # first verified release with the split-format LTX-2.3 VAE fixes. The
@@ -521,6 +562,8 @@ video = [
     "pillow>=10.0.0; platform_system == 'Darwin' and python_version >= '3.11'",
     "sentencepiece>=0.2.0; platform_system == 'Darwin' and python_version >= '3.11'",
 ]
+# Image-generation runtime. Already part of the base install on macOS; kept as
+# an accepted no-op alias for existing docs, scripts and installers.
 image = [
     # MLX-native text-to-image / image-edit (FLUX.1-schnell, Qwen-Image,
     # Qwen-Image-Edit, Qwen-Image-2.1) via mflux. mflux 0.20.0 adds Qwen-Image-2.1
@@ -612,6 +655,8 @@ rapid_mlx = [
     # Vendored Stability AI MLX Stable Audio 3 attribution — the MIT license
     # text + provenance NOTICE/README must travel with the redistributed code.
     "audio/sa3/LICENSE",
+    "clef/vendor/LICENSE",
+    "clef/vendor/NOTICE",
     "audio/sa3/NOTICE",
     "audio/sa3/README.md",
     # Vendored HiDream-O1 MLX adapter attribution must ship in wheels and the
@@ -636,6 +681,8 @@ rapid_mlx = [
     # The vendored mlx-vlm APC/cache implementation is MIT-licensed; its
     # license text must travel with every wheel that redistributes the source.
     "models/mlx_vlm_vendored/LICENSE",
+    "models/embedding_gemma2/LICENSE",
+    "models/embedding_gemma2/NOTICE",
 ]
 videox_fun_mlx = ["LICENSE", "NOTICE"]
 
@@ -665,6 +712,8 @@ exclude = [
     "rapid_mlx/models/gemma4_vendored/*.py",
     "rapid_mlx/models/mlx_vlm_vendored/*.py",
     "rapid_mlx/models/hy_v3.py",
+    # Preserve Cloudflare's pinned reference implementation byte for byte.
+    "rapid_mlx/clef/vendor/joint_schema_model.py",
     # Vendored Stability AI MLX Stable Audio 3 (models + scripts). Keep
     # formatting identical to the upstream source so future syncs stay clean.
     "rapid_mlx/audio/sa3/**/*.py",
@@ -681,10 +730,7 @@ ignore = [
     "E402",   # module-level import not at top
     "E501",   # line too long
     "E731",   # lambda assignment
-    "F811",   # redefined unused
-    "F841",   # unused variable
     "B004",   # unreliable callable check
-    "B007",   # unused loop variable
     "B008",   # function call in default arg
     "B011",   # assert false
     "B017",   # assert raises exception
@@ -703,6 +749,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# Pinned Cloudflare reference source; Rapid-owned Clef adapter stays linted.
+"rapid_mlx/clef/vendor/joint_schema_model.py" = ["I", "B007"]
 # Vendored from ml-explore/mlx-lm PR #1192 (Blaizzy). Keep as-is so
 # upstream syncs remain a clean diff. Drop this once mlx-lm 0.32+
 # ships native deepseek_v4 support and we delete the vendored copy.
@@ -760,6 +808,10 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "rapid_mlx.clef.vendor.joint_schema_model"
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 # Exact third-party numerical core; Rapid-owned runtime.py remains under the

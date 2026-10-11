@@ -1863,6 +1863,67 @@ def test_chat_command_sigterm_handler_installed_before_spawn(monkeypatch):
     )
 
 
+def test_chat_command_forwards_cache_policies_and_log_target(monkeypatch, capsys):
+    spawn_kwargs: dict = {}
+
+    class _NoopProc:
+        _rapid_mlx_log = None
+        _rapid_mlx_log_path = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            pass
+
+        def kill(self):
+            pass
+
+    def _fake_spawn(*_a, **kwargs):
+        spawn_kwargs.update(kwargs)
+        return _NoopProc(), f"http://127.0.0.1:{port}"
+
+    monkeypatch.delenv("RAPID_MLX_LOG_FILE", raising=False)
+    monkeypatch.setattr(cli, "_spawn_chat_server", _fake_spawn)
+    monkeypatch.setattr(cli, "_ensure_model_downloaded", lambda *_a, **_kw: None)
+    monkeypatch.setattr(cli, "_wait_for_chat_server", lambda *_a, **_kw: True)
+
+    with _fake_server([_delta("ok")]) as (fake_port, _payloads):
+        port = fake_port
+        inputs = iter(["exit"])
+        monkeypatch.setattr("builtins.input", lambda _p="": next(inputs))
+        ns = _ns_for_chat(fake_port)
+        ns.base_url = None
+        ns.port = None
+        ns.disable_disk_caches = True
+        ns.disable_model_downloads = True
+        ns.log_file = "/dev/null"
+        cli.chat_command(ns)
+
+    assert spawn_kwargs["disable_disk_caches"] is True
+    assert spawn_kwargs["disable_model_downloads"] is True
+    assert spawn_kwargs["log_target"] == "/dev/null"
+    assert "log: discarded (/dev/null)" in capsys.readouterr().out
+
+
+def test_chat_command_rejects_unusable_log_file(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("RAPID_MLX_LOG_FILE", raising=False)
+    monkeypatch.setattr(
+        cli, "_spawn_chat_server", lambda *_a, **_kw: pytest.fail("must not spawn")
+    )
+    ns = _ns_for_chat(0)
+    ns.base_url = None
+    ns.port = None
+    ns.log_file = str(tmp_path / "missing" / "server.log")
+    with pytest.raises(SystemExit) as exc:
+        cli.chat_command(ns)
+    assert exc.value.code == 2
+    assert "does not exist" in capsys.readouterr().err
+
+
 def test_chat_model_switch_refuses_draft_before_download(monkeypatch, capsys):
     """The in-process /model path must run the draft gate before its own
     prefetch and leave the current server alive."""
@@ -2845,6 +2906,68 @@ def test_main_does_not_treat_non_one_chat_spawn_value_as_child(monkeypatch):
     cli.main()
 
     assert calls == ["cached"]
+
+
+def test_main_reports_external_cache_probe_timeout_without_traceback(
+    monkeypatch, capsys
+):
+    """Interactive BYOM startup fails fast with the macOS permission remedy."""
+    from rapid_mlx import _download_gate as gate
+
+    monkeypatch.delenv("RAPID_MLX_CHAT_SPAWN", raising=False)
+    monkeypatch.delenv("RAPID_MLX_AUTO_PULL", raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(
+        "rapid_mlx.byom.preflight.run_cli_preflight", lambda *_args, **_kwargs: None
+    )
+
+    def blocked(_model):
+        raise gate.CacheProbeTimeoutError("/Volumes/Models/hf/refs/main", 2)
+
+    monkeypatch.setattr("rapid_mlx._download_gate.require_repo_cache_probe", blocked)
+    monkeypatch.setattr(cli, "serve_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["rapid-mlx", "serve", "community/model"],
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cli.main()
+
+    assert raised.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "cannot read the Hugging Face cache" in stderr
+    assert "Privacy & Security → Files & Folders" in stderr
+
+
+def test_main_reports_external_cache_permission_failure_without_traceback(
+    monkeypatch, capsys
+):
+    from rapid_mlx import _download_gate as gate
+
+    monkeypatch.delenv("RAPID_MLX_CHAT_SPAWN", raising=False)
+    monkeypatch.delenv("RAPID_MLX_AUTO_PULL", raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(
+        "rapid_mlx.byom.preflight.run_cli_preflight", lambda *_args, **_kwargs: None
+    )
+
+    def denied(_model):
+        raise gate.CacheProbePermissionError("/Volumes/Models/hf/refs/main")
+
+    monkeypatch.setattr("rapid_mlx._download_gate.require_repo_cache_probe", denied)
+    monkeypatch.setattr(cli, "serve_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sys, "argv", ["rapid-mlx", "serve", "community/model"])
+
+    with pytest.raises(SystemExit) as raised:
+        cli.main()
+
+    assert raised.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "cannot read the Hugging Face cache" in stderr
+    assert "Privacy & Security → Files & Folders" in stderr
+    assert "Traceback" not in stderr
 
 
 def test_main_skips_size_estimate_in_non_tty_context(monkeypatch):

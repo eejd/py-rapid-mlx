@@ -14,6 +14,19 @@ rapid-mlx serve qwen3.5-4b-4bit --port 8000
 Short aliases (see `rapid-mlx models`) work everywhere a model name is
 accepted. Full HuggingFace repo IDs (`mlx-community/...`) work too.
 
+### An external model cache cannot be read
+
+If startup reports that the Hugging Face cache on an external volume cannot
+be read, keep the existing cache. An access error does not mean the model is
+missing. For a timeout, first check that the volume is connected and responsive.
+
+If macOS denied access, open **System Settings → Privacy & Security → Files &
+Folders** using the command printed with the error. Under the app you launched
+the command from (for example, Terminal), enable **Removable Volumes**, or
+accept its **Allow** prompt. Then retry the same `rapid-mlx serve` command in
+that app. Permission for a different terminal or editor does not authorize
+the app you are using. Rapid-MLX does not reset permissions or move your cache.
+
 ### With Paged Cache
 
 Memory-efficient caching for production / shared system prompts:
@@ -52,8 +65,8 @@ flag visible in `rapid-mlx serve --help`, grouped by category — lives in the
 | `--log-level` | Log level for Python logging and uvicorn (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | INFO |
 | `--served-model-name` | Model name reported by the API; when unset the `model` argument is used | None |
 | `--api-key` | API key for authentication (falls back to `RAPID_MLX_API_KEY`) | None |
-| `--cors-origins` | Allowed CORS origins (also via `RAPID_MLX_CORS_ALLOW_ORIGINS`) | `*` (all origins) |
-| `--trusted-hosts` | Opt-in Host-header allowlist; non-matching requests get HTTP 400 | None (not enforced) |
+| `--cors-origins` | Allowed CORS origins (also via `RAPID_MLX_CORS_ALLOW_ORIGINS`) | Disabled (explicit opt-in) |
+| `--trusted-hosts` | Host-header allowlist; non-matching requests get HTTP 400 | `localhost`, `127.0.0.1`, `[::1]`, `*.localhost` |
 | `--rate-limit` | Requests per minute per client (0 = disabled) | 0 |
 | `--max-request-bytes` | Max HTTP request body size; oversized requests get HTTP 413 before parsing (0 disables) | 8 MiB (8388608) |
 | `--timeout` | Default request timeout in seconds; per-request `timeout: null` or `timeout: 0` uses this value | 1800 |
@@ -62,6 +75,8 @@ flag visible in `rapid-mlx serve --help`, grouped by category — lives in the
 | `--prefill-batch-size` | Max prompts prefilled together in one cold wave; lower for better first-token latency under concurrent cold load | 8 |
 | `--completion-batch-size` | Completion batch size | 32 |
 | `--prefill-step-size` | Chunk size for prompt prefill processing | 2048 |
+| `--shared-prefix-wait-tokens` | A request sharing at least this many uncached prompt tokens with a request that is still prefilling waits for that prompt state instead of recomputing it; `0` disables | 1024 |
+| `--decode-stall-target-ms` | Target wait between a decoding request's tokens while another prompt prefills; `0` disables | 500 |
 | `--gpu-memory-utilization` | Fraction of device memory for the Metal allocation limit (0.0-1.0); advanced override of the automatic per-model budget | auto |
 | `--context-length` | Operator-selected per-request window in tokens (prompt plus output), up to the model's declared limit; requests still need to fit available memory | auto |
 
@@ -79,7 +94,7 @@ flag visible in `rapid-mlx serve --help`, grouped by category — lives in the
 | `--stream-interval` | Tokens per stream chunk | 1 |
 | `--mcp-config` | Path to MCP config file | None |
 | `--reasoning-parser` | Reasoning parser (`qwen3`, `deepseek_r1`, `deepseek_r1_distill`, `deepseek_v4`, `gemma4`, `glm4`, `gpt_oss`, `harmony`, `hy3`/`hy_v3`, `minimax`, `muse`, `ui_tars`, `vibethinker`). Auto-detected from the alias profile; explicit flag overrides. There is no literal `auto` value — omit the flag for auto-detection. | None (auto-detected) |
-| `--embedding-model` | Pre-load an embedding model at startup (requires `pip install 'rapid-mlx[embeddings]'`; companions: `--embedding-max-length`, `--embedding-overflow-policy`) | None |
+| `--embedding-model` | Pre-load an embedding model at startup; without a positional model the server runs embeddings-only (`[embeddings]` for legacy models, the base install's vision runtime for native EmbeddingGemma 2; companions: `--embedding-max-length`, `--embedding-overflow-policy`) | None |
 | `--enable-auto-tool-choice` | Enable automatic tool calling | False |
 | `--tool-call-parser` | Tool call parser (see [Tool Calling](tool-calling.md)) | None |
 | `--mllm` / `--no-mllm` | Force multimodal (vision) loading / force text-only loading, overriding auto-detection | auto-detect |
@@ -88,7 +103,7 @@ flag visible in `rapid-mlx serve --help`, grouped by category — lives in the
 | `--resident-memory-limit-gb` | Process-wide resident model ceiling in GiB (multi-model serving); LRU idle unpinned models are evicted first; 0 disables (companion: `--resident-model-idle-ttl`) | 0 |
 | `--lazy-load` | Keep the endpoint online in `standby` until the configured primary receives its first text-generation request | False |
 | `--idle-unload-seconds` | Unload the configured primary after an idle interval, preserving its route and reloading on demand; 0 disables | 0 |
-| `--pflash` | PFlash long-prompt prefill compression (`off`, `auto`, `always`); tuning knobs in the [CLI reference](../reference/cli.md#pflash-long-prompt-compression) | `always` for verified aliases, `off` otherwise |
+| `--pflash` | Lossy PFlash long-prompt prefill compression (`off`, `auto`, `always`); tuning knobs in the [CLI reference](../reference/cli.md#pflash-long-prompt-compression) | `off` |
 
 For example, `rapid-mlx serve ling-3.0-tiny-4bit --context-length 65536`
 selects a 64K-token request window for Ling. The model's declared maximum
@@ -167,6 +182,76 @@ are marked; multimodal and MCP surfaces link to their own guides.
 | `/v1/cua/runs/{id}` | GET | Poll typed events, terminal state, and any pending approval gate |
 | `/v1/cua/runs/{id}/approval` | POST | Resolve the current gate with `{"gate_id": "...", "approved": true|false}` |
 | `/v1/cua/runs/{id}/cancel` | POST | Cancel a run |
+
+### Cache persistence and diagnostics
+
+Cache export/import currently support text serving. A loaded vision-capable
+server returns HTTP 501 with `error.code: "cache_persistence_unsupported"` and a
+message identifying the unsupported operation, including when a separate text
+scheduler is present. An unloaded engine still returns HTTP 503. Vision prefix
+reuse and cache clearing remain available in memory.
+
+`GET /v1/cache/stats` identifies the active backend (`model_type: "mllm"` for
+vision, `"llm"` for text, or `null` when no engine is installed).
+This diagnostic classification is separate from request readiness; use
+`GET /health/ready` to check readiness during startup or model switching.
+Vision `multimodal_kv_cache` contains the active engine's reusable-prefix
+counters, or `null` if those counters are unavailable. It does not depend on optional
+package-global image-cache APIs. The existing `pixel_values_cache` and
+`pil_image_cache` fields remain present as `null` when their statistics are
+unavailable.
+
+### Low-memory model switching
+
+When `POST /v1/models/load` must evict the primary before loading its replacement,
+`GET /health` reports `state: "switching"` and `ready: false` until the replacement
+and audio-worker handoff commit. `GET /v1/models/residency` also exposes
+`primary_switching`. Health and residency reads do not wait for the model loader.
+
+During this interval, `/health/ready` (and `/readyz`) and requests for the absent
+primary return HTTP 503 with `error.code: "model_switching"` and `Retry-After: 5`.
+Explicit requests for an independently resident secondary remain routable.
+Audio POST routes return the same transient error while worker ownership is
+being handed off. Authentication remains required on inference routes.
+Clients can wait and poll readiness before retrying; five seconds is a retry
+hint, not a promised loading duration.
+
+A failed or cancelled destructive replacement clears the switching state and
+releases worker ownership, but cannot restore an already evicted model. Readiness
+stays false until another model is successfully loaded. Replacements that fit
+alongside the old primary retain its existing serving behavior during loading.
+
+### Recovery after resident eviction
+
+An estimated admission that cannot fit even after eligible idle models are
+removed fails before eviction. A feasible admission can still evict idle models
+and then fail during loading, cancellation, or cleanup. Those evictions are
+committed: the server does not automatically restore the old engines or reload
+them on an inference request. Restoration would require another load that can
+itself fail or exceed the process memory ceiling. Primary, pinned, leased, and
+engine-busy residents retain their existing eviction protection.
+
+`keep_then_commit` protects the replacement group until the incoming model can
+commit; it does not roll back unrelated idle residents evicted for capacity.
+`evict_first_if_needed` can deliberately remove the replacement group before
+loading. Neither policy promises restoration after that removal.
+
+Inspect `GET /v1/models/residency` after a failed load. An engine whose cleanup
+fails remains visible with `cleanup_failed` and its bytes remain charged; it is
+not routable and its memory is not treated as free. Resolve that cleanup failure
+before retrying a load that needs the capacity; if cleanup cannot complete, an
+operator may need to restart the server. Successfully removed models can be
+loaded again with `POST /v1/models/load`, using their original model identity,
+path, and performance settings, subject to normal admission checks.
+
+Conversation inference requests for recently removed residents return HTTP 404
+with the existing `not_found_error` type and `model_not_found` code. The message
+says the requested model was previously loaded, gives the reload endpoint, and
+offers `GET /v1/models` to choose a currently loaded model. Unknown ids retain
+their existing error. This diagnostic history covers the last 256 resident
+retirements in the current process, including request aliases; it retains no
+engines, survives neither restart nor history overflow, and adds no new wire
+fields or automatic reload behavior. Live routes take precedence over history.
 
 ### Custom computer-use clients
 
@@ -1155,3 +1240,30 @@ rapid-mlx serve qwen3.5-27b-4bit \
   --timeout 120 \
   --port 8000
 ```
+
+### Browser access and Host validation
+
+A default server accepts native clients on `localhost`, `127.0.0.1`, `[::1]`,
+and `*.localhost`. It rejects foreign browser Origins before executing routes,
+including simple POST requests, and rejects unexpected Host headers to prevent
+DNS rebinding. Same-origin browser clients remain supported.
+
+For a browser frontend, explicitly allow its origin:
+
+```bash
+rapid-mlx serve qwen3.5-4b-4bit --cors-origins http://localhost:3000
+```
+
+For LAN or reverse-proxy access, set the expected Host names explicitly; this
+replaces the local defaults, so include loopback names if they are also needed:
+
+```bash
+rapid-mlx serve qwen3.5-4b-4bit --host 0.0.0.0 --api-key "$RAPID_MLX_API_KEY" \
+  --trusted-hosts localhost 127.0.0.1 workstation.local 192.168.1.10
+```
+
+`--cors-origins '*'` and `--trusted-hosts '*'` explicitly opt out of their
+respective boundaries. Allow only required origins/hosts and authenticate shared
+servers. `rapid-mlx share` retains its origin allowlist and bearer authentication;
+the relay rewrites Host to the local destination. These defaults also apply to
+dedicated speculative decoding and model-free Computer Use servers.
