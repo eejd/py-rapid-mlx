@@ -179,7 +179,23 @@ def is_same_process(marker: object) -> bool:
         # stable. It may have exited or its PID may have been reused since the
         # first probe; a permission denial supplies no evidence of liveness.
         try:
-            return process_identity(expected.pid) == current
+            refreshed = process_identity(expected.pid)
+            return (
+                refreshed is not None
+                and refreshed.pid == current.pid
+                and math.isclose(
+                    refreshed.create_time,
+                    current.create_time,
+                    rel_tol=0.0,
+                    abs_tol=0.01,
+                )
+                and math.isclose(
+                    refreshed.boot_time,
+                    current.boot_time,
+                    rel_tol=0.0,
+                    abs_tol=0.01,
+                )
+            )
         except Exception as exc:
             logger.debug(
                 "could not revalidate denied process identity for pid %s: %r",

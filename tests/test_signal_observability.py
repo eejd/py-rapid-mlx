@@ -900,7 +900,7 @@ def test_raw_creation_time_probe_keeps_identity_boundaries(monkeypatch, kind, ex
 
 @pytest.mark.parametrize("denied", ["permission", "access-denied"])
 @pytest.mark.parametrize(
-    "after", ["same", "dead", "reused", "rebooted", "unknown", "error"]
+    "after", ["same", "jitter", "dead", "reused", "rebooted", "unknown", "error"]
 )
 def test_denied_raw_probe_revalidates_observed_process(monkeypatch, denied, after):
     from rapid_mlx import _process_identity as identity
@@ -909,7 +909,8 @@ def test_denied_raw_probe_revalidates_observed_process(monkeypatch, denied, afte
     error = PermissionError() if denied == "permission" else access_denied()
     observed = identity.ProcessIdentity(123, 102.0, 50.0)
     refreshed = {
-        "same": observed,
+        "same": identity.ProcessIdentity(123, 102.0, 50.0),
+        "jitter": identity.ProcessIdentity(123, 102.005, 49.995),
         "dead": None,
         "reused": identity.ProcessIdentity(123, 103.0, 50.0),
         "rebooted": identity.ProcessIdentity(123, 102.0, 51.0),
@@ -944,7 +945,7 @@ def test_denied_raw_probe_revalidates_observed_process(monkeypatch, denied, afte
         ),
     )
     marker = {"pid": 123, "create_time": 100.0, "boot_time": 50.0, "app_version": "1"}
-    assert identity.is_same_process(marker) is (after == "same")
+    assert identity.is_same_process(marker) is (after in {"same", "jitter"})
     assert probes == [123, 123]
 
 
