@@ -594,6 +594,28 @@ def test_failed_or_empty_estimate_still_reports_unknown(
     )
 
 
+def test_unreadable_cache_probe_does_not_abort_pool_share(
+    monkeypatch, tmp_path, capsys
+):
+    """A cache probe that raises (unreadable or disconnected HF cache) is
+    treated as "not cached": share continues and still reports progress."""
+    import huggingface_hub.constants
+
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path))
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+
+    def probe(repo):
+        raise OSError("volume private path")
+
+    monkeypatch.setattr(gate, "is_repo_cached", probe)
+    monkeypatch.setattr(gate, "estimate_download_size_bytes", lambda repo: None)
+    reporter = cli._maybe_confirm_download("org/repo", pool_mode=True)
+    assert reporter is not None
+    err = capsys.readouterr().err
+    assert err.startswith("Model download: estimated size unknown.")
+    assert "private" not in err
+
+
 @pytest.mark.parametrize("layout", ["home", "hub", "symlink"])
 def test_hf_cache_env_is_resolved_in_fresh_process(tmp_path, layout):
     import os

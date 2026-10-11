@@ -156,7 +156,8 @@ candidate while preserving all real serving, heartbeat, and relay calls. Use
 sent to this bootstrap's PID from another terminal.
 
 ```sh
-RAPID_MLX_AUTO_PULL=1 HF_HOME="$DOGFOOD_DIR/hf" python - blocked "$ALIAS" <<'PY'
+MODE=unavailable  # then repeat with MODE=blocked
+RAPID_MLX_AUTO_PULL=1 HF_HOME="$DOGFOOD_DIR/hf" python - "$MODE" "$ALIAS" <<'PY'
 import sys
 import threading
 from rapid_mlx.share import quicksilver as qs

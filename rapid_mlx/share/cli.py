@@ -598,7 +598,11 @@ def _maybe_confirm_download(
     if pool_mode:
         from .._download_gate import estimate_download_size_bytes, is_repo_cached
 
-        if is_repo_cached(alias):
+        try:
+            cached = is_repo_cached(alias)
+        except Exception:  # noqa: BLE001 — an unreadable cache must not abort share
+            cached = False  # Let the downloader decide; report progress meanwhile.
+        if cached:
             return None
         try:
             estimated = estimate_download_size_bytes(alias)
