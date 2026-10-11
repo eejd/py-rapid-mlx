@@ -995,8 +995,8 @@ def _install_continuous_mtp_router(
     Lane admission is memory planned when live Metal headroom is known:
     ``lane_bytes_estimator(request)`` projects each lane's whole-request
     target+draft cache footprint and the router admits the longest FIFO
-    prefix that fits ``free - hard_reserve``.  Without headroom telemetry the
-    planner is bounded by lane count alone, exactly as before.
+    prefix that fits ``free - hard_reserve``. Without headroom telemetry,
+    new cohort/join admission retains ordinary queue/singleton ownership.
     """
     import types
 
@@ -1413,7 +1413,7 @@ def _install_continuous_mtp_router(
         if not joining_specs:
             return
         try:
-            driver.queue_lanes(joining_specs, stop_tokens=joining_stops)
+            accepted = driver.queue_lanes(joining_specs, stop_tokens=joining_stops)
         except Exception as exc:  # noqa: BLE001 - optional route fails closed
             # A staged join owns no continuous cache yet.  Keep the base queue
             # authoritative when validation or allocation rejects the join.
@@ -1424,6 +1424,13 @@ def _install_continuous_mtp_router(
             )
             return
         joining_uids = {spec.uid for spec in joining_specs}
+        if set(accepted) != joining_uids or not joining_uids.issubset(
+            driver.pending_join_uids
+        ):
+            # The driver contract is atomic. A refused/incomplete receipt must
+            # leave the entire source queue authoritative, with no staged copy.
+            driver.remove_uids(tuple(joining_uids))
+            return
         _remove_queued(joining_uids)
         staged_join_sequences.update(joining_sequences)
         logger.info(

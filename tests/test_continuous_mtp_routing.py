@@ -1747,3 +1747,30 @@ def test_infinite_lane_estimate_is_unplannable(monkeypatch):
     batch_gen.next()
     assert created == []
     assert [sequence[0] for sequence in batch_gen._unprocessed_sequences] == [1, 2]
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize("partial", [False, True])
+def test_unconfirmed_dynamic_join_keeps_original_queue_ownership(monkeypatch, partial):
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2)]
+    )
+    requests, mapping = _requests_for(1, 2, 3, 4)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    driver = created[0]
+    original = driver.queue_lanes
+
+    def refuse(specs, **kwargs):
+        if partial:
+            return original(specs[:1], **kwargs)
+        return ()
+
+    driver.queue_lanes = refuse
+    source = [_scheduler_sequence(3), _scheduler_sequence(4)]
+    batch_gen._unprocessed_sequences.extend(source)
+    batch_gen.next()
+    assert list(batch_gen._unprocessed_sequences) == source
+    assert driver.pending_join_uids == ()
+    assert driver.lane_uids == (1, 2)
