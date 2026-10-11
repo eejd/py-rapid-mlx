@@ -281,6 +281,7 @@ def test_url_sources_cannot_select_local_file_loader(url):
 )
 def test_image_url_uses_existing_remote_media_safety_guard(monkeypatch, url):
     import socket
+
     from rapid_mlx.models.mllm import RemoteMediaFetchError, process_image_input
 
     monkeypatch.setattr(
