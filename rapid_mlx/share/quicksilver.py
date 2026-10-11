@@ -1139,11 +1139,17 @@ class _PoolStatus:
         except Exception:  # noqa: BLE001 — observation must be fail-open
             return None
 
-    def wait_for_warmup(self, stop: threading.Event | None = None) -> None:
+    def wait_for_warmup(
+        self,
+        stop: threading.Event | None = None,
+        *,
+        serve_proc: subprocess.Popen[bytes] | None = None,
+    ) -> None:
         """Bound preparation accounting before the relay can dispatch work.
 
         Every wait is short and signal-interruptible: on the main thread a
         SIGINT/SIGTERM handler that raises aborts it immediately.
+        Serve exit also ends retries, spending at most one second in a scrape.
 
         A counter increment is attributed to the warm-up because nothing else
         can reach serve at this point: it listens on loopback only, requires
@@ -1157,23 +1163,38 @@ class _PoolStatus:
         if pre_warmup is None:
             return  # Unavailable metrics must not add an accounting wait.
         deadline = time.monotonic() + _WARMUP_ACCOUNTING_WAIT_SECONDS
+        scraped = False
         while not stop.is_set():
+            if serve_proc is not None and serve_proc.poll() is not None:
+                return
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return
+                break
             values = self._read(timeout=min(1.0, remaining), stop=stop)
-            if values is None or stop.is_set():
+            if stop.is_set() or (
+                serve_proc is not None and serve_proc.poll() is not None
+            ):
                 return
-            self.baseline = values
-            self._previous = values
-            if values[0] > pre_warmup[0]:
-                return
+            if values is not None:
+                scraped = True
+                self.baseline = values
+                self._previous = values
+                if values[0] > pre_warmup[0]:
+                    return
+            # A failed scrape is retried until the bound: returning early would
+            # keep the pre-warm-up baseline and count the warm-up as pool work.
             # [NIT] A timed-out warm-up accounted after this bound and first
             # relay dispatch can still add one request and a few tokens. Keep
             # re-baselining before dispatch; this is informational, not payout
             # accounting, and must not hold startup indefinitely.
             if stop.wait(min(0.5, max(0.0, deadline - time.monotonic()))):
                 return
+        if not scraped and not stop.is_set():
+            # Metrics went away for the whole wait. Drop the pre-warm-up sample
+            # so the next successful scrape becomes a late, labelled baseline.
+            self.baseline = None
+            self._previous = None
+            self.baseline_at_start = False
 
     def _scrape(self) -> tuple[float, ...] | None:
         req = urllib.request.Request(
@@ -2046,7 +2067,20 @@ def _run_share(
         # Main thread: SIGINT and SIGTERM (``_term_handler``) raise
         # KeyboardInterrupt here, which interrupts the bounded waits below, so
         # this never delays shutdown. The event only serves in-process callers.
-        status.wait_for_warmup()
+        status.wait_for_warmup(serve_proc=serve_proc)
+        serve_rc = serve_proc.poll()
+        if serve_rc is not None:
+            if desktop_status is not None:
+                desktop_status.publish(
+                    "error",
+                    **desktop_fields,
+                    message="The local model server stopped unexpectedly.",
+                )
+            print(
+                f"share: serve process exited — leaving the pool. See {serve_log}.",
+                file=sys.stderr,
+            )
+            sys.exit(serve_rc if serve_rc != 0 else 1)
 
         # ``interval`` was validated (finite, 1..3600) before serve
         # booted — the beat thread can never be born frozen or dead.

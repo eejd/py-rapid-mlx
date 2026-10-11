@@ -636,6 +636,33 @@ def test_download_progress_fake_cache_and_clock(cache, clock, capsys):
     assert "60s elapsed, model cache size 0.0 GiB" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("relocated_blobs", [False, True])
+def test_download_cache_walks_blobs_once(cache, monkeypatch, relocated_blobs):
+    reporter = cli._DownloadProgress("org/repo", None)
+    repo_dir = reporter.cache_dir.resolve()
+    repo_dir.mkdir(parents=True)
+    blob_dir = repo_dir / "blobs"
+    if relocated_blobs:
+        blob_dir = cache / "relocated-blobs"
+        blob_dir.mkdir()
+        (repo_dir / "blobs").symlink_to(blob_dir, target_is_directory=True)
+    else:
+        blob_dir.mkdir()
+    weights = blob_dir / "weights.incomplete"
+    weights.write_bytes(b"weights")
+    (blob_dir / "unreferenced.incomplete").write_bytes(b"partial")
+    snapshot_dir = repo_dir / "snapshots" / "sha"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "weights").symlink_to(weights)
+    (snapshot_dir / "config.json").write_bytes(b"{}")
+    walk = MagicMock(wraps=cli.os.walk)
+    monkeypatch.setattr(cli.os, "walk", walk)
+    assert reporter._cache_size() == len(b"weights") + len(b"partial") + len(b"{}")
+    assert [call.args[0] for call in walk.call_args_list] == (
+        [repo_dir, blob_dir] if relocated_blobs else [repo_dir]
+    )
+
+
 def test_download_progress_missing_cache_and_permission_failure(
     cache, clock, monkeypatch, capsys
 ):

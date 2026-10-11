@@ -3520,7 +3520,8 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
         assert events == ["pre-warmup"]
         events.append("warmup")
 
-    def accounting_wait():
+    def accounting_wait(*, serve_proc):
+        assert serve_proc is serve
         assert events == ["pre-warmup", "warmup"]
         events.append("accounted-baseline")
 
@@ -3570,6 +3571,39 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
     tunnel.ready_event.is_set.return_value = True
     tunnel.error = ConnectionError()
     assert not connected_fn()
+
+
+@pytest.mark.parametrize("serve_rc", [0, 7])
+def test_pool_serve_exit_during_warmup_never_connects(serve_rc, capsys):
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    serve, ctrl_c = _patched_run_env(None)
+    desktop = MagicMock()
+    reporter = MagicMock()
+
+    def accounting_wait(*, serve_proc):
+        assert serve_proc is serve
+        serve.poll.return_value = serve_rc
+
+    reporter.wait_for_warmup.side_effect = accounting_wait
+    contexts = _run_patches(serve, MagicMock(), ctrl_c) + (
+        patch.object(qs._DesktopStatus, "from_args", return_value=desktop),
+        patch.object(qs, "_PoolStatus", return_value=reporter),
+        patch.object(qs, "_Heartbeat"),
+    )
+    with _enter(*contexts):
+        with pytest.raises(SystemExit) as exc:
+            qs.run_share(_make_args())
+        qs.ws_tunnel.TunnelClient.assert_not_called()
+        qs._Heartbeat.assert_not_called()
+    assert exc.value.code == (serve_rc or 1)
+    assert "serve process exited — leaving the pool" in capsys.readouterr().err
+    assert any(
+        call.args == ("error",)
+        and call.kwargs["message"] == "The local model server stopped unexpectedly."
+        for call in desktop.publish.call_args_list
+    )
+    reporter.stop.assert_called_once_with(serve)
+    serve.terminate.assert_not_called()
 
 
 def test_pool_failed_health_never_starts_status_and_reaps_serve():

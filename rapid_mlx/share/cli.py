@@ -502,7 +502,14 @@ class _DownloadProgress:
             repo_dir = self.cache_dir.resolve()
             blob_dir = (repo_dir / "blobs").resolve()
             roots = {repo_dir, blob_dir}
-            for directory in roots:
+            # A blobs directory inside the repository is reached by the
+            # repository walk already; only a relocated one needs its own.
+            walk_roots = (
+                [repo_dir]
+                if blob_dir.is_relative_to(repo_dir)
+                else [repo_dir, blob_dir]
+            )
+            for directory in walk_roots:
                 for root, _, files in os.walk(directory, onerror=raise_walk_error):
                     for name in files:
                         try:

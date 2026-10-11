@@ -194,6 +194,38 @@ def test_final_status_scrape_and_poll_share_one_shutdown_bound(
     assert capsys.readouterr() == ("", "")
 
 
+def test_final_status_skips_scrape_when_poll_holds_lock(status, monkeypatch, capsys):
+    reporter, _ = status
+    reporter._stop = threading.Event()
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked_read(**kw):
+        entered.set()
+        assert release.wait(5)
+        return (2, 18, 60, 2)
+
+    read = MagicMock(side_effect=blocked_read)
+    monkeypatch.setattr(reporter, "_read", read)
+    poller = threading.Thread(target=reporter.poll, args=(True,))
+    poller.start()
+    try:
+        assert entered.wait(2)
+        started = time.perf_counter()
+        reporter.stop(MagicMock(poll=MagicMock(return_value=None)))
+        assert time.perf_counter() - started < 1.25
+        assert poller.is_alive()
+        assert reporter._stop.is_set()
+        read.assert_called_once_with()
+    finally:
+        release.set()
+        poller.join(2)
+    assert not poller.is_alive()
+    assert not reporter._poll_lock.locked()
+    assert reporter._totals == (0, 0, 0, 0)
+    assert reporter.last_print is None
+    assert capsys.readouterr() == ("", "")
+
+
 def test_download_initial_cache_scan_is_bounded_and_reused(
     monkeypatch, tmp_path, clock, capsys
 ):
@@ -655,12 +687,13 @@ def test_plain_share_preserves_early_returns(monkeypatch, capsys, override):
 
 
 @pytest.mark.parametrize("signal_name", ["SIGTERM", "SIGINT", "serve-exit"])
-def test_real_signal_reaps_serve_with_metrics_inflight(tmp_path, signal_name):
+@pytest.mark.parametrize("phase", ["warmup", "supervisor"])
+def test_real_signal_reaps_serve_with_metrics_inflight(tmp_path, signal_name, phase):
     import subprocess
     import sys
 
     code = r"""
-import os, signal, subprocess, threading
+import os, signal, subprocess, threading, time
 from pathlib import Path
 from unittest.mock import patch
 from rapid_mlx.share import quicksilver as qs
@@ -671,6 +704,10 @@ os.environ["HOME"] = sys.argv[1]
 entered = threading.Event()
 reads = [0]
 stop_forever = threading.Event()
+scrape_finished = threading.Event()
+triggered_at = []
+warmup_left_at = []
+warmup = sys.argv[3] == 'warmup'
 
 def transport(req, **kw):
     if not req.full_url.endswith("/metrics"):
@@ -678,14 +715,24 @@ def transport(req, **kw):
     reads[0] += 1
     if reads[0] == 1:
         return metrics_response(metrics(1, 8, 40, 1).encode())
+    if not warmup and reads[0] == 2:
+        return metrics_response(metrics(2, 16, 80, 2).encode())
     entered.set()
     stop_forever.wait()  # A deliberately unresponsive endpoint; daemon only.
+    scrape_finished.set()
 
 reporters = []
 original_status = qs._PoolStatus
 
 def make_status(*a, **kw):
     status = original_status(*a, **kw)
+    wait_for_warmup = status.wait_for_warmup
+    def accounting_wait(*a, **kw):
+        try:
+            wait_for_warmup(*a, **kw)
+        finally:
+            warmup_left_at.append(time.monotonic())
+    status.wait_for_warmup = accounting_wait
     reporters.append(status)
     return status
 
@@ -694,8 +741,10 @@ real_terminate, real_wait = serve.terminate, serve.wait
 terminated = [0]
 tunnel = _fake_tunnel()
 def trigger(*a):
-    threading.Thread(target=reporters[0].poll, args=(True,), daemon=True).start()
+    if not warmup:
+        threading.Thread(target=reporters[0].poll, args=(True,), daemon=True).start()
     assert entered.wait(3)
+    triggered_at.append(time.monotonic())
     if sys.argv[2] == "serve-exit":
         real_terminate()
         real_wait(timeout=3)
@@ -715,7 +764,11 @@ contexts = _run_patches(serve, lambda **kw:tunnel, trigger) + (
     patch.object(qs, '_PoolStatus', side_effect=make_status),
     patch.object(qs, '_open', side_effect=transport),
     patch.object(original_status, '_scrape', original_status._scrape),
+    patch.object(qs, '_WARMUP_ACCOUNTING_WAIT_SECONDS', 3.0),
 )
+if warmup:
+    contexts += (patch.object(qs, '_warmup', side_effect=lambda *a:
+        threading.Thread(target=trigger, daemon=True).start()),)
 # _run_patches installs a scrape stub; the last patch restores the real method.
 try:
     with _enter(*contexts):
@@ -723,19 +776,28 @@ try:
             qs.run_share(_make_args())
         except SystemExit as exc:
             assert sys.argv[2] == 'serve-exit' and exc.code != 0
+        assert triggered_at and time.monotonic() - triggered_at[0] < 2.5
 finally:
     if serve.poll() is None:
         real_terminate()
     real_wait(timeout=3)
 assert terminated[0] == (0 if sys.argv[2] == 'serve-exit' else 1)
 assert serve.poll() is not None
-assert reporters[0]._stop.is_set()
-assert reporters[0]._scrape_thread.is_alive()
+if warmup:
+    limit = 1.25 if sys.argv[2] == 'serve-exit' else 0.25
+    assert warmup_left_at[0] - triggered_at[0] < limit
+    assert reporters[0]._stop is None
+    assert reporters[0]._thread is None
+    tunnel.run_in_thread.assert_not_called()
+else:
+    assert reporters[0]._stop.is_set()
+    assert reporters[0]._scrape_thread.is_alive()
 assert reporters[0]._scrape_thread.daemon
+assert not scrape_finished.is_set()  # Transport is still blocked after cleanup.
 print('reaped without waiting for metrics')
 """
     result = subprocess.run(
-        [sys.executable, "-c", code, str(tmp_path), signal_name],
+        [sys.executable, "-c", code, str(tmp_path), signal_name, phase],
         capture_output=True,
         text=True,
         timeout=10,
@@ -873,7 +935,8 @@ def test_warmup_accounting_skips_scrape_when_clock_passes_deadline(
     reporter.wait_for_warmup(threading.Event())
     assert clock.call_count == 2
     read.assert_not_called()
-    assert reporter.baseline == reporter._previous == (1, 8, 40, 1)
+    assert reporter.baseline is reporter._previous is None
+    assert not reporter.baseline_at_start
     assert capsys.readouterr() == ("", "")
 
 
@@ -906,7 +969,7 @@ def test_warmup_late_accounting_within_bound_is_excluded(monkeypatch, clock, cap
 
 
 @pytest.mark.parametrize("initially_available", [False, True])
-def test_warmup_unavailable_metrics_skip_accounting_wait(
+def test_warmup_unavailable_metrics_skip_or_retry_accounting_wait(
     monkeypatch, clock, initially_available
 ):
     reads = []
@@ -921,9 +984,75 @@ def test_warmup_unavailable_metrics_skip_accounting_wait(
     reporter = qs._PoolStatus(1, lambda: True)
     stop = AccountingClockStop(clock)
     reporter.wait_for_warmup(stop)
-    assert stop.waits == []
-    assert clock[0] == 100
-    assert len(reads) == (2 if initially_available else 1)
+    assert stop.waits == ([0.5] * 20 if initially_available else [])
+    assert clock[0] == (110 if initially_available else 100)
+    assert len(reads) == (21 if initially_available else 1)
+    assert reporter.baseline is reporter._previous is None
+    assert not reporter.baseline_at_start
+
+
+def test_warmup_transient_metrics_failure_retries_and_excludes_warmup(
+    monkeypatch, clock, capsys
+):
+    responses = iter([metrics(), None, metrics(1, 8, 40, 1)])
+
+    def transport(*a, **kw):
+        sample = next(responses)
+        if sample is None:
+            raise TimeoutError()
+        return metrics_response(sample.encode())
+
+    monkeypatch.setattr(qs, "_open", transport)
+    started = threading.Event()
+    reporter = qs._PoolStatus(1, lambda: True, requests_started_fn=started.is_set)
+    stop = AccountingClockStop(clock)
+    reporter.wait_for_warmup(stop)
+    assert stop.waits == [0.5]
+    assert clock[0] == 100.5
+    assert reporter.baseline == reporter._previous == (1, 8, 40, 1)
+    assert reporter.baseline_at_start
+    started.set()
+    snapshot = [metrics(1, 8, 40, 1)]
+    monkeypatch.setattr(
+        qs, "_open", lambda *a, **kw: metrics_response(snapshot[0].encode())
+    )
+    reporter.poll(True)
+    assert capsys.readouterr() == ("", "")
+    snapshot[0] = metrics(2, 18, 60, 2)
+    clock[0] += 10
+    reporter.poll(True)
+    assert capsys.readouterr().err == (
+        "QuickSilver status: 1 request served, 10 output tokens since start, "
+        "average 20.0 tok/s, connected.\n"
+    )
+
+
+def test_warmup_metrics_failure_for_whole_bound_uses_labelled_late_baseline(
+    status, monkeypatch, clock, capsys
+):
+    reporter, snapshot = status
+    monkeypatch.setattr(qs, "_open", MagicMock(side_effect=TimeoutError()))
+    stop = AccountingClockStop(clock)
+    reporter.wait_for_warmup(stop)
+    assert stop.waits == [0.5] * 20
+    assert clock[0] == 110
+    assert reporter.baseline is reporter._previous is None
+    assert not reporter.baseline_at_start
+    snapshot[0] = metrics(3, 28, 80, 3)  # Omit work before metrics recover.
+    monkeypatch.setattr(
+        qs, "_open", lambda *a, **kw: metrics_response(snapshot[0].encode())
+    )
+    reporter.poll(True)
+    assert reporter.baseline == reporter._previous == (3, 28, 80, 3)
+    assert reporter._totals == (0, 0, 0, 0)
+    assert capsys.readouterr() == ("", "")
+    snapshot[0] = metrics(4, 38, 100, 4)
+    clock[0] += 10
+    reporter.poll(True)
+    assert capsys.readouterr().err == (
+        "QuickSilver status: 1 request served, 10 output tokens "
+        "since metrics became available, average 20.0 tok/s, connected.\n"
+    )
 
 
 @pytest.mark.parametrize("blocked_scrape", [False, True])
@@ -956,6 +1085,8 @@ def test_shutdown_interrupts_warmup_accounting_wait(monkeypatch, blocked_scrape)
         stop.set()
         waiter.join(0.25)
         assert not waiter.is_alive()
+        assert reporter.baseline == reporter._previous == (0, 0, 0, 0)
+        assert reporter.baseline_at_start
         if blocked_scrape:
             assert reporter._scrape_thread.is_alive()
             assert reporter._scrape_thread.daemon
@@ -964,6 +1095,34 @@ def test_shutdown_interrupts_warmup_accounting_wait(monkeypatch, blocked_scrape)
         release.set()
         waiter.join(2)
         reporter._scrape_thread.join(2)
+
+
+@pytest.mark.parametrize("exit_during", ["before-scrape", "scrape", "wait"])
+def test_serve_exit_interrupts_warmup_accounting_wait(
+    status, monkeypatch, clock, exit_during
+):
+    reporter, _ = status
+    serve = MagicMock(poll=MagicMock(return_value=None))
+
+    def read(**kw):
+        if exit_during == "scrape":
+            clock[0] += kw["timeout"]
+            serve.poll.return_value = 7
+        return None
+
+    read = MagicMock(side_effect=read)
+    monkeypatch.setattr(reporter, "_read", read)
+    stop = AccountingClockStop(clock)
+    if exit_during == "before-scrape":
+        serve.poll.return_value = 7
+    elif exit_during == "wait":
+        stop.on_wait = lambda: setattr(serve.poll, "return_value", 7)
+    reporter.wait_for_warmup(stop, serve_proc=serve)
+    assert read.call_count == (0 if exit_during == "before-scrape" else 1)
+    assert stop.waits == ([0.5] if exit_during == "wait" else [])
+    assert clock[0] == {"before-scrape": 100, "scrape": 101, "wait": 100.5}[exit_during]
+    assert reporter.baseline == reporter._previous == (1, 8, 40, 1)
+    assert reporter.baseline_at_start
 
 
 def test_timed_out_warmup_after_bound_and_relay_dispatch_is_known_residual(
