@@ -20,16 +20,14 @@ from rapid_mlx.middleware.browser_security import (
 
 
 @contextmanager
-def secured_endpoint(bind_host):
+def secured_endpoint(bind_host, *, hosts=DEFAULT_TRUSTED_HOSTS):
     requests = []
 
     async def healthy(scope, receive, send):
         requests.append(dict(scope["headers"]))
         await JSONResponse({"ready": True, "model_loaded": True})(scope, receive, send)
 
-    app = BrowserSecurityMiddleware(
-        healthy, hosts=list(DEFAULT_TRUSTED_HOSTS), deny_cross_origin=True
-    )
+    app = BrowserSecurityMiddleware(healthy, hosts=list(hosts), deny_cross_origin=True)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -122,6 +120,33 @@ def test_service_probes_pass_default_host_boundary(bind_host, configured_host):
         authority = f"[{destination}]" if ":" in destination else destination
         assert all(
             request[b"host"] == f"{authority}:{port}".encode("ascii")
+            for request in requests
+        )
+        assert all(b"authorization" not in request for request in requests)
+
+
+def test_legacy_dns_probe_authority_uses_idna(monkeypatch):
+    original_connect = socket.create_connection
+    connected_hosts = []
+
+    def resolve_local(address, **kwargs):
+        host, port = address
+        connected_hosts.append(host)
+        assert host == "café.localhost"
+        return original_connect(("127.0.0.1", port), **kwargs)
+
+    # Resolve the legacy hostname locally without depending on external DNS.
+    monkeypatch.setattr(socket, "create_connection", resolve_local)
+    with secured_endpoint("127.0.0.1", hosts=["xn--caf-dma.localhost"]) as (
+        port,
+        requests,
+    ):
+        assert _readyz_ready("café.localhost", port, require_model_loaded=True)
+        assert _endpoint_health("café.localhost", port) == (True, True)
+        assert connected_hosts == ["café.localhost"] * 3
+        assert len(requests) == 3
+        assert all(
+            request[b"host"] == f"xn--caf-dma.localhost:{port}".encode("ascii")
             for request in requests
         )
         assert all(b"authorization" not in request for request in requests)

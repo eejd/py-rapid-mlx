@@ -68,7 +68,11 @@ def is_loopback_host(host: str) -> bool:
 
 def http_probe_authority(host: str, port: int) -> str:
     """HTTP Host for the connected probe destination, including IPv6 brackets."""
-    authority_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    if ":" in host:
+        authority_host = host if host.startswith("[") else f"[{host}]"
+    else:
+        # Match socket/HTTPConnection IDNA handling for legacy DNS binds.
+        authority_host = host.encode("idna").decode("ascii")
     return f"{authority_host}:{port}"
 
 
