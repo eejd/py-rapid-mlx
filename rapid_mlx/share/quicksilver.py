@@ -35,10 +35,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import http.client
 import json
 import logging
 import math
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -1020,6 +1022,134 @@ def register_node(
 # ───────────────────────────── heartbeat (§3.3) ─────────────────────────────
 
 
+class _PoolStatus:
+    """Count-only loopback telemetry; baseline after warm-up, before relay-up.
+
+    The scheduler's performance ledger accounts terminal requests, including
+    batched MTP, for both chat response modes. Decode sum/count is the mean
+    per-request post-first-token rate, excluding unmeasurable one-token runs.
+    Metrics cannot distinguish a relay readiness probe from customer traffic.
+    """
+
+    _METRICS = (
+        "rapid_mlx_model_requests_total",
+        "rapid_mlx_model_completion_tokens_total",
+        "rapid_mlx_model_decode_tokens_per_second_sum",
+        "rapid_mlx_model_decode_tokens_per_second_count",
+    )
+    _SAMPLE = re.compile(
+        r'^(\w+)(\{(?:[^"{}]|"(?:\\.|[^"\\])*")*\})?\s+(\S+)(?:\s+\d+)?\s*$'
+    )
+
+    def __init__(self, port: int, connected_fn: Callable[[], bool]) -> None:
+        self.port = port
+        self._connected_fn = connected_fn
+        self.baseline = self._read()
+        self.baseline_at_start = self.baseline is not None
+        self.next_poll = 0.0
+        self.last_print: float | None = None
+        self.last_counts = (0, 0, True)
+        self._stop: threading.Event | None = None
+
+    @classmethod
+    def _parse(cls, raw: str) -> tuple[float, ...] | None:
+        values = [0.0] * len(cls._METRICS)
+        found: set[str] = set()
+        for line in raw.splitlines():
+            match = cls._SAMPLE.fullmatch(line.strip())
+            if match is None:
+                continue
+            name, labels, value = match.groups()
+            if name not in cls._METRICS:
+                continue
+            if name == cls._METRICS[0] and not re.search(
+                r'(?:\{|,)\s*outcome="succeeded"\s*(?:,|\})', labels or ""
+            ):
+                continue
+            try:
+                number = float(value)
+            except ValueError:
+                return None
+            if not math.isfinite(number) or number < 0:
+                return None
+            values[cls._METRICS.index(name)] += number
+            if not math.isfinite(values[cls._METRICS.index(name)]):
+                return None
+            found.add(name)
+        return tuple(values) if found == set(cls._METRICS) else None
+
+    def _read(self) -> tuple[float, ...] | None:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.port}/metrics", timeout=1
+            ) as response:
+                raw = _bounded_read(response, 256 * 1024).decode("utf-8")
+            return self._parse(raw)
+        except urllib.error.HTTPError as exc:
+            with contextlib.suppress(OSError):
+                exc.close()
+            return None
+        except (OSError, ValueError, http.client.HTTPException, _ResponseTooLargeError):
+            return None
+
+    def start(self, stop: threading.Event) -> None:
+        # Share the heartbeat's cancellation event. Scrapes run separately so
+        # neither the beat interval nor a stalled scrape delays the supervisor.
+        self._stop = stop
+        threading.Thread(
+            target=self._run, name="rapid-mlx-qs-status", daemon=True
+        ).start()
+
+    def _run(self) -> None:
+        assert self._stop is not None
+        while not self._stop.wait(10):
+            self.poll(self._connected_fn())
+
+    def poll(self, connected: bool) -> None:
+        now = time.monotonic()
+        if now < self.next_poll or (self._stop is not None and self._stop.is_set()):
+            return
+        self.next_poll = now + 10
+        values = self._read()
+        if values is None or (self._stop is not None and self._stop.is_set()):
+            return
+        # Throttle from emission time, including the scrape's latency.
+        now = time.monotonic()
+        if self.baseline is None:
+            # Do not count warm-up if the initial scrape failed. A late
+            # baseline also omits traffic before metrics recovered; label it.
+            self.baseline = values
+            return
+        requests, tokens, speed_sum, speed_count = (
+            max(0.0, value - base)
+            for value, base in zip(values, self.baseline, strict=True)
+        )
+        counts = (int(requests), int(tokens), connected)
+        if counts == self.last_counts or (not requests and self.last_print is None):
+            return
+        # Only actual output advances the throttle. Polling idle/failed
+        # scrapes must not keep postponing the next changed status forever.
+        if self.last_print is not None and now - self.last_print < 60:
+            return
+        average = speed_sum / speed_count if speed_count else 0.0
+        window = (
+            "since start"
+            if self.baseline_at_start
+            else "since metrics became available"
+        )
+        print(
+            f"QuickSilver status: {int(requests):,} "
+            f"{'request' if requests == 1 else 'requests'} served, "
+            f"{int(tokens):,} output {'token' if tokens == 1 else 'tokens'} "
+            f"{window}, average {average:.1f} tok/s, "
+            f"{'connected' if connected else 'disconnected, reconnecting'}.",
+            file=sys.stderr,
+            flush=True,
+        )
+        self.last_counts = counts
+        self.last_print = now
+
+
 class _Heartbeat:
     """POST the §3.3 beat every ``interval`` while the tunnel is up.
 
@@ -1038,7 +1168,13 @@ class _Heartbeat:
     """
 
     def __init__(
-        self, url: str, share_key: str, interval: float, inflight_fn: Callable[[], int]
+        self,
+        url: str,
+        share_key: str,
+        interval: float,
+        inflight_fn: Callable[[], int],
+        *,
+        status: _PoolStatus | None = None,
     ) -> None:
         self._url = url
         self._share_key = share_key
@@ -1050,8 +1186,11 @@ class _Heartbeat:
         self._stop = threading.Event()
         self._logged_404 = False
         self._thread: threading.Thread | None = None
+        self._status = status
 
     def start(self) -> None:
+        if self._status is not None:
+            self._status.start(self._stop)
         self._thread = threading.Thread(
             target=self._run, name="rapid-mlx-qs-heartbeat", daemon=True
         )
@@ -1085,6 +1224,7 @@ class _Heartbeat:
                 continue
             self._beat_once()
             if self.fatal.is_set():
+                self._stop.set()
                 return
 
     def _beat_once(self) -> None:
@@ -1567,7 +1707,7 @@ def _run_share(
     # B2 download gate (share is not on the top-level gated-command
     # list — same replication cli.py's plain path does, on the RESOLVED
     # hf path since the cache lookup keys the repo id).
-    _maybe_confirm_download(_resolve_serve_hf_path(serve_alias))
+    download_progress = _maybe_confirm_download(serve_alias, pool_mode=True)
 
     print(
         "warning: `rapid-mlx share --quicksilver` serves QuickSilver pool "
@@ -1673,7 +1813,7 @@ def _run_share(
             log_path=serve_log,
             extra_args=extra,
         )
-        if not _wait_for_healthz(port, serve_proc):
+        if not _wait_for_healthz(port, serve_proc, progress=download_progress):
             print(
                 f"serve exited before becoming ready — see {serve_log}",
                 file=sys.stderr,
@@ -1694,6 +1834,16 @@ def _run_share(
         print("Warming up (pages weights into Metal)…", file=sys.stderr)
         _warmup(port, api_key, display_model)
 
+        status = _PoolStatus(
+            port,
+            connected_fn=lambda: (
+                tunnel is not None
+                and tunnel.ready_event.is_set()
+                and not tunnel.closed_event.is_set()
+                and tunnel.error is None
+            ),
+        )
+
         # ``interval`` was validated (finite, 1..3600) before serve
         # booted — the beat thread can never be born frozen or dead.
         heartbeat = _Heartbeat(
@@ -1703,6 +1853,7 @@ def _run_share(
             # Bound to the SLOW-BIND of ``tunnel``: between reconnects
             # there is no live tunnel and the beat pauses anyway.
             inflight_fn=lambda: tunnel.inflight if tunnel is not None else 0,
+            status=status,
         )
         heartbeat.start()
 

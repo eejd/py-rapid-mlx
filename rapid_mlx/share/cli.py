@@ -268,7 +268,12 @@ def _resolve_served_model_name(port: int, api_key: str) -> str | None:
     return None
 
 
-def _wait_for_healthz(port: int, serve_proc: subprocess.Popen[bytes]) -> bool:
+def _wait_for_healthz(
+    port: int,
+    serve_proc: subprocess.Popen[bytes],
+    *,
+    progress: _DownloadProgress | None = None,
+) -> bool:
     """Poll /healthz until the child serve reports ready or exits.
 
     No fixed timeout: a cold first-time pull of a 70B model legitimately
@@ -286,6 +291,8 @@ def _wait_for_healthz(port: int, serve_proc: subprocess.Popen[bytes]) -> bool:
     while True:
         if serve_proc.poll() is not None:
             return False
+        if progress is not None:
+            progress.poll()
         try:
             with urllib.request.urlopen(url, timeout=2) as r:
                 if r.status == 200:
@@ -446,7 +453,71 @@ def _state_dir() -> Path:
     return d
 
 
-def _maybe_confirm_download(alias: str) -> None:
+class _DownloadProgress:
+    """Report cache occupancy while preparing an uncached pool model."""
+
+    def __init__(self, repo: str, estimated: int | None) -> None:
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        self.cache_dir = Path(HF_HUB_CACHE) / f"models--{repo.replace('/', '--')}"
+        self.estimated = estimated
+        self.started = time.monotonic()
+        self.next_poll = self.started + 30
+        size = (
+            f"approximately {estimated / 1024**3:.1f} GiB"
+            if estimated is not None
+            else "estimated size unknown"
+        )
+        print(
+            f"First-run model download: {size}. Cache size every 30s until ready.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _cache_size(self) -> int | None:
+        # Snapshots symlink to blobs (sometimes shared blobs). Count each file
+        # once, including .incomplete files, without following directory links.
+        seen: set[tuple[int, int]] = set()
+        size = 0
+
+        def raise_walk_error(error: OSError) -> None:
+            if not isinstance(error, FileNotFoundError):
+                raise error
+
+        try:
+            for root, _, files in os.walk(self.cache_dir, onerror=raise_walk_error):
+                for name in files:
+                    try:
+                        stat = (Path(root) / name).stat()
+                    except FileNotFoundError:
+                        # Downloads rename .incomplete blobs while we scan.
+                        continue
+                    identity = (stat.st_dev, stat.st_ino)
+                    if identity not in seen:
+                        seen.add(identity)
+                        size += stat.st_size
+        except OSError:
+            return None
+        return size
+
+    def poll(self) -> None:
+        now = time.monotonic()
+        if now < self.next_poll:
+            return
+        self.next_poll = now + 30
+        size = self._cache_size()
+        cached = f"{size / 1024**3:.1f} GiB" if size is not None else "unavailable"
+        print(
+            f"Preparing model: {int(now - self.started)}s elapsed, "
+            f"model cache size {cached} (downloading or loading)…",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _maybe_confirm_download(
+    alias: str, *, pool_mode: bool = False
+) -> _DownloadProgress | None:
     """Replicate the top-level B2 auto-pull gate for share.
 
     ``rapid_mlx/cli.py`` runs a confirmation prompt for chat/run/serve/pull/bench
@@ -458,28 +529,44 @@ def _maybe_confirm_download(alias: str) -> None:
     confirmation. Codex round-1 BLOCKING: replicate the same check here
     so the share entrypoint enforces the policy too.
 
-    Mirrors the logic at ``cli.py:4322`` — env override / non-TTY both
-    short-circuit before any HF API round-trip.
+    Plain share preserves the existing env / non-TTY short circuits. Pool
+    mode also estimates uncached models and returns a non-TTY reporter.
     """
+    if pool_mode:
+        from ..model_aliases import resolve_profile
+
+        profile = resolve_profile(alias)
+        if profile is not None:
+            alias = profile.hf_path
     if "/" not in alias or os.path.exists(alias):
         # Not an HF-style repo id, or a local path — nothing to prompt for.
         return
+    progress = None
+    if pool_mode:
+        from .._download_gate import estimate_download_size_bytes, is_repo_cached
+
+        if is_repo_cached(alias):
+            return None
+        progress = _DownloadProgress(alias, estimate_download_size_bytes(alias))
     if os.environ.get("RAPID_MLX_CHAT_SPAWN", "") == "1":
         # Grandchild safety: a parent ``rapid-mlx`` invocation already
         # gated and set this marker. Don't re-prompt.
-        return
+        return progress
     if env_truthy("RAPID_MLX_AUTO_PULL"):
-        return
+        return progress
     if not sys.stdin.isatty():
-        return
+        return progress
     from rapid_mlx._download_gate import (
         confirm_or_abort,
         estimate_download_size_bytes,
         is_repo_cached,
     )
 
-    if not is_repo_cached(alias):
+    if progress is not None:
+        confirm_or_abort(alias, progress.estimated)
+    elif not is_repo_cached(alias):
         confirm_or_abort(alias, estimate_download_size_bytes(alias))
+    return progress
 
 
 def share_command(args: argparse.Namespace) -> None:

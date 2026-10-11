@@ -3489,3 +3489,71 @@ def test_pool_cleanup_failure_prevents_serve_spawn(capsys):
     assert error.value.code == 2
     assert "could not retire legacy model prompt cache" in capsys.readouterr().err
     spawn.assert_not_called()
+
+
+def test_pool_progress_and_status_follow_serve_lifecycle():
+    """Progress ends at health; metrics baseline follows warm-up, before relay."""
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    tunnel = _fake_tunnel()
+    tunnel.ready_event.is_set.return_value = True
+    serve, ctrl_c = _patched_run_env(None)
+    heartbeat = _fake_heartbeat_class()
+    progress = MagicMock()
+    reporter = MagicMock()
+    events = []
+
+    def make_status(port, *, connected_fn):
+        assert port == 18765
+        assert events == ["warmup"]
+        assert not connected_fn()  # No tunnel exists until after the baseline.
+        events.append("baseline")
+        reporter.connected_fn = connected_fn
+        return reporter
+
+    def tunnel_factory(**kw):
+        assert events == ["warmup", "baseline"]
+        return tunnel
+
+    ctxs = _run_patches(serve, tunnel_factory, ctrl_c) + (
+        patch.object(share_cli, "_maybe_confirm_download", return_value=progress),
+        patch.object(share_cli, "_wait_for_healthz", return_value=True),
+        patch.object(qs, "_warmup", side_effect=lambda *a: events.append("warmup")),
+        patch.object(qs, "_PoolStatus", side_effect=make_status),
+        patch.object(qs, "_Heartbeat", return_value=heartbeat),
+    )
+    with _enter(*ctxs):
+        qs.run_share(_make_args())
+        share_cli._maybe_confirm_download.assert_called_once_with(
+            "qwen3.6-35b", pool_mode=True
+        )
+        share_cli._wait_for_healthz.assert_called_once_with(
+            18765, serve, progress=progress
+        )
+        assert qs._Heartbeat.call_args.kwargs["status"] is reporter
+    heartbeat.start.assert_called_once()
+    heartbeat.stop.assert_called_once()
+    connected_fn = reporter.connected_fn
+    assert connected_fn()
+    tunnel.closed_event.set()
+    assert not connected_fn()
+    tunnel.closed_event.clear()
+    tunnel.ready_event.is_set.return_value = False
+    assert not connected_fn()
+    tunnel.ready_event.is_set.return_value = True
+    tunnel.error = ConnectionError()
+    assert not connected_fn()
+
+
+def test_pool_failed_health_never_starts_status_and_reaps_serve():
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    serve, ctrl_c = _patched_run_env(None)
+    ctxs = _run_patches(serve, lambda **kw: _fake_tunnel(), ctrl_c) + (
+        patch.object(share_cli, "_wait_for_healthz", return_value=False),
+        patch.object(qs, "_PoolStatus"),
+    )
+    with _enter(*ctxs):
+        with pytest.raises(SystemExit) as exc:
+            qs.run_share(_make_args())
+        qs._PoolStatus.assert_not_called()
+    assert exc.value.code == 1
+    serve.terminate.assert_called_once()
