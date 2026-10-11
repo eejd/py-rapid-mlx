@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from rapid_mlx.middleware import browser_security as security
 
@@ -62,6 +64,7 @@ def test_default_local_hosts_allowed(local_app, host):
         "[::1]evil",
         "[::1]:",
         "localhost:",
+        ":8898",
         "local\x00host",
     ],
 )
@@ -79,6 +82,64 @@ def test_duplicate_host_is_rejected(local_app):
     )
     assert r.status_code == 400
     assert not calls
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [("Host", "evil.example")],
+        [("Host", "localhost:8898"), ("Origin", "https://evil.example")],
+        [("Host", "localhost:8898"), ("Origin", "null")],
+        [
+            ("Host", "localhost:8898"),
+            ("Origin", "http://localhost:8898"),
+            ("Origin", "http://localhost:8898"),
+        ],
+    ],
+)
+def test_websocket_policy_violation_closes_before_dispatch(local_app, headers):
+    app, calls = local_app
+
+    @app.websocket("/socket")
+    async def socket(websocket: WebSocket):
+        calls.append(True)
+        await websocket.accept()
+
+    client = TestClient(app)
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        client.websocket_connect(
+            "ws://localhost:8898/socket", headers=httpx.Headers(headers)
+        ),
+    ):
+        pytest.fail("Rejected WebSocket reached the application")
+    assert exc.value.code == 1008
+    assert not calls
+
+
+@pytest.mark.parametrize("scheme,origin_scheme", [("ws", "http"), ("wss", "https")])
+@pytest.mark.parametrize("native", [True, False])
+def test_native_and_same_origin_websockets_dispatch(
+    local_app, scheme, origin_scheme, native
+):
+    app, calls = local_app
+
+    @app.websocket("/socket")
+    async def socket(websocket: WebSocket):
+        calls.append(True)
+        await websocket.accept()
+        await websocket.send_json({"ok": True})
+        await websocket.close()
+
+    headers = {} if native else {"Origin": f"{origin_scheme}://localhost:8898"}
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(
+            f"{scheme}://localhost:8898/socket", headers=headers
+        ) as ws,
+    ):
+        assert ws.receive_json() == {"ok": True}
+    assert calls == [True]
 
 
 @pytest.mark.parametrize(
