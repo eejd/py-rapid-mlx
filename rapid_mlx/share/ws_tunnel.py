@@ -585,9 +585,6 @@ class TunnelClient:
         if t == "req":
             req_id = msg.get("id")
             if isinstance(req_id, str):
-                # Only a well-formed request can reach serve; a malformed
-                # frame must not end the status reporter's warm-up baseline.
-                self._requests_started.set()
                 # Epoch opens at DISPATCH, on the loop thread that also
                 # reads aborts: from here until _release_epoch, an abort
                 # naming this id is unambiguously for THIS request even
@@ -711,6 +708,10 @@ class TunnelClient:
         # ``http.client`` is synchronous; run it in a worker thread so
         # the asyncio loop stays responsive while the response streams
         # back from the local serve.
+        # The request passed validation and is about to reach serve: only now
+        # does pool traffic exist. A malformed frame rejected above must not
+        # end the status reporter's warm-up baseline.
+        self._requests_started.set()
         try:
             await asyncio.to_thread(
                 self._perform_local_fetch, req_id, method, path, headers, body

@@ -280,28 +280,33 @@ def test_status_does_not_rebaseline_traffic_arriving_during_scrape(
 
 @pytest.mark.asyncio
 async def test_tunnel_request_signal_is_shared_across_reconnects():
-    started = threading.Event()
-    client = ws_tunnel.TunnelClient(local_port=1, requests_started_event=started)
-    client._dispatch_inbound({"t": "abort", "id": "absent"})
-    assert not started.is_set()
-
-    async def ignore(msg):
-        pass
-
-    client._handle_request = ignore
-    client._dispatch_inbound({"t": "req"})  # malformed: no request id
-    client._dispatch_inbound({"t": "req", "id": 7})
-    assert not started.is_set()
-
-    async def handle(msg):
-        assert started.is_set()  # Set before the request can reach serve.
-
-    client._handle_request = handle
-    client._dispatch_inbound({"t": "req", "id": "first"})
-    assert started.is_set()
+    """Only a request that passed validation and is being forwarded to serve
+    marks pool traffic as started; malformed frames never do."""
     import asyncio
 
+    started = threading.Event()
+    client = ws_tunnel.TunnelClient(local_port=1, requests_started_event=started)
+    sent = []
+
+    async def send(frame):
+        sent.append(frame)
+
+    def fetch(req_id, method, path, headers, body):
+        assert started.is_set()  # Set before the request can reach serve.
+
+    client._send = send
+    client._perform_local_fetch = fetch
+    client._dispatch_inbound({"t": "abort", "id": "absent"})
+    client._dispatch_inbound({"t": "req"})  # malformed: no request id
+    client._dispatch_inbound({"t": "req", "id": 7})
+    client._dispatch_inbound({"t": "req", "id": "bad-body", "body": "a"})
     await asyncio.gather(*client._tasks)
+    assert not started.is_set()
+    assert [frame["t"] for frame in sent] == ["err"]
+
+    client._dispatch_inbound({"t": "req", "id": "first", "path": "/v1/models"})
+    await asyncio.gather(*client._tasks)
+    assert started.is_set()
     reconnected = ws_tunnel.TunnelClient(local_port=1, requests_started_event=started)
     assert reconnected._requests_started.is_set()
 
