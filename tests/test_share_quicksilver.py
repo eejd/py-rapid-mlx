@@ -3520,9 +3520,8 @@ def test_pool_progress_and_status_follow_serve_lifecycle():
         assert events == ["pre-warmup"]
         events.append("warmup")
 
-    def accounting_wait(stop):
+    def accounting_wait():
         assert events == ["pre-warmup", "warmup"]
-        assert not stop.is_set()
         events.append("accounted-baseline")
 
     reporter.wait_for_warmup.side_effect = accounting_wait

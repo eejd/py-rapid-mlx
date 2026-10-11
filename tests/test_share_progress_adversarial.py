@@ -868,3 +868,34 @@ def test_warmup_accounting_bound_includes_scrape_latency(monkeypatch, clock):
     reporter.wait_for_warmup(stop)
     assert clock[0] == 110
     assert sum(stop.waits) == 4
+
+
+def test_real_sigterm_interrupts_warmup_accounting_wait(monkeypatch):
+    """Share's SIGTERM handler raises KeyboardInterrupt on the main thread;
+    the warm-up accounting wait must abort at once, not run out its bound."""
+    import os
+    import signal
+    import threading
+    import time
+
+    from rapid_mlx.share import quicksilver as qs
+
+    sample = (1.0, 8.0, 40.0, 1.0)
+    monkeypatch.setattr(qs._PoolStatus, "_read", lambda self, **kw: sample)
+    reporter = qs._PoolStatus(18765, lambda: True)
+
+    def term_handler(signum, frame):  # same shape as run_share's handler
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, term_handler)
+    timer = threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGTERM))
+    started = time.monotonic()
+    try:
+        timer.start()
+        with pytest.raises(KeyboardInterrupt):
+            reporter.wait_for_warmup()  # counter never advances: full bound
+    finally:
+        timer.cancel()
+        signal.signal(signal.SIGTERM, previous)
+    assert time.monotonic() - started < 3.0
+    assert qs._WARMUP_ACCOUNTING_WAIT_SECONDS >= 5

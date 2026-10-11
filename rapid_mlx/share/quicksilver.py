@@ -1139,8 +1139,13 @@ class _PoolStatus:
         except Exception:  # noqa: BLE001 — observation must be fail-open
             return None
 
-    def wait_for_warmup(self, stop: threading.Event) -> None:
-        """Bound preparation accounting before the relay can dispatch work."""
+    def wait_for_warmup(self, stop: threading.Event | None = None) -> None:
+        """Bound preparation accounting before the relay can dispatch work.
+
+        Every wait is short and signal-interruptible: on the main thread a
+        SIGINT/SIGTERM handler that raises aborts it immediately.
+        """
+        stop = stop if stop is not None else threading.Event()
         pre_warmup = self.baseline
         if pre_warmup is None:
             return  # Unavailable metrics must not add an accounting wait.
@@ -2031,7 +2036,10 @@ def _run_share(
         # The constructor samples before warm-up. Wait for its terminal ledger
         # update before any relay request can arrive, with a hard startup bound.
         _warmup(port, api_key, display_model)
-        status.wait_for_warmup(threading.Event())
+        # Main thread: SIGINT and SIGTERM (``_term_handler``) raise
+        # KeyboardInterrupt here, which interrupts the bounded waits below, so
+        # this never delays shutdown. The event only serves in-process callers.
+        status.wait_for_warmup()
 
         # ``interval`` was validated (finite, 1..3600) before serve
         # booted — the beat thread can never be born frozen or dead.
