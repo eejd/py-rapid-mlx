@@ -110,6 +110,38 @@ def test_unknown_failure_stays_safe_json(control_plane):
     assert "secret" not in response.text
 
 
+@pytest.mark.parametrize(
+    "diagnostic", ["raise_if_missing_local_model", "local_model_failure_message"]
+)
+@pytest.mark.parametrize("diagnostic_error", [OSError, ValueError])
+@pytest.mark.parametrize("hub_failure", [False, True])
+def test_diagnostic_failure_preserves_safe_load_error(
+    control_plane, monkeypatch, diagnostic, diagnostic_error, hub_failure
+):
+    client, manager = control_plane
+
+    def fail_diagnostic(*args, **kwargs):
+        raise diagnostic_error("diagnostic secret /Users/private/model")
+
+    monkeypatch.setattr(residency, diagnostic, fail_diagnostic)
+    manager.load.side_effect = (
+        hub_error(RepositoryNotFoundError, 404)
+        if hub_failure
+        else RuntimeError("loader secret /Users/private/model")
+    )
+    response = client.post("/v1/models/load", json={"model": "org/model"})
+    assert response.status_code == (404 if hub_failure else 500)
+    assert response.headers["content-type"] == "application/json"
+    assert response.json()["error"]["type"] == (
+        "not_found_error" if hub_failure else "api_error"
+    )
+    if hub_failure:
+        assert "HF_TOKEN" in response.json()["error"]["message"]
+    assert "secret" not in response.text
+    assert "/Users/private" not in response.text
+    assert client.get("/v1/models/residency").status_code == 200
+
+
 def test_resolution_failure_before_manager_is_json(control_plane, monkeypatch):
     client, manager = control_plane
 
