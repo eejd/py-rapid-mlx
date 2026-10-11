@@ -548,7 +548,7 @@ def _maybe_confirm_download(
             alias = profile.hf_path
     if "/" not in alias or os.path.exists(alias):
         # Not an HF-style repo id, or a local path — nothing to prompt for.
-        return
+        return None
     progress = None
     if pool_mode:
         from .._download_gate import estimate_download_size_bytes, is_repo_cached
