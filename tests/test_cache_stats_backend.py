@@ -8,9 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 
-pytestmark = pytest.mark.requires_mlx
 
-
+@pytest.mark.requires_mlx
 @pytest.mark.parametrize("is_mllm", [False, True])
 def test_installed_backend_diagnostics_do_not_claim_request_readiness(
     monkeypatch, is_mllm
