@@ -19,6 +19,8 @@ def test_vision_cache_stats_use_active_engine(monkeypatch, stats):
     assert asyncio.run(health.cache_stats()) == {
         "model_type": "mllm",
         "multimodal_kv_cache": stats,
+        "pixel_values_cache": None,
+        "pil_image_cache": None,
     }
     engine.get_cache_stats.assert_called_once_with()
 

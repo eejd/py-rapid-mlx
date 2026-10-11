@@ -195,7 +195,9 @@ reuse and cache clearing remain available in memory.
 vision, `"llm"` for text, or `null` when no engine is installed). Vision
 `multimodal_kv_cache` contains the active engine's reusable-prefix counters, or
 `null` if those counters are unavailable. It does not depend on optional
-package-global image-cache APIs.
+package-global image-cache APIs. The existing `pixel_values_cache` and
+`pil_image_cache` fields remain present as `null` when their statistics are
+unavailable.
 
 ### Low-memory model switching
 

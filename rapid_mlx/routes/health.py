@@ -483,6 +483,8 @@ async def cache_stats():
         return {
             "model_type": "mllm",
             "multimodal_kv_cache": engine.get_cache_stats(),
+            "pixel_values_cache": None,
+            "pil_image_cache": None,
         }
     return {
         "message": "Vision cache stats not available (text-only model loaded). "
