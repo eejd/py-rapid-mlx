@@ -320,6 +320,15 @@ class StressE2EBenchStep(Step):
                             f"[{tag}] bench on {choice.model_id}: {result['summary']}"
                         )
                     continue
+                # Startup failures provide no test evidence and must never be
+                # waived by reproducing the same broken environment on base.
+                if kind == "agent" and not pr_result.get("executed"):
+                    any_fail = True
+                    all_findings.append(
+                        f"[BLOCKING] {_failure_label(kind, agent)} on {choice.model_id}: "
+                        f"{pr_result['summary']} (integration results not recorded)"
+                    )
+                    continue
                 base_result = _run_base_check(ctx, choice, kind, agent)
                 _record_manifest(
                     manifest,
@@ -763,7 +772,7 @@ def _run_agent(
     script = run_root / agent["script"]
     if not script.exists():
         return {
-            "status": "skip",
+            "status": "fail",
             "summary": f"script missing: {agent['script']}",
             "executed": False,
         }
@@ -792,12 +801,40 @@ def _run_agent(
         timeout=1800,
     )
     log.write_text((proc.stdout or "") + (proc.stderr or ""))
-    summary = _grep_last(proc.stdout, "passed") or _grep_last(proc.stdout, "FAIL")
+    # A launched interpreter is not evidence that the SDK battery ran.
+    # All registered scripts report a nonempty final count after collecting
+    # their test outcomes. Missing imports, setup errors, silent exits, and
+    # teardown crashes must block even if base has the same environment.
+    prefix = agent.get("result_prefix")
+    matches = (
+        re.findall(
+            rf"^{re.escape(prefix)}: (\d+)/(\d+) passed(?:, (\d+) skipped)?$",
+            proc.stdout or "",
+            re.MULTILINE,
+        )
+        if isinstance(prefix, str) and prefix
+        else []
+    )
+    executed = False
+    if len(matches) == 1:
+        passed, total, skipped = (int(value or 0) for value in matches[0])
+        expected_exit = 0 if passed + skipped == total else 1
+        # Zero passed can be a real all-failed battery too; zero executed
+        # (all skipped) is never adequate integration evidence.
+        valid_counts = total > 0 and passed + skipped <= total and skipped < total
+        executed = (
+            valid_counts
+            and proc.returncode == expected_exit
+            and "Traceback (most recent call last)" not in (proc.stderr or "")
+        )
+    summary = _grep_last(proc.stdout, "passed") or f"exit {proc.returncode}"
     return {
-        "status": "pass" if proc.returncode == 0 else "fail",
-        "summary": summary or f"exit {proc.returncode}",
+        "status": "pass" if proc.returncode == 0 and executed else "fail",
+        "summary": summary
+        if executed
+        else f"SDK startup/results incomplete: {summary}",
         "artifact": str(log),
-        "executed": True,
+        "executed": executed,
     }
 
 

@@ -350,6 +350,21 @@ it (see "Threat model" above, #275).
 * Runs `pip-audit` against any new dependencies declared in
   `pyproject.toml` / `requirements.txt`.
 
+### `sdk_env_check` (high-blast prerequisite check)
+
+After supply-chain and test-environment checks, import the registered SDK
+prerequisites with the same `python3.12`, working directory and Python path
+used by the model matrix. This check does not install packages or execute
+integration scripts. Missing prerequisites or scripts stop validation before
+full-unit/model work, including when `--fail-fast` is off.
+
+The SDK matrix requires each registered script's nonempty final test-count
+summary and matching exit status. Missing imports, setup failures, silent
+exits and incomplete results block validation; reproducing them on base does
+not make them pre-existing test failures. Real completed test failures retain
+the existing base-comparison policy. Model-specific registry exclusions and
+the supported guided-output capability skip remain unchanged.
+
 ### `lint` (step 2)
 
 `ruff check` + `ruff format --check` on the changed `.py` files only.
