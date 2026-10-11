@@ -480,11 +480,26 @@ async def cache_stats():
     if engine is None:
         return {"message": "engine not loaded", "model_type": None}
     if engine.is_mllm:
+        # Older optional backends expose image-cache diagnostics independently
+        # of the engine-owned KV cache. Their presence does not classify the
+        # active model, and a missing API must not hide the other statistics.
+        image_stats = {"pixel_values_cache": None, "pil_image_cache": None}
+        try:
+            from mlx_vlm import utils as vlm_utils
+        except ImportError:
+            pass
+        else:
+            for field, api in (
+                ("pixel_values_cache", "get_pixel_values_cache_stats"),
+                ("pil_image_cache", "get_pil_cache_stats"),
+            ):
+                getter = getattr(vlm_utils, api, None)
+                if callable(getter):
+                    image_stats[field] = getter()
         return {
             "model_type": "mllm",
             "multimodal_kv_cache": engine.get_cache_stats(),
-            "pixel_values_cache": None,
-            "pil_image_cache": None,
+            **image_stats,
         }
     return {
         "message": "Vision cache stats not available (text-only model loaded). "
