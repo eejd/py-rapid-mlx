@@ -66,6 +66,12 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
+def http_probe_authority(host: str, port: int) -> str:
+    """HTTP Host for the connected probe destination, including IPv6 brackets."""
+    authority_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return f"{authority_host}:{port}"
+
+
 def home_for_user(user: str) -> Path | None:
     """Return the home directory for ``user``, or None if unknown.
 
