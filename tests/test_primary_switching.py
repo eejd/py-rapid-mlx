@@ -173,11 +173,11 @@ async def test_evicted_secondary_http_errors_offer_reload(switching_server, stre
             error = response.json()["error"]
             assert "previously loaded" in error["message"]
             assert "POST /v1/models/load" in error["message"]
-            if path != "/v1/messages":
-                assert error["code"] == "model_not_found"
-                assert error["type"] == "not_found_error"
-            else:
-                assert error["type"] == "not_found_error"
+            assert error["code"] == "model_not_found"
+            assert error["type"] == "not_found_error"
+            assert error["param"] == "model"
+            if path == "/v1/messages":
+                assert response.json()["type"] == "error"
         assert (await client.get("/health/ready")).status_code == 200
 
 
