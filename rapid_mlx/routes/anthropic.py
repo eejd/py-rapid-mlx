@@ -811,7 +811,7 @@ async def create_anthropic_message(
         try:
             validate_content_blocks_for_capabilities(
                 openai_request.messages,
-                model_name=cfg_pre.model_name,
+                model_name=cfg_pre.model_name or anthropic_request.model,
                 allow_image=getattr(engine, "is_mllm", True),
                 allow_video=False,
                 telemetry_model=_served_telemetry_id,
