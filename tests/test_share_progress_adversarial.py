@@ -263,14 +263,103 @@ def test_reporter_exceptions_never_emit_private_traceback(
     assert capsys.readouterr() == ("", "")
 
 
-def test_unexpected_http_exception_is_silent(monkeypatch, capsys):
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_unexpected_http_exception_is_silent(monkeypatch, capsys, error_type):
     def fail(*a, **kw):
-        raise RuntimeError("request text customer secret")
+        raise error_type("request text customer secret")
 
     monkeypatch.setattr(qs, "_open", fail)
     reporter = qs._PoolStatus(1, lambda: True)
     reporter.poll(True)
     assert reporter.baseline is None
+    assert capsys.readouterr() == ("", "")
+
+
+def test_metrics_thread_start_failure_is_silent_and_retryable(
+    status, monkeypatch, capsys
+):
+    reporter, _ = status
+    start = MagicMock(side_effect=RuntimeError("cannot start new thread"))
+    with monkeypatch.context() as scoped:
+        scoped.setattr(qs.threading.Thread, "start", start)
+        assert reporter._read() is None
+    start.assert_called_once_with()
+    assert not reporter._scrape_thread.is_alive()
+    assert reporter._scrape_result is None
+    assert reporter._read() == reporter.baseline
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("reason", ["deadline", "stop"])
+def test_metrics_join_abandons_blocked_transport(
+    status, clock, monkeypatch, capsys, reason
+):
+    reporter, _ = status
+    entered, release = threading.Event(), threading.Event()
+    calls, joins = [], []
+    real_join = threading.Thread.join
+    stop = threading.Event()
+
+    def transport(*a, **kw):
+        calls.append(1)
+        entered.set()
+        release.wait()  # The finally block releases it; no timed sleep or race.
+        return metrics_response(metrics(2, 18, 60, 2).encode())
+
+    def join(thread, timeout=None):
+        assert entered.wait(0.2)
+        real_join(thread, timeout=0)
+        joins.append(timeout)
+        # Advance at the actual join boundary with a real, blocked scrape thread.
+        if reason == "deadline":
+            clock[0] += timeout + 0.001
+        else:
+            stop.set()
+
+    monkeypatch.setattr(qs, "_open", transport)
+    try:
+        with monkeypatch.context() as scoped:
+            scoped.setattr(qs.threading.Thread, "join", join)
+            assert reporter._read(timeout=0.01, stop=stop) is None
+        assert joins == [pytest.approx(0.01)]
+        assert stop.is_set() == (reason == "stop")
+        assert reporter._scrape_thread.is_alive()
+        assert reporter._scrape_thread.daemon
+        assert reporter._read() is None  # Never start a second blocked scrape.
+        assert calls == [1]
+        assert reporter.baseline == (1, 8, 40, 1)
+        assert capsys.readouterr() == ("", "")
+    finally:
+        release.set()
+        real_join(reporter._scrape_thread, timeout=0.2)
+    assert not reporter._scrape_thread.is_alive()
+    assert reporter._scrape_result == (2, 18, 60, 2)
+    assert capsys.readouterr() == ("", "")
+
+
+def test_final_status_skips_scrape_when_lock_acquisition_uses_deadline(
+    status, clock, monkeypatch, capsys
+):
+    reporter, _ = status
+    reporter._stop = threading.Event()
+    lock = reporter._poll_lock
+
+    def acquire(*, timeout):
+        assert lock.acquire(blocking=False)
+        clock[0] += timeout  # Acquiring the poll lock spent the entire bound.
+        return True
+
+    delayed_lock = MagicMock(wraps=lock)
+    delayed_lock.acquire.side_effect = acquire
+    read = MagicMock(wraps=reporter._read)
+    monkeypatch.setattr(reporter, "_poll_lock", delayed_lock)
+    monkeypatch.setattr(reporter, "_read", read)
+    reporter.stop(MagicMock(poll=MagicMock(return_value=None)))
+    delayed_lock.acquire.assert_called_once_with(timeout=1.0)
+    delayed_lock.release.assert_called_once_with()
+    assert not lock.locked()
+    assert reporter._stop.is_set()
+    read.assert_not_called()
     assert capsys.readouterr() == ("", "")
 
 
@@ -354,6 +443,46 @@ def test_large_finite_numbers_stay_bounded_and_private(status, clock, capsys):
     assert "private model" not in output
     assert "inf" not in output.lower()
     assert "nan" not in output.lower()
+
+
+@pytest.mark.parametrize("field", [0, 1, 2, 3])
+def test_status_total_overflow_after_counter_reset_preserves_state(
+    status, clock, capsys, field
+):
+    reporter, snapshot = status
+    values = [2, 18, 60, 2]
+    values[field] = 1e308
+    snapshot[0] = metrics(*values)
+    reporter.poll(True)
+    capsys.readouterr()
+    clock[0] += 10
+    snapshot[0] = metrics()  # Reset the server counters, preserving local totals.
+    reporter.poll(True)
+    capsys.readouterr()
+    before = (
+        reporter._totals,
+        reporter._previous,
+        reporter.last_counts,
+        reporter.last_print,
+    )
+    clock[0] += 10
+    snapshot[0] = metrics(*values)
+    assert reporter._parse(snapshot[0]) is not None  # Each sample is finite.
+    reporter.poll(True)  # The sum of the two finite samples overflows.
+    assert (
+        reporter._totals,
+        reporter._previous,
+        reporter.last_counts,
+        reporter.last_print,
+    ) == before
+    assert capsys.readouterr() == ("", "")
+    snapshot[0] = metrics(1, 2, 3, 1)
+    clock[0] += 60
+    reporter.poll(True)
+    assert reporter._previous == (1, 2, 3, 1)
+    output = capsys.readouterr().err.lower()
+    assert "quicksilver status:" in output
+    assert "inf" not in output and "nan" not in output
 
 
 def test_days_of_non_tty_status_are_flushed_and_throttled(status, clock, monkeypatch):
@@ -729,6 +858,23 @@ class AccountingClockStop:
         self.clock[0] += timeout
         self.on_wait()
         return False
+
+
+def test_warmup_accounting_skips_scrape_when_clock_passes_deadline(
+    status, monkeypatch, capsys
+):
+    reporter, _ = status
+    read = MagicMock(wraps=reporter._read)
+    clock = MagicMock(
+        side_effect=[100.0, 100.0 + qs._WARMUP_ACCOUNTING_WAIT_SECONDS + 1]
+    )
+    monkeypatch.setattr(reporter, "_read", read)
+    monkeypatch.setattr(qs.time, "monotonic", clock)
+    reporter.wait_for_warmup(threading.Event())
+    assert clock.call_count == 2
+    read.assert_not_called()
+    assert reporter.baseline == reporter._previous == (1, 8, 40, 1)
+    assert capsys.readouterr() == ("", "")
 
 
 def test_warmup_late_accounting_within_bound_is_excluded(monkeypatch, clock, capsys):

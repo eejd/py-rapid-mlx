@@ -646,6 +646,74 @@ def test_download_progress_missing_cache_and_permission_failure(
     assert "model cache size unavailable" in capsys.readouterr().err
 
 
+def test_download_notice_broken_stderr_does_not_abort(cache, monkeypatch, capsys):
+    stream = MagicMock(write=MagicMock(side_effect=BrokenPipeError("private path")))
+    with monkeypatch.context() as scoped:
+        scoped.setattr(cli.sys, "stderr", stream)
+        reporter = cli._DownloadProgress("org/repo", None)
+    stream.write.assert_called_once()
+    assert reporter.cache_dir == cache / "models--org--repo"
+    assert reporter._scan_thread is None
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("source", ["callback", "stderr"])
+def test_download_poll_failure_is_silent_and_recovers(
+    cache, clock, monkeypatch, capsys, source
+):
+    reporter = cli._DownloadProgress("org/repo", None)
+    capsys.readouterr()
+    clock[0] = 130
+    failure = MagicMock(side_effect=RuntimeError("private cache path"))
+    with monkeypatch.context() as scoped:
+        if source == "callback":
+            scoped.setattr(reporter, "_poll", failure)
+        else:
+            scoped.setattr(cli.sys, "stderr", MagicMock(write=failure))
+        assert reporter.poll() is None
+    failure.assert_called_once()
+    assert capsys.readouterr() == ("", "")
+    clock[0] = 160
+    reporter.poll()
+    assert "Preparing model:" in capsys.readouterr().err
+
+
+def test_download_walk_onerror_rejects_permission_failure(cache, monkeypatch, capsys):
+    reporter = cli._DownloadProgress("org/repo", None)
+    capsys.readouterr()
+    # Let the real os.walk deliver scandir's failure to its onerror callback.
+    scandir = MagicMock(side_effect=PermissionError("private cache path"))
+    monkeypatch.setattr(cli.os, "scandir", scandir)
+    assert reporter._cache_size() is None  # An inaccessible cache is not empty.
+    scandir.assert_called_once()
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_download_scan_fault_discards_stale_size_and_recovers(
+    cache, monkeypatch, capsys, error_type
+):
+    reporter = cli._DownloadProgress("org/repo", None)
+    capsys.readouterr()
+    reporter._last_size = 123
+    scan = MagicMock(side_effect=error_type("private cache path"))
+    monkeypatch.setattr(reporter, "_cache_size", scan)
+    reporter._refresh_cache_size()
+    reporter._scan_thread.join(0.2)
+    assert not reporter._scan_thread.is_alive()
+    assert reporter._scan_thread.daemon
+    scan.assert_called_once_with()
+    assert reporter._last_size is None
+    assert capsys.readouterr() == ("", "")
+    scan.side_effect = None
+    scan.return_value = 456
+    reporter._refresh_cache_size()
+    reporter._scan_thread.join(0.2)
+    assert not reporter._scan_thread.is_alive()
+    assert reporter._last_size == 456
+    assert capsys.readouterr() == ("", "")
+
+
 def test_download_progress_relocated_blobs_and_safe_symlinks(cache, clock, capsys):
     reporter = cli._DownloadProgress("org/repo", None)
     capsys.readouterr()
