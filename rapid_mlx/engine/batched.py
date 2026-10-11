@@ -1209,6 +1209,7 @@ class BatchedEngine(BaseEngine):
         self._engine = None  # AsyncEngineCore for LLM
         self._mllm_scheduler = None  # MLLMScheduler for MLLM
         self._mllm_native_text_engine = False
+        self._mllm_dense_singleton_fastpath = False
         self._model_load_executor = None  # mlx-step worker (#170)
         self._mllm_instance = None  # MLXMultimodalLM instance
         # The MLLM lane has no text EngineCore/model_config to query. Set this
@@ -2021,6 +2022,7 @@ class BatchedEngine(BaseEngine):
             else getattr(config, "model_type", None)
         )
         spec_decode = getattr(self._scheduler_config, "spec_decode", "none")
+        self._mllm_dense_singleton_fastpath = False
         if _should_start_qwen36_native_text_cache(
             language_model,
             config_model_type=config_model_type,
@@ -2029,6 +2031,9 @@ class BatchedEngine(BaseEngine):
             no_hybrid=getattr(self, "_no_hybrid", False),
         ):
             await self._start_qwen36_native_text_engine(language_model)
+            self._mllm_dense_singleton_fastpath = bool(
+                config_model_type == "qwen3_5" and self._mllm_native_text_engine
+            )
 
         logger.info(
             f"MLLM Scheduler started with continuous batching: "
@@ -2552,6 +2557,7 @@ class BatchedEngine(BaseEngine):
         self._loaded = False
         self._engine_started = False
         self._mllm_native_text_engine = False
+        self._mllm_dense_singleton_fastpath = False
         logger.info("BatchedEngine stopped")
 
     def _prepare_harmony_no_thinking_prompt(
@@ -2855,6 +2861,34 @@ class BatchedEngine(BaseEngine):
             and (getattr(self, "_engine", None) is None or images or videos)
         )
 
+    def _select_mllm_request_path(
+        self,
+        images: list[str] | None,
+        videos: list[str] | None,
+        admission_token: str,
+    ) -> bool:
+        """Pin dense singleton routing using existing request ownership.
+
+        A sole admitted dense text request retains the vision scheduler's
+        singleton fast path. Concurrent text uses the shared native-cache
+        scheduler. The admission token covers preparation until scheduler
+        insertion; scheduler IDs cover committed and deferred-abort work.
+        No request cache moves between lanes.
+        """
+        if self._uses_mllm_request_path(images, videos):
+            return True
+        if not getattr(self, "_mllm_dense_singleton_fastpath", False):
+            return False
+        # Same lock order as pause_generation(). Both schedulers publish
+        # ownership before on_request_committed consumes the admission token.
+        with self._admission_lock:
+            tokens = self._admission_tokens
+            return bool(
+                admission_token in tokens
+                and tokens == {admission_token}
+                and not self._lifecycle_request_ids()
+            )
+
     async def generate(
         self,
         prompt: str | list[int],
@@ -2891,7 +2925,7 @@ class BatchedEngine(BaseEngine):
                 admission_token, clear_context=owns_admission
             )
 
-        if self._uses_mllm_request_path(images, videos):
+        if self._select_mllm_request_path(images, videos, admission_token):
             mllm_scheduler = self._mllm_scheduler
             assert mllm_scheduler is not None
             # Media requests always use the MLLM scheduler. Qualified hybrid
@@ -3166,7 +3200,7 @@ class BatchedEngine(BaseEngine):
             if owns_admission and not request_committed:
                 self.release_admission_reservation()
 
-        if self._uses_mllm_request_path(images, videos):
+        if self._select_mllm_request_path(images, videos, admission_token):
             mllm_scheduler = self._mllm_scheduler
             assert mllm_scheduler is not None
             # Media always stays on MLLMScheduler; only qualified text-only

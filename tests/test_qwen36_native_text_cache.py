@@ -307,6 +307,131 @@ def test_request_routing_keeps_media_on_mllm_and_text_on_native_engine():
     assert engine._uses_mllm_request_path(None, None) is True
 
 
+def _dense_routing_engine():
+    engine = BatchedEngine("fake/dense")
+    engine._loaded = True
+    engine._is_mllm = True
+    engine._mllm_dense_singleton_fastpath = True
+    media_requests = {}
+    text_requests = {}
+    engine._mllm_scheduler = SimpleNamespace(
+        config=SimpleNamespace(max_concurrent_requests=16),
+        requests=media_requests,
+        request_ids_snapshot=lambda: tuple(media_requests),
+    )
+    text_scheduler = SimpleNamespace(
+        requests=text_requests,
+        request_ids_snapshot=lambda: tuple(text_requests),
+    )
+    engine._engine = SimpleNamespace(engine=SimpleNamespace(scheduler=text_scheduler))
+    return engine, media_requests, text_requests
+
+
+def test_dense_singleton_selection_requires_owned_admission():
+    engine, _, _ = _dense_routing_engine()
+    assert not engine._select_mllm_request_path(None, None, "unowned")
+    token, _ = engine._ensure_generation_admission()
+    try:
+        assert engine._select_mllm_request_path(None, None, token)
+        assert engine._select_mllm_request_path(None, None, token)
+        assert engine._admission_tokens == {token}  # selector has no side effects
+    finally:
+        engine.release_admission_reservation()
+
+
+def test_dense_concurrent_route_admissions_use_native_before_insertion():
+    engine, _, _ = _dense_routing_engine()
+    first, _ = engine._ensure_generation_admission()
+    assert engine._select_mllm_request_path(None, None, first)
+    engine.check_admission()
+    second = engine._current_admission_token()
+    try:
+        assert not engine._select_mllm_request_path(None, None, second)
+        assert not engine._select_mllm_request_path(None, None, first)
+    finally:
+        engine.release_admission_reservation()
+        engine.release_admission_reservation()
+
+
+@pytest.mark.parametrize("lane", ["media", "text"])
+def test_dense_handoff_and_deferred_abort_keep_singleton_lane_occupied(lane):
+    engine, media, text = _dense_routing_engine()
+    requests = media if lane == "media" else text
+    first, _ = engine._ensure_generation_admission()
+    requests["first"] = object()  # insertion precedes the commit callback
+    assert not engine._select_mllm_request_path(None, None, first)
+    engine._transfer_admission_to_scheduler(first, clear_context=True)
+    assert engine._admission_tokens == set()
+    next_token, _ = engine._ensure_generation_admission()
+    try:
+        # A deferred abort retains scheduler ownership until actual removal.
+        assert not engine._select_mllm_request_path(None, None, next_token)
+        requests.clear()
+        assert engine._select_mllm_request_path(None, None, next_token)
+    finally:
+        engine.release_admission_reservation()
+
+
+def test_dense_cancelled_preparation_releases_existing_admission():
+    engine, _, _ = _dense_routing_engine()
+    token, _ = engine._ensure_generation_admission()
+    assert engine._select_mllm_request_path(None, None, token)
+    engine.release_admission_reservation()
+    replacement, _ = engine._ensure_generation_admission()
+    try:
+        assert replacement != token
+        assert engine._select_mllm_request_path(None, None, replacement)
+        engine._mllm_dense_singleton_fastpath = False
+        assert not engine._select_mllm_request_path(None, None, replacement)
+        assert engine._select_mllm_request_path(["image"], None, replacement)
+        assert engine._select_mllm_request_path(None, ["video"], replacement)
+    finally:
+        engine.release_admission_reservation()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("busy", [False, True])
+async def test_dense_entrypoints_pin_lane_and_release_failed_submission(
+    streaming, busy, monkeypatch
+):
+    engine, _, text = _dense_routing_engine()
+    if busy:
+        text["running"] = object()
+    selected = []
+    selector = engine._select_mllm_request_path
+
+    def select(*args):
+        decision = selector(*args)
+        selected.append(decision)
+        return decision
+
+    class SubmissionFailedError(Exception):
+        pass
+
+    async def media_submit(**_kwargs):
+        assert not busy
+        raise SubmissionFailedError("media")
+
+    async def text_submit(**_kwargs):
+        assert busy
+        raise SubmissionFailedError("text")
+
+    monkeypatch.setattr(engine, "_select_mllm_request_path", select)
+    engine._mllm_scheduler.generate = media_submit
+    engine._mllm_scheduler.add_request_async = media_submit
+    engine._engine.generate = text_submit
+    engine._engine.add_request = text_submit
+    with pytest.raises(SubmissionFailedError, match="text" if busy else "media"):
+        if streaming:
+            await anext(engine.stream_generate("prompt"))
+        else:
+            await engine.generate("prompt")
+    assert selected == [not busy]
+    assert engine._admission_tokens == set()
+    assert engine._admission_reservations == 0
+
+
 @pytest.mark.asyncio
 async def test_native_text_engine_reuses_model_and_executor(monkeypatch):
     import rapid_mlx.engine_core as engine_core
@@ -496,6 +621,7 @@ async def test_mllm_start_activates_native_text_lane_only_after_qualification(
 
     async def _activate(model):
         activated.append(model)
+        engine._mllm_native_text_engine = True
 
     monkeypatch.setattr(engine, "_start_qwen36_native_text_engine", _activate)
     try:
@@ -507,6 +633,7 @@ async def test_mllm_start_activates_native_text_lane_only_after_qualification(
 
     assert activated == ([] if backbone == "unqualified_dense" else [language_model])
     assert isinstance(engine._mllm_scheduler, _FakeMLLMScheduler)
+    assert engine._mllm_dense_singleton_fastpath is (backbone == "dense27b")
 
 
 @pytest.mark.asyncio

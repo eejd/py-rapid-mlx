@@ -8,14 +8,24 @@ Issue #4324. Mac Studio M3 Ultra, 256 GB; Python 3.12.13, vision runtime
 ## Behavior and scope
 
 The vision-capable model keeps one loaded set of weights. Its qualified dense
-27B language backbone now uses the existing shared-weight native-cache text
-scheduler for pure-text requests. Media remains on the serialized vision
+27B language backbone uses the existing shared-weight native-cache text
+scheduler for concurrent pure-text requests. A sole admitted text request,
+when both schedulers are idle, retains the original vision singleton fast path.
+Lane selection uses existing admission tokens until scheduler insertion and
+live scheduler request IDs afterward, including deferred abort cleanup. The
+choice remains fixed for that request; caches never move between lanes.
+Media remains on the serialized vision
 scheduler. Both schedulers use the model-owning executor and preserve separate
 MRoPE state. Exact architecture and layer-geometry checks fail closed for other
 hybrid backbones. Requested speculative decoding and `--no-hybrid` retain their
 existing behavior; the default speculative alias route is unchanged.
 
-## HTTP measurement
+## Historical all-native HTTP measurement
+
+The following receipts measure the earlier policy that sent every pure-text
+request to native batching, including singletons. They do not qualify the
+revised singleton-preserving policy above. Fresh B1/B2/B4, lifecycle dogfood and
+the unchanged default performance gates are required before merge.
 
 SSE `/v1/chat/completions`, greedy, thinking disabled, 300 tokens per request,
 `ignore_eos=true`, B simultaneous clients, two repetitions. Prefix and disk
@@ -32,8 +42,8 @@ and keepalive events. Each phase had an 8-token warmup.
 B=4 median aggregate throughput improved about **2.30×**; the slowest first
 content delta fell from about 30.5 seconds to about 0.59 seconds. **Single-client
 throughput decreased about 20.6%** relative to the serialized singleton fast
-path. This qualification targets multi-client throughput and queue latency;
-it does not claim a single-client speedup. Operators can retain the serialized
+path. This exposed the need to preserve the existing singleton path while
+batching concurrent traffic. Operators can retain the serialized
 path with `--mllm --no-hybrid --no-spec-decode`.
 
 These are measurements on a shared development host, not an isolated hardware
@@ -64,7 +74,11 @@ qualification disabled to preserve the exact pre-change serialized policy.
 The probe requires final usage and exactly the requested token count; incomplete
 or error streams fail instead of producing throughput numbers.
 
-## Correctness and lifecycle
+## Historical correctness and lifecycle
+
+These receipts also cover the earlier all-native policy. The revised routing
+additionally needs qualification of concurrent vision-singleton text and native
+text, followed by complete drain and a return to the singleton path.
 
 Real HTTP dogfood passed streaming and nonstreaming text, image/text
 concurrency (a 224×224 red image recognized as red while a text request returned
