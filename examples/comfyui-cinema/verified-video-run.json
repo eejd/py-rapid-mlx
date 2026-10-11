@@ -1,0 +1,212 @@
+{
+  "date": "2026-10-11",
+  "environment": {
+    "host": "Apple M5 Max",
+    "unified_memory_gib": 36,
+    "macos": "27.0.1",
+    "python": "3.12.13",
+    "rapid_mlx_commit": "75548891b",
+    "runtime_commit": "57952288076766abe27dda3a774b2c24f7346977",
+    "packages": {
+      "rapid-mlx": "0.15.7",
+      "mlx": "0.32.3",
+      "mlx-lm": "0.31.3",
+      "imageio-ffmpeg": "0.6.0"
+    },
+    "generation": {
+      "model": "MrMofer/ltx-2.5-mlx-q8",
+      "width": 704,
+      "height": 480,
+      "frames": 97,
+      "fps": 24,
+      "distilled": true,
+      "low_ram": true
+    },
+    "model_revision": "f1b56e7dc89f71a9af2cddac787b89ed22a8b7fc"
+  },
+  "shots": [
+    {
+      "id": "01-departure",
+      "seed": 7300,
+      "comfy_prompt_id": "30748faa-9b54-4240-ae1f-9a5ea5fbd045",
+      "rapid_job_id": "video_ab535a157bb844babaf58e9f9cd4a9aa",
+      "server_wall_seconds": 55,
+      "sha256": "46a65232f99cb6f0b8393465a94e399dad314d573af57da29e172a431a9dab73",
+      "video": {
+        "codec_name": "h264",
+        "width": 704,
+        "height": 448,
+        "nb_frames": "97",
+        "avg_frame_rate": "24/1",
+        "duration": "4.041667"
+      },
+      "audio": {
+        "codec_name": "aac",
+        "sample_rate": "48000",
+        "channels": 2,
+        "duration": "4.010000"
+      },
+      "source_audio_mean_db": -44.7
+    },
+    {
+      "id": "02-cloud-sea",
+      "seed": 7301,
+      "comfy_prompt_id": "ba9e5cc0-f7db-4453-8f21-d0545e2e0d20",
+      "rapid_job_id": "video_e818af290bd045bca6ec1eccd58045a5",
+      "server_wall_seconds": 47,
+      "sha256": "b4062aaf074309da6b2ffb83deb4cfb97e2241f2066df0db0ee4c7d4db85c42d",
+      "video": {
+        "codec_name": "h264",
+        "width": 704,
+        "height": 448,
+        "nb_frames": "97",
+        "avg_frame_rate": "24/1",
+        "duration": "4.041667"
+      },
+      "audio": {
+        "codec_name": "aac",
+        "sample_rate": "48000",
+        "channels": 2,
+        "duration": "4.010000"
+      },
+      "source_audio_mean_db": -32.1
+    },
+    {
+      "id": "03-moon-canal",
+      "seed": 7302,
+      "comfy_prompt_id": "9de2187e-0c67-4a7d-a6c9-230d7926cc5d",
+      "rapid_job_id": "video_d11942b00b4945d086151ab16a161d83",
+      "server_wall_seconds": 48,
+      "sha256": "7144aaa60ac2a4e15741936bd396a6a2843b05f1b1483cd8fd61a45133d4fc55",
+      "video": {
+        "codec_name": "h264",
+        "width": 704,
+        "height": 448,
+        "nb_frames": "97",
+        "avg_frame_rate": "24/1",
+        "duration": "4.041667"
+      },
+      "audio": {
+        "codec_name": "aac",
+        "sample_rate": "48000",
+        "channels": 2,
+        "duration": "4.010000"
+      },
+      "source_audio_mean_db": -24.4
+    },
+    {
+      "id": "04-deep-blue",
+      "seed": 7303,
+      "comfy_prompt_id": "7b9e91fa-f1ea-4862-9b6e-2b5110ecc716",
+      "rapid_job_id": "video_1d661ca878be4efc9050d60038ee0855",
+      "server_wall_seconds": 47,
+      "sha256": "ffbd45340f9ad406976b267e678270f08eadd49a6e30142c2a9082e15eefcd02",
+      "video": {
+        "codec_name": "h264",
+        "width": 704,
+        "height": 448,
+        "nb_frames": "97",
+        "avg_frame_rate": "24/1",
+        "duration": "4.041667"
+      },
+      "audio": {
+        "codec_name": "aac",
+        "sample_rate": "48000",
+        "channels": 2,
+        "duration": "4.010000"
+      },
+      "source_audio_mean_db": -25.0
+    },
+    {
+      "id": "05-forest",
+      "seed": 7304,
+      "comfy_prompt_id": "ccd2e00a-64db-437b-9eab-fd40aa0e40f0",
+      "rapid_job_id": "video_7ca7e03d99a746c1b5e1dfd60440171b",
+      "server_wall_seconds": 47,
+      "sha256": "91621dd0edc9ddb0e9af770977be40b98e7a5567a6c9e6693018017b98c5ddc7",
+      "video": {
+        "codec_name": "h264",
+        "width": 704,
+        "height": 448,
+        "nb_frames": "97",
+        "avg_frame_rate": "24/1",
+        "duration": "4.041667"
+      },
+      "audio": {
+        "codec_name": "aac",
+        "sample_rate": "48000",
+        "channels": 2,
+        "duration": "4.010000"
+      },
+      "source_audio_mean_db": -49.6
+    },
+    {
+      "id": "06-home",
+      "seed": 7305,
+      "comfy_prompt_id": "64adef3e-afe7-4c41-8861-176c7b54259d",
+      "rapid_job_id": "video_56b697a5ae834e19b5ef69c4feeb0938",
+      "server_wall_seconds": 47,
+      "sha256": "bf5c0b82dfd34fdbf8c004af5df0ca206b4ff063f75ecba099b901cd70eb063a",
+      "video": {
+        "codec_name": "h264",
+        "width": 704,
+        "height": 448,
+        "nb_frames": "97",
+        "avg_frame_rate": "24/1",
+        "duration": "4.041667"
+      },
+      "audio": {
+        "codec_name": "aac",
+        "sample_rate": "48000",
+        "channels": 2,
+        "duration": "4.010000"
+      },
+      "source_audio_mean_db": -53.7
+    }
+  ],
+  "editorial": {
+    "resolution": "1920x1080",
+    "fps": 24,
+    "generated_shots": 6,
+    "title_and_outro_seconds": 6,
+    "audio": "Native generated audio with loudness normalization to -23 LUFS, -2 dBTP ceiling and brief edge fades; silent title cards.",
+    "motion": "Actual LTX image-to-video, with no added still-image camera animation."
+  },
+  "preflight_failures": [
+    "CLI cache-runnability probe rejected existing complete LTX cache; launched supported python module server entry instead.",
+    "Initial image-to-video request rejected before creating any video job because Pillow/video extra was absent; installed video extra, retained failed Comfy receipt and resubmitted."
+  ],
+  "rejected_generations": [
+    {
+      "id": "03-moon-canal",
+      "reason": "Boat disappeared by the end of the first attempt; reran with a foreground continuity constraint.",
+      "server_wall_seconds": 47,
+      "sha256": "3704ccf722b90e1b14e94804189f8f9f59ca2d91c3799df15980fff687c7f055"
+    }
+  ],
+  "demo_file_sha256": {
+    "storyboard.json": "e7b860555be6b8eb7a011fc8fc4e14854631b0b71492b585de9edd3470106a53",
+    "render.py": "e6bd54b86cce0de56fd667976d41ecfd686e31aa677f9cbd2c588346671dea47"
+  },
+  "final": {
+    "file": "the-last-lantern.mp4",
+    "sha256": "9feecd28eda3b2eb909b07ee653a870f0357490f40a2d94a6d1e4bdb6b557ccb",
+    "bytes": 29443438,
+    "duration_seconds": 30.267333,
+    "video": {
+      "codec_name": "h264",
+      "width": 1920,
+      "height": 1080,
+      "nb_frames": "726",
+      "avg_frame_rate": "24/1",
+      "duration": "30.250000"
+    },
+    "audio": {
+      "codec_name": "aac",
+      "sample_rate": "48000",
+      "channels": 2,
+      "duration": "30.267333"
+    },
+    "verification": "All source shots and final film fully decoded with FFmpeg without errors; start/middle/end frames reviewed for all selected shots."
+  }
+}

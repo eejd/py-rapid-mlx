@@ -1,7 +1,7 @@
 # Publication drafts — use after the film passes review
 
-Attach `media/the-last-lantern.mp4`. These drafts describe the intended completed
-run; keep them unpublished until video and audio verification are recorded.
+Attach `media/the-last-lantern.mp4`. These drafts describe the verified completed
+run and remain unpublished.
 
 ## Main post
 
@@ -26,9 +26,10 @@ Two passes. Fixed seeds. Resumable jobs. Workflow + code in the demo.
 
 ## Evidence reply
 
-Test machine: M3 Ultra, 256 GB unified memory.
+Keyframes: M3 Ultra, 256 GB unified memory.
+Motion + audio: M5 Max, 36 GB unified memory, low-RAM distilled path.
 
-6 generated shots at 704×480 / 24 fps. The 1080p film is an editorial upscale with title cards.
+6 selected generated shots at 704×448 / 24 fps (704×480 requested). The 1080p film is an editorial upscale with title cards.
 
 AI generated. Local inference. Model/runtime versions and receipts included in the write-up.
 

@@ -4,7 +4,7 @@
 
 这个 demo 把两种生成任务分开：Qwen-Image 2.1 画关键帧，LTX-2.5 从关键帧生成运动和声音。ComfyUI 负责节点连接、队列和结果预览，Rapid-MLX 提供本地模型服务，通过 MLX 执行 Apple Silicon 推理。
 
-> 状态：六张关键帧已实际生成并人工检查；视频和成片等待下一段 GPU 窗口，尚未实跑。本文是待补充成片的草稿。
+> 成片已完成：六个动态镜头在 36 GB M5 Max 上生成，关键帧此前由 256 GB M3 Ultra 生成。[观看约 30 秒成片](media/the-last-lantern.mp4)，运行记录见 [verified-video-run.json](verified-video-run.json)。本文仍为未发布草稿。
 
 ![六个已生成并审核的关键帧](media/contact-sheet.jpg)
 
@@ -67,7 +67,7 @@ RAPID_MLX_LTX25_RUNTIME=/absolute/path/ltx-2-mlx/.venv/bin/ltx-2-mlx \
 
 这两个命令属于不同阶段。我们的运行方式是先完成关键帧，再正常关闭自己的图像服务，之后进入视频阶段，让模型驻留和生成顺序容易控制。共享机器上也要先协调 GPU 窗口。
 
-LTX 模型包和独立 runtime 有各自的体积与内存要求。本文展示机是 256 GB 统一内存的 M3 Ultra；这套结果不能用来承诺小内存 Mac 的运行能力。转换模型的结构、量化和许可证见 [模型卡](https://huggingface.co/MrMofer/ltx-2.5-mlx-q8)。
+LTX 模型包和独立 runtime 有各自的体积与内存要求。本次关键帧在 256 GB M3 Ultra 上生成，视频推理在 36 GB M5 Max 上使用 low-RAM distilled 路径完成。这是一轮 demo 实测，不是不同硬件之间的受控比较。转换模型的结构、量化和许可证见 [模型卡](https://huggingface.co/MrMofer/ltx-2.5-mlx-q8)。
 
 ## 批量制作，保留断点和证据
 
@@ -82,7 +82,7 @@ python3 examples/comfyui-cinema/batch.py shots \
 
 这仍有明确的恢复边界：如果创建请求已经到达服务端，却在收到 job ID 前断线，客户端不能保证安全重提，必须先检查服务端任务。ComfyUI 重启丢失历史时，也要保留 receipt 并人工核对。服务端的 `--video-output-dir` 用于持久保存完成的视频任务。
 
-本次每镜头使用 704×480、97 帧、24 fps，约 4.04 秒。LTX-2.5 的 distilled 路径要求合法的帧数和尺寸，也不接受 CFG guidance 或 negative prompt。修改参数前应读取 `/v1/videos/capabilities`。
+本次每镜头请求 704×480、97 帧、24 fps，约 4.04 秒；固定版本 runtime 实际编码尺寸为 704×448。LTX-2.5 的 distilled 路径要求合法的帧数和尺寸，也不接受 CFG guidance 或 negative prompt。修改参数前应读取 `/v1/videos/capabilities`。
 
 ## 后期只做可解释的剪辑
 
@@ -92,8 +92,8 @@ python3 examples/comfyui-cinema/render.py \
   --output examples/comfyui-cinema/media/the-last-lantern.mp4
 ```
 
-脚本保留镜头原声，统一编码，加入各三秒的片头与片尾。输出为 1080p 的编辑放大版，生成镜头的原始分辨率仍是 704×480；这是两项不同的信息。片中标注 AI 生成。
+脚本保留镜头原声，做响度归一化和短淡入淡出，统一编码，加入各三秒的片头与片尾。输出为 1080p 的编辑放大版，生成镜头实际分辨率是 704×448。片中标注 AI 生成。
 
-最终发布前，需要检查纸船变形、背景突变、镜头运动是否成立，以及音轨是否适合成片。完整运行证据会包含模型和 runtime 版本、每个任务的执行记录、耗时与输出校验值。
+六个入选镜头和成片已完整解码，并检查了每镜的首、中、尾画面。月球镜头首次生成时纸船在末尾消失，收紧连续性提示词后重做了一次，共生成七个镜头。模型和 runtime 版本、任务 ID、耗时及输出校验值均保留在运行记录中。
 
 这个流程的用途不限于纸船故事。换一份分镜和提示词，就可以制作产品概念片、虚构旅行预告或系列短内容；Rapid-MLX 承担本地模型服务，ComfyUI 将这些能力连接成可编辑、可重复运行的创作流程。

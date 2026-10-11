@@ -13,7 +13,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 def run(args):
     subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *args], check=True
+        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", *args],
+        check=True,
     )
 
 
@@ -108,7 +109,7 @@ def main():
             draw.text((960, 585), subtitle, font=font(32), anchor="mm", fill="#e6e6dd")
             draw.text(
                 (960, 990),
-                "AI GENERATED  |  Editorial upscale from 704 x 480",
+                "AI GENERATED  |  Editorial upscale to 1920 x 1080",
                 font=font(24),
                 anchor="mm",
                 fill="#91a7b5",
@@ -177,7 +178,9 @@ def main():
                     "-vf",
                     "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x071019,setsar=1,fps=24",
                     "-af",
-                    "aresample=48000,apad",
+                    "loudnorm=I=-23:TP=-2:LRA=7,aresample=48000,"
+                    "afade=t=in:st=0:d=0.04,"
+                    f"afade=t=out:st={max(duration - 0.08, 0)}:d=0.08,apad",
                     "-t",
                     str(duration),
                     *encode,
@@ -201,7 +204,17 @@ def main():
                 "0",
                 "-i",
                 str(listing),
-                "-c",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-r",
+                "24",
+                "-fps_mode",
+                "cfr",
+                "-c:a",
                 "copy",
                 "-movflags",
                 "+faststart",
