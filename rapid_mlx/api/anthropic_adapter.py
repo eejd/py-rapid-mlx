@@ -890,12 +890,16 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
             # Tool result → OpenAI tool message
             result_content = block.content
             result_images = []
+            result_parts = []
             if isinstance(result_content, list):
                 # Extract text from content blocks
                 parts = []
                 for item in result_content:
                     if isinstance(item, dict) and item.get("type") == "text":
                         parts.append(item.get("text", ""))
+                        result_parts.append(
+                            {"type": "text", "text": item.get("text", "")}
+                        )
                     elif isinstance(item, dict) and item.get("type") == "image":
                         try:
                             nested_image = AnthropicContentBlock(**item)
@@ -903,13 +907,16 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
                             raise AnthropicContentError(
                                 "Invalid image source in tool_result content"
                             ) from error
-                        result_images.append(_image_content_part(nested_image))
+                        image_part = _image_content_part(nested_image)
+                        result_images.append(image_part)
+                        result_parts.append(image_part)
                     elif isinstance(item, dict) and item.get("type") == "document":
                         raise AnthropicContentError(
                             "document inputs are not supported in tool_result content"
                         )
                     elif isinstance(item, str):
                         parts.append(item)
+                        result_parts.append({"type": "text", "text": item})
                 result_content = "\n".join(parts)
             elif result_content is None:
                 result_content = ""
@@ -921,7 +928,9 @@ def _convert_message(msg: AnthropicMessage) -> list[Message]:
                         "text": f"Images from tool_result {block.tool_use_id}:",
                     }
                 )
-                content_parts.extend(result_images)
+                # Keep captions next to their images in the vision turn. The
+                # correlated tool reply above retains its text-only contract.
+                content_parts.extend(result_parts)
             tool_results.append(
                 Message(
                     role="tool",

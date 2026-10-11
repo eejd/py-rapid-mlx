@@ -411,6 +411,44 @@ def test_mixed_direct_and_tool_images_keep_reply_adjacency_and_image_order(tool_
     assert "Images from tool_result toolu_123:" in str(converted[1].content)
 
 
+@pytest.mark.parametrize("native", [False, True])
+def test_tool_screenshot_captions_keep_block_order(native):
+    converted = _convert_message(
+        AnthropicMessage(
+            role="user",
+            content=[
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_123",
+                    "content": [
+                        {"type": "text", "text": "Before"},
+                        image(),
+                        "Between",
+                        image({"type": "url", "url": URL}),
+                        {"type": "text", "text": "After"},
+                    ],
+                }
+            ],
+        )
+    )
+    assert [m.role for m in converted] == ["tool", "user"]
+    assert converted[0].tool_call_id == "toolu_123"
+    assert converted[0].content == "Before\nBetween\nAfter"
+    parts = converted[1].model_dump(exclude_none=True)["content"]
+    assert parts == [
+        {"type": "text", "text": "Images from tool_result toolu_123:"},
+        {"type": "text", "text": "Before"},
+        {"type": "image_url", "image_url": {"url": DATA_URL}},
+        {"type": "text", "text": "Between"},
+        {"type": "image_url", "image_url": {"url": URL}},
+        {"type": "text", "text": "After"},
+    ]
+    assert extract_multimodal_content(converted, preserve_native_format=native)[1] == [
+        DATA_URL,
+        URL,
+    ]
+
+
 def test_base64_validation_uses_bounded_chunks(monkeypatch):
     import base64
 
