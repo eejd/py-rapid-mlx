@@ -199,6 +199,9 @@ class AnthropicContentBlock(BaseModel):
                     "image source.media_type must be a supported image MIME type"
                 )
             if source_type == "base64":
+                # Validate encoding here; image-format decoding stays in the
+                # engine. Its ClientRequestError is mapped to HTTP 400 or an
+                # invalid_request_error SSE event by the route/disconnect guard.
                 try:
                     base64.b64decode(self.source["data"], validate=True)
                 except (binascii.Error, ValueError) as error:

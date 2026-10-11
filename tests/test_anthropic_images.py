@@ -15,7 +15,13 @@ from rapid_mlx.config import reset_config
 from rapid_mlx.routes.anthropic import router
 
 URL = "https://example.com/screenshot.png"
-BASE64_SOURCE = {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="}
+BASE64_SOURCE = {
+    "type": "base64",
+    "media_type": "image/png",
+    "data": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIklEQVR4nGNkaGAgCTCRppxhVANRgIk4ZQgwqoEYQHIoAQC7HwCg8pZY7gAAAABJRU5ErkJggg==",
+}
+
+DATA_URL = "data:image/png;base64," + BASE64_SOURCE["data"]
 
 
 def image(source=None):
@@ -25,7 +31,7 @@ def image(source=None):
 @pytest.mark.parametrize(
     "source,expected",
     [
-        (BASE64_SOURCE, "data:image/png;base64,aGVsbG8="),
+        (BASE64_SOURCE, DATA_URL),
         ({"type": "url", "url": URL}, URL),
     ],
 )
@@ -47,9 +53,7 @@ def test_images_preserve_order_and_bytes(source, expected):
 
 def test_image_only_message_is_not_empty():
     converted = _convert_message(AnthropicMessage(role="user", content=[image()]))
-    assert extract_multimodal_content(converted)[1] == [
-        "data:image/png;base64,aGVsbG8="
-    ]
+    assert extract_multimodal_content(converted)[1] == [DATA_URL]
 
 
 @pytest.mark.parametrize("native", [False, True])
@@ -72,7 +76,7 @@ def test_tool_result_images_preserve_correlation_and_reach_extractor(native):
     assert converted[0].content == "screenshot"
     assert converted[1].tool_call_id == "toolu_456"
     assert extract_multimodal_content(converted, preserve_native_format=native)[1] == [
-        "data:image/png;base64,aGVsbG8="
+        DATA_URL
     ]
 
 
@@ -151,7 +155,7 @@ def make_client():
 @pytest.mark.parametrize(
     "source,expected",
     [
-        (BASE64_SOURCE, "data:image/png;base64,aGVsbG8="),
+        (BASE64_SOURCE, DATA_URL),
         ({"type": "url", "url": URL}, URL),
     ],
 )
@@ -251,7 +255,7 @@ def test_vision_preparation_decodes_native_tool_arguments():
     engine.preserve_native_tool_format = True
     messages, images, videos = _prepare_anthropic_engine_messages(request, engine)
     assert messages[0]["tool_calls"][0]["function"]["arguments"] == {"screen": 1}
-    assert extract_multimodal_content(messages)[1] == ["data:image/png;base64,aGVsbG8="]
+    assert extract_multimodal_content(messages)[1] == [DATA_URL]
     assert not images and not videos
 
 
@@ -266,7 +270,7 @@ def test_invalid_base64_payloads_fail_at_schema(data):
     [
         "file:///tmp/image.png",
         "/tmp/image.png",
-        "data:image/png;base64,aGVsbG8=",
+        DATA_URL,
         "https://",
         "ftp://example.com/a.png",
     ],
@@ -357,6 +361,38 @@ def test_multiple_screenshot_results_keep_explicit_image_association():
     assert [m.tool_call_id for m in converted[:2]] == ["toolu_123", "toolu_456"]
     parts = converted[2].model_dump()["content"]
     assert parts[0]["text"] == "Images from tool_result toolu_123:"
-    assert parts[1]["image_url"]["url"] == "data:image/png;base64,aGVsbG8="
+    assert parts[1]["image_url"]["url"] == DATA_URL
     assert parts[2]["text"] == "Images from tool_result toolu_456:"
     assert parts[3]["image_url"]["url"] == URL
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_decoder_client_errors_keep_existing_http_or_sse_contract(make_client, stream):
+    from rapid_mlx.request import ClientRequestError
+
+    client, engine = make_client()
+    message = "Failed to process image: image data could not be decoded"
+
+    async def reject_chat(*args, **kwargs):
+        raise ClientRequestError(message)
+
+    async def reject_stream(*args, **kwargs):
+        raise ClientRequestError(message)
+        yield  # Marks the engine contract as an async generator.
+
+    engine.chat = reject_chat
+    engine.stream_chat = reject_stream
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": "test-model",
+            "max_tokens": 20,
+            "stream": stream,
+            "messages": [{"role": "user", "content": [image()]}],
+        },
+    )
+    assert response.status_code == (200 if stream else 400)
+    if stream:
+        assert '"type": "invalid_request_error"' in response.text
+        assert "data: [DONE]" in response.text
+    assert message in response.text
