@@ -42,6 +42,7 @@ from ..utils.chat_template import apply_chat_template as shared_apply_chat_templ
 from .base import BaseEngine, GenerationOutput
 
 ADMISSION_ORPHAN_GRACE_SECONDS = 2.0
+TOOL_GRAMMAR_DRAIN_SECONDS = 5.0
 
 logger = logging.getLogger(__name__)
 
@@ -1266,20 +1267,31 @@ class BatchedEngine(BaseEngine):
 
         future.add_done_callback(forget)
 
-    async def _drain_tool_grammar_builds(self) -> None:
-        """Wait for cancelled clients' offloaded builds before cache cleanup."""
+    async def _drain_tool_grammar_builds(self) -> tuple[Future, ...]:
+        """Bound unload waiting without cancelling native compilation/admission."""
         lock = getattr(self, "_tool_grammar_futures_lock", None)
         if lock is None:
-            return
+            return ()
+        deadline = asyncio.get_running_loop().time() + TOOL_GRAMMAR_DRAIN_SECONDS
         while True:
             with lock:
                 pending = tuple(self._tool_grammar_futures)
             if not pending:
-                return
-            await asyncio.gather(
+                return ()
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return pending
+            # wait_for would cancel wrapped futures and release compile admission
+            # while a native build still runs. Keep the group alive on timeout;
+            # return_exceptions also consumes errors from late completions.
+            group = asyncio.gather(
                 *(asyncio.wrap_future(future) for future in pending),
                 return_exceptions=True,
             )
+            done, _ = await asyncio.wait((group,), timeout=remaining)
+            if not done:
+                with lock:
+                    return tuple(self._tool_grammar_futures)
 
     def _bind_prompt_host_cache(self, async_engine: Any) -> None:
         """Share the host cache with a concrete scheduler when one exists."""
@@ -2586,7 +2598,7 @@ class BatchedEngine(BaseEngine):
             await self._mllm_scheduler.stop()
             self._mllm_scheduler = None
 
-        await self._drain_tool_grammar_builds()
+        late_grammar_builds = await self._drain_tool_grammar_builds()
 
         # Startup's tool-grammar warmup pins a native matcher template in a
         # process-wide cache. Release this model's templates before dropping
@@ -2603,6 +2615,14 @@ class BatchedEngine(BaseEngine):
         else:
             tokenizer = getattr(self, "_tokenizer", None)
         if tokenizer is not None:
+            # A native compiler cannot be killed safely. Clear cached state now
+            # and again after each unfinished build completes, including queued
+            # work that has not reached matcher construction yet. Its existing
+            # future retains admission until genuine completion.
+            for future in late_grammar_builds:
+                future.add_done_callback(
+                    lambda _done, tokenizer=tokenizer: release_model_matchers(tokenizer)
+                )
             release_model_matchers(tokenizer)
 
         if (

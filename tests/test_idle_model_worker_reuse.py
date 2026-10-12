@@ -340,3 +340,48 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(
         assert worker._shutdown is True
     finally:
         worker.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("build_error", [False, True])
+async def test_stuck_grammar_build_does_not_block_unload_and_cleans_late_cache(
+    monkeypatch, build_error
+):
+    from rapid_mlx.api import tool_grammar
+    from rapid_mlx.engine import batched as batched_mod
+
+    engine = batched_mod.BatchedEngine.__new__(batched_mod.BatchedEngine)
+    engine._is_mllm = False
+    engine._engine = None
+    engine._mllm_scheduler = None
+    engine._model_load_executor = None
+    tokenizer = object()
+    engine._tokenizer = tokenizer
+    engine._processor = None
+    engine._model = None
+    engine._mllm_instance = None
+    engine._tool_grammar_futures_lock = threading.Lock()
+    engine._tool_grammar_futures = set()
+    monkeypatch.setattr(engine, "_abort_all_guided_requests", lambda: None)
+    monkeypatch.setattr(batched_mod, "TOOL_GRAMMAR_DRAIN_SECONDS", 0.01, raising=False)
+    released = []
+    monkeypatch.setattr(tool_grammar, "release_model_matchers", released.append)
+    pending = concurrent.futures.Future()
+    assert pending.set_running_or_notify_cancel()
+    engine.track_tool_grammar_build(pending)
+    try:
+        await asyncio.wait_for(engine.stop(), timeout=0.2)
+        assert released == [tokenizer]
+        assert engine._tokenizer is None and engine._loaded is False
+        assert pending.running() and pending in engine._tool_grammar_futures
+        if build_error:
+            pending.set_exception(RuntimeError("late compiler failure"))
+        else:
+            pending.set_result(None)
+        await asyncio.sleep(0)
+        assert released == [tokenizer, tokenizer]
+        assert not engine._tool_grammar_futures
+    finally:
+        if not pending.done():
+            pending.set_result(None)
+        await asyncio.sleep(0)

@@ -1838,10 +1838,10 @@ class _BuildSlot:
 
 # Per-key in-flight build registry for single-flight (key -> _BuildSlot).
 _compiled_matcher_building: "dict[tuple[int, str], _BuildSlot]" = {}
-# An offloaded build can outlive a cancelled request. Keep its tokenizer ID
-# invalidated until its last builder finishes, so unload cannot be undone by
-# a late cache publication. The builder itself pins the tokenizer while this
-# ID is present, preventing ID reuse; the final builder removes the marker.
+# Every caller pins its tokenizer, including single-flight waiters that may
+# retry after a builder fails. Keep unload invalidation until all such callers
+# leave, preventing a waiter from republishing an unloaded tokenizer's cache.
+_compiled_matcher_callers: dict[int, int] = {}
 _compiled_matcher_invalidated: set[int] = set()
 
 
@@ -1857,7 +1857,7 @@ def release_model_matchers(tokenizer: Any) -> None:
         return
     tokenizer_id = id(lltokenizer)
     with _compiled_matcher_lock:
-        if any(key[0] == tokenizer_id for key in _compiled_matcher_building):
+        if _compiled_matcher_callers.get(tokenizer_id, 0):
             _compiled_matcher_invalidated.add(tokenizer_id)
         for key in tuple(_compiled_matcher_cache):
             if key[0] == tokenizer_id:
@@ -1891,6 +1891,25 @@ def _cache_hit_copy_locked(key: "tuple[int, str]") -> Any:
 
 
 def get_request_matcher(lltokenizer: Any, grammar: str) -> Any:
+    """Return a private matcher while retaining unload invalidation for waiters."""
+    tokenizer_id = id(lltokenizer)
+    with _compiled_matcher_lock:
+        _compiled_matcher_callers[tokenizer_id] = (
+            _compiled_matcher_callers.get(tokenizer_id, 0) + 1
+        )
+    try:
+        return _build_request_matcher(lltokenizer, grammar)
+    finally:
+        with _compiled_matcher_lock:
+            remaining = _compiled_matcher_callers[tokenizer_id] - 1
+            if remaining:
+                _compiled_matcher_callers[tokenizer_id] = remaining
+            else:
+                del _compiled_matcher_callers[tokenizer_id]
+                _compiled_matcher_invalidated.discard(tokenizer_id)
+
+
+def _build_request_matcher(lltokenizer: Any, grammar: str) -> Any:
     """Return a FRESH per-request ``LLMatcher`` for ``(lltokenizer, grammar)``.
 
     Builds the compiled automaton AT MOST ONCE per distinct ``(tokenizer,
@@ -1972,11 +1991,6 @@ def get_request_matcher(lltokenizer: Any, grammar: str) -> Any:
             with _compiled_matcher_lock:
                 slot.event.set()
                 _compiled_matcher_building.pop(key, None)
-                if not any(
-                    active_key[0] == id(lltokenizer)
-                    for active_key in _compiled_matcher_building
-                ):
-                    _compiled_matcher_invalidated.discard(id(lltokenizer))
 
 
 def build_tool_grammar(
