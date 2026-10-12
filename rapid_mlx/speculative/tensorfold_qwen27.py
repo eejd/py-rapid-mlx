@@ -247,6 +247,7 @@ class TensorFoldQwen27Backend:
         self._owns_executor = executor is None
         self._closed = False
         self._active: dict[str, Any] = {}
+        self._provider_iterators: set[Any] = set()
         self._lock = threading.Lock()
 
     @classmethod
@@ -436,4 +437,11 @@ class TensorFoldQwen27Backend:
                 scheduler.stop()
         if self._owns_executor:
             self._executor.shutdown(wait=True)
+            # All provider pulls have exited; suspended iterators can now close
+            # safely too, without leaving jobs/model references between pulls.
+            with self._lock:
+                iterators = list(self._provider_iterators)
+                self._provider_iterators.clear()
+            for iterator in iterators:
+                iterator.close()
         self._app = None

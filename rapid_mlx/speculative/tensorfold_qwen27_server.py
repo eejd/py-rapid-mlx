@@ -179,6 +179,28 @@ class TensorFoldRequestProvider:
         self._results.outputs = value
 
     def _outputs(self, prompt: str, **kwargs: Any) -> Iterator[RequestOutput]:
+        return self._track_iterator(self._job_outputs(prompt, **kwargs))
+
+    def _track_iterator(self, iterator: Iterator[Any]) -> Iterator[Any]:
+        if not self._close_cancellable:
+            return iterator
+
+        def tracked() -> Iterator[RequestOutput]:
+            try:
+                yield from iterator
+            finally:
+                iterator.close()
+                with self.backend._lock:
+                    self.backend._provider_iterators.discard(wrapper)
+
+        wrapper = tracked()
+        with self.backend._lock:
+            if self.backend._closed:
+                raise RuntimeError("TensorFold backend is closed")
+            self.backend._provider_iterators.add(wrapper)
+        return wrapper
+
+    def _job_outputs(self, prompt: str, **kwargs: Any) -> Iterator[RequestOutput]:
         from tensorfold.engine.lane_engine import SuffixLookupProposer
         from tensorfold.server.cancellation import Cancellation
         from tensorfold.server.scheduler import ChatJob
@@ -362,6 +384,9 @@ class TensorFoldRequestProvider:
     def stream_generate(
         self, _model: Any, _processor: Any, prompt: str, **kwargs: Any
     ) -> Iterator[ProviderChunk]:
+        return self._track_iterator(self._stream_chunks(prompt, **kwargs))
+
+    def _stream_chunks(self, prompt: str, **kwargs: Any) -> Iterator[ProviderChunk]:
         for output in self._outputs(prompt, **kwargs):
             if output.finished:
                 continue

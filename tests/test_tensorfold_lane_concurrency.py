@@ -329,6 +329,9 @@ def stalled_provider(monkeypatch):
             self.strings = ()
             self.eos_ids = set()
 
+        def visible(self, text, partial=False):
+            return text
+
     for name, attrs in {
         "tensorfold.engine.lane_engine": {"SuffixLookupProposer": lambda **_: None},
         "tensorfold.server.cancellation": {"Cancellation": Cancellation},
@@ -569,3 +572,33 @@ def test_close_and_provider_registration_are_atomic(stalled_provider):
     finally:
         resume.set()
         thread.join(2)
+
+
+def test_close_finalizes_provider_suspended_between_stream_pulls(
+    stalled_provider, monkeypatch
+):
+    backend, provider, submitted, _, jobs = stalled_provider
+    from rapid_mlx.speculative import tensorfold_qwen27_server as adapter
+
+    class Decoder:
+        def __init__(self, *_):
+            pass
+
+        def extend(self, _):
+            return ""
+
+    monkeypatch.setattr(adapter, "_StableIncrementalText", Decoder)
+    iterator = provider.stream_generate(None, None, "prompt")
+    future = backend._executor.submit(next, iterator)
+    assert submitted.wait(2)
+    jobs[0].chunks.put([7])
+    assert future.result(timeout=1).token == 7
+    backend.close()
+    try:
+        assert not backend._active, "suspended provider keeps its job/model after close"
+        assert not backend._provider_iterators
+        import inspect
+
+        assert inspect.getgeneratorstate(iterator) == inspect.GEN_CLOSED
+    finally:
+        iterator.close()
