@@ -6855,6 +6855,14 @@ class Scheduler:
 
             footprint = get_phys_footprint()
             if type(footprint) is int and footprint > 0:
+                # Live Metal pressure is a lower bound if the two probes race.
+                # A valid complete ledger remains usable without this probe.
+                try:
+                    metal = mx.get_active_memory()
+                    if type(metal) is int and metal >= 0:
+                        footprint = max(footprint, metal)
+                except Exception:  # noqa: BLE001 - complete ledger is available
+                    pass
                 return max(0, cap - footprint)
         except Exception:  # noqa: BLE001 - optional admission fails closed
             pass

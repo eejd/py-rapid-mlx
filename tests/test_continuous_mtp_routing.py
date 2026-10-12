@@ -1705,6 +1705,9 @@ def test_singleton_stays_put_when_the_cohort_cannot_absorb_it(monkeypatch, case)
         (None, None, 700, None),
         (800, None, None, None),
         (400, 600, None, 400),
+        # A concurrently newer Metal reading must bound the kernel snapshot.
+        (800, 600, None, 200),
+        (1200, 600, None, 0),
         (1200, None, None, None),
         (0, None, None, None),
         (-1, None, None, None),
@@ -1747,7 +1750,10 @@ def test_continuous_headroom_requires_comprehensive_usage(
 
     # A failed snapshot must not poison later successful measurements.
     monkeypatch.setattr(process_memory, "get_phys_footprint", lambda: 900)
-    assert scheduler._continuous_mtp_free_bytes() == 100
+    metal_floor = metal if type(metal) is int and metal >= 0 else 0
+    assert scheduler._continuous_mtp_free_bytes() == max(
+        0, 1000 - max(900, metal_floor)
+    )
 
 
 @pytest.mark.requires_mlx
