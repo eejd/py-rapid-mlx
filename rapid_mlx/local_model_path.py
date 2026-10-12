@@ -26,7 +26,7 @@ def resolved_model_ref(model_ref: str) -> str:
     """Use an absolute path for local input, preserving Hub repo ids."""
     # A literal existing directory can legitimately end in a space. Only
     # repair whitespace/quotes when that exact spelling does not resolve.
-    if os.path.exists(model_ref):
+    if os.path.exists(os.path.expanduser(model_ref)):
         value = model_ref
     else:
         value = _typed_ref(model_ref)

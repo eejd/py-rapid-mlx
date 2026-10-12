@@ -89,6 +89,13 @@ def test_existing_folder_with_trailing_space_is_preserved(tmp_path):
     assert local_paths.resolved_model_ref(str(model)) == str(model)
 
 
+def test_existing_home_folder_with_trailing_space_is_preserved(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    model = tmp_path / "literal space "
+    model.mkdir()
+    assert local_paths.resolved_model_ref("~/literal space ") == str(model)
+
+
 def test_nearest_child_directories_are_bounded_even_without_close_match(tmp_path):
     parent = tmp_path / "models"
     parent.mkdir()
