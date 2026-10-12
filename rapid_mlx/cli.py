@@ -13064,16 +13064,25 @@ def _print_next_step(alias: str | None = None) -> None:
     if alias:
         from rapid_mlx.model_aliases import resolve_profile
         from rapid_mlx.model_sizes import size_bytes
-        from rapid_mlx.recommendations import recommendation_footprint_gb
+        from rapid_mlx.recommendations import (
+            is_recommended_alias,
+            recommendation_footprint_gb,
+        )
 
         profile = resolve_profile(alias)
         if profile is not None and profile.modality == "text":
             footprint = recommendation_footprint_gb(alias)
+            policy_fit = footprint is None or is_recommended_alias(alias, ram_gb)
             if footprint is None:
                 size = size_bytes(profile.hf_path)
                 footprint = size * 1.5 / (1024**3) if size is not None else None
             floor = profile.min_memory_gb or 0
-            if footprint is not None and ram_gb >= floor and footprint <= ram_gb:
+            if (
+                footprint is not None
+                and policy_fit
+                and ram_gb >= floor
+                and footprint <= ram_gb
+            ):
                 selected = alias
     print(f"Next: rapid-mlx serve {selected}")
 

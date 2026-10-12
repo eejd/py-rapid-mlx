@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -78,14 +79,18 @@ def test_ls_dispatch_ends_with_hint(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "alias,expected",
+    "ram_gb,alias,expected",
     [
-        ("qwen3.5-4b-4bit", "qwen3.5-4b-4bit"),
-        ("qwen3.5-27b-4bit", "qwen3.5-4b-4bit"),
+        (16.0, "qwen3.5-4b-4bit", "qwen3.5-4b-4bit"),
+        (24.0, "qwen3.5-4b-4bit", "qwen3.5-4b-4bit"),
+        (16.0, "qwen3.5-27b-4bit", "qwen3.5-4b-4bit"),
+        (16.0, "bonsai-27b-2bit", "qwen3.5-4b-4bit"),
+        (8.0, "qwen3.5-4b-4bit", "lfm2.5-2.6b-4bit"),
     ],
 )
-def test_info_hint_uses_alias_only_when_it_fits(alias, expected, monkeypatch):
+def test_info_hint_uses_alias_only_when_it_fits(ram_gb, alias, expected, monkeypatch):
     out = Terminal()
+    monkeypatch.setattr("rapid_mlx.recommendations.physical_ram_gb", lambda: ram_gb)
     monkeypatch.setattr(
         "rapid_mlx._download_gate.estimate_repo_size_bytes", lambda *_a: None
     )
@@ -94,6 +99,15 @@ def test_info_hint_uses_alias_only_when_it_fits(alias, expected, monkeypatch):
     with patch.object(sys, "stdout", out):
         cli.info_command(SimpleNamespace(model=alias))
     assert out.getvalue().rstrip().endswith(f"Next: rapid-mlx serve {expected}")
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_models_json_terminal_output_is_valid_json(cached):
+    out = Terminal()
+    with patch.object(sys, "stdout", out):
+        cli.models_command(SimpleNamespace(cached=cached, json=True))
+    assert isinstance(json.loads(out.getvalue()), (list, dict))
+    assert "Next:" not in out.getvalue()
 
 
 def test_non_tty_and_json_outputs_have_no_hint(monkeypatch):
