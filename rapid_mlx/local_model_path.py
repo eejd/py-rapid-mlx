@@ -24,8 +24,17 @@ def _typed_ref(model_ref: str) -> str:
 
 def resolved_model_ref(model_ref: str) -> str:
     """Use an absolute path for local input, preserving Hub repo ids."""
-    value = _typed_ref(model_ref)
-    if is_local_model_ref(value):
+    # A literal existing directory can legitimately end in a space. Only
+    # repair whitespace/quotes when that exact spelling does not resolve.
+    if os.path.exists(model_ref):
+        value = model_ref
+    else:
+        value = _typed_ref(model_ref)
+    # An unprefixed org/name is a Hub id when the whole path is missing,
+    # regardless of whether an unrelated local org directory exists.
+    if _HF_REPO_ID.fullmatch(value) and not os.path.exists(value):
+        return value
+    if is_local_model_ref(value) or ("/" in value and Path(value).parent.is_dir()):
         if "/" not in value and not value.startswith(("~", ".")):
             from .model_aliases import local_dir_shadows_alias
 
@@ -76,15 +85,12 @@ def is_local_model_ref(model_ref: object) -> bool:
     """Whether ``model_ref`` denotes a local path, including a missing one."""
     if not isinstance(model_ref, str) or not model_ref:
         return False
-    model_ref = _typed_ref(model_ref)
     from .telemetry.redact import normalize_model_path
 
     if normalize_model_path(model_ref) == "<local>":
         return True
     try:
-        return os.path.exists(os.path.expanduser(model_ref)) or (
-            "/" in model_ref and Path(model_ref).parent.is_dir()
-        )
+        return os.path.exists(os.path.expanduser(model_ref))
     except (OSError, ValueError):
         return True
 
@@ -177,9 +183,13 @@ def local_model_failure_message(
     """Render a local-model failure without exposing paths to HTTP clients."""
     if _has_authoritative_load_failure(exc):
         return None
-    if not is_local_model_ref(model_ref) or not isinstance(model_ref, str):
+    if not isinstance(model_ref, str):
         return None
-    typed = _typed_ref(model_ref)
+    typed = _typed_ref(model_ref) if include_supplied_path else model_ref
+    if not is_local_model_ref(typed) and not (
+        include_supplied_path and "/" in typed and Path(typed).parent.is_dir()
+    ):
+        return None
     expanded = Path(typed).expanduser().absolute()
     try:
         exists = expanded.exists()
@@ -229,11 +239,11 @@ def raise_if_missing_local_model(model_ref: object) -> None:
     """Raise before a missing explicit local path can be treated as a Hub id."""
     if not is_local_model_ref(model_ref) or not isinstance(model_ref, str):
         return
-    expanded = Path(_typed_ref(model_ref)).expanduser().absolute()
+    expanded = Path(model_ref).expanduser().absolute()
     exists = expanded.exists()
     if not exists:
         raise FileNotFoundError(
             errno.ENOENT,
             "Local model path does not exist",
-            str(expanded),
+            model_ref,
         )

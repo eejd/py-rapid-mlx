@@ -841,6 +841,16 @@ def test_hook_confirms_architecture_against_full_config(hook, capsys):
     assert [e.failure_class for e in hook.emitted] == [pf.UNSUPPORTED_ARCHITECTURE]
 
 
+def test_hook_reports_architecture_from_confirmed_config(hook, capsys):
+    summary = {"model_type": "spark_x", "architectures": ["OldForCausalLM"]}
+    full = {"model_type": "spark_new", "architectures": ["NewForCausalLM"]}
+    with pytest.raises(SystemExit):
+        hook(_info({"model.safetensors": GIB}, config=summary), full_config=full)
+    err = capsys.readouterr().err
+    assert "Architecture spark_new is not supported yet" in err
+    assert "config architectures: NewForCausalLM" in err
+
+
 def test_hook_refuses_oversize_serve_but_not_pull_or_disk_stream(hook, capsys):
     info = _info({"model.safetensors": 40 * GIB}, config=dict(MLX_CONFIG))
     hook(info, _args(command="pull", bits=None, format=None))

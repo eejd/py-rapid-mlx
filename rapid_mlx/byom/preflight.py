@@ -29,7 +29,7 @@ import re
 import sys
 import tempfile
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -848,6 +848,7 @@ def run_cli_preflight(args: Any, *, spinner_factory: Callable[[str], Any]) -> No
         supported=supported,
         ram_bytes=physical_ram_bytes(),
     )
+    display_inspection, display_verdict = inspection, verdict
     if verdict.failure == UNSUPPORTED_ARCHITECTURE and not inspection.is_local:
         # The Hub's config summary omits fields that route a model to other
         # loaders; confirm against the real config.json before refusing.
@@ -863,6 +864,10 @@ def run_cli_preflight(args: Any, *, spinner_factory: Callable[[str], Any]) -> No
             if confirmed is True:
                 funnel.set_preflight("passed")
             return
+        display_inspection = replace(inspection, config=full)
+        full_type = full.get("model_type")
+        if isinstance(full_type, str) and full_type:
+            display_verdict = replace(verdict, model_type=full_type)
     if verdict.failure is not None:
         from rapid_mlx.byom.alternatives import suggest
 
@@ -880,7 +885,9 @@ def run_cli_preflight(args: Any, *, spinner_factory: Callable[[str], Any]) -> No
         else:
             hints, found_build = [], False
         print("", file=sys.stderr)
-        lines = render_failure(inspection, verdict, search_hint=not found_build)
+        lines = render_failure(
+            display_inspection, display_verdict, search_hint=not found_build
+        )
         for line in lines + hints:
             print(f"  {line}", file=sys.stderr)
         print(
