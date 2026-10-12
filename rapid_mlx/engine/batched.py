@@ -2632,9 +2632,9 @@ class BatchedEngine(BaseEngine):
         ):
             self._model_load_executor.shutdown(wait=False)
 
-        # _engine.stop() already shutdown the shared mlx-step executor
-        # (handed off in start()). Drop our reference so __del__ doesn't
-        # double-shutdown.
+        # The dual text engine borrows this worker and never shuts it down.
+        # Idle unload preserves it; final MLLM shutdown above releases it.
+        # Text-only engines own and shut down their separate step executor.
         if not preserve_model_worker or not self._is_mllm:
             self._model_load_executor = None
         self._start_time = None

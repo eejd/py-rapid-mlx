@@ -290,13 +290,31 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(
 
     engine = BatchedEngine.__new__(BatchedEngine)
     engine._is_mllm = True
-    text_engine = Mock(stop=AsyncMock(), engine=Mock(close=Mock()))
-    engine._engine = text_engine if dual_scheduler else None
+    engine._engine = None
     engine._mllm_scheduler = Mock(stop=AsyncMock())
     engine._guided_requests_lock = threading.Lock()
     monkeypatch.setattr(engine, "_abort_all_guided_requests", lambda: None)
     engine._model_load_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     worker = engine._model_load_executor
+    if dual_scheduler:
+        from rapid_mlx.engine_core import AsyncEngineCore, EngineCore
+
+        core = EngineCore.__new__(EngineCore)
+        core._running = False
+        core._task = None
+        core.scheduler = Mock()
+        core.close = Mock()
+
+        async def idle_loop():
+            await asyncio.Event().wait()
+
+        core._engine_loop = idle_loop
+        await core.start(executor=worker)
+        assert core._owns_executor is False
+        text_engine = AsyncEngineCore.__new__(AsyncEngineCore)
+        text_engine.engine = core
+        text_engine._executor = worker
+        engine._engine = text_engine
     model = Model()
     model_ref = weakref.ref(model)
     engine._model = model
@@ -332,8 +350,12 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(
         assert matcher_key not in tool_grammar._compiled_matcher_cache
         assert tool_grammar._compiled_matcher_cache_bytes == 0
         if dual_scheduler:
-            text_engine.stop.assert_awaited_once()
-            text_engine.engine.close.assert_called_once()
+            assert core._running is False
+            assert core._task is None
+            assert core._mlx_executor is None
+            core.scheduler._close_batch_generator.assert_called_once()
+            core.close.assert_called_once()
+            assert worker._shutdown is False
 
         await engine.stop()
         assert engine._model_load_executor is None
