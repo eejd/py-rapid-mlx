@@ -474,6 +474,7 @@ def test_mllm_loader_installs_qwen35_fused_gdn_decode():
 @pytest.mark.skipif(not mx.metal.is_available(), reason="requires Metal")
 def test_other_convolution_law_cannot_pass_full_state_probe(monkeypatch):
     selected = shared_kernel._qwen35_conv_silu_precise()
+    assert fused._probe_candidate(4)
     monkeypatch.setattr(
         shared_kernel, "_qwen35_conv_silu_precise", lambda: not selected
     )
