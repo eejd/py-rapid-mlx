@@ -964,8 +964,8 @@ def _ensure_request_mtp_counter(request: Any):
     return counter
 
 
-# A lane whose cache footprint could not be projected: larger than any host.
-_UNPLANNABLE_LANE_BYTES = 1 << 62
+class _ContinuousMTPProjectionError(ValueError):
+    """Optional cohort admission cannot reserve this lane's memory."""
 
 
 def _install_continuous_mtp_router(
@@ -1249,10 +1249,10 @@ def _install_continuous_mtp_router(
             if callable(lane_bytes_estimator):
                 try:
                     base_bytes = max(0, int(lane_bytes_estimator(request)))
-                except Exception:  # noqa: BLE001 - fail closed for this lane
-                    base_bytes = _UNPLANNABLE_LANE_BYTES
+                except Exception as exc:  # noqa: BLE001 - fail closed for this lane
+                    raise _ContinuousMTPProjectionError from exc
             else:
-                base_bytes = _UNPLANNABLE_LANE_BYTES
+                raise _ContinuousMTPProjectionError
         return ContinuousMTPRequestMetadata(
             lane_id=request_id,
             uid=int(uid),
@@ -1276,7 +1276,12 @@ def _install_continuous_mtp_router(
     def _queued_candidates(*, planned_bytes: bool = False):
         candidates = []
         for sequence in tuple(batch_gen._unprocessed_sequences):
-            metadata = _metadata(sequence, planned_bytes=planned_bytes)
+            try:
+                metadata = _metadata(sequence, planned_bytes=planned_bytes)
+            except _ContinuousMTPProjectionError:
+                # Unknown footprint stops the eligible FIFO prefix without
+                # encoding refusal as a finite byte count.
+                break
             if metadata is not None:
                 candidates.append((sequence, metadata))
         return candidates
@@ -1389,7 +1394,10 @@ def _install_continuous_mtp_router(
             snapshot = staged_join_sequences.get(uid)
             if snapshot is None:
                 return None
-            metadata = _metadata(snapshot, planned_bytes=True)
+            try:
+                metadata = _metadata(snapshot, planned_bytes=True)
+            except _ContinuousMTPProjectionError:
+                return None
             if metadata is None:
                 return None
             budget -= metadata.base_bytes

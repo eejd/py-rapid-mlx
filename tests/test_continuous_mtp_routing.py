@@ -1949,14 +1949,23 @@ def test_resumed_cache_clone_failure_preserves_source_queue(monkeypatch, joining
 
 
 @pytest.mark.requires_mlx
-def test_missing_lane_estimator_refuses_even_empty_cache_admission(monkeypatch):
+@pytest.mark.parametrize("headroom", [16 * 1024**3, 1 << 70])
+@pytest.mark.parametrize("estimator", [None, lambda _request: float("inf")])
+def test_missing_lane_estimator_refuses_even_empty_cache_admission(
+    monkeypatch, headroom, estimator
+):
     batch_gen = _SchedulerBatchGenerator()
     batch_gen._unprocessed_sequences.extend(
         [_scheduler_sequence(1), _scheduler_sequence(2)]
     )
     requests, mapping = _requests_for(1, 2)
     created = _install_recording_router(
-        monkeypatch, batch_gen, requests, mapping, estimator=None
+        monkeypatch,
+        batch_gen,
+        requests,
+        mapping,
+        estimator=estimator,
+        free_bytes=headroom,
     )
     batch_gen.next()
     assert created == []
