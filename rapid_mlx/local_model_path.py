@@ -217,10 +217,8 @@ def local_model_failure_message(
             )
             if matches:
                 message += " Nearby model folders: " + ", ".join(matches) + "."
-            repo_id = typed.removeprefix("./").removeprefix("/")
-            if _HF_REPO_ID.fullmatch(repo_id) and (
-                typed.startswith(("./", "/")) or expanded.parent.is_dir()
-            ):
+            repo_id = typed.removeprefix("./")
+            if typed.startswith("./") and _HF_REPO_ID.fullmatch(repo_id):
                 message += f" If you meant a Hugging Face repo, use {repo_id}."
             elif typed.startswith("~/") or typed.startswith(("./", "../", "/")):
                 message += " If you meant a Hugging Face repo, use org/model without a path prefix."

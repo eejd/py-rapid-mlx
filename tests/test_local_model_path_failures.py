@@ -116,6 +116,14 @@ def test_hub_repo_id_spelled_as_path_gets_repo_hint(tmp_path):
     assert local_paths.resolved_model_ref("owner/model") == "owner/model"
 
 
+def test_absolute_two_component_path_does_not_invent_repo_id():
+    spelling = "/tmp/path-arch-absent-model"
+    failure = FileNotFoundError(2, "missing", spelling)
+    message = local_model_failure_message(spelling, failure, include_supplied_path=True)
+    assert "use org/model without a path prefix" in message
+    assert "use tmp/path-arch-absent-model" not in message
+
+
 def test_nonexistent_local_path_without_attributable_file_failure_is_generic(tmp_path):
     model_dir = tmp_path / "private" / "missing-model"
 
