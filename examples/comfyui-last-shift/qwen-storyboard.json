@@ -1,0 +1,82 @@
+[
+  {
+    "id": "robot-turnaround",
+    "seed": 91000,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. Professional practical-prop character design turnaround on a neutral gray studio background: front three-quarter view, side profile, rear three-quarter view, all showing exactly the same robot design at equal scale. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, compact rounded rectangular box head, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on its left shoulder, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. The black optical lens glows amber. One scratched orange cylindrical power cartridge with black metal end caps is locked vertically inside its chest recess. No environment and no extra characters.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "01-choice",
+    "seed": 91001,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, large rounded cube head almost as wide as the torso, short black cylindrical neck, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on the left side of its head, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Wide establishing shot: robot stands in the left third, looking at a fragile wilted two-leaf seedling in the pot at the right. Chest visibly contains one orange cylindrical cartridge with black end caps. Its single eye glows amber. Overhead heater is completely off. Cold blue dawn, melancholy solitude, full body visible, readable distance between robot and greenhouse.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "02-one-percent",
+    "seed": 93002,
+    "width": 1536,
+    "height": 768,
+    "steps": 40,
+    "prompt": "Cinematic close-up photograph of the chest of a weathered ivory maintenance robot. One scratched orange cylindrical power cartridge with black end caps is installed vertically in a rectangular black recess in the exact center of its flat square ivory chest panel. Scratched enamel, small screws, dusty corners, dark mechanical joints. Frame crops above the neck and below the waist. Arms outside the crop. Cold blue light from frosted greenhouse windows. Photoreal practical science fiction film prop, shallow depth of field, subtle film grain. Blank plain ivory panel surrounding the cartridge. Absolutely no display, no gauge, no numbers, no letters, no text, no hands, no face, no duplicate battery."
+  },
+  {
+    "id": "03-last-seedling",
+    "seed": 91003,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Macro photograph of a fragile dying two-leaf green seedling drooping from a thin stem in the terracotta pot. Delicate frost on the leaf and soil, cold blue morning light, heater completely unlit. Far behind the glass at the left, the blurred ivory robot with one amber eye watches. Focus on the small plant, no flowers, no healthy foliage.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "04-the-gift",
+    "seed": 91004,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, large rounded cube head almost as wide as the torso, short black cylindrical neck, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on the left side of its head, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Close medium composition: the robot at left holds exactly one scratched orange cylindrical cartridge with black end caps in its right three-finger hand next to the EMPTY rectangular heater socket at right. The cartridge is ALREADY REMOVED from the chest: its chest recess is visibly empty, black, and hollow. Eye dim amber. Wilted seedling blurred behind. Cold blue light. One cartridge only; none inside the chest or heater. Freeze this clear storytelling moment.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "05-warmth",
+    "seed": 91005,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Clean cinematic insert of the SAME orange cylindrical cartridge with black end caps now installed vertically in the wall heater socket at right. The overhead radiant panel glows warm amber, softly illuminating the same tiny wilted two-leaf seedling in its terracotta pot at left. Warm condensation on glass. No robot, no hands, no arms. No growth yet. One cartridge only, installed securely. Strong readable cause and effect.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "06-last-light",
+    "seed": 91006,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, large rounded cube head almost as wide as the torso, short black cylindrical neck, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on the left side of its head, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Matching wide static camera composition: robot seated on the dusty floor in the left third, back against the greenhouse wall under the window, head slightly bowed, legs extended, its right hand resting palm-up on its thigh. A completely EMPTY black rectangular chest recess. Single optical eye glows only a very faint amber. At right, the tiny seedling stays wilted in its terracotta pot on the ledge, the heater glows warmly, one orange cartridge remains installed in the heater. Blue twilight beyond the glass, amber interior, emotionally quiet.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "07-stillness",
+    "seed": 93007,
+    "prompt": "Intimate cinematic close-up portrait of a powered-down old ivory maintenance robot, framing ONLY the bowed rounded cube head and top half of its square chest. Single large circular black glass lens in the center of its face, completely dark, no light inside. Small navy triangle on the left side of the cube head. Heavily scratched ivory enamel, subtle rust, black short cylindrical neck. Empty rectangular black recess in the chest. Head tilts downward, a still exhausted pose. Warm amber greenhouse heater light grazes the worn enamel from the right, cold blue twilight through blurred grimy metal-framed windows behind. A tiny green two-leaf seedling in a terracotta pot is softly blurred at far right. Camera close enough that hands, hips, legs, feet and floor are all outside the frame. Photoreal practical science fiction film prop, 35mm grain, shallow depth of field, 2:1 widescreen, no text, no battery in chest, no glowing eye.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "08-years-later",
+    "seed": 91006,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, large rounded cube head almost as wide as the torso, short black cylindrical neck, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on the left side of its head, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Matching wide static camera composition years later: robot seated on the dusty floor in the left third, back against the greenhouse wall under the window, head slightly bowed, legs extended, its right hand resting palm-up on its thigh. Single optical lens COMPLETELY DARK and black, chest recess visibly EMPTY and black. Green vines and white flowers now flourish all around the old weathered robot. The terracotta pot on the same ledge at right holds a mature flowering plant. Bright warm golden morning sunshine streams through the same windows. One small white flower grows from soil collected in its open right palm. The robot has not revived.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "09-flower",
+    "seed": 91009,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. Exquisite extreme macro photograph of one small white five-petaled flower with a golden center growing from a patch of soil in the shallow concave center of a weathered ivory-and-metal robot palm. Two tiny green leaves and clear dew drops. Golden greenhouse morning light and delicate bokeh. All fingertips, fingers and joints are outside the tight crop; only the curved palm surface supports the soil. In the distant blurred background a bowed ivory robot head has one completely DARK black optical lens. Flower is the sharp focal point at center-left; soft darker negative space at lower right for an editorial title. No other flowers, hands or limbs in the frame.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  }
+]

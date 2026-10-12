@@ -1,0 +1,101 @@
+[
+  {
+    "id": "01-choice",
+    "seed": 94101,
+    "motion_prompt": "Photoreal cinematic shot in the cold blue greenhouse. The ivory robot stands absolutely motionless beside the fragile seedling. Its single optical eye stays brightly illuminated AMBER throughout every frame, steady amber luminous core visible at all times. The orange cartridge stays in the chest. Only an extremely slow camera push and faint drifting dust. Preserve exactly the robot head, body, feet, hands, window grid and unlit overhead heater. No head turn, no eye blinking, no eye dimming, no shutdown, no movement of limbs, no new objects. Quiet room air and distant wind.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "02-one-percent",
+    "seed": 90102,
+    "motion_prompt": "Cinematic close-up insert of the single orange power cartridge installed vertically in the worn ivory robot chest. Extremely slow camera push only. Robot completely motionless. Plain blank ivory chest panel remains unchanged around the cartridge. Cold blue greenhouse window light, drifting dust, faint low-power beep and room air. Preserve exact geometry. No text, numbers, letters, gauges, hands, extra objects or duplicate battery.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "03-last-seedling",
+    "seed": 87103,
+    "motion_prompt": "Very slow cinematic push toward the dying two-leaf seedling in its terracotta pot. The thin leaf trembles slightly in the cold air, tiny frost crystals glisten. Overhead heater stays dark. The blurred robot single amber eye watches through glass at left. Soft cold air sound. Preserve composition and objects, no plant growth yet.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "04-the-gift",
+    "seed": 87104,
+    "motion_prompt": "Locked close medium shot. The robot gently advances the one orange power cartridge held in its three-finger hand a few centimeters toward the empty heater socket at right. Chest cradle remains visibly EMPTY and dark. Eye remains dim amber. Slow careful restrained mechanical movement, unchanged geometry, no second battery, no extra fingers. Quiet servo whir.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "05-warmth",
+    "seed": 91105,
+    "motion_prompt": "Beautiful locked-off cinematic insert of the greenhouse now receiving warmth. One scratched orange cartridge remains securely installed in heater socket at right. Hanging heater glows steady amber above the same fragile bent seedling in terracotta pot. Tiny condensation droplets glisten and slowly roll down the glass. The leaf trembles very subtly in warm air. Extremely restrained camera creep, preserve all architecture and prop positions. No robot or hands enter frame. No plant growth yet, no new objects or cartridge movement. A quiet relay click and continuous soft heater hum, no music or speech.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "06-last-light",
+    "seed": 87106,
+    "motion_prompt": "Very slow restrained push toward the seated exhausted robot. It lowers its bowed head a few degrees and becomes completely still, dim amber eye gradually fades to dark. Chest cradle stays EMPTY. Plant and heater at right retain warm amber light, installed orange cartridge remains visible. Three-finger hands remain resting on thighs, right palm open upward. Soft winding-down servo and heater hum. No standing, no extra limbs, no battery appearing in chest.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "07-stillness",
+    "seed": 94107,
+    "motion_prompt": "Photoreal photographic close-up of an INERT, LIFELESS maintenance robot prop in a greenhouse. Robot head and torso are rigidly fixed in the exact initial tilted pose for the entire shot, no motion of any part of the robot. The dark optical lens is unpowered black glass with reflections only. Empty chest stays black. Only the camera slowly creeps straight forward a few millimeters; dust motes drift in the background. Preserve identical head angle, neck angle, body geometry and lighting in every frame. No head lowering, no nodding, no breathing, no blinking, no eye glow, no mechanical movement, no revival. Quiet air and heater hum only.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "08-years-later",
+    "seed": 87110,
+    "motion_prompt": "Locked-off matching wide shot of the greenhouse years later. The old robot remains completely motionless in its exact seated pose, single eye DARK and chest cradle EMPTY. Lush vines and white flowers gently stir in barely perceptible air, warm sunlight shimmers on leaves. A tiny white flower rests growing in the robot open right palm. Orange battery stays in heater socket at right. Gentle airy greenhouse ambience, no birds or speech, no robot resurrection, no new objects.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "09-flower",
+    "seed": 90109,
+    "motion_prompt": "An exquisite almost locked-off macro film shot of one dew-covered white five-petaled flower with golden center growing from soil in a weathered metal palm. The flower petals and two tiny leaves barely tremble in soft warm greenhouse air. The metal palm is completely still, as is the blurred powered-down robot in the background. Its optical eye stays dark and its chest stays empty. Golden natural morning light, subtle airy bokeh. Camera gently creeps forward only a tiny amount. Preserve the exact flower, soil, metal surface and composition throughout. No new objects or body parts enter the frame. Quiet room air and faint leaf rustle only, no speech or music.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  }
+]

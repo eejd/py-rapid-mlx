@@ -10,18 +10,18 @@ import uuid
 from pathlib import Path
 
 
-def request(base, route, data=None, content_type=None):
+def request(base, route, data=None, content_type=None, timeout=120):
     headers = {"X-Rapid-Client": "comfyui-cinema"}
     if content_type:
         headers["Content-Type"] = content_type
     if key := os.environ.get("RAPID_MLX_API_KEY"):
         headers["Authorization"] = f"Bearer {key}"
     req = urllib.request.Request(base.rstrip("/") + route, data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as response:
+    with urllib.request.urlopen(req, timeout=timeout) as response:
         return response.read()
 
 
-def multipart(fields, png):
+def multipart(fields, png, image_field="input_reference"):
     boundary = "rapid" + uuid.uuid4().hex
     parts = []
     for name, value in fields.items():
@@ -30,7 +30,7 @@ def multipart(fields, png):
         )
     parts.extend(
         [
-            f'--{boundary}\r\nContent-Disposition: form-data; name="input_reference"; filename="keyframe.png"\r\nContent-Type: image/png\r\n\r\n'.encode(),
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{image_field}"; filename="keyframe.png"\r\nContent-Type: image/png\r\n\r\n'.encode(),
             png,
             f"\r\n--{boundary}--\r\n".encode(),
         ]

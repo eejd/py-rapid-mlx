@@ -1,0 +1,51 @@
+{
+  "1": {
+    "class_type": "RapidMLXQwenImage",
+    "inputs": {
+      "base_url": "http://127.0.0.1:19427",
+      "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, large rounded cube head almost as wide as the torso, short black cylindrical neck, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on the left side of its head, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Wide establishing shot: robot stands in the left third, looking at a fragile wilted two-leaf seedling in the pot at the right. Chest visibly contains one orange cylindrical cartridge with black end caps. Its single eye glows amber. Overhead heater is completely off. Cold blue dawn, melancholy solitude, full body visible, readable distance between robot and greenhouse.",
+      "width": 1536,
+      "height": 768,
+      "steps": 40,
+      "seed": 91001
+    }
+  },
+  "2": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ],
+      "filename_prefix": "last-shift-qwen/keyframe"
+    }
+  },
+  "3": {
+    "class_type": "RapidMLXLastShift",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "base_url": "http://127.0.0.1:19428",
+      "prompt": "Photoreal cinematic shot in the cold blue greenhouse. The ivory robot stands absolutely motionless beside the fragile seedling. Its single optical eye stays brightly illuminated AMBER throughout every frame, steady amber luminous core visible at all times. The orange cartridge stays in the chest. Only an extremely slow camera push and faint drifting dust. Preserve exactly the robot head, body, feet, hands, window grid and unlit overhead heater. No head turn, no eye blinking, no eye dimming, no shutdown, no movement of limbs, no new objects. Quiet room air and distant wind.",
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "seed": 94101
+    }
+  },
+  "4": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "3",
+        0
+      ],
+      "filename_prefix": "last-shift-qwen/shot",
+      "format": "mp4",
+      "format.codec": "auto",
+      "codec": "auto"
+    }
+  }
+}

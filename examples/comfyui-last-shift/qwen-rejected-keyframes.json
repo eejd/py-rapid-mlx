@@ -1,0 +1,18 @@
+[
+  {
+    "id": "02-one-percent",
+    "seed": 91002,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, large rounded cube head almost as wide as the torso, short black cylindrical neck, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on the left side of its head, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. Extreme close-up of the worn ivory chest: one scratched orange cylindrical power cartridge with black end caps sits vertically in its rectangular recess. Beside it a small amber digital display reads 1%. Cold blue greenhouse window light, dust and scratches, shallow focus. No hands or arms anywhere in frame. Only the torso battery compartment, no face, no duplicate battery.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  },
+  {
+    "id": "07-stillness",
+    "seed": 91007,
+    "prompt": "A photorealistic cinematic frame from an original science-fiction short film, physically built animatronic props, subtle 35mm film grain, meticulous believable weathering, natural photographic light, restrained composition, widescreen 2:1. No illustration, no cartoon, no glossy toy, no watermark, no title text. The same maintenance robot R-07: waist-high stocky body, heavily scratched ivory enamel panels, large rounded cube head almost as wide as the torso, short black cylindrical neck, exactly one large circular black optical lens centered in its face, black exposed mechanical joints, a small navy blue triangular marking on the left side of its head, sturdy short legs, broad flat feet, three mechanical fingers per hand, one tall rectangular cartridge recess in the center of its chest. An abandoned Mars outpost greenhouse with a grid of grimy metal-framed glass windows, rusted ivory metal walls, dusty red Martian mountains visible outside. A terracotta pot stands on a narrow waist-high metal ledge beside a small wall-mounted heater socket with an overhead rectangular radiant panel. Close-up of the seated robot bowed head and upper chest. Its single black circular optical lens is COMPLETELY DARK, opaque black with a faint environmental reflection only, absolutely no glow or illuminated eye. The chest recess is EMPTY and black. Warm amber light on scratched ivory cheek panels from the heater, the small seedling softly blurred at right. Powered down forever, no movement, intimate quiet.",
+    "width": 1536,
+    "height": 768,
+    "steps": 40
+  }
+]

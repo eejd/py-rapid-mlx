@@ -1,0 +1,24 @@
+[
+  {
+    "id": "01-choice",
+    "seed": 94101,
+    "motion_prompt": "Photoreal cinematic shot in the cold blue greenhouse. The ivory robot stands absolutely motionless beside the fragile seedling. Its single optical eye stays brightly illuminated AMBER throughout every frame, steady amber luminous core visible at all times. The orange cartridge stays in the chest. Only an extremely slow camera push and faint drifting dust. Preserve exactly the robot head, body, feet, hands, window grid and unlit overhead heater. No head turn, no eye blinking, no eye dimming, no shutdown, no movement of limbs, no new objects. Quiet room air and distant wind.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "07-stillness",
+    "seed": 94107,
+    "motion_prompt": "Photoreal photographic close-up of an INERT, LIFELESS maintenance robot prop in a greenhouse. Robot head and torso are rigidly fixed in the exact initial tilted pose for the entire shot, no motion of any part of the robot. The dark optical lens is unpowered black glass with reflections only. Empty chest stays black. Only the camera slowly creeps straight forward a few millimeters; dust motes drift in the background. Preserve identical head angle, neck angle, body geometry and lighting in every frame. No head lowering, no nodding, no breathing, no blinking, no eye glow, no mechanical movement, no revival. Quiet air and heater hum only.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  }
+]

@@ -14,26 +14,27 @@ ROOT = Path(__file__).resolve().parent
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--media", type=Path, default=ROOT / "media")
+    p.add_argument("--storyboard", type=Path, default=ROOT / "storyboard.json")
     a = p.parse_args()
     out = a.media / "qa"
     out.mkdir(parents=True, exist_ok=True)
-    jobs = json.loads((ROOT / "storyboard.json").read_text())
-    font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Songti.ttc", 30)
+    jobs = json.loads(a.storyboard.read_text())
+    font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 30)
     small = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 23)
     labels = [
-        "最后的电量",
-        "仅剩 1%",
-        "最后一株幼苗",
-        "交出自己的电池",
-        "温室重新亮起",
-        "最后一次守护",
-        "眼睛熄灭",
-        "多年以后",
-        "掌心开花",
+        "The choice",
+        "One percent",
+        "The last seedling",
+        "The gift",
+        "Warmth",
+        "The last light",
+        "Stillness",
+        "Years later",
+        "The flower",
     ]
     board = Image.new("RGB", (2280, 1440), "#101719")
     d = ImageDraw.Draw(board)
-    d.text((40, 25), "最后一班 / THE LAST SHIFT", font=font, fill="#ecdfc4")
+    d.text((40, 25), "THE LAST SHIFT", font=font, fill="#ecdfc4")
     for n, job in enumerate(jobs):
         x = 40 + (n % 3) * 750
         y = 90 + (n // 3) * 445

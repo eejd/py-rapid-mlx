@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""ComfyUI IMAGE → Rapid-MLX LTX-2.5 → VIDEO, preserving generated audio."""
+"""Local image, motion and editorial nodes for The Last Shift."""
 
 from .client import generate
+from .post import RapidMLXLastShiftEdit
+from .qwen import RapidMLXQwenImage
 
 
 class RapidMLXLastShift:
@@ -61,5 +63,13 @@ class RapidMLXLastShift:
         return (InputImpl.VideoFromFile(str(path)),)
 
 
-NODE_CLASS_MAPPINGS = {"RapidMLXLastShift": RapidMLXLastShift}
-NODE_DISPLAY_NAME_MAPPINGS = {"RapidMLXLastShift": "Rapid-MLX · Last Shift Shot"}
+NODE_CLASS_MAPPINGS = {
+    "RapidMLXLastShift": RapidMLXLastShift,
+    "RapidMLXQwenImage": RapidMLXQwenImage,
+    "RapidMLXLastShiftEdit": RapidMLXLastShiftEdit,
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "RapidMLXLastShift": "Rapid-MLX · Last Shift Shot",
+    "RapidMLXQwenImage": "Rapid-MLX · Qwen Image 2.1",
+    "RapidMLXLastShiftEdit": "Rapid-MLX · Last Shift Edit",
+}
