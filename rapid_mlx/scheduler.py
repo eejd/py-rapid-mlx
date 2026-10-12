@@ -5435,7 +5435,7 @@ class Scheduler:
         store = self.memory_aware_cache
         if store is None or boundary <= 0:
             return False
-        entry = store._entries.get(tuple(request.prompt_token_ids[:boundary]))
+        entry = store._entries.get(tuple(request.prompt_token_ids[:boundary]))  # noqa: SLF001 — caller holds the cache lock
         return entry is not None and entry.message_boundary
 
     def _boundary_snapshot_supersedes(
@@ -9392,8 +9392,8 @@ class Scheduler:
             and _cache_has_non_trimmable(request.prompt_cache)
         ):
             store = self.memory_aware_cache
-            with store._lock:
-                entry = store._entries.get(tuple(prompt_tokens[:cached]))
+            with store._lock:  # noqa: SLF001 — atomic cache entry lookup
+                entry = store._entries.get(tuple(prompt_tokens[:cached]))  # noqa: SLF001
                 retained = entry is not None and entry.message_boundary
             if retained:
                 # Snapshot lifecycle metadata is attached dynamically to requests.
