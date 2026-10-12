@@ -2481,20 +2481,21 @@ def _hub_not_found_hint(model_id: str) -> str:
     """Suggest catalog names near either an alias or a full Hub ID."""
     import difflib
 
-    from rapid_mlx.model_aliases import list_aliases, suggest_similar
+    from rapid_mlx.model_aliases import list_builtin_aliases, suggest_similar
 
-    aliases = list_aliases()
+    aliases = list_builtin_aliases()
     suggestions = suggest_similar(model_id)
     if not suggestions and "/" in model_id:
         close_ids = difflib.get_close_matches(
             model_id.lower(),
-            [repo.lower() for repo in aliases.values()],
+            sorted({repo.lower() for repo in aliases.values()}),
             n=3,
             cutoff=0.6,
         )
         suggestions = [
-            alias for alias, repo in aliases.items() if repo.lower() in close_ids
-        ][:3]
+            next(alias for alias, repo in aliases.items() if repo.lower() == repo_id)
+            for repo_id in close_ids
+        ]
     if suggestions:
         return f"  Closest catalog aliases: {', '.join(suggestions)}.\n"
     return "  See catalog aliases with `rapid-mlx models`.\n"

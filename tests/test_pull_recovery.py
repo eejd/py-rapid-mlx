@@ -120,7 +120,7 @@ def test_gated_and_misspelled_repo_guidance(monkeypatch):
     assert "HF_TOKEN" in gated
 
     monkeypatch.setattr(
-        "rapid_mlx.model_aliases.list_aliases",
+        "rapid_mlx.model_aliases.list_builtin_aliases",
         lambda: {"qwen3-0.6b-4bit": "mlx-community/Qwen3-0.6B-4bit"},
     )
     missing = cli.render_hub_error(
@@ -153,7 +153,7 @@ def test_pull_exits_with_actionable_permanent_error(
     monkeypatch.setattr(cli, "_try_mirror_prefetch", lambda *_a, **_kw: False)
     monkeypatch.setattr(cli, "_hf_cache_root", lambda _repo: tmp_path)
     monkeypatch.setattr(
-        "rapid_mlx.model_aliases.list_aliases",
+        "rapid_mlx.model_aliases.list_builtin_aliases",
         lambda: {"qwen3-0.6b-4bit": "mlx-community/Qwen3-0.6B-4bit"},
     )
     calls = []
