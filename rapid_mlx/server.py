@@ -40,6 +40,7 @@ import functools
 import gc
 import logging
 import os
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -919,6 +920,11 @@ async def lifespan(app: FastAPI):
                 auto_selected=_telemetry_auto_selected,
                 failure_stage="engine_start",
             )
+            from rapid_mlx.local_serve_diagnostics import startup_error_lines
+
+            if detail := startup_error_lines(_start_exc, _model_alias or _model_path):
+                print(f"  Cause: {detail[0]}", file=sys.stderr)
+                print(f"  Next step: {detail[1]}", file=sys.stderr)
             raise
 
     if _engine is not None and getattr(_engine, "is_text_diffusion", False):
@@ -967,8 +973,6 @@ async def lifespan(app: FastAPI):
                 ),
             )
     await _residency_manager.start()
-    if _primary_model_lifecycle is not None:
-        await _primary_model_lifecycle.start()
 
     # Tool-grammar warmup (#558): the FIRST grammar-constrained tool call
     # otherwise pays a one-time ~1s llguidance ``LLTokenizer`` build on the
@@ -982,6 +986,11 @@ async def lifespan(app: FastAPI):
             await _warmup_tool_grammar(_engine)
         except Exception as _e:
             logger.debug(f"Tool-grammar warmup failed (non-fatal): {_e}")
+    # An already-loaded primary can reach this warmup without going through
+    # ensure_loaded(). Do not let its idle monitor unload the tokenizer while
+    # the off-thread grammar build is still using it.
+    if _primary_model_lifecycle is not None:
+        await _primary_model_lifecycle.start()
 
     # Prefix-cache load is deferred OFF the readiness path (#1359 follow-up
     # #1350): a large persisted cache used to block here — between engine
