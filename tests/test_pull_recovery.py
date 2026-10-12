@@ -65,6 +65,7 @@ def test_retry_is_bounded_for_network_and_server_errors(monkeypatch):
 def test_permanent_hub_errors_are_not_retried(monkeypatch):
     from huggingface_hub.errors import (
         GatedRepoError,
+        HfHubHTTPError,
         OfflineModeIsEnabled,
         RepositoryNotFoundError,
     )
@@ -73,6 +74,7 @@ def test_permanent_hub_errors_are_not_retried(monkeypatch):
     for failure in (
         _hub_error(GatedRepoError, 403),
         _hub_error(RepositoryNotFoundError, 404),
+        _hub_error(HfHubHTTPError, 401),
         OfflineModeIsEnabled("offline"),
     ):
         calls = []
@@ -112,7 +114,11 @@ def test_pull_retries_mocked_snapshot_and_keeps_revision(monkeypatch, tmp_path):
 
 
 def test_gated_and_misspelled_repo_guidance(monkeypatch):
-    from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+    from huggingface_hub.errors import (
+        GatedRepoError,
+        HfHubHTTPError,
+        RepositoryNotFoundError,
+    )
 
     gated = cli.render_hub_error(_hub_error(GatedRepoError, 403), "owner/private")
     assert "https://huggingface.co/owner/private" in gated
@@ -136,6 +142,16 @@ def test_gated_and_misspelled_repo_guidance(monkeypatch):
     )
     assert "could not reach Hugging Face" in protocol
     assert "secret URL" not in protocol
+
+    server_error = cli.render_hub_error(
+        _hub_error(HfHubHTTPError, 503),
+        "owner/model",
+    )
+    assert "temporarily unavailable" in server_error
+
+    monkeypatch.setattr("rapid_mlx.model_aliases.suggest_similar", lambda _name: [])
+    monkeypatch.setattr("rapid_mlx.model_aliases.list_builtin_aliases", lambda: {})
+    assert "rapid-mlx models" in cli._hub_not_found_hint("owner/unknown")
 
 
 @pytest.mark.parametrize(
@@ -280,3 +296,57 @@ def test_transient_mirror_failure_falls_back_to_hub(monkeypatch, tmp_path, capsy
     output = capsys.readouterr().out
     assert "trying Hugging Face" in output
     assert "secret URL" not in output
+
+
+def test_serve_transient_mirror_failure_falls_back_to_hub(monkeypatch, capsys):
+    def mirror(*_args, **_kwargs):
+        raise httpx.RemoteProtocolError("mirror closed with secret URL")
+
+    monkeypatch.setattr(cli, "_cache_runnability", lambda _model: False)
+    monkeypatch.setattr(cli, "_offline_hub_mode_active", lambda: False)
+    monkeypatch.setattr(cli, "_check_disk_space", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_try_mirror_prefetch", mirror)
+    monkeypatch.setattr(
+        "rapid_mlx._download_gate.call_with_deadline",
+        lambda _func, _timeout, *_args, **_kwargs: SimpleNamespace(
+            sha="fixed-sha", siblings=[]
+        ),
+    )
+    monkeypatch.setattr("rapid_mlx._download_gate.pin_main_ref", lambda *_a: None)
+    calls = []
+    monkeypatch.setattr(
+        "huggingface_hub.snapshot_download",
+        lambda repo, **kwargs: calls.append((repo, kwargs)) or "/tmp/fake-snapshot",
+    )
+    cli._ensure_model_downloaded("owner/repo")
+    assert calls == [("owner/repo", {"revision": "fixed-sha"})]
+    output = capsys.readouterr().out
+    assert "trying Hugging Face" in output
+    assert "secret URL" not in output
+
+
+def test_variant_metadata_error_is_guided_without_hiding_unknown_errors(
+    monkeypatch, capsys
+):
+    failure = httpx.RemoteProtocolError("secret URL")
+
+    def fail(*_args):
+        raise failure
+
+    monkeypatch.setattr(cli, "_resolve_variant_allow_patterns", fail)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    args = argparse.Namespace(model="owner/repo", bits="4", format=None)
+    with pytest.raises(SystemExit) as caught:
+        cli._pull_repository(args, emit_lifecycle_event=False)
+    assert caught.value.code == 1
+    assert "could not reach Hugging Face" in capsys.readouterr().err
+
+    unknown = RuntimeError("implementation bug")
+
+    def fail_unknown(*_args):
+        raise unknown
+
+    monkeypatch.setattr(cli, "_resolve_variant_allow_patterns", fail_unknown)
+    with pytest.raises(RuntimeError) as caught_unknown:
+        cli._pull_repository(args, emit_lifecycle_event=False)
+    assert caught_unknown.value is unknown
