@@ -157,8 +157,24 @@ class TensorFoldRequestProvider:
         self._sampling_defaults = dict(sampling_defaults or {})
         self._audit_path = audit_path
         self._audit_lock = threading.Lock()
-        self.last_token_ids: list[int] = []
-        self.last_outputs: list[RequestOutput] = []
+        self._results = threading.local()
+
+    @property
+    def last_token_ids(self) -> list[int]:
+        """Thread-local qualification diagnostics; never used to build a reply."""
+        return getattr(self._results, "tokens", [])
+
+    @last_token_ids.setter
+    def last_token_ids(self, value: list[int]) -> None:
+        self._results.tokens = value
+
+    @property
+    def last_outputs(self) -> list[RequestOutput]:
+        return getattr(self._results, "outputs", [])
+
+    @last_outputs.setter
+    def last_outputs(self, value: list[RequestOutput]) -> None:
+        self._results.outputs = value
 
     def _outputs(self, prompt: str, **kwargs: Any) -> Iterator[RequestOutput]:
         from tensorfold.engine.lane_engine import SuffixLookupProposer
@@ -313,6 +329,9 @@ class TensorFoldRequestProvider:
                 encoded = ",".join(str(token) for token in collected).encode()
                 record = {
                     "request_id": request_id,
+                    "request_sha256": hashlib.sha256(
+                        json.dumps(kwargs.get("messages"), sort_keys=True).encode()
+                    ).hexdigest(),
                     "token_ids": collected,
                     "token_sha256": hashlib.sha256(encoded).hexdigest(),
                 }
@@ -340,12 +359,12 @@ class TensorFoldRequestProvider:
     ) -> ProviderResult:
         text = ""
         prompt_tokens = 0
+        tokens: list[int] = []
         for output in self._outputs(prompt, **kwargs):
             text = output.output_text
             prompt_tokens = output.prompt_tokens
-        return ProviderResult(
-            text, list(self.last_token_ids), len(self.last_token_ids), prompt_tokens
-        )
+            tokens = list(output.output_token_ids)
+        return ProviderResult(text, tokens, len(tokens), prompt_tokens)
 
 
 def validate_http_request(
@@ -518,16 +537,20 @@ def run_tensorfold_qwen27_server(
     supports_reasoning_budget: bool = False,
     **_ignored: Any,
 ) -> None:
-    """Load the pinned pair and serve the experimental serial text API."""
+    """Load the pinned profile; concurrency requires an explicit qualified opt-in."""
     if main_model_revision is not None or drafter_revision is not None:
         raise RuntimeError("tensorfold backend requires pinned local snapshot paths")
     if tool_call_parser is not None:
         raise RuntimeError("tensorfold backend does not support tool parsing")
+    from .tensorfold_concurrency import request_lanes
+
+    lanes = request_lanes(profile_id)
     backend = backend_class.load(
         main_model_repo,
         drafter_repo,
         served_name=served_model_name,
         max_tokens=default_max_tokens,
+        **({"lanes": lanes} if lanes > 1 else {}),
     )
     # Qualification-only token evidence. Unset by default so production
     # requests never persist generated token IDs.
@@ -538,6 +561,12 @@ def run_tensorfold_qwen27_server(
     )
     from rapid_mlx.api.models import ModelInfo, SpeculativeDecodingInfo
     from rapid_mlx.speculative.dflash.server import _build_app
+
+    execution_policy = None
+    if lanes > 1:
+        from rapid_mlx.speculative.dflash.server import BackendExecutionPolicy
+
+        execution_policy = BackendExecutionPolicy(lanes, backend._executor)
 
     speculative_info = SpeculativeDecodingInfo(
         configured=True,
@@ -573,9 +602,10 @@ def run_tensorfold_qwen27_server(
         max_request_bytes=max_request_bytes,
         body_receive_timeout_seconds=body_receive_timeout_seconds,
         default_timeout=default_timeout,
-        # TensorFold exposes one serial lane. Keep admission aligned with that
-        # runtime capacity even when the shared CLI default is much larger.
-        max_concurrent_requests=_MAX_CONCURRENT_REQUESTS,
+        # Admission and execution capacity must agree with the runtime lanes.
+        # With the opt-in unset, keep the existing serial HTTP policy.
+        max_concurrent_requests=lanes,
+        execution_policy=execution_policy,
         cors_policy=cors_policy,
         tool_call_parser=None,
         reasoning_parser_name=reasoning_parser_name,
@@ -591,8 +621,7 @@ def run_tensorfold_qwen27_server(
             pool_worker=os.environ.get("RAPID_MLX_QUICKSILVER_POOL") == "1",
         ),
         backend_name=backend_label,
-        # One request holds the only lane, so a prompt past the model's
-        # window must be refused before it is prefilled.
+        # Refuse prompts past the model window before prefill.
         enforce_model_window=True,
         speculative_info=speculative_info,
         model_info=model_info,
@@ -634,7 +663,7 @@ def run_tensorfold_qwen27_server(
                     "tools": False,
                     "media": False,
                     "grammar": False,
-                    "max_concurrency": _MAX_CONCURRENT_REQUESTS,
+                    "max_concurrency": lanes,
                 },
             }
         },

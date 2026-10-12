@@ -1,0 +1,295 @@
+"""Concurrent request boundaries, without loading a model."""
+
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from types import SimpleNamespace
+
+from rapid_mlx.request import RequestOutput
+from rapid_mlx.speculative.tensorfold_qwen27_server import TensorFoldRequestProvider
+
+
+def test_one_provider_keeps_nonstream_token_results_per_request(monkeypatch):
+    provider = TensorFoldRequestProvider(SimpleNamespace())
+    first_drained, second_drained = Event(), Event()
+
+    def outputs(prompt, **_kwargs):
+        tokens = [1, 2] if prompt == "first" else [3, 4, 5]
+        if prompt == "second":
+            assert first_drained.wait(3)
+        yield RequestOutput(
+            request_id=prompt,
+            output_token_ids=tokens,
+            output_text=prompt,
+            prompt_tokens=7,
+        )
+        provider.last_token_ids = tokens
+        if prompt == "first":
+            first_drained.set()
+            assert second_drained.wait(3)
+        else:
+            second_drained.set()
+
+    monkeypatch.setattr(provider, "_outputs", outputs)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(provider.generate, None, None, "first")
+        second = pool.submit(provider.generate, None, None, "second")
+        a, b = first.result(timeout=5), second.result(timeout=5)
+    assert a.tokens == [1, 2]
+    assert b.tokens == [3, 4, 5]
+    assert (a.generation_tokens, b.generation_tokens) == (2, 3)
+
+
+import asyncio
+import threading
+
+import httpx
+import pytest
+
+from rapid_mlx.speculative.dflash import server
+from rapid_mlx.speculative.tensorfold_qwen27_server import ProviderChunk, ProviderResult
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("concurrent", [False, True])
+async def test_http_execution_policy_preserves_default_and_capacity(
+    monkeypatch, stream, concurrent
+):
+    monkeypatch.setattr(server, "_dflash_lock", asyncio.Lock())
+    entered, two_entered, release = Event(), Event(), Event()
+    mutex = threading.Lock()
+    active = peak = 0
+    observed = []
+    worker_names = []
+
+    def begin():
+        nonlocal active, peak
+        with mutex:
+            active += 1
+            peak = max(peak, active)
+            observed.append(server._dflash_lock.locked())
+            worker_names.append(threading.current_thread().name)
+            entered.set()
+            if active == 2:
+                two_entered.set()
+        assert release.wait(5)
+
+    def end():
+        nonlocal active
+        with mutex:
+            active -= 1
+
+    def generate(*_args, **_kwargs):
+        begin()
+        try:
+            return ProviderResult("ok", [7], 1, 2)
+        finally:
+            end()
+
+    def chunks(*_args, **_kwargs):
+        begin()
+        try:
+            yield ProviderChunk("ok", 7, 1, 2)
+        finally:
+            end()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        app = server._build_app(
+            model=None,
+            processor=SimpleNamespace(eos_token_id=99),
+            runtime=SimpleNamespace(
+                algorithm="mtp",
+                drafter_repo=None,
+                target_revision="a" * 40,
+                drafter_revision=None,
+            ),
+            served_model_name="pilot",
+            default_max_tokens=8,
+            cors_origins=[],
+            max_concurrent_requests=99 if concurrent else 2,
+            execution_policy=server.BackendExecutionPolicy(2, executor)
+            if concurrent
+            else None,
+            generate_fn=generate,
+            stream_generate_fn=chunks,
+            render_prompt_fn=lambda *_args, **_kwargs: "prompt",
+            generation_kwargs_fn=lambda **kw: {"max_tokens": kw["max_tokens"]},
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
+        ) as client:
+            body = {
+                "model": "pilot",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": stream,
+            }
+            first = asyncio.create_task(client.post("/v1/chat/completions", json=body))
+            assert await asyncio.to_thread(entered.wait, 3)
+            second = asyncio.create_task(client.post("/v1/chat/completions", json=body))
+            try:
+                if concurrent:
+                    assert await asyncio.to_thread(two_entered.wait, 3)
+                else:
+                    await asyncio.sleep(0.05)
+                    assert not two_entered.is_set()
+                overflow = await client.post("/v1/chat/completions", json=body)
+                assert overflow.status_code == 503
+                assert overflow.headers["Retry-After"] == "1"
+                assert overflow.json()["error"]["code"] == "at_capacity"
+            finally:
+                release.set()
+            responses = await asyncio.gather(first, second)
+            assert all(r.status_code == 200 for r in responses)
+            if stream:
+                assert all("data: [DONE]" in r.text for r in responses)
+    assert peak == (2 if concurrent else 1)
+    assert observed == [not concurrent, not concurrent]
+    if not concurrent:
+        assert all(name.startswith("dflash-worker") for name in worker_names)
+    assert not server._dflash_lock.locked()
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 3, 9, "auto", "2.0"])
+def test_invalid_lane_opt_in_is_refused(value):
+    from rapid_mlx.speculative.tensorfold_concurrency import request_lanes
+
+    with pytest.raises(ValueError, match="must be 1, 2, 4 or 8"):
+        request_lanes("nemotron-3.5-lightning-tensorfold", value)
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "bonsai2-27b-tensorfold",
+        "gemma-4-26b-tensorfold",
+        "qwen3.8-flash-next-tensorfold",
+        "deepseek-v4-flash-tensorfold",
+        "glm-5.3-flash-tensorfold",
+    ],
+)
+def test_unmeasured_profile_refuses_lane_opt_in(profile):
+    from rapid_mlx.speculative.tensorfold_concurrency import request_lanes
+
+    assert request_lanes(profile, 1) == 1
+    with pytest.raises(ValueError, match="has not qualified"):
+        request_lanes(profile, 2)
+
+
+def test_lane_opt_in_is_explicit_and_defaults_serial(monkeypatch):
+    from rapid_mlx.speculative.tensorfold_concurrency import LANES_ENV, request_lanes
+
+    monkeypatch.delenv(LANES_ENV, raising=False)
+    assert request_lanes("nemotron-3.5-lightning-tensorfold") == 1
+    monkeypatch.setenv(LANES_ENV, "4")
+    assert request_lanes("nemotron-3.5-lightning-tensorfold") == 4
+
+
+async def test_concurrent_timeout_retains_capacity_without_global_lock(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(server, "_dflash_lock", asyncio.Lock())
+    release, started = Event(), Event()
+    admission = server._DFlashAdmission(1)
+    reservation = admission.reserve()
+    reservation.claim()
+
+    def generate(*_args, **_kwargs):
+        started.set()
+        assert release.wait(5)
+        return ProviderResult("ok", [7], 1, 2)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await server._non_stream_completion(
+                    prompt="prompt",
+                    request=SimpleNamespace(),
+                    served_model_name="pilot",
+                    gen_kwargs={},
+                    model=None,
+                    processor=SimpleNamespace(),
+                    timeout=0.05,
+                    admission_reservation=reservation,
+                    generate_fn=generate,
+                    execution_policy=server.BackendExecutionPolicy(1, executor),
+                )
+            assert exc.value.status_code == 504
+            assert started.is_set()
+            assert admission._reservations == 1
+            assert not server._dflash_lock.locked()
+        finally:
+            release.set()
+        for _ in range(100):
+            if admission._reservations == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert admission._reservations == 0
+
+
+@pytest.mark.parametrize("lanes", [1, 2, 4, 8])
+def test_tensorfold_bootstrap_aligns_load_http_capacity_and_capability(
+    monkeypatch, lanes
+):
+    import rapid_mlx._uvicorn as uvicorn
+    from rapid_mlx.speculative import tensorfold_qwen27_server as adapter
+    from rapid_mlx.speculative.tensorfold_concurrency import LANES_ENV
+
+    captured = {}
+
+    class App:
+        def on_event(self, _event):
+            return lambda fn: fn
+
+    monkeypatch.setattr(server, "_build_app", lambda **kw: captured.update(kw) or App())
+    monkeypatch.setattr(uvicorn, "run_uvicorn", lambda *_args, **_kw: None)
+    monkeypatch.setenv(LANES_ENV, str(lanes))
+    with ThreadPoolExecutor(max_workers=lanes) as executor:
+        backend = SimpleNamespace(
+            _app=SimpleNamespace(tokenizer=object()),
+            _executor=executor,
+            close=lambda: None,
+        )
+        loader = SimpleNamespace(
+            load=lambda *args, **kw: captured.update(load=kw) or backend
+        )
+        adapter.run_tensorfold_qwen27_server(
+            main_model_repo="target",
+            main_model_revision=None,
+            drafter_repo="",
+            drafter_revision=None,
+            host="127.0.0.1",
+            port=1,
+            port_explicit=True,
+            served_model_name="pilot",
+            default_max_tokens=256,
+            cors_origins=[],
+            uvicorn_log_level="warning",
+            backend_class=loader,
+            profile_id="nemotron-3.5-lightning-tensorfold",
+        )
+    assert captured["load"].get("lanes", 1) == lanes
+    assert captured["max_concurrent_requests"] == lanes
+    policy = captured["execution_policy"]
+    assert (policy.capacity if policy else 1) == lanes
+    if lanes == 1:
+        assert policy is None
+        assert "lanes" not in captured["load"]
+    assert (
+        captured["runtime_status_extra"]["profile"]["capabilities"]["max_concurrency"]
+        == lanes
+    )
+
+
+def test_execution_policy_cannot_unlock_default_gpu_callbacks():
+    with (
+        ThreadPoolExecutor(max_workers=2) as executor,
+        pytest.raises(ValueError, match="both generation callbacks"),
+    ):
+        server._build_app(
+            model=None,
+            processor=None,
+            runtime=None,
+            served_model_name="pilot",
+            default_max_tokens=1,
+            cors_origins=[],
+            execution_policy=server.BackendExecutionPolicy(2, executor),
+        )
