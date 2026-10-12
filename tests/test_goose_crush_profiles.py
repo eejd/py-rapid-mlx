@@ -11,6 +11,7 @@ from rapid_mlx.agents.adapter import setup_agent_config
 @pytest.mark.parametrize("keyed", [False, True])
 def test_goose_provider_setup(tmp_path, monkeypatch, keyed):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     if keyed:
         monkeypatch.setenv("RAPID_MLX_API_KEY", "local-secret")
     else:
@@ -28,6 +29,26 @@ def test_goose_provider_setup(tmp_path, monkeypatch, keyed):
     assert data["requires_auth"] is keyed
     assert data["api_key_env"] == ("RAPID_MLX_API_KEY" if keyed else "")
     assert "local-secret" not in path.read_text()
+
+
+def test_goose_xdg_config_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    profile = get_profile("goose")
+    setup_agent_config(profile, "http://127.0.0.1:18740/v1", "qwen3.5-4b-4bit")
+    assert (tmp_path / "xdg/goose/custom_providers/custom_rapid_mlx.json").exists()
+
+
+def test_goose_path_root_takes_precedence(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("GOOSE_PATH_ROOT", str(tmp_path / "goose-root"))
+    setup_agent_config(
+        get_profile("goose"), "http://127.0.0.1:18740/v1", "qwen3.5-4b-4bit"
+    )
+    assert (
+        tmp_path / "goose-root/config/custom_providers/custom_rapid_mlx.json"
+    ).exists()
 
 
 @pytest.mark.parametrize("keyed", [False, True])

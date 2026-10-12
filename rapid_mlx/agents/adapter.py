@@ -165,6 +165,16 @@ def _resolve_config_path(cfg) -> Path:
     """
     assert cfg.path
     default = Path(os.path.expanduser(cfg.path))
+    if cfg.path == "~/.config/goose/custom_providers/custom_rapid_mlx.json":
+        goose_root = os.environ.get("GOOSE_PATH_ROOT", "").strip()
+        if goose_root and Path(goose_root).is_absolute():
+            return Path(goose_root) / "config/custom_providers/custom_rapid_mlx.json"
+        xdg_config = os.environ.get("XDG_CONFIG_HOME", "").strip()
+        if xdg_config:
+            return (
+                Path(os.path.expanduser(xdg_config))
+                / "goose/custom_providers/custom_rapid_mlx.json"
+            )
     home_env = getattr(cfg, "home_env", None)
     if not home_env:
         return default
