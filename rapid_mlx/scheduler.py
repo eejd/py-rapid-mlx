@@ -6850,21 +6850,27 @@ class Scheduler:
         cap = self._resolve_metal_cap_bytes()
         if cap <= 0:
             return None
-        measurements = []
-        for probe in (
-            self._current_metal_active_bytes,
-            self._current_process_resident_bytes,
-        ):
-            try:
-                value = probe(require_measurement=True)
-            except Exception:  # noqa: BLE001 - optional admission fails closed
-                continue
-            if type(value) is int and value >= 0:
-                measurements.append(value)
-        if not measurements:
+        try:
+            from .runtime.process_memory import get_phys_footprint
+
+            footprint = get_phys_footprint()
+            if type(footprint) is int and footprint > 0:
+                return max(0, cap - footprint)
+        except Exception:  # noqa: BLE001 - optional admission fails closed
+            pass
+        # RSS alone omits some driver allocations; Metal alone omits host
+        # allocations. Without the complete kernel ledger require both, and
+        # conservatively count their overlap twice rather than invent headroom.
+        try:
+            import psutil
+
+            metal = mx.get_active_memory()
+            rss = psutil.Process().memory_info().rss
+        except Exception:  # noqa: BLE001 - optional admission fails closed
             return None
-        resident = max(measurements)
-        return max(0, cap - resident)
+        if any(type(value) is not int or value < 0 for value in (metal, rss)):
+            return None
+        return max(0, cap - metal - rss)
 
     def _continuous_mtp_lane_bytes(self, request: Request) -> int:
         """Projected whole-request cache footprint of one continuous MTP lane.

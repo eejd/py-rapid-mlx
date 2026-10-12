@@ -1702,15 +1702,20 @@ def test_singleton_stays_put_when_the_cohort_cannot_absorb_it(monkeypatch, case)
     [
         (None, None, None, None),
         (None, 600, None, 400),
-        (None, None, 700, 300),
-        (800, None, None, 200),
+        (None, None, 700, None),
+        (800, None, None, None),
         (400, 600, None, 400),
-        (1200, None, None, 0),
-        (0, None, None, 1000),
+        (1200, None, None, None),
+        (0, None, None, None),
         (-1, None, None, None),
+        (400, None, 300, 300),
+        (800, None, 700, 0),
+        (0, None, 0, 1000),
+        (False, None, 0, None),
+        (0, None, -1, None),
     ],
 )
-def test_continuous_headroom_requires_a_successful_usage_probe(
+def test_continuous_headroom_requires_comprehensive_usage(
     monkeypatch, metal, footprint, rss, expected
 ):
     import psutil
@@ -1741,7 +1746,7 @@ def test_continuous_headroom_requires_a_successful_usage_probe(
         assert scheduler._current_process_resident_bytes() == 0
 
     # A failed snapshot must not poison later successful measurements.
-    monkeypatch.setattr(scheduler_module.mx, "get_active_memory", lambda: 900)
+    monkeypatch.setattr(process_memory, "get_phys_footprint", lambda: 900)
     assert scheduler._continuous_mtp_free_bytes() == 100
 
 
