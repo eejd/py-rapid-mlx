@@ -2130,3 +2130,44 @@ def test_partial_join_rollback_preserves_earlier_pending_reservation(monkeypatch
     assert list(batch_gen._unprocessed_sequences) == [source]
     assert driver.pending_join_uids == (3,)
     assert driver.lane_uids == (1, 2)
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize("limit", ["lanes", "bytes", "no_bytes"])
+def test_dynamic_join_stops_projecting_backlog_at_capacity(monkeypatch, limit):
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2)]
+    )
+    requests, mapping = _requests_for(*range(1, 21))
+    request_uids = {id(request): int(name[4:]) for name, request in requests.items()}
+    calls = []
+    headroom = {"free": 16 * 1024**3}
+
+    def estimate(request):
+        calls.append(request_uids[id(request)])
+        return 1024**3
+
+    created = _install_recording_router(
+        monkeypatch,
+        batch_gen,
+        requests,
+        mapping,
+        estimator=estimate,
+        free_bytes=lambda: headroom["free"],
+        max_lanes=3 if limit == "lanes" else 8,
+    )
+    batch_gen.next()
+    calls.clear()
+    if limit in ("bytes", "no_bytes"):
+        headroom["free"] = (9 if limit == "bytes" else 8) * 1024**3
+    batch_gen._unprocessed_sequences.extend(
+        _scheduler_sequence(uid) for uid in range(3, 21)
+    )
+    batch_gen.next()
+    assert calls == ([] if limit == "no_bytes" else [3])
+    assert created[0].pending_join_uids == (() if limit == "no_bytes" else (3,))
+    first_queued = 3 if limit == "no_bytes" else 4
+    assert [seq[0] for seq in batch_gen._unprocessed_sequences] == list(
+        range(first_queued, 21)
+    )

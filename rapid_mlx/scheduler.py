@@ -1276,8 +1276,7 @@ def _install_continuous_mtp_router(
         )
 
     def _queued_candidates(*, planned_bytes: bool = False):
-        candidates = []
-        for sequence in tuple(batch_gen._unprocessed_sequences):
+        for sequence in batch_gen._unprocessed_sequences:
             try:
                 metadata = _metadata(sequence, planned_bytes=planned_bytes)
             except _ContinuousMTPProjectionError:
@@ -1285,8 +1284,7 @@ def _install_continuous_mtp_router(
                 # encoding refusal as a finite byte count.
                 break
             if metadata is not None:
-                candidates.append((sequence, metadata))
-        return candidates
+                yield sequence, metadata
 
     def _lane_gate(metadata: Any):
         return assess_lane(
@@ -1323,7 +1321,7 @@ def _install_continuous_mtp_router(
         headroom = _planning_headroom()
         if headroom is None:
             return
-        candidates = _queued_candidates(planned_bytes=True)
+        candidates = list(_queued_candidates(planned_bytes=True))
         if not candidates:
             return
         metadata = [item[1] for item in candidates]
@@ -1420,7 +1418,7 @@ def _install_continuous_mtp_router(
         # hard reserve is kept intact; FIFO order is preserved by stopping at
         # the first eligible lane that does not fit.
         budget = _joining_budget()
-        if budget is None:
+        if budget is None or budget == 0:
             return
         joining_specs: list[SelfMTPLaneSpec] = []
         joining_stops: dict[int, frozenset[int]] = {}
@@ -1430,8 +1428,6 @@ def _install_continuous_mtp_router(
             for sequence, metadata in _queued_candidates(
                 planned_bytes=budget is not None
             ):
-                if len(joining_specs) >= room:
-                    break
                 if not _lane_gate(metadata).eligible:
                     continue
                 if budget is not None:
@@ -1455,6 +1451,8 @@ def _install_continuous_mtp_router(
                 joining_specs.append(spec)
                 joining_stops[spec.uid] = metadata.stop_tokens
                 joining_sequences[spec.uid] = sequence
+                if len(joining_specs) >= room or budget == 0:
+                    break
             if not joining_specs:
                 return
             accepted = driver.queue_lanes(joining_specs, stop_tokens=joining_stops)
