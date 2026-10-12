@@ -10645,7 +10645,10 @@ def _pull_repository(
         variant_allow = (
             list(allow_patterns_override)
             if allow_patterns_override is not None
-            else _resolve_variant_allow_patterns(repo_id, _bits, _fmt)
+            else _retry_hub_download(
+                lambda: _resolve_variant_allow_patterns(repo_id, _bits, _fmt),
+                repo_id,
+            )
         )
     except ValueError as e:
         print(f"\n  Error: {e}")
@@ -10663,6 +10666,12 @@ def _pull_repository(
             "  Pick one with --bits <N> or --format <name>, or pull the repo without a selector."
         )
         sys.exit(1)
+    except Exception as exc:
+        rendered = render_hub_error(exc, repo_id)
+        if rendered is not None:
+            print(f"\n{rendered}\n", file=sys.stderr)
+            raise SystemExit(1) from None
+        raise
 
     # Only a primary model pull owns serving-choice metadata. Runtime asset
     # allow-pattern overrides select dependency files, not a checkpoint, and

@@ -231,3 +231,31 @@ def test_pull_protocol_disconnect_has_bounded_retry_and_safe_guidance(
     stderr = capsys.readouterr().err
     assert "could not reach Hugging Face" in stderr
     assert "private URL" not in stderr
+
+
+def test_pull_variant_metadata_retries_before_transfer(monkeypatch, tmp_path):
+    probe_calls = []
+
+    def resolve_variant(*_args):
+        probe_calls.append(1)
+        if len(probe_calls) == 1:
+            raise httpx.ConnectError("temporary")
+        return ["4bit/*"]
+
+    monkeypatch.setattr(cli, "_resolve_variant_allow_patterns", resolve_variant)
+    monkeypatch.setattr(cli, "_try_mirror_prefetch", lambda *_a, **_kw: False)
+    monkeypatch.setattr(cli, "_hf_cache_root", lambda _repo: tmp_path)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    snapshot_calls = []
+
+    def download(_repo, **kwargs):
+        snapshot_calls.append(kwargs)
+        return str(tmp_path)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    cli._pull_repository(
+        argparse.Namespace(model="owner/repo", bits="4", format=None),
+        emit_lifecycle_event=False,
+    )
+    assert len(probe_calls) == 2
+    assert snapshot_calls == [{"allow_patterns": ["4bit/*"]}]
