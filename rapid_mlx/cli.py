@@ -6429,12 +6429,9 @@ def serve_command(args):
     # would mask a regression that deleted the wire-up entirely.
     _apply_body_receive_timeout_env(server, logger=logger)
 
-    # Configure CORS (F-090 + F-091). Default: wildcard ``*`` for friendly
-    # single-machine UX — rapid-mlx is primarily run locally and a
-    # browser frontend at ``http://localhost:3000`` hitting the API at
-    # ``http://localhost:8000`` "just works". Operators on multi-tenant /
-    # production deployments lock down via
-    # ``RAPID_MLX_CORS_ALLOW_ORIGINS=https://your.app,https://other.app``.
+    # Browser access is opt-in. Native and same-origin clients work by
+    # default; browser frontends on another origin must set --cors-origins
+    # or RAPID_MLX_CORS_ALLOW_ORIGINS explicitly.
     # The full env-var family (METHODS / HEADERS / MAX_AGE /
     # ALLOW_CREDENTIALS) still applies; see
     # ``rapid_mlx/server.py::configure_cors_from_env``.
@@ -13348,6 +13345,13 @@ def agents_command(args):
         print(f"  Unknown agent: {agent_name}")
         print("  Run 'rapid-mlx agents' to see available agents.")
         sys.exit(1)  # pragma: no cover - CLI error path
+
+    # Share Codex's API base across discovery, setup, and integration tests.
+    try:
+        base_url = profile.normalize_base_url(base_url)
+    except ValueError as exc:
+        print(f"  Invalid base URL: {exc}")
+        sys.exit(1)
 
     # --test: run integration tests
     if args.test:
