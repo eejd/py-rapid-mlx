@@ -4,7 +4,7 @@
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
 
 import pytest
 
@@ -202,12 +202,15 @@ def test_sdk_preflight_follows_supply_chain_and_precedes_full_unit():
     )
 
 
-@pytest.mark.parametrize("missing", ["script", "prerequisite_imports", "result_prefix"])
+@pytest.mark.parametrize(
+    "missing",
+    ["name", "script", "script_file", "prerequisite_imports", "result_prefix"],
+)
 def test_incomplete_registration_blocks_without_running_scripts(
     ctx, agent, monkeypatch, missing
 ):
-    if missing == "script":
-        (ctx.repo_root / agent[missing]).unlink()
+    if missing == "script_file":
+        (ctx.repo_root / agent["script"]).unlink()
     else:
         del agent[missing]
     monkeypatch.setattr(sdk_env_check, "_load_registry", lambda: {"agents": [agent]})
@@ -217,6 +220,55 @@ def test_incomplete_registration_blocks_without_running_scripts(
         lambda *a, **kw: pytest.fail("invalid registry must not launch"),
     )
     assert sdk_env_check.SDKEnvCheckStep().run(ctx).status == "fail"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError("python3.12 unavailable"),
+        PermissionError("python3.12 not executable"),
+        TimeoutExpired("python3.12", 60, output=b"import started", stderr=b"stalled"),
+    ],
+)
+def test_sdk_probe_launch_failure_records_diagnostics_and_stops(
+    ctx, agent, monkeypatch, error
+):
+    from scripts.pr_validate import runner
+
+    monkeypatch.setattr(sdk_env_check, "_load_registry", lambda: {"agents": [agent]})
+
+    def failed_probe(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(sdk_env_check.subprocess, "run", failed_probe)
+    result = sdk_env_check.SDKEnvCheckStep().run(ctx)
+    assert result.status == "fail"
+    log = Path(result.artifacts[0]).read_text()
+    assert type(error).__name__ in log
+    if isinstance(error, TimeoutExpired):
+        assert "import started" in log
+        assert "stalled" in log
+    monkeypatch.setattr(runner, "Context", lambda **kwargs: ctx)
+
+    class Costly(Step):
+        name = "full_unit"
+
+        def run(self, ctx):
+            pytest.fail("failed SDK probe must stop before costly work")
+
+    assert (
+        runner.run_pipeline(123, steps=[sdk_env_check.SDKEnvCheckStep(), Costly()]) == 1
+    )
+
+
+def test_sdk_probe_missing_interpreter_fails_with_real_launch(ctx, agent, monkeypatch):
+    monkeypatch.setattr(sdk_env_check, "_load_registry", lambda: {"agents": [agent]})
+    monkeypatch.setenv("PATH", str(ctx.repo_root / "no-interpreters"))
+    result = sdk_env_check.SDKEnvCheckStep().run(ctx)
+    assert result.status == "fail"
+    log = Path(result.artifacts[0]).read_text()
+    assert "FileNotFoundError" in log
+    assert "python3.12" in log
 
 
 @pytest.mark.parametrize(

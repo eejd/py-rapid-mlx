@@ -22,13 +22,20 @@ class SDKEnvCheckStep(Step):
         agents = _load_registry()["agents"]
         modules: set[str] = set()
         for agent in agents:
+            if not isinstance(agent, dict) or not all(
+                isinstance(agent.get(key), str) and agent[key].strip()
+                for key in ("name", "script", "result_prefix")
+            ):
+                return StepResult(
+                    name=self.name,
+                    status="fail",
+                    summary="incomplete SDK registration: name, script and result_prefix required",
+                )
             imports = agent.get("prerequisite_imports")
             if (
                 not isinstance(imports, list)
                 or not imports
                 or not all(isinstance(module, str) and module for module in imports)
-                or not isinstance(agent.get("result_prefix"), str)
-                or not agent["result_prefix"]
                 or not (ctx.repo_root / agent["script"]).is_file()
             ):
                 return StepResult(
@@ -53,20 +60,35 @@ class SDKEnvCheckStep(Step):
             "        print(f'{prerequisite}: {type(exc).__name__}: {exc}')\n"
             "sys.exit(bool(failed))\n"
         )
-        proc = subprocess.run(  # noqa: S603
-            ["python3.12", "-c", probe, *sorted(modules)],
-            cwd=str(ctx.repo_root),
-            env=_repo_python_env(ctx.repo_root),
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
         log = ctx.artifact_path("sdk-env-check.log")
-        log.write_text(
-            f"interpreter: python3.12\nmodules: {json.dumps(sorted(modules))}\n"
-            + (proc.stdout or "")
-            + (proc.stderr or "")
-        )
+        header = f"interpreter: python3.12\nmodules: {json.dumps(sorted(modules))}\n"
+        try:
+            proc = subprocess.run(  # noqa: S603
+                ["python3.12", "-c", probe, *sorted(modules)],
+                cwd=str(ctx.repo_root),
+                env=_repo_python_env(ctx.repo_root),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            details = f"{type(exc).__name__}: {exc}\n"
+            if isinstance(exc, subprocess.TimeoutExpired):
+                for output in (exc.stdout, exc.stderr):
+                    if output:
+                        details += (
+                            output.decode(errors="replace")
+                            if isinstance(output, bytes)
+                            else output
+                        ) + "\n"
+            log.write_text(header + details)
+            return StepResult(
+                name=self.name,
+                status="fail",
+                summary="SDK prerequisite probe could not complete; repair the validator environment",
+                artifacts=[str(log)],
+            )
+        log.write_text(header + (proc.stdout or "") + (proc.stderr or ""))
         return StepResult(
             name=self.name,
             status="pass" if proc.returncode == 0 else "fail",
