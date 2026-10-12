@@ -3217,6 +3217,9 @@ def _suspended_generator():
     gen.active_batch = None
     gen.completion_batch_size = 1
     gen.cooperative_prefill = True
+    from rapid_mlx.mllm_batch_generator import MLLMBatchStats
+
+    gen._stats = MLLMBatchStats()
     gen.unprocessed_requests = [_make_ids_request(1500)]
     gen._pending_prefill = None
     return gen

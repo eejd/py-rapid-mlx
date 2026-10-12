@@ -3929,6 +3929,7 @@ class MLLMBatchGenerator:
         from mlx_lm.models.cache import make_prompt_cache
 
         tic = time.perf_counter()
+        prompt_elapsed = 0.0
 
         # Close the previous media request's MRoPE transaction before this
         # prefill computes its own position state: a stale installed delta
@@ -4021,7 +4022,19 @@ class MLLMBatchGenerator:
                 request_cache = make_prompt_cache(self.language_model)
 
             if cooperative:
-                logits = yield from self._vision_encoding_steps(req, request_cache)
+                steps = self._vision_encoding_steps(req, request_cache)
+                try:
+                    while True:
+                        try:
+                            next(steps)
+                        except StopIteration as done:
+                            logits = done.value
+                            break
+                        prompt_elapsed += time.perf_counter() - tic
+                        yield
+                        tic = time.perf_counter()
+                finally:
+                    steps.close()
 
             with mx.stream(self._stream):
                 # Run VLM forward pass — cache= flows through to language_model
@@ -4124,7 +4137,7 @@ class MLLMBatchGenerator:
         # Create initial y (first generated tokens)
         y = mx.array(first_tokens)
 
-        self._stats.prompt_time += time.perf_counter() - tic
+        self._stats.prompt_time += prompt_elapsed + time.perf_counter() - tic
 
         # Release preprocessed vision inputs for all requests now that
         # they have been encoded into the batch KV cache.  pixel_values,
@@ -4336,6 +4349,9 @@ class MLLMBatchGenerator:
                     self._pending_prefill = pending
                 try:
                     next(pending[1])
+                    # Preserve the existing next-step contribution across
+                    # resumes without counting executor waits between calls.
+                    self._stats.prompt_time += time.perf_counter() - tic
                     return []
                 except StopIteration as done:
                     new_batch = done.value
