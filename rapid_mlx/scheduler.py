@@ -1640,7 +1640,10 @@ def _install_continuous_mtp_router(
             batch_gen._continuous_mtp_driver = None
             _stage_initial()
         elif not deferred_join_failed:
-            _absorb_singleton_into_cohort()
+            # Serialize only the reservation/removal ownership seam. Inference
+            # and ordinary queue processing must not hold up cancellation.
+            with ownership_lock:
+                _absorb_singleton_into_cohort()
             _stage_joins()
 
         raw = original_next()
@@ -1702,7 +1705,7 @@ def _install_continuous_mtp_router(
 
         return owned
 
-    batch_gen.next = types.MethodType(_serialized(_continuous_next), batch_gen)
+    batch_gen.next = types.MethodType(_continuous_next, batch_gen)
     batch_gen.close = types.MethodType(_serialized(_continuous_close), batch_gen)
     batch_gen.remove = types.MethodType(_serialized(_continuous_remove), batch_gen)
     batch_gen._continuous_mtp_router = router

@@ -2279,3 +2279,48 @@ def test_dynamic_join_never_overtakes_ineligible_fifo_head(monkeypatch, blocked)
     assert list(batch_gen._unprocessed_sequences) == source
     assert created[0].pending_join_uids == ()
     assert created[0].lane_uids == (1, 2)
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize("operation", ["remove", "close"])
+def test_inference_step_does_not_block_cancellation_or_shutdown(monkeypatch, operation):
+    import threading
+
+    batch_gen, _owner, driver = _absorb_setup(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    errors = []
+
+    def blocked_step():
+        entered.set()
+        assert release.wait(3)
+        return []
+
+    def infer():
+        try:
+            batch_gen.next()
+        except Exception as exc:
+            errors.append(exc)
+
+    def cleanup():
+        try:
+            batch_gen.remove([99]) if operation == "remove" else batch_gen.close()
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            completed.set()
+
+    driver.next = blocked_step
+    inference = threading.Thread(target=infer)
+    inference.start()
+    assert entered.wait(2)
+    canceller = threading.Thread(target=cleanup)
+    canceller.start()
+    responsive = completed.wait(0.2)
+    release.set()
+    inference.join(2)
+    canceller.join(2)
+    assert not inference.is_alive() and not canceller.is_alive()
+    assert not errors
+    assert responsive, "inference held the handoff ownership lock"
