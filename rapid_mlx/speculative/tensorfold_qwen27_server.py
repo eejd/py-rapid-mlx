@@ -387,15 +387,20 @@ class TensorFoldRequestProvider:
         return self._track_iterator(self._stream_chunks(prompt, **kwargs))
 
     def _stream_chunks(self, prompt: str, **kwargs: Any) -> Iterator[ProviderChunk]:
-        for output in self._outputs(prompt, **kwargs):
-            if output.finished:
-                continue
-            yield ProviderChunk(
-                text=output.new_text,
-                token=(output.new_token_ids[0] if output.new_token_ids else -1),
-                generation_tokens=output.completion_tokens,
-                prompt_tokens=output.prompt_tokens,
-            )
+        iterator = self._outputs(prompt, **kwargs)
+        try:
+            for output in iterator:
+                if output.finished:
+                    continue
+                yield ProviderChunk(
+                    text=output.new_text,
+                    token=(output.new_token_ids[0] if output.new_token_ids else -1),
+                    generation_tokens=output.completion_tokens,
+                    prompt_tokens=output.prompt_tokens,
+                )
+        finally:
+            if self._close_cancellable:
+                iterator.close()
 
     def generate(
         self, _model: Any, _processor: Any, prompt: str, **kwargs: Any

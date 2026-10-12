@@ -602,3 +602,29 @@ def test_close_finalizes_provider_suspended_between_stream_pulls(
         assert inspect.getgeneratorstate(iterator) == inspect.GEN_CLOSED
     finally:
         iterator.close()
+
+
+def test_client_stream_close_finalizes_inner_tracked_job(stalled_provider, monkeypatch):
+    backend, provider, submitted, _, jobs = stalled_provider
+    from rapid_mlx.speculative import tensorfold_qwen27_server as adapter
+
+    class Decoder:
+        def __init__(self, *_):
+            pass
+
+        def extend(self, _):
+            return ""
+
+    monkeypatch.setattr(adapter, "_StableIncrementalText", Decoder)
+    iterator = provider.stream_generate(None, None, "prompt")
+    future = backend._executor.submit(next, iterator)
+    assert submitted.wait(2)
+    jobs[0].chunks.put([7])
+    assert future.result(timeout=1).token == 7
+    iterator.close()
+    try:
+        assert not backend._active
+        assert not backend._provider_iterators
+        assert jobs[0].cancellation.event.is_set()
+    finally:
+        backend.close()
