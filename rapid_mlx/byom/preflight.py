@@ -874,6 +874,7 @@ def run_cli_preflight(args: Any, *, spinner_factory: Callable[[str], Any]) -> No
             if confirmed is True:
                 funnel.set_preflight("passed")
             return
+        assert full is not None
         display_inspection = replace(inspection, config=full)
         full_type = full.get("model_type")
         if isinstance(full_type, str) and full_type:
