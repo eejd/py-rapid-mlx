@@ -23,8 +23,9 @@ the current per-family status.
 ## Current release (v0.21.6)
 
 The [v0.21.6 source release](https://github.com/NousResearch/hermes-agent/releases/tag/v0.21.6)
-requires Python 3.14 for its runtime dependencies. PyPI currently publishes
-0.15.2, so `pip install hermes-agent` does not install this release. In a
+requires Python 3.14 for its runtime dependencies. The
+[PyPI package](https://pypi.org/project/hermes-agent/) is currently older than
+v0.21.6, so `pip install hermes-agent` does not install this release. In a
 fresh directory, install the source release with `uv`:
 
 ```bash
