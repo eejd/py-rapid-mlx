@@ -2113,6 +2113,11 @@ class BatchedEngine(BaseEngine):
             self._mllm_dense_singleton_fastpath = bool(
                 config_model_type == "qwen3_5" and self._mllm_native_text_engine
             )
+            if self._mllm_native_text_engine:
+                # Both schedulers use the model-loading thread. A text-only
+                # singleton must return between prefill chunks so native
+                # peers can run without waiting for its entire prompt.
+                self._mllm_scheduler.batch_generator.cooperative_prefill = True
 
         logger.info(
             f"MLLM Scheduler started with continuous batching: "

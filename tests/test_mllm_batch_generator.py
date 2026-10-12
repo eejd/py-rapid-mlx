@@ -3145,3 +3145,140 @@ def test_image_prefill_cleanup_preserves_cached_modality_metadata(tmp_path):
     assert model.language_model.call_count == 2
     assert model.language_model.call_args.kwargs["mm_token_type_ids"] is types
     assert cached.extra_kwargs["mm_token_type_ids"] is types
+
+
+def test_text_prefill_returns_executor_between_materialized_chunks():
+    """A queued model peer runs before the long prompt's second chunk."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    model = _ChunkRecordingModel()
+    gen = _make_bare_generator(512, model)
+    cache = [_FakeCache()]
+    request = _make_ids_request(1500)
+    steps = gen._vision_encoding_steps(request, cache)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        assert executor.submit(next, steps).result() is None
+        assert executor.submit(lambda: cache[0].tokens_seen).result() == 512
+        assert cache[0].state_reads == 1
+        assert not request.vision_encoded
+        executor.submit(next, steps).result()
+        assert cache[0].tokens_seen == 1024
+        executor.submit(next, steps).result()
+        with pytest.raises(StopIteration) as done:
+            executor.submit(next, steps).result()
+    assert done.value.value.shape == (1, 1, model.vocab)
+    assert [n for n, _ in model.calls] == [512, 512, 475, 1]
+    assert cache[0].tokens_seen == 1500
+    assert request.vision_encoded
+
+
+@pytest.mark.parametrize("kind", ["media", "partial_mask", "extra_kwargs", "short"])
+def test_cooperative_encoding_keeps_indivisible_inputs(kind):
+    model = _ChunkRecordingModel()
+    gen = _make_bare_generator(512, model)
+    request = _make_ids_request(100 if kind == "short" else 1500)
+    if kind == "media":
+        request.pixel_values = mx.zeros((1, 2))
+    elif kind == "partial_mask":
+        request.attention_mask = mx.concatenate([mx.ones((1499,)), mx.zeros((1,))])
+    elif kind == "extra_kwargs":
+        request.extra_kwargs = {"token_type_ids": mx.zeros((1, 1500))}
+    with pytest.raises(StopIteration):
+        next(gen._vision_encoding_steps(request, [_FakeCache()]))
+    assert len(model.calls) == 1
+    assert model.calls[0][0] == (100 if kind == "short" else 1500)
+
+
+def test_suspended_text_prefill_keeps_checkpoint_boundaries():
+    model = _ChunkRecordingModel()
+    gen = _make_bare_generator(512, model)
+    request = _make_ids_request(1500)
+    request.prefix_boundary = 600
+    request.shared_prefix_store_at = 900
+    checkpoints, stores = [], []
+    gen._record_text_prefill_checkpoint = lambda req, cache, pos: checkpoints.append(
+        pos
+    )
+    gen._store_exact_text_prefix = lambda req, cache, prefix_len: stores.append(
+        prefix_len
+    )
+    steps = gen._vision_encoding_steps(request, [_FakeCache()])
+    for expected in (512, 600, 900, 1412, 1499):
+        next(steps)
+        assert checkpoints[-1] == expected
+    with pytest.raises(StopIteration):
+        next(steps)
+    assert stores == [600, 900]
+    assert [n for n, _ in model.calls] == [512, 88, 300, 512, 87, 1]
+
+
+def _suspended_generator():
+    gen = MLLMBatchGenerator.__new__(MLLMBatchGenerator)
+    gen.active_batch = None
+    gen.completion_batch_size = 1
+    gen.cooperative_prefill = True
+    gen.unprocessed_requests = [_make_ids_request(1500)]
+    gen._pending_prefill = None
+    return gen
+
+
+def test_remove_closes_suspended_prefill_without_finishing_prompt():
+    gen = _suspended_generator()
+    model = _ChunkRecordingModel()
+    gen.model, gen.language_model, gen.prefill_step_size = (
+        model,
+        model.language_model,
+        512,
+    )
+    request = gen.unprocessed_requests[0]
+    steps = gen._vision_encoding_steps(request, [_FakeCache()])
+    gen._process_prompt_steps = lambda requests, cooperative: steps
+    assert gen._next() == []
+    gen.remove([999])
+    assert gen._pending_prefill is not None
+    gen.remove([request.uid])
+    assert gen._pending_prefill is None
+    assert not gen.has_pending()
+    assert not request.vision_encoded
+    with pytest.raises(StopIteration):
+        next(steps)
+    assert len(model.calls) == 1
+
+
+def test_prefill_exception_drops_suspended_state():
+    gen = _suspended_generator()
+    released = []
+
+    def fail(requests, cooperative):
+        try:
+            yield
+            raise RuntimeError("chunk failed")
+        finally:
+            released.append(True)
+
+    gen._process_prompt_steps = fail
+    assert gen._next() == []
+    with pytest.raises(RuntimeError, match="chunk failed"):
+        gen._next()
+    assert gen._pending_prefill is None
+    assert released == [True]
+    gen.remove([0])
+    assert not gen.has_pending()
+
+
+def test_close_releases_suspended_prefill():
+    gen = _suspended_generator()
+    released = []
+
+    def pending(requests, cooperative):
+        try:
+            yield
+        finally:
+            released.append(True)
+
+    gen._process_prompt_steps = pending
+    gen._old_wired_limit = None
+    gen._next()
+    gen.close()
+    assert gen._pending_prefill is None
+    assert released == [True]
