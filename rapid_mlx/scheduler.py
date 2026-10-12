@@ -1124,14 +1124,21 @@ def _install_continuous_mtp_router(
             setattr(response, name, value)
         return response
 
-    def _cache_offset(value: Any) -> int:
+    def _cache_offsets(value: Any) -> tuple[int, ...]:
         children = getattr(value, "caches", None)
         if isinstance(children, (list, tuple)):
-            return max((_cache_offset(child) for child in children), default=0)
-        try:
-            return max(0, int(getattr(value, "offset", 0) or 0))
-        except (TypeError, ValueError):
-            return 0
+            return tuple(
+                offset for child in children for offset in _cache_offsets(child)
+            )
+        # Recurrent ArraysCache leaves carry state without an offset property.
+        # Only position-bearing attention leaves participate in this agreement.
+        offset = getattr(value, "offset", None)
+        if offset is None:
+            return ()
+        offset = int(offset)
+        if offset < 0:
+            raise ValueError("negative continuous MTP cache offset")
+        return (offset,)
 
     def _planning_headroom() -> int | None:
         """Live headroom for byte planning, ``None`` when it is unknowable.
@@ -1201,9 +1208,17 @@ def _install_continuous_mtp_router(
         # process, which is the same contract mlx-lm's prompt batch consumes.
         # Its draft cache starts empty, as the singleton verifier's always
         # does; drafting quality is affected, verified output is not.
-        # ``_cache_offset`` recurses into nested ``.caches`` (CacheList), so a
-        # nested leaf with a non-zero offset marks the lane resumed too.
-        resumed = any(_cache_offset(cache) for cache in caches)
+        # Nested position-bearing leaves must agree; a partly advanced cache
+        # must stay with its original owner rather than enter this route.
+        try:
+            offsets = tuple(
+                offset for cache in caches for offset in _cache_offsets(cache)
+            )
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if len(set(offsets)) > 1:
+            return None
+        resumed = bool(offsets and offsets[0] > 0)
         # Token history only accompanies a cached prefix (it is the logits
         # processors' context); a fresh lane with history is inconsistent.
         cache_ready = not history or resumed

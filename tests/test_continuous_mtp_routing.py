@@ -1343,6 +1343,51 @@ def test_resumed_prefix_cache_lane_joins_the_cohort_with_its_cache(monkeypatch, 
 
 
 @pytest.mark.requires_mlx
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("offsets", [(0, 12), (12, 13), (12, -1), (12, float("inf"))])
+def test_inconsistent_cache_positions_preserve_ordinary_ownership(
+    monkeypatch, nested, offsets
+):
+    leaves = [SimpleNamespace(offset=offset, nbytes=0) for offset in offsets]
+    caches = [SimpleNamespace(caches=leaves)] if nested else leaves
+    batch_gen = _SchedulerBatchGenerator()
+    source = [_scheduler_sequence(1), _scheduler_sequence(2, caches=caches)]
+    batch_gen._unprocessed_sequences.extend(source)
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    assert created == []
+    assert list(batch_gen._unprocessed_sequences) == source
+
+
+@pytest.mark.requires_mlx
+def test_recurrent_cache_without_offset_coexists_with_agreeing_attention_positions(
+    monkeypatch,
+):
+    import mlx.core as mx
+    from mlx_lm.models.cache import ArraysCache
+
+    state = ArraysCache(1)
+    state[0] = mx.zeros((1, 2))
+    caches = [
+        SimpleNamespace(offset=12, nbytes=0),
+        state,
+        SimpleNamespace(offset=12, nbytes=0),
+    ]
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2, caches=caches)]
+    )
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    assert len(created) == 1
+    assert created[0].lane_uids == (1, 2)
+    assert isinstance(created[0].specs[1].prompt_cache[1], ArraysCache)
+    assert mx.array_equal(created[0].specs[1].prompt_cache[1][0], state[0]).item()
+
+
+@pytest.mark.requires_mlx
 def test_windowed_or_quantized_layer_anywhere_keeps_the_lane_off_the_cohort(
     monkeypatch,
 ):
