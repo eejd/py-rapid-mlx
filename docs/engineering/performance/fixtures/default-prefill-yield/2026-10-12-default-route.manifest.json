@@ -1,0 +1,7 @@
+{
+  "archive": "2026-10-12-default-route.tar.gz",
+  "sha256": "4f37bc93b6f4d1510ad2d47c2fffcbb0098669fc6c8bae8eb092c288615bb57f",
+  "bytes": 43090,
+  "members": 19,
+  "normalization": "Only generated JSON/log HF cache root replaced with ${HF_CACHE}; source and harness bytes unchanged."
+}
