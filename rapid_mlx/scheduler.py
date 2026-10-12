@@ -1319,7 +1319,6 @@ def _install_continuous_mtp_router(
     # Only the synchronous singleton handoff may remove a base row while its
     # replacement lane is already reserved in the continuous driver.
     singleton_transfer_uid: int | None = None
-    ownership_lock = threading.RLock()
 
     def _stage_initial() -> None:
         nonlocal driver
@@ -1640,10 +1639,7 @@ def _install_continuous_mtp_router(
             batch_gen._continuous_mtp_driver = None
             _stage_initial()
         elif not deferred_join_failed:
-            # Serialize only the reservation/removal ownership seam. Inference
-            # and ordinary queue processing must not hold up cancellation.
-            with ownership_lock:
-                _absorb_singleton_into_cohort()
+            _absorb_singleton_into_cohort()
             _stage_joins()
 
         raw = original_next()
@@ -1696,18 +1692,12 @@ def _install_continuous_mtp_router(
                 )
         return base
 
-    def _serialized(callback):
-        def owned(*args, **kwargs):
-            # The internal synchronous handoff re-enters remove on this thread.
-            # Other threads must wait until its reservation becomes cancellable.
-            with ownership_lock:
-                return callback(*args, **kwargs)
-
-        return owned
-
+    # BatchGenerator mutation is executor-confined, including admission and
+    # cache removal. Cross-thread cancellation uses Scheduler.abort_request;
+    # step() drains that ledger before the next inference/admission boundary.
     batch_gen.next = types.MethodType(_continuous_next, batch_gen)
-    batch_gen.close = types.MethodType(_serialized(_continuous_close), batch_gen)
-    batch_gen.remove = types.MethodType(_serialized(_continuous_remove), batch_gen)
+    batch_gen.close = types.MethodType(_continuous_close, batch_gen)
+    batch_gen.remove = types.MethodType(_continuous_remove, batch_gen)
     batch_gen._continuous_mtp_router = router
     batch_gen._continuous_mtp_runtime = runtime
     batch_gen._continuous_mtp_driver = None

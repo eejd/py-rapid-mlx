@@ -2189,44 +2189,6 @@ def test_dynamic_join_stops_projecting_backlog_at_capacity(monkeypatch, limit):
 
 
 @pytest.mark.requires_mlx
-def test_singleton_handoff_serializes_concurrent_cancellation(monkeypatch):
-    import threading
-
-    batch_gen, _owner, driver = _absorb_setup(monkeypatch)
-    requeue = batch_gen._mtp_vendored_requeue_owner
-    attempted = threading.Event()
-    completed = threading.Event()
-    workers = []
-    completed_during_handoff = []
-
-    def cancel():
-        attempted.set()
-        batch_gen.remove([7])
-        completed.set()
-
-    def racing_requeue(*, admit):
-        def reserve(snapshot):
-            accepted = admit(snapshot)
-            worker = threading.Thread(target=cancel)
-            workers.append(worker)
-            worker.start()
-            assert attempted.wait(2)
-            completed_during_handoff.append(completed.wait(0.1))
-            return accepted
-
-        return requeue(admit=reserve)
-
-    batch_gen._mtp_vendored_requeue_owner = racing_requeue
-    batch_gen.next()
-    for worker in workers:
-        worker.join(2)
-        assert not worker.is_alive()
-    assert completed_during_handoff == [False]
-    assert completed.is_set()
-    assert driver.pending_join_uids == ()
-
-
-@pytest.mark.requires_mlx
 def test_join_rollback_does_not_use_live_lane_removal(monkeypatch):
     batch_gen = _SchedulerBatchGenerator()
     batch_gen._unprocessed_sequences.extend(
@@ -2282,45 +2244,67 @@ def test_dynamic_join_never_overtakes_ineligible_fifo_head(monkeypatch, blocked)
 
 
 @pytest.mark.requires_mlx
-@pytest.mark.parametrize("operation", ["remove", "close"])
-def test_inference_step_does_not_block_cancellation_or_shutdown(monkeypatch, operation):
+@pytest.mark.parametrize("during", ["handoff", "inference"])
+def test_public_cancellation_is_deferred_to_executor_boundary(monkeypatch, during):
     import threading
 
+    from rapid_mlx.scheduler import Scheduler
+
     batch_gen, _owner, driver = _absorb_setup(monkeypatch)
-    entered = threading.Event()
-    release = threading.Event()
-    completed = threading.Event()
-    errors = []
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler._cancel_counter_lock = threading.Lock()
+    scheduler.requests = {"req-7": object()}
+    scheduler.request_id_to_uid = {"req-7": 7}
+    scheduler.running = {}
+    scheduler._pending_abort_ids = set()
+    scheduler._cancelled_request_ids = set()
+    scheduler.num_requests_cancelled = 0
+    applied = []
 
-    def blocked_step():
-        entered.set()
-        assert release.wait(3)
-        return []
+    def apply_abort(request_id):
+        applied.append((request_id, threading.get_ident()))
+        batch_gen.remove([scheduler.request_id_to_uid[request_id]])
 
-    def infer():
-        try:
-            batch_gen.next()
-        except Exception as exc:
-            errors.append(exc)
+    scheduler._do_abort_request = apply_abort
 
-    def cleanup():
-        try:
-            batch_gen.remove([99]) if operation == "remove" else batch_gen.close()
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            completed.set()
+    def cancel_from_other_thread():
+        results = []
+        worker = threading.Thread(
+            target=lambda: results.append(scheduler.abort_request("req-7"))
+        )
+        worker.start()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert results == [True]
+        assert scheduler._pending_abort_ids == {"req-7"}
+        assert applied == []  # no cache/queue mutation on the caller thread
 
-    driver.next = blocked_step
-    inference = threading.Thread(target=infer)
-    inference.start()
-    assert entered.wait(2)
-    canceller = threading.Thread(target=cleanup)
-    canceller.start()
-    responsive = completed.wait(0.2)
-    release.set()
-    inference.join(2)
-    canceller.join(2)
-    assert not inference.is_alive() and not canceller.is_alive()
-    assert not errors
-    assert responsive, "inference held the handoff ownership lock"
+    if during == "handoff":
+        requeue = batch_gen._mtp_vendored_requeue_owner
+
+        def cancelling_requeue(*, admit):
+            def reserve(snapshot):
+                accepted = admit(snapshot)
+                cancel_from_other_thread()
+                return accepted
+
+            return requeue(admit=reserve)
+
+        batch_gen._mtp_vendored_requeue_owner = cancelling_requeue
+    else:
+        next_step = driver.next
+
+        def cancelling_inference():
+            cancel_from_other_thread()
+            return next_step()
+
+        driver.next = cancelling_inference
+
+    batch_gen.next()
+    assert driver.pending_join_uids == (7,)
+    assert scheduler.num_requests_cancelled == 1
+    executor_thread = threading.get_ident()
+    scheduler._process_pending_aborts()
+    assert applied == [("req-7", executor_thread)]
+    assert scheduler._pending_abort_ids == set()
+    assert driver.pending_join_uids == ()
