@@ -55,6 +55,21 @@ def test_bare_terminal_screen_ends_with_policy_pick():
     assert "Next:" not in front_door.render_non_tty("1.0", 16.0, state.picks)
 
 
+def test_bare_fallback_help_ends_with_policy_pick(monkeypatch):
+    out = Terminal()
+    monkeypatch.setattr(sys, "argv", ["rapid-mlx"])
+    monkeypatch.setattr(sys, "stdout", out)
+
+    def unavailable(**_kw):
+        raise front_door.FrontDoorUnavailableError()
+
+    monkeypatch.setattr(front_door, "run_bare", unavailable)
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    assert out.getvalue().rstrip().endswith("Next: rapid-mlx serve qwen3.5-4b-4bit")
+
+
 @pytest.mark.parametrize("cached", [False, True])
 def test_models_and_ls_terminal_views_end_with_hint(cached, monkeypatch):
     out = Terminal()
