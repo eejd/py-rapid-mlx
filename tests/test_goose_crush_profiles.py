@@ -1,9 +1,11 @@
 """Current Goose and Crush configurations for a local OpenAI server."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from rapid_mlx import cli
 from rapid_mlx.agents import get_profile
 from rapid_mlx.agents.adapter import setup_agent_config
 
@@ -76,3 +78,29 @@ def test_crush_provider_setup(tmp_path, monkeypatch, keyed):
         "model": "qwen3.5-4b-4bit",
     }
     assert "local-secret" not in path.read_text()
+
+
+def test_agents_setup_keeps_public_alias(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "rapid_mlx.agents.adapter.fetch_context_window", lambda *_: 32768
+    )
+    monkeypatch.setattr(
+        "rapid_mlx.agents.adapter.setup_agent_config",
+        lambda _profile, _url, model_id, **_kwargs: (
+            seen.append(model_id) or "Would write config (nothing written)"
+        ),
+    )
+    args = SimpleNamespace(
+        agent_name="aider",
+        base_url="http://127.0.0.1:18740/v1",
+        model="mlx-community/Qwen3.5-4B-MLX-4bit",
+        _original_alias="qwen3.5-4b-4bit",
+        test=False,
+        setup=True,
+        agent_version=None,
+        dry_run=True,
+        no_check=True,
+    )
+    cli.agents_command(args)
+    assert seen == ["qwen3.5-4b-4bit"]
