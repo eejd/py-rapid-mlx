@@ -53,7 +53,12 @@ def fake_home(tmp_path, monkeypatch) -> Path:
     """
     monkeypatch.delenv("RAPID_MLX_API_KEY", raising=False)
     # The clients' own relocation variables must not leak in from the host.
-    for name in ("CLINE_DIR", "CLINE_DATA_DIR", "CONTINUE_GLOBAL_DIR"):
+    for name in (
+        "CLINE_DIR",
+        "CLINE_DATA_DIR",
+        "CLINE_PROVIDER_SETTINGS_PATH",
+        "CONTINUE_GLOBAL_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     # cline: Cline's data dir and the VS Code globalStorage roots both
