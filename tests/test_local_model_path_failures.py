@@ -89,6 +89,22 @@ def test_existing_folder_with_trailing_space_is_preserved(tmp_path):
     assert local_paths.resolved_model_ref(str(model)) == str(model)
 
 
+def test_nearest_child_directories_are_bounded_even_without_close_match(tmp_path):
+    parent = tmp_path / "models"
+    parent.mkdir()
+    for name in ("alpha", "beta", "gamma", "delta"):
+        (parent / name).mkdir()
+    (parent / "not-a-dir").write_text("x")
+    missing = parent / "zzz"
+    failure = FileNotFoundError(2, "missing", str(missing))
+    message = local_model_failure_message(
+        str(missing), failure, include_supplied_path=True
+    )
+    nearby = message.split("Nearby model folders: ", 1)[1].split(".", 1)[0]
+    assert len(nearby.split(", ")) == 3
+    assert "not-a-dir" not in nearby
+
+
 def test_hub_repo_id_spelled_as_path_gets_repo_hint(tmp_path):
     spelling = f"{tmp_path}/owner/model"
     with pytest.raises(FileNotFoundError) as raised:

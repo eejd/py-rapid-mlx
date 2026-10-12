@@ -213,7 +213,7 @@ def local_model_failure_message(
             except OSError:
                 siblings = []
             matches = difflib.get_close_matches(
-                expanded.name, siblings, n=3, cutoff=0.45
+                expanded.name, siblings, n=3, cutoff=0.0
             )
             if matches:
                 message += " Nearby model folders: " + ", ".join(matches) + "."
