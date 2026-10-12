@@ -28,14 +28,14 @@ requires Python 3.14 for its runtime dependencies. PyPI currently publishes
 fresh directory, install the source release with `uv`:
 
 ```bash
-git clone --depth 1 --branch v0.21.6 https://github.com/NousResearch/hermes-agent.git
-uv venv --python 3.14 hermes-agent/.venv
-uv pip install --python hermes-agent/.venv/bin/python -e hermes-agent
-export PATH="$PWD/hermes-agent/.venv/bin:$PATH"
-
-# Start rapid-mlx, then configure Hermes in another terminal.
+# Start the server in one terminal.
 rapid-mlx serve qwen3.5-4b-4bit --port 8000
 
+# In another terminal, install Hermes and keep this terminal for setup and chat.
+git clone --depth 1 --branch v0.21.6 https://github.com/NousResearch/hermes-agent.git "$HOME/hermes-agent"
+uv venv --python 3.14 "$HOME/hermes-agent/.venv"
+uv pip install --python "$HOME/hermes-agent/.venv/bin/python" -e "$HOME/hermes-agent"
+export PATH="$HOME/hermes-agent/.venv/bin:$PATH"
 rapid-mlx agents hermes --setup --yes
 hermes chat -q "Run cat README.md using the terminal tool and report its title" -Q -t terminal
 ```

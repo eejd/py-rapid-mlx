@@ -37,7 +37,7 @@ testing:
   binary: "hermes"
   query_cmd: "hermes chat -q '{query}' -Q"
   query_timeout: 120
-  install_cmd: "git clone --depth 1 --branch v0.21.6 https://github.com/NousResearch/hermes-agent.git && uv venv --python 3.14 hermes-agent/.venv && uv pip install --python hermes-agent/.venv/bin/python -e hermes-agent"
+  install_cmd: "git clone --depth 1 --branch v0.21.6 https://github.com/NousResearch/hermes-agent.git $HOME/hermes-agent && uv venv --python 3.14 $HOME/hermes-agent/.venv && uv pip install --python $HOME/hermes-agent/.venv/bin/python -e $HOME/hermes-agent && export PATH=\"$HOME/hermes-agent/.venv/bin:$PATH\""
   specific_tests: "test_hermes.py"
 
 capabilities:
