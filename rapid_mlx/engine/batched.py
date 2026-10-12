@@ -2117,7 +2117,7 @@ class BatchedEngine(BaseEngine):
                 # Both schedulers use the model-loading thread. A text-only
                 # singleton must return between prefill chunks so native
                 # peers can run without waiting for its entire prompt.
-                self._mllm_scheduler.batch_generator.cooperative_prefill = True
+                self._mllm_scheduler.cooperative_prefill = True
 
         logger.info(
             f"MLLM Scheduler started with continuous batching: "
