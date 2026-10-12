@@ -169,6 +169,75 @@ async def test_mllm_load_materializes_random_state_on_model_worker(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["mlx", "mlx.core", "unrelated_backend"])
+async def test_mllm_random_state_import_only_allows_missing_mlx(monkeypatch, missing):
+    import builtins
+
+    from rapid_mlx import engine_core
+    from rapid_mlx.engine import batched as batched_mod
+    from rapid_mlx.models import mllm as mllm_mod
+    from rapid_mlx.utils import chat_template_registry
+
+    calls = []
+    unavailable = ModuleNotFoundError("simulated missing dependency", name=missing)
+
+    class StopAfterLoadError(Exception):
+        pass
+
+    class Model:
+        model = object()
+        processor = object()
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def load(self):
+            calls.append("load")
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if (
+            name == "mlx.core"
+            and (globals or {}).get("__name__") == batched_mod.__name__
+        ):
+            calls.append("random_state_import")
+            raise unavailable
+        return original_import(name, globals, locals, fromlist, level)
+
+    def stop_after_load(*args):
+        calls.append("template")
+        raise StopAfterLoadError
+
+    monkeypatch.setattr(mllm_mod, "MLXMultimodalLM", Model)
+    monkeypatch.setattr(engine_core, "_init_mlx_step_thread", lambda: None)
+    monkeypatch.setattr(
+        chat_template_registry, "resolve_chat_template", stop_after_load
+    )
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    engine = batched_mod.BatchedEngine("fake/model")
+    engine._is_mllm = True
+
+    try:
+        if missing == "mlx":
+            with pytest.raises(StopAfterLoadError):
+                await engine._start_mllm()
+            assert calls == ["load", "random_state_import", "template"]
+            assert engine._mllm_instance is not None
+        else:
+            with pytest.raises(ModuleNotFoundError) as caught:
+                await engine._start_mllm()
+            assert caught.value is unavailable
+            assert calls == ["load", "random_state_import"]
+            assert engine._mllm_instance is None
+            assert engine._model_load_executor is None
+        assert engine.is_mllm is True
+    finally:
+        if engine._model_load_executor is not None:
+            engine._model_load_executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
 async def test_idle_lifecycle_uses_idle_stop_when_available():
     class Engine:
         _loaded = True
