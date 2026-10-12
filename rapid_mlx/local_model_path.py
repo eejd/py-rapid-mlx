@@ -3,12 +3,36 @@
 
 from __future__ import annotations
 
+import difflib
 import errno
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 
 MAX_MISSING_LOCAL_MODEL_FILES = 5
+_HF_REPO_ID = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+
+def _typed_ref(model_ref: str) -> str:
+    """Remove shell quotes accidentally passed literally and surrounding space."""
+    value = model_ref.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1].strip()
+    return value
+
+
+def resolved_model_ref(model_ref: str) -> str:
+    """Use an absolute path for local input, preserving Hub repo ids."""
+    value = _typed_ref(model_ref)
+    if is_local_model_ref(value):
+        if "/" not in value and not value.startswith(("~", ".")):
+            from .model_aliases import local_dir_shadows_alias
+
+            if local_dir_shadows_alias(value):
+                return value
+        return str(Path(value).expanduser().absolute())
+    return value
 
 
 def _exception_chain(exc: BaseException | None) -> tuple[BaseException, ...]:
@@ -52,12 +76,15 @@ def is_local_model_ref(model_ref: object) -> bool:
     """Whether ``model_ref`` denotes a local path, including a missing one."""
     if not isinstance(model_ref, str) or not model_ref:
         return False
+    model_ref = _typed_ref(model_ref)
     from .telemetry.redact import normalize_model_path
 
     if normalize_model_path(model_ref) == "<local>":
         return True
     try:
-        return os.path.exists(os.path.expanduser(model_ref))
+        return os.path.exists(os.path.expanduser(model_ref)) or (
+            "/" in model_ref and Path(model_ref).parent.is_dir()
+        )
     except (OSError, ValueError):
         return True
 
@@ -152,7 +179,8 @@ def local_model_failure_message(
         return None
     if not is_local_model_ref(model_ref) or not isinstance(model_ref, str):
         return None
-    expanded = Path(model_ref).expanduser().absolute()
+    typed = _typed_ref(model_ref)
+    expanded = Path(typed).expanduser().absolute()
     try:
         exists = expanded.exists()
     except OSError:
@@ -166,7 +194,27 @@ def local_model_failure_message(
                 missing_path = True
                 break
         if missing_path:
-            return f"The local model path{shown} does not exist."
+            message = f"The local model path{shown} does not exist."
+            if not include_supplied_path:
+                return message
+            message += f" Resolved path: {expanded}."
+            try:
+                siblings = [p.name for p in expanded.parent.iterdir() if p.is_dir()]
+            except OSError:
+                siblings = []
+            matches = difflib.get_close_matches(
+                expanded.name, siblings, n=3, cutoff=0.45
+            )
+            if matches:
+                message += " Nearby model folders: " + ", ".join(matches) + "."
+            repo_id = typed.removeprefix("./").removeprefix("/")
+            if _HF_REPO_ID.fullmatch(repo_id) and (
+                typed.startswith(("./", "/")) or expanded.parent.is_dir()
+            ):
+                message += f" If you meant a Hugging Face repo, use {repo_id}."
+            elif typed.startswith("~/") or typed.startswith(("./", "../", "/")):
+                message += " If you meant a Hugging Face repo, use org/model without a path prefix."
+            return message
         return None
     missing = missing_local_model_files(model_ref, exc)
     if missing:
@@ -181,11 +229,11 @@ def raise_if_missing_local_model(model_ref: object) -> None:
     """Raise before a missing explicit local path can be treated as a Hub id."""
     if not is_local_model_ref(model_ref) or not isinstance(model_ref, str):
         return
-    expanded = Path(model_ref).expanduser().absolute()
+    expanded = Path(_typed_ref(model_ref)).expanduser().absolute()
     exists = expanded.exists()
     if not exists:
         raise FileNotFoundError(
             errno.ENOENT,
             "Local model path does not exist",
-            model_ref,
+            str(expanded),
         )

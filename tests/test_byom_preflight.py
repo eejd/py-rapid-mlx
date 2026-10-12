@@ -621,8 +621,38 @@ def test_render_architecture(monkeypatch):
     lines = pf.render_failure(insp, verdict)
     assert lines[0] == "✗ Architecture spark_x is not supported yet."
     assert "(mlx-lm 0.31.3)" in lines[1]
+    assert "SForCausalLM" in lines[2]
+    assert pf.BYOM_DOCS_URL in lines[-1]
     monkeypatch.setattr(pf, "_mlx_lm_version", lambda: None)
     assert "mlx-lm" not in pf.render_failure(insp, verdict)[1]
+
+
+def test_render_architecture_suggests_same_family_and_size(monkeypatch):
+    monkeypatch.setattr(
+        "rapid_mlx.model_aliases.list_builtin_aliases",
+        lambda: {
+            "qwen3.5-4b-4bit": "publisher/one",
+            "qwen3.5-4b-8bit": "publisher/two",
+            "qwen3.5-4b-6bit": "publisher/three",
+            "qwen3.5-4b-bf16": "publisher/four",
+            "qwen3.5-9b-4bit": "publisher/five",
+            "qwen3-4b-4bit": "publisher/six",
+        },
+    )
+    monkeypatch.setattr("rapid_mlx.model_aliases.draft_only_conflict", lambda _: None)
+    insp = _insp(
+        ref="owner/Qwen3.5-4B-NewArch",
+        config={"model_type": "new_qwen", "architectures": ["NewQwenForCausalLM"]},
+    )
+    lines = pf.render_failure(insp, _evaluate(insp))
+    assert "new_qwen" in lines[0]
+    assert "NewQwenForCausalLM" in lines[2]
+    assert [line.strip() for line in lines if "rapid-mlx serve" in line] == [
+        "rapid-mlx serve qwen3.5-4b-4bit",
+        "rapid-mlx serve qwen3.5-4b-8bit",
+        "rapid-mlx serve qwen3.5-4b-6bit",
+    ]
+    assert pf.BYOM_DOCS_URL not in " ".join(lines)
 
 
 def test_render_memory():

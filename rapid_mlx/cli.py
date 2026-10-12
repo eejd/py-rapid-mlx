@@ -14602,11 +14602,15 @@ def main():
         from rapid_mlx.local_model_path import (
             local_model_failure_message,
             raise_if_missing_local_model,
+            resolved_model_ref,
         )
         from rapid_mlx.model_aliases import RetiredModelAliasError, resolve_model
         from rapid_mlx.user_aliases import UserAliasError
 
         try:
+            supplied_model = args.model
+            if getattr(args, "command", None) == "serve":
+                args.model = resolved_model_ref(args.model)
             raise_if_missing_local_model(args.model)
             resolved = resolve_model(args.model)
         except FileNotFoundError as exc:
@@ -14617,7 +14621,7 @@ def main():
                     exc, alias_or_path=args.model, failure_stage="resolve"
                 )
             message = local_model_failure_message(
-                args.model, exc, include_supplied_path=True
+                supplied_model, exc, include_supplied_path=True
             )
             print(f"\n  Error: {message}", file=sys.stderr)
             raise SystemExit(1) from None

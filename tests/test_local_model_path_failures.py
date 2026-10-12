@@ -36,6 +36,51 @@ def test_nonexistent_local_path_has_honest_class_and_messages(tmp_path):
         str(model_dir), exc, include_supplied_path=True
     )
     assert str(model_dir) in cli_message
+    assert f"Resolved path: {model_dir}" in cli_message
+
+
+@pytest.mark.parametrize(
+    "spelling", ["~/models/target ", "'~/models/target '", '"~/models/target "']
+)
+def test_typed_home_path_quotes_and_trailing_space(monkeypatch, tmp_path, spelling):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "models").mkdir()
+    target = tmp_path / "models" / "target"
+    assert local_paths.resolved_model_ref(spelling) == str(target)
+    with pytest.raises(FileNotFoundError) as raised:
+        local_paths.raise_if_missing_local_model(spelling)
+    assert (
+        serve_error_class(raised.value, model_ref=str(target)) == "local_path_missing"
+    )
+    assert f"Resolved path: {target}" in local_model_failure_message(
+        spelling, raised.value, include_supplied_path=True
+    )
+
+
+def test_relative_path_nearby_directory_and_repo_hint(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "qwen3.5-4b-4bit").mkdir()
+    spelling = "models/qwen3.5-4b-4bi"
+    with pytest.raises(FileNotFoundError) as raised:
+        local_paths.raise_if_missing_local_model(spelling)
+    message = local_model_failure_message(
+        spelling, raised.value, include_supplied_path=True
+    )
+    assert f"Resolved path: {tmp_path / spelling}" in message
+    assert "Nearby model folders: qwen3.5-4b-4bit" in message
+    assert "If you meant a Hugging Face repo, use models/qwen3.5-4b-4bi" in message
+
+
+def test_hub_repo_id_spelled_as_path_gets_repo_hint(tmp_path):
+    spelling = f"{tmp_path}/owner/model"
+    with pytest.raises(FileNotFoundError) as raised:
+        local_paths.raise_if_missing_local_model(spelling)
+    message = local_model_failure_message(
+        spelling, raised.value, include_supplied_path=True
+    )
+    assert "use org/model without a path prefix" in message
+    assert local_paths.resolved_model_ref("owner/model") == "owner/model"
 
 
 def test_nonexistent_local_path_without_attributable_file_failure_is_generic(tmp_path):
