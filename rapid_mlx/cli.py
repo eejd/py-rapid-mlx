@@ -2894,7 +2894,10 @@ def _ensure_model_downloaded(
         # Typed permanent failures stop here; starting a loader cannot repair
         # a missing repository or grant access to a gated one. Network and
         # offline failures retain the best-effort loader retry.
-        from rapid_mlx.telemetry.model_events import emit_model_pull_failed
+        from rapid_mlx.telemetry.model_events import (
+            emit_model_pull_failed,
+            pull_error_class,
+        )
 
         rendered = render_hub_error(e, model_name)
         if rendered is not None and pull_error_class(e) in {"gated", "not_found"}:
