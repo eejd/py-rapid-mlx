@@ -333,6 +333,8 @@ class TensorFoldRequestProvider:
                         json.dumps(kwargs.get("messages"), sort_keys=True).encode()
                     ).hexdigest(),
                     "token_ids": collected,
+                    "prompt_tokens": len(prompt_ids),
+                    "cached_tokens": int(job.cached_tokens),
                     "token_sha256": hashlib.sha256(encoded).hexdigest(),
                 }
                 with (
@@ -363,8 +365,8 @@ class TensorFoldRequestProvider:
         for output in self._outputs(prompt, **kwargs):
             text = output.output_text
             prompt_tokens = output.prompt_tokens
-            tokens = list(output.output_token_ids)
-        return ProviderResult(text, tokens, len(tokens), prompt_tokens)
+            tokens = output.output_token_ids
+        return ProviderResult(text, list(tokens), len(tokens), prompt_tokens)
 
 
 def validate_http_request(

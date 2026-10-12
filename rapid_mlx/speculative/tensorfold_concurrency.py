@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import os
 
-QUALIFIED_PROFILES = frozenset({"nemotron-3.5-lightning-tensorfold"})
+QUALIFIED_PROFILES = frozenset(
+    {"nemotron-3.5-lightning-tensorfold", "qwen3.8-27b-tensorfold"}
+)
 LANES_ENV = "RAPID_MLX_TENSORFOLD_LANES"
 
 
