@@ -14,9 +14,13 @@ still happen once; cache state is not migrated between lanes.
 Activation follows successful startup of the existing qualified shared native
 text engine and is passed through lazy batch-generator initialization. It is
 restricted to a single-request completion lane. Media, informative masks,
-sequence-aligned processor kwargs and short prompts preserve their indivisible
-forward behavior. Removal, exceptions and close release a suspended continuation.
-The public request/response schema and routing policy do not change.
+sequence-aligned processor kwargs preserve their indivisible forward behavior.
+Short prompts retain their existing forward sequence, including cache-boundary
+splits, within one executor turn. Removal, exceptions and close release a
+suspended continuation.
+Active prefill intervals are accumulated across resumes, excluding executor
+waits while preserving the existing reporting convention. The public
+request/response schema and routing policy do not change.
 
 ## Experiment contract
 
@@ -51,10 +55,10 @@ inference tasks were active; these are descriptive shared-host observations.
 
 | Median metric | Baseline (s) | Candidate (s) | Descriptive change |
 | --- | ---: | ---: | ---: |
-| Short TTFT under contention | 24.257 | 2.586 | -89.34% |
-| Short singleton TTFT | 0.769 | 0.427 | -44.46% |
-| Long completion under contention | 23.993 | 17.234 | -28.17% |
-| Long singleton completion | 26.656 | 16.239 | -39.08% |
+| Short TTFT under contention | 13.295 | 2.044 | -84.62% |
+| Short singleton TTFT | 0.349 | 0.330 | -5.37% |
+| Long completion under contention | 13.170 | 13.470 | +2.27% |
+| Long singleton completion | 12.810 | 12.816 | +0.05% |
 
 Eight paired waves across four fresh children produced 28 distinct measured
 streams plus four warmups. Each arm has four overlap waves, four short singleton
@@ -64,17 +68,16 @@ by both repeats; it is not two independent samples).
 Both baseline traces have zero native ticks between short request start and long
 first-token delivery. Both candidate traces have eight such native ticks per
 wave, and all four candidate short streams produce their first content before
-the long stream's first content. The candidate records 108 materialized prefix
+the long stream's first content. The candidate records 102 materialized prefix
 returns per child; baseline records none. The unchanged native scheduler source
 hash and identical 16 native ticks per child confirm this campaign does not
 exercise a native scheduler budget change.
 
-The short-TTFT median falls in both cycle orders: 28.957 to 2.593 seconds in
-cycle 0 and 19.540 to 2.585 seconds in cycle 1. The baseline's large variation and
-the singleton timing shifts show why the timing table is not a quiet-host speed
-claim. The execution-order change provides direct evidence of restored peer
-progress; the long/singleton timing improvements are not attributed to this patch.
-
+The short-TTFT median falls in both cycle orders: 13.334 to 2.079 seconds in
+cycle 0 and 13.171 to 2.000 seconds in cycle 1. Other owners' inference tasks were
+active. Execution order gives direct
+evidence of restored peer progress; long/singleton timing shifts are not
+attributed to this patch, and shared-host timings do not qualify quiet-host gates.
 
 Acceptance remains at least 30% lower median short TTFT under contention and no
 more than 10% long-completion or singleton regression, with correctness/cache/
@@ -85,7 +88,7 @@ nor public configuration requires migration.
 
 ## Verification and reproduction
 
-638 focused tests passed, 6 skipped. The focused set covers generator/sampling,
+641 focused tests passed, 6 skipped. The focused set covers generator/sampling,
 qualified native startup, lazy initialization, media/prefix-cache isolation,
 executor cancellation, cross-thread streams, usage/logprobs, hybrid checkpoints,
 disk checkpoints and request/protocol cancellation. Ruff and diff checks passed.
@@ -106,7 +109,7 @@ methodology hashes, receipt times and outputs are unchanged. No exploratory or
 incomplete campaign is included.
 
 - Baseline: `bec47abba980d48432c8b5917ca682dd0a5758de`.
-- Candidate: `f5de30d4f81f404deacb69acc2e357b5e30909d6`.
+- Candidate: `32fdd92c880a8fc1341e37e604c8a568ef558ebb`.
 - [Evidence archive](fixtures/default-prefill-yield/2026-10-12-default-route.tar.gz).
 - [Archive hash and size](fixtures/default-prefill-yield/2026-10-12-default-route.manifest.json).
 
@@ -116,7 +119,7 @@ fixed `CODE_ROOTS` and extract its frozen harness:
 
 ```sh
 git worktree add --detach /private/tmp/rapid-mlx-default-prefill/base bec47abba980d48432c8b5917ca682dd0a5758de
-git worktree add --detach /private/tmp/rapid-mlx-default-prefill/worktree f5de30d4f81f404deacb69acc2e357b5e30909d6
+git worktree add --detach /private/tmp/rapid-mlx-default-prefill/worktree 32fdd92c880a8fc1341e37e604c8a568ef558ebb
 mkdir -p /private/tmp/rapid-mlx-default-prefill/evidence
 tar -xzf docs/engineering/performance/fixtures/default-prefill-yield/2026-10-12-default-route.tar.gz -C /private/tmp/rapid-mlx-default-prefill/evidence
 PREFILL_EVIDENCE=/private/tmp/rapid-mlx-default-prefill/evidence
