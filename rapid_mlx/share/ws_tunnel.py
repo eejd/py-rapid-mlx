@@ -202,6 +202,7 @@ class TunnelClient:
         share_key: str | None = None,
         override_authorization: str | None = None,
         inject_stream_usage: bool = False,
+        requests_started_event: threading.Event | None = None,
     ) -> None:
         """
         QuickSilver-pool mode knobs (all default to the historical plain
@@ -230,6 +231,8 @@ class TunnelClient:
         self._share_key = share_key
         self._override_authorization = override_authorization
         self._inject_stream_usage = inject_stream_usage
+        # Sticky across pool reconnects when supplied by the share supervisor.
+        self._requests_started = requests_started_event or threading.Event()
         # Set by ``run`` on its event loop; used by ``_sync_send`` to
         # post messages back from per-request threads.
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -679,7 +682,15 @@ class TunnelClient:
             # actually minted, or serve's auth gate 401s it.
             # Case-insensitive replace: the relay may forward any
             # casing of the inbound header name.
-            headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+            # Pool browser Origin belongs to the gateway, which already owns
+            # browser access policy. This hop translates authenticated pool
+            # traffic to a native loopback request. Plain share retains Origin
+            # so its explicitly configured CORS allowlist still applies.
+            headers = {
+                k: v
+                for k, v in headers.items()
+                if k.lower() not in {"authorization", "origin"}
+            }
             headers["Authorization"] = f"Bearer {self._override_authorization}"
 
         if self._inject_stream_usage and method == "POST":
@@ -697,6 +708,10 @@ class TunnelClient:
         # ``http.client`` is synchronous; run it in a worker thread so
         # the asyncio loop stays responsive while the response streams
         # back from the local serve.
+        # The request passed validation and is about to reach serve: only now
+        # does pool traffic exist. A malformed frame rejected above must not
+        # end the status reporter's warm-up baseline.
+        self._requests_started.set()
         try:
             await asyncio.to_thread(
                 self._perform_local_fetch, req_id, method, path, headers, body
@@ -746,7 +761,10 @@ class TunnelClient:
                 return
             self._active[req_id] = conn
         try:
-            conn.request(method, path, body=body, headers=headers)
+            # The relay authority is public; the backend authority is loopback.
+            # Let HTTPConnection generate Host for the actual local destination.
+            local_headers = {k: v for k, v in headers.items() if k.lower() != "host"}
+            conn.request(method, path, body=body, headers=local_headers)
             resp = conn.getresponse()
             self._sync_send(
                 {
