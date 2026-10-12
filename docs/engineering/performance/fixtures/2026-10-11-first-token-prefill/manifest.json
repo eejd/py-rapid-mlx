@@ -1,0 +1,17 @@
+{
+  "source_commit": "1b8f137cacd25d545f70fcb452e0aeccdff44df7",
+  "original_results_sha256": "65f0785bb3626db32920963c03a26ef308d12d59893b70cab15cbca2a6aabafd",
+  "path_normalization": "Commands normalize Python, worktree, campaign and HF cache paths; original command hashes retained. Traces unchanged.",
+  "files": {
+    "cycle0-adaptive2048.trace.jsonl": "b2dd93ac16b40e964fa1d97351bc91f11e5f0f5529fde98eef2ec4a7dd8c0377",
+    "cycle0-fixed2048.trace.jsonl": "9effba15a754a5fb8dc7a11f66f46673f2655ca390d6b24e52e97719b4a66c03",
+    "cycle0-fixed512.trace.jsonl": "a0d18118aa751ae2ea02a0b79c67aa5e276fcc510f902b328e52d07285274a0c",
+    "cycle1-adaptive2048.trace.jsonl": "c3a6461e3e7df25b2de7f1384b1d31e8949e9dd05938cf80072ac82ecb15fc35",
+    "cycle1-fixed2048.trace.jsonl": "6519b9778cbcba6af00797246f35d3beb7adededb27b2fc5406cba799cdcb5fb",
+    "cycle1-fixed512.trace.jsonl": "97caa7955257e7332bd21f2e4b19ef882ddfe038fce7c131676e81a98ecb79d7",
+    "dispatch-windows.json": "5fa6dc261456cc9bf25955e41b4c862f4189e56150e2dc1d7a0ac8cedc89156f",
+    "environment.json": "2e2011a7b15cd20bc906133ecf1d29a215b5722cb14adc0865dab44aaefd2c25",
+    "results.json": "b58b8848040cce6aae9a280bdeb8348219f17a96903d3baa92a382320586aeba",
+    "validate.py": "0f5930d1cb22e922fe7af411a3a89021db0dd8bcc1bd2005fe60de6a9d747505"
+  }
+}

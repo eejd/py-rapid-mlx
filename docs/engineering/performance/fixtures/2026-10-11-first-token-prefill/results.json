@@ -1,0 +1,4367 @@
+{
+  "base_commit": "1b8f137cacd25d545f70fcb452e0aeccdff44df7",
+  "harness_sha256": "e0eb3cef610f903213d01258b1a1df97f186b139ba5baca59a8fd8c5c42ab803",
+  "python": "3.12.14 (main, Aug 12 2026, 13:57:54) [Clang 21.0.0 (clang-2100.1.1.101)]",
+  "packages": {
+    "mlx": "0.32.3",
+    "mlx-lm": "0.31.3",
+    "mlx-vlm": "0.7.1",
+    "transformers": "5.15.1",
+    "numpy": "2.5.4",
+    "httpx": "0.28.1"
+  },
+  "model_revision": "32f3e8ecf65426fc3306969496342d504bfa13f3",
+  "repeat": 2,
+  "cycles": 2,
+  "target_ms": 500,
+  "workloads": [
+    "prose",
+    "retrieval"
+  ],
+  "arms": [
+    {
+      "label": "cycle0-fixed2048",
+      "command": [
+        "<python>",
+        "<worktree>/scripts/benchmark_prefill_first_token.py",
+        "--child",
+        "--model",
+        "<HF_HOME>/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3",
+        "--output",
+        "<campaign>/results.json",
+        "--port",
+        "18348",
+        "--arm",
+        "fixed2048",
+        "--trace",
+        "<campaign>/cycle0-fixed2048.trace.jsonl",
+        "--target-ms",
+        "500"
+      ],
+      "controlled_env": {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_CTYPE": "C.UTF-8",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "DO_NOT_TRACK": "1"
+      },
+      "final_status": {
+        "status": "idle",
+        "model": "prefill-probe",
+        "uptime_s": 150.4,
+        "steps_executed": 657,
+        "num_running": 0,
+        "num_waiting": 0,
+        "total_requests_processed": 16,
+        "total_prompt_tokens": 100986,
+        "total_completion_tokens": 712,
+        "generation_tps": 22.22,
+        "prompt_tps": 883.36,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 81
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 5.48,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 16,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 2489.12,
+          "max_memory_mb": 26271.92,
+          "current_memory_bytes": 2610036736,
+          "max_memory_bytes": 27548100198,
+          "memory_utilization": 0.0947,
+          "entry_count": 4,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 4,
+          "radix": {
+            "hits": 0,
+            "misses": 16,
+            "inserts": 32,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 402768,
+            "node_count": 16721,
+            "entry_count": 4,
+            "max_depth": 16427,
+            "lookup_p50_seconds": 6.25e-07,
+            "lookup_p99_seconds": 1.375e-06
+          }
+        },
+        "requests": []
+      },
+      "exit_code": -15,
+      "original_command_sha256": "e9913593510b00f039ee35d2e3b96c62526489515cb8e2240dab8a4456fb7d09"
+    },
+    {
+      "label": "cycle0-fixed512",
+      "command": [
+        "<python>",
+        "<worktree>/scripts/benchmark_prefill_first_token.py",
+        "--child",
+        "--model",
+        "<HF_HOME>/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3",
+        "--output",
+        "<campaign>/results.json",
+        "--port",
+        "18348",
+        "--arm",
+        "fixed512",
+        "--trace",
+        "<campaign>/cycle0-fixed512.trace.jsonl",
+        "--target-ms",
+        "500"
+      ],
+      "controlled_env": {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_CTYPE": "C.UTF-8",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "DO_NOT_TRACK": "1"
+      },
+      "final_status": {
+        "status": "idle",
+        "model": "prefill-probe",
+        "uptime_s": 164.2,
+        "steps_executed": 829,
+        "num_running": 0,
+        "num_waiting": 0,
+        "total_requests_processed": 16,
+        "total_prompt_tokens": 100986,
+        "total_completion_tokens": 712,
+        "generation_tps": 9.34,
+        "prompt_tps": 602.39,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 160
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 5.13,
+          "peak_memory_gb": 7.56,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 16,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 2489.12,
+          "max_memory_mb": 29567.68,
+          "current_memory_bytes": 2610036736,
+          "max_memory_bytes": 31003960934,
+          "memory_utilization": 0.0842,
+          "entry_count": 4,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 4,
+          "radix": {
+            "hits": 0,
+            "misses": 16,
+            "inserts": 32,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 402768,
+            "node_count": 16721,
+            "entry_count": 4,
+            "max_depth": 16427,
+            "lookup_p50_seconds": 6.25e-07,
+            "lookup_p99_seconds": 9.58e-07
+          }
+        },
+        "requests": []
+      },
+      "exit_code": -15,
+      "original_command_sha256": "7391b5230c81d16bcf77b0f856be8e81d3cd700c271e526a343a3a0bc9dc7f43"
+    },
+    {
+      "label": "cycle0-adaptive2048",
+      "command": [
+        "<python>",
+        "<worktree>/scripts/benchmark_prefill_first_token.py",
+        "--child",
+        "--model",
+        "<HF_HOME>/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3",
+        "--output",
+        "<campaign>/results.json",
+        "--port",
+        "18348",
+        "--arm",
+        "adaptive2048",
+        "--trace",
+        "<campaign>/cycle0-adaptive2048.trace.jsonl",
+        "--target-ms",
+        "500"
+      ],
+      "controlled_env": {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_CTYPE": "C.UTF-8",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "DO_NOT_TRACK": "1"
+      },
+      "final_status": {
+        "status": "idle",
+        "model": "prefill-probe",
+        "uptime_s": 181.7,
+        "steps_executed": 735,
+        "num_running": 0,
+        "num_waiting": 0,
+        "total_requests_processed": 16,
+        "total_prompt_tokens": 100986,
+        "total_completion_tokens": 712,
+        "generation_tps": 15.85,
+        "prompt_tps": 685.56,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 147
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 5.44,
+          "peak_memory_gb": 9.25,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 16,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 2489.12,
+          "max_memory_mb": 29686.17,
+          "current_memory_bytes": 2610036736,
+          "max_memory_bytes": 31128204083,
+          "memory_utilization": 0.0838,
+          "entry_count": 4,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 4,
+          "radix": {
+            "hits": 0,
+            "misses": 16,
+            "inserts": 32,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 402768,
+            "node_count": 16721,
+            "entry_count": 4,
+            "max_depth": 16427,
+            "lookup_p50_seconds": 7.09e-07,
+            "lookup_p99_seconds": 1e-06
+          }
+        },
+        "requests": []
+      },
+      "exit_code": -15,
+      "original_command_sha256": "77ce8dc7eff0a6ebf20cbf26b7734f4ed05fe1226524f191e13b9460a35de329"
+    },
+    {
+      "label": "cycle1-adaptive2048",
+      "command": [
+        "<python>",
+        "<worktree>/scripts/benchmark_prefill_first_token.py",
+        "--child",
+        "--model",
+        "<HF_HOME>/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3",
+        "--output",
+        "<campaign>/results.json",
+        "--port",
+        "18348",
+        "--arm",
+        "adaptive2048",
+        "--trace",
+        "<campaign>/cycle1-adaptive2048.trace.jsonl",
+        "--target-ms",
+        "500"
+      ],
+      "controlled_env": {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_CTYPE": "C.UTF-8",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "DO_NOT_TRACK": "1"
+      },
+      "final_status": {
+        "status": "idle",
+        "model": "prefill-probe",
+        "uptime_s": 190.1,
+        "steps_executed": 736,
+        "num_running": 0,
+        "num_waiting": 0,
+        "total_requests_processed": 16,
+        "total_prompt_tokens": 100986,
+        "total_completion_tokens": 712,
+        "generation_tps": 12.41,
+        "prompt_tps": 711.78,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 148
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 5.44,
+          "peak_memory_gb": 9.26,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 16,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 2489.12,
+          "max_memory_mb": 23083.12,
+          "current_memory_bytes": 2610036736,
+          "max_memory_bytes": 24204410880,
+          "memory_utilization": 0.1078,
+          "entry_count": 4,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 4,
+          "radix": {
+            "hits": 0,
+            "misses": 16,
+            "inserts": 32,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 402768,
+            "node_count": 16721,
+            "entry_count": 4,
+            "max_depth": 16427,
+            "lookup_p50_seconds": 5.83e-07,
+            "lookup_p99_seconds": 1.167e-06
+          }
+        },
+        "requests": []
+      },
+      "exit_code": -15,
+      "original_command_sha256": "d9985eb9ea154193c261fe5d193c6f858fd81e1d3447c5b95ffd0f836b228172"
+    },
+    {
+      "label": "cycle1-fixed512",
+      "command": [
+        "<python>",
+        "<worktree>/scripts/benchmark_prefill_first_token.py",
+        "--child",
+        "--model",
+        "<HF_HOME>/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3",
+        "--output",
+        "<campaign>/results.json",
+        "--port",
+        "18348",
+        "--arm",
+        "fixed512",
+        "--trace",
+        "<campaign>/cycle1-fixed512.trace.jsonl",
+        "--target-ms",
+        "500"
+      ],
+      "controlled_env": {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_CTYPE": "C.UTF-8",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "DO_NOT_TRACK": "1"
+      },
+      "final_status": {
+        "status": "idle",
+        "model": "prefill-probe",
+        "uptime_s": 220.5,
+        "steps_executed": 855,
+        "num_running": 0,
+        "num_waiting": 0,
+        "total_requests_processed": 16,
+        "total_prompt_tokens": 100986,
+        "total_completion_tokens": 712,
+        "generation_tps": 14.33,
+        "prompt_tps": 528.34,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 180
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 5.12,
+          "peak_memory_gb": 7.85,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 16,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 2489.12,
+          "max_memory_mb": 19791.57,
+          "current_memory_bytes": 2610036736,
+          "max_memory_bytes": 20752960716,
+          "memory_utilization": 0.1258,
+          "entry_count": 4,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 4,
+          "radix": {
+            "hits": 0,
+            "misses": 16,
+            "inserts": 32,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 402768,
+            "node_count": 16721,
+            "entry_count": 4,
+            "max_depth": 16427,
+            "lookup_p50_seconds": 7.09e-07,
+            "lookup_p99_seconds": 1.25e-06
+          }
+        },
+        "requests": []
+      },
+      "exit_code": -15,
+      "original_command_sha256": "aa93c6b779d00624532d863b38417b7c1a405e4cbba60937d350672a5e16beab"
+    },
+    {
+      "label": "cycle1-fixed2048",
+      "command": [
+        "<python>",
+        "<worktree>/scripts/benchmark_prefill_first_token.py",
+        "--child",
+        "--model",
+        "<HF_HOME>/hub/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ecf65426fc3306969496342d504bfa13f3",
+        "--output",
+        "<campaign>/results.json",
+        "--port",
+        "18348",
+        "--arm",
+        "fixed2048",
+        "--trace",
+        "<campaign>/cycle1-fixed2048.trace.jsonl",
+        "--target-ms",
+        "500"
+      ],
+      "controlled_env": {
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "LC_CTYPE": "C.UTF-8",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "DO_NOT_TRACK": "1"
+      },
+      "final_status": {
+        "status": "idle",
+        "model": "prefill-probe",
+        "uptime_s": 222.5,
+        "steps_executed": 703,
+        "num_running": 0,
+        "num_waiting": 0,
+        "total_requests_processed": 16,
+        "total_prompt_tokens": 100986,
+        "total_completion_tokens": 712,
+        "generation_tps": 14.33,
+        "prompt_tps": 711.72,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 127
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 5.47,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 16,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 2489.12,
+          "max_memory_mb": 19432.91,
+          "current_memory_bytes": 2610036736,
+          "max_memory_bytes": 20376882380,
+          "memory_utilization": 0.1281,
+          "entry_count": 4,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 4,
+          "radix": {
+            "hits": 0,
+            "misses": 16,
+            "inserts": 32,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 402768,
+            "node_count": 16721,
+            "entry_count": 4,
+            "max_depth": 16427,
+            "lookup_p50_seconds": 7.92e-07,
+            "lookup_p99_seconds": 1.084e-06
+          }
+        },
+        "requests": []
+      },
+      "exit_code": -15,
+      "original_command_sha256": "b665c898d196c91b0cb40a88edd11fddc29758cc1c1b4d7d1e1ebb703299ce4f"
+    }
+  ],
+  "rows": [
+    {
+      "arm": "fixed2048",
+      "cycle": 0,
+      "workload": "prose",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 29727074917000,
+        "first_ns": 29743190042875,
+        "ended_ns": 29746927950458,
+        "ttft_ms": 16115.125875,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 19853.033458
+      },
+      "short_solo": {
+        "started_ns": 29747053096375,
+        "first_ns": 29747566865166,
+        "ended_ns": 29750611506500,
+        "ttft_ms": 513.768791,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 3558.410125
+      },
+      "long": {
+        "started_ns": 29750732818916,
+        "first_ns": 29778404929916,
+        "ended_ns": 29783242009375,
+        "ttft_ms": 27672.111,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 32509.190459
+      },
+      "short": {
+        "started_ns": 29750771259166,
+        "first_ns": 29763729210041,
+        "ended_ns": 29781871896875,
+        "ttft_ms": 12957.950875,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 31100.637709
+      },
+      "wave_ms": 32513.77675,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 26.5,
+        "steps_executed": 215,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 4,
+        "total_prompt_tokens": 33280,
+        "total_completion_tokens": 197,
+        "generation_tps": 31.53,
+        "prompt_tps": 570.88,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 0
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 5.82,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 5,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 26271.92,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 27548100198,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 5,
+            "inserts": 8,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 67196,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 8.33e-07,
+            "lookup_p99_seconds": 1.375e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-09a51e51ef9443d88e32262d831c40ba",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed2048",
+      "cycle": 0,
+      "workload": "prose",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 29727074917000,
+        "first_ns": 29743190042875,
+        "ended_ns": 29746927950458,
+        "ttft_ms": 16115.125875,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 19853.033458
+      },
+      "short_solo": {
+        "started_ns": 29783374853791,
+        "first_ns": 29783811841000,
+        "ended_ns": 29786542268750,
+        "ttft_ms": 436.987209,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 3167.414959
+      },
+      "long": {
+        "started_ns": 29786660446000,
+        "first_ns": 29813614504375,
+        "ended_ns": 29820233278000,
+        "ttft_ms": 26954.058375,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 33572.832
+      },
+      "short": {
+        "started_ns": 29786699216291,
+        "first_ns": 29799973419583,
+        "ended_ns": 29818168495041,
+        "ttft_ms": 13274.203292,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 31469.27875
+      },
+      "wave_ms": 33576.7345,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 62.4,
+        "steps_executed": 448,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 7,
+        "total_prompt_tokens": 50260,
+        "total_completion_tokens": 485,
+        "generation_tps": 35.17,
+        "prompt_tps": 672.95,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 34
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 8,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 26271.92,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 27548100198,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 8,
+            "inserts": 14,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 134800,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 6.67e-07,
+            "lookup_p99_seconds": 1.375e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-d0fe25176e9540afbbaf348c9a13461b",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed2048",
+      "cycle": 0,
+      "workload": "retrieval",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 29820823411958,
+        "first_ns": 29835060148083,
+        "ended_ns": 29835270730583,
+        "ttft_ms": 14236.736125,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 14447.318625
+      },
+      "short_solo": {
+        "started_ns": 29835397626083,
+        "first_ns": 29835853403416,
+        "ended_ns": 29835974067625,
+        "ttft_ms": 455.777333,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 576.441542
+      },
+      "long": {
+        "started_ns": 29836089528583,
+        "first_ns": 29854840000833,
+        "ended_ns": 29854957405125,
+        "ttft_ms": 18750.47225,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 18867.876542
+      },
+      "short": {
+        "started_ns": 29836140825458,
+        "first_ns": 29845610377250,
+        "ended_ns": 29847669987541,
+        "ttft_ms": 9469.551792,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 11529.162083
+      },
+      "wave_ms": 18871.71575,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 111.9,
+        "steps_executed": 609,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 11,
+        "total_prompt_tokens": 83682,
+        "total_completion_tokens": 687,
+        "generation_tps": 41.33,
+        "prompt_tps": 665.54,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 71
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 3.1,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 12,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 26271.92,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 27548100198,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 12,
+            "inserts": 22,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 268124,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 6.67e-07,
+            "lookup_p99_seconds": 1.375e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-52f5de1c6600426e84f0e960c9527509",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.03,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed2048",
+      "cycle": 0,
+      "workload": "retrieval",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 29820823411958,
+        "first_ns": 29835060148083,
+        "ended_ns": 29835270730583,
+        "ttft_ms": 14236.736125,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 14447.318625
+      },
+      "short_solo": {
+        "started_ns": 29855088591750,
+        "first_ns": 29855512082125,
+        "ended_ns": 29855600238375,
+        "ttft_ms": 423.490375,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 511.646625
+      },
+      "long": {
+        "started_ns": 29855717857458,
+        "first_ns": 29874339445250,
+        "ended_ns": 29874568497541,
+        "ttft_ms": 18621.587792,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 18850.640083
+      },
+      "short": {
+        "started_ns": 29855753320208,
+        "first_ns": 29865629777166,
+        "ended_ns": 29867469732291,
+        "ttft_ms": 9876.456958,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 11716.412083
+      },
+      "wave_ms": 18854.142875,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 131.5,
+        "steps_executed": 637,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 14,
+        "total_prompt_tokens": 100692,
+        "total_completion_tokens": 702,
+        "generation_tps": 57.17,
+        "prompt_tps": 717.33,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 76
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 15,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 26271.92,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 27548100198,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 15,
+            "inserts": 28,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 336004,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 6.25e-07,
+            "lookup_p99_seconds": 1.375e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-ee901e31645d41a1a5c2899e268fb1f0",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 0,
+      "workload": "prose",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 29887389745916,
+        "first_ns": 29903636416458,
+        "ended_ns": 29907673260833,
+        "ttft_ms": 16246.670542,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe parameters $a_n$ and $m_n$ are systematically incremented, suggesting a",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "1f89af0a752f676b1069b276ae4a815edd2c0706afc088bb84d108d74a4d65bb",
+        "done": true,
+        "total_ms": 20283.514917
+      },
+      "short_solo": {
+        "started_ns": 29907797847833,
+        "first_ns": 29908238653833,
+        "ended_ns": 29911678419750,
+        "ttft_ms": 440.806,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 3880.571917
+      },
+      "long": {
+        "started_ns": 29911799593750,
+        "first_ns": 29938234425291,
+        "ended_ns": 29945733721958,
+        "ttft_ms": 26434.831541,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe parameters are systematically incremented: the multiplier ($a$) increases by 13",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "985e17600f9cb84babbf7d2547594a1f690f71e4298b20e7118a39dbeeafbc02",
+        "done": true,
+        "total_ms": 33934.128208
+      },
+      "short": {
+        "started_ns": 29911839117166,
+        "first_ns": 29914941043333,
+        "ended_ns": 29941359666333,
+        "ttft_ms": 3101.926167,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 29520.549167
+      },
+      "wave_ms": 33937.812417,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 27.2,
+        "steps_executed": 239,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 4,
+        "total_prompt_tokens": 33280,
+        "total_completion_tokens": 197,
+        "generation_tps": 27.91,
+        "prompt_tps": 667.82,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 0
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 4.31,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 5,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29567.68,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31003960934,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 5,
+            "inserts": 8,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 67196,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 7.5e-07,
+            "lookup_p99_seconds": 8.75e-07
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-e428dd39ad6f476ca0a31cb7ca7f47b6",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 0,
+      "workload": "prose",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 29887389745916,
+        "first_ns": 29903636416458,
+        "ended_ns": 29907673260833,
+        "ttft_ms": 16246.670542,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe parameters $a_n$ and $m_n$ are systematically incremented, suggesting a",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "1f89af0a752f676b1069b276ae4a815edd2c0706afc088bb84d108d74a4d65bb",
+        "done": true,
+        "total_ms": 20283.514917
+      },
+      "short_solo": {
+        "started_ns": 29945858144666,
+        "first_ns": 29946318891291,
+        "ended_ns": 29949911621416,
+        "ttft_ms": 460.746625,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 4053.47675
+      },
+      "long": {
+        "started_ns": 29950029884583,
+        "first_ns": 29981324014041,
+        "ended_ns": 29987265511083,
+        "ttft_ms": 31294.129458,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe pattern reveals a systematic progression: the multiplier ($a$) and modulus ($m",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "fc502da7ac54d0b57ae4e3e66cae93710a9495510b7de1d8dcd8c27b0ab5869b",
+        "done": true,
+        "total_ms": 37235.6265
+      },
+      "short": {
+        "started_ns": 29950067672666,
+        "first_ns": 29953182605041,
+        "ended_ns": 29982561778708,
+        "ttft_ms": 3114.932375,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 32494.106042
+      },
+      "wave_ms": 37239.288542,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 65.5,
+        "steps_executed": 504,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 7,
+        "total_prompt_tokens": 50260,
+        "total_completion_tokens": 485,
+        "generation_tps": 26.72,
+        "prompt_tps": 640.69,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 66
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 7.55,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 8,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29567.68,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31003960934,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 8,
+            "inserts": 14,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 134800,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 7.5e-07,
+            "lookup_p99_seconds": 8.75e-07
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-2fe736b5f7c44c91ba623dd0d4662ebc",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 0,
+      "workload": "retrieval",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 29987887028375,
+        "first_ns": 30002665304291,
+        "ended_ns": 30002720900000,
+        "ttft_ms": 14778.275916,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 14833.871625
+      },
+      "short_solo": {
+        "started_ns": 30002836422666,
+        "first_ns": 30003130784208,
+        "ended_ns": 30003173750916,
+        "ttft_ms": 294.361542,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 337.32825
+      },
+      "long": {
+        "started_ns": 30003276997125,
+        "first_ns": 30019813603958,
+        "ended_ns": 30020084426958,
+        "ttft_ms": 16536.606833,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 16807.429833
+      },
+      "short": {
+        "started_ns": 30003315402416,
+        "first_ns": 30005907160666,
+        "ended_ns": 30006990918708,
+        "ttft_ms": 2591.75825,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 3675.516292
+      },
+      "wave_ms": 16810.948084,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 118.7,
+        "steps_executed": 736,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 11,
+        "total_prompt_tokens": 83682,
+        "total_completion_tokens": 687,
+        "generation_tps": 119.63,
+        "prompt_tps": 1055.02,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 150
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 7.56,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 12,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29567.68,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31003960934,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 12,
+            "inserts": 22,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 268124,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 7.5e-07,
+            "lookup_p99_seconds": 9.58e-07
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-85bbabf429774bcc95c83e337761f273",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 0,
+      "workload": "retrieval",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 29987887028375,
+        "first_ns": 30002665304291,
+        "ended_ns": 30002720900000,
+        "ttft_ms": 14778.275916,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 14833.871625
+      },
+      "short_solo": {
+        "started_ns": 30020209060833,
+        "first_ns": 30020656922750,
+        "ended_ns": 30020720146916,
+        "ttft_ms": 447.861917,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 511.086083
+      },
+      "long": {
+        "started_ns": 30020838609458,
+        "first_ns": 30048134130208,
+        "ended_ns": 30048673961875,
+        "ttft_ms": 27295.52075,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 27835.352417
+      },
+      "short": {
+        "started_ns": 30020887406833,
+        "first_ns": 30024721043458,
+        "ended_ns": 30026116493750,
+        "ttft_ms": 3833.636625,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 5229.086917
+      },
+      "wave_ms": 27839.030208,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 136.3,
+        "steps_executed": 786,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 14,
+        "total_prompt_tokens": 100692,
+        "total_completion_tokens": 702,
+        "generation_tps": 79.82,
+        "prompt_tps": 680.52,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 155
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.8,
+          "peak_memory_gb": 7.56,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 15,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29567.68,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31003960934,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 15,
+            "inserts": 28,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 336004,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 6.25e-07,
+            "lookup_p99_seconds": 9.58e-07
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-25d8991923b24df08859c54a52297193",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 0,
+      "workload": "prose",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30061607491625,
+        "first_ns": 30074158083083,
+        "ended_ns": 30077707260500,
+        "ttft_ms": 12550.591458,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 16099.768875
+      },
+      "short_solo": {
+        "started_ns": 30077828908250,
+        "first_ns": 30078277407541,
+        "ended_ns": 30081038032375,
+        "ttft_ms": 448.499291,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 3209.124125
+      },
+      "long": {
+        "started_ns": 30081168819791,
+        "first_ns": 30122208857500,
+        "ended_ns": 30130219454166,
+        "ttft_ms": 41040.037709,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 49050.634375
+      },
+      "short": {
+        "started_ns": 30081212417250,
+        "first_ns": 30085410472583,
+        "ended_ns": 30122524092541,
+        "ttft_ms": 4198.055333,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 41311.675291
+      },
+      "wave_ms": 49067.867292,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 22.3,
+        "steps_executed": 215,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 4,
+        "total_prompt_tokens": 33280,
+        "total_completion_tokens": 197,
+        "generation_tps": 34.78,
+        "prompt_tps": 654.8,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 0
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.66,
+          "peak_memory_gb": 5.82,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 5,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29686.17,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31128204083,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 5,
+            "inserts": 8,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 67196,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 8.75e-07,
+            "lookup_p99_seconds": 9.58e-07
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-d8791a74b07b4d299b358ebf55325672",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 0,
+      "workload": "prose",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30061607491625,
+        "first_ns": 30074158083083,
+        "ended_ns": 30077707260500,
+        "ttft_ms": 12550.591458,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 16099.768875
+      },
+      "short_solo": {
+        "started_ns": 30130353235916,
+        "first_ns": 30130933704916,
+        "ended_ns": 30137212428333,
+        "ttft_ms": 580.469,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 6859.192417
+      },
+      "long": {
+        "started_ns": 30137330266083,
+        "first_ns": 30159936364666,
+        "ended_ns": 30167927599250,
+        "ttft_ms": 22606.098583,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 30597.333167
+      },
+      "short": {
+        "started_ns": 30137374928958,
+        "first_ns": 30140998988625,
+        "ended_ns": 30164170190750,
+        "ttft_ms": 3624.059667,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 26795.261792
+      },
+      "wave_ms": 30601.13525,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 78.4,
+        "steps_executed": 507,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 7,
+        "total_prompt_tokens": 50260,
+        "total_completion_tokens": 485,
+        "generation_tps": 15.29,
+        "prompt_tps": 503.69,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 92
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.79,
+          "peak_memory_gb": 7.87,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 8,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29686.17,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31128204083,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 8,
+            "inserts": 14,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 134800,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 8.75e-07,
+            "lookup_p99_seconds": 1e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-c063091efeee4b749b7cc4c4ae24e66b",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 0,
+      "workload": "retrieval",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30168527980208,
+        "first_ns": 30189327663500,
+        "ended_ns": 30189555865000,
+        "ttft_ms": 20799.683292,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 21027.884792
+      },
+      "short_solo": {
+        "started_ns": 30189674558083,
+        "first_ns": 30190191936583,
+        "ended_ns": 30190364768875,
+        "ttft_ms": 517.3785,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 690.210792
+      },
+      "long": {
+        "started_ns": 30190479875000,
+        "first_ns": 30214815272916,
+        "ended_ns": 30215198624833,
+        "ttft_ms": 24335.397916,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 24718.749833
+      },
+      "short": {
+        "started_ns": 30190528518583,
+        "first_ns": 30194565532750,
+        "ended_ns": 30196132385208,
+        "ttft_ms": 4037.014167,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 5603.866625
+      },
+      "wave_ms": 24722.383042,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 131.6,
+        "steps_executed": 678,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 11,
+        "total_prompt_tokens": 83682,
+        "total_completion_tokens": 687,
+        "generation_tps": 28.94,
+        "prompt_tps": 583.48,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 137
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 3.08,
+          "peak_memory_gb": 7.87,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 12,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29686.17,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31128204083,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 12,
+            "inserts": 22,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 268124,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 7.5e-07,
+            "lookup_p99_seconds": 1e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-3d1930198ce1461d986d23657a0a578e",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 0,
+      "workload": "retrieval",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30168527980208,
+        "first_ns": 30189327663500,
+        "ended_ns": 30189555865000,
+        "ttft_ms": 20799.683292,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 21027.884792
+      },
+      "short_solo": {
+        "started_ns": 30215329621958,
+        "first_ns": 30215892850583,
+        "ended_ns": 30216068061250,
+        "ttft_ms": 563.228625,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 738.439292
+      },
+      "long": {
+        "started_ns": 30216189967250,
+        "first_ns": 30240175674958,
+        "ended_ns": 30240495905583,
+        "ttft_ms": 23985.707708,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 24305.938333
+      },
+      "short": {
+        "started_ns": 30216234627750,
+        "first_ns": 30220220309416,
+        "ended_ns": 30221775062625,
+        "ttft_ms": 3985.681666,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 5540.434875
+      },
+      "wave_ms": 24309.600792,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 157.3,
+        "steps_executed": 710,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 14,
+        "total_prompt_tokens": 100692,
+        "total_completion_tokens": 702,
+        "generation_tps": 28.6,
+        "prompt_tps": 535.33,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 142
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.75,
+          "peak_memory_gb": 9.24,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 15,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 29686.17,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 31128204083,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 15,
+            "inserts": 28,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 336004,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 7.09e-07,
+            "lookup_p99_seconds": 1e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-b648fe891b534e24908d7173f2b43a9b",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 1,
+      "workload": "prose",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30253504802875,
+        "first_ns": 30271805967833,
+        "ended_ns": 30277026070791,
+        "ttft_ms": 18301.164958,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 23521.267916
+      },
+      "short_solo": {
+        "started_ns": 30277151611791,
+        "first_ns": 30277672652041,
+        "ended_ns": 30281251174541,
+        "ttft_ms": 521.04025,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 4099.56275
+      },
+      "long": {
+        "started_ns": 30281370508041,
+        "first_ns": 30314464658458,
+        "ended_ns": 30322179273416,
+        "ttft_ms": 33094.150417,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 40808.765375
+      },
+      "short": {
+        "started_ns": 30281420785541,
+        "first_ns": 30285796557416,
+        "ended_ns": 30317250330750,
+        "ttft_ms": 4375.771875,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 35829.545209
+      },
+      "wave_ms": 40812.379958,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 30.8,
+        "steps_executed": 215,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 4,
+        "total_prompt_tokens": 33280,
+        "total_completion_tokens": 197,
+        "generation_tps": 26.83,
+        "prompt_tps": 558.84,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 0
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 3.1,
+          "peak_memory_gb": 5.82,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 5,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 23083.12,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 24204410880,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 5,
+            "inserts": 8,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 67196,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 8.75e-07,
+            "lookup_p99_seconds": 1.167e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-78bb3a0659194adc910bb89ef3d48954",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.03,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 1,
+      "workload": "prose",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30253504802875,
+        "first_ns": 30271805967833,
+        "ended_ns": 30277026070791,
+        "ttft_ms": 18301.164958,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 23521.267916
+      },
+      "short_solo": {
+        "started_ns": 30322316641333,
+        "first_ns": 30322811754166,
+        "ended_ns": 30326910960583,
+        "ttft_ms": 495.112833,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 4594.31925
+      },
+      "long": {
+        "started_ns": 30327034102916,
+        "first_ns": 30360996570833,
+        "ended_ns": 30369265124250,
+        "ttft_ms": 33962.467917,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 42231.021334
+      },
+      "short": {
+        "started_ns": 30327078336750,
+        "first_ns": 30330183750583,
+        "ended_ns": 30362982670041,
+        "ttft_ms": 3105.413833,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 35904.333291
+      },
+      "wave_ms": 42234.699458,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 76.4,
+        "steps_executed": 482,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 7,
+        "total_prompt_tokens": 50260,
+        "total_completion_tokens": 485,
+        "generation_tps": 23.42,
+        "prompt_tps": 593.25,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 67
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.75,
+          "peak_memory_gb": 7.84,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 8,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 23083.12,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 24204410880,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 8,
+            "inserts": 14,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 134800,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 5.84e-07,
+            "lookup_p99_seconds": 1.167e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-24180f9651b8472b86e47a773bcaaa79",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 1,
+      "workload": "retrieval",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30369853612083,
+        "first_ns": 30391145448583,
+        "ended_ns": 30391405814375,
+        "ttft_ms": 21291.8365,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 21552.202292
+      },
+      "short_solo": {
+        "started_ns": 30391531505708,
+        "first_ns": 30392081299708,
+        "ended_ns": 30392356736958,
+        "ttft_ms": 549.794,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 825.23125
+      },
+      "long": {
+        "started_ns": 30392477856291,
+        "first_ns": 30415650687625,
+        "ended_ns": 30416075490583,
+        "ttft_ms": 23172.831334,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 23597.634292
+      },
+      "short": {
+        "started_ns": 30392525111833,
+        "first_ns": 30396423056833,
+        "ended_ns": 30397947702208,
+        "ttft_ms": 3897.945,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 5422.590375
+      },
+      "wave_ms": 23601.594958,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 141.9,
+        "steps_executed": 679,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 11,
+        "total_prompt_tokens": 83682,
+        "total_completion_tokens": 687,
+        "generation_tps": 18.18,
+        "prompt_tps": 548.46,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 138
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.92,
+          "peak_memory_gb": 8.14,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 12,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 23083.12,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 24204410880,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 12,
+            "inserts": 22,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 268124,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 5.84e-07,
+            "lookup_p99_seconds": 1.167e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-d21c17139ef248beb9ead1718ada64a4",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "adaptive2048",
+      "cycle": 1,
+      "workload": "retrieval",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30369853612083,
+        "first_ns": 30391145448583,
+        "ended_ns": 30391405814375,
+        "ttft_ms": 21291.8365,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 21552.202292
+      },
+      "short_solo": {
+        "started_ns": 30416207399791,
+        "first_ns": 30416760735291,
+        "ended_ns": 30416955543916,
+        "ttft_ms": 553.3355,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 748.144125
+      },
+      "long": {
+        "started_ns": 30417079437583,
+        "first_ns": 30440184355750,
+        "ended_ns": 30440592134291,
+        "ttft_ms": 23104.918167,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 23512.696708
+      },
+      "short": {
+        "started_ns": 30417127650041,
+        "first_ns": 30421525305500,
+        "ended_ns": 30422968280500,
+        "ttft_ms": 4397.655459,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 5840.630459
+      },
+      "wave_ms": 23516.388459,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 166.5,
+        "steps_executed": 711,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 14,
+        "total_prompt_tokens": 100692,
+        "total_completion_tokens": 702,
+        "generation_tps": 25.73,
+        "prompt_tps": 546.88,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 143
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.86,
+          "peak_memory_gb": 9.23,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 15,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 23083.12,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 24204410880,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 15,
+            "inserts": 28,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 336004,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 5.83e-07,
+            "lookup_p99_seconds": 1.167e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-5d0e31842b0b4ca8817d7f7272651ac5",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 1,
+      "workload": "prose",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30453689503250,
+        "first_ns": 30475416515750,
+        "ended_ns": 30480624069541,
+        "ttft_ms": 21727.0125,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe parameters $a_n$ and $m_n$ are systematically incremented, suggesting a",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "1f89af0a752f676b1069b276ae4a815edd2c0706afc088bb84d108d74a4d65bb",
+        "done": true,
+        "total_ms": 26934.566291
+      },
+      "short_solo": {
+        "started_ns": 30480750776083,
+        "first_ns": 30481244165541,
+        "ended_ns": 30485752278875,
+        "ttft_ms": 493.389458,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 5001.502792
+      },
+      "long": {
+        "started_ns": 30485883385125,
+        "first_ns": 30520885744708,
+        "ended_ns": 30529704100291,
+        "ttft_ms": 35002.359583,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe parameters are systematically incremented: the multiplier ($a$) increases by 13",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "985e17600f9cb84babbf7d2547594a1f690f71e4298b20e7118a39dbeeafbc02",
+        "done": true,
+        "total_ms": 43820.715166
+      },
+      "short": {
+        "started_ns": 30485921419541,
+        "first_ns": 30490543413958,
+        "ended_ns": 30523083761791,
+        "ttft_ms": 4621.994417,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 37162.34225
+      },
+      "wave_ms": 43824.518125,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 35.1,
+        "steps_executed": 239,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 4,
+        "total_prompt_tokens": 33280,
+        "total_completion_tokens": 197,
+        "generation_tps": 21.29,
+        "prompt_tps": 595.36,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 0
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 4.31,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 5,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19791.57,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20752960716,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 5,
+            "inserts": 8,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 67196,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 1.125e-06,
+            "lookup_p99_seconds": 1.25e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-45696d80054c4af89b8bc1b9e5889bd9",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 1,
+      "workload": "prose",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30453689503250,
+        "first_ns": 30475416515750,
+        "ended_ns": 30480624069541,
+        "ttft_ms": 21727.0125,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe parameters $a_n$ and $m_n$ are systematically incremented, suggesting a",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "1f89af0a752f676b1069b276ae4a815edd2c0706afc088bb84d108d74a4d65bb",
+        "done": true,
+        "total_ms": 26934.566291
+      },
+      "short_solo": {
+        "started_ns": 30529840536958,
+        "first_ns": 30530394468708,
+        "ended_ns": 30534968637791,
+        "ttft_ms": 553.93175,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 5128.100833
+      },
+      "long": {
+        "started_ns": 30535100497583,
+        "first_ns": 30576827433625,
+        "ended_ns": 30584921538958,
+        "ttft_ms": 41726.936042,
+        "output_text": "These code records define a sequence of linear congruential generators (LCGs), a common method for generating pseudo-random numbers. Each function, `record_00000` through `record_00620`, implements an LCG using the formula $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$.\n\nThe parameters are systematically incremented: the multiplier ($a$) increases by 13",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "985e17600f9cb84babbf7d2547594a1f690f71e4298b20e7118a39dbeeafbc02",
+        "done": true,
+        "total_ms": 49821.041375
+      },
+      "short": {
+        "started_ns": 30535138020958,
+        "first_ns": 30539954975333,
+        "ended_ns": 30574640618666,
+        "ttft_ms": 4816.954375,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 39502.597708
+      },
+      "wave_ms": 49824.95525,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 84.3,
+        "steps_executed": 512,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 7,
+        "total_prompt_tokens": 50260,
+        "total_completion_tokens": 485,
+        "generation_tps": 20.99,
+        "prompt_tps": 525.2,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 74
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 7.85,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 8,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19791.57,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20752960716,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 8,
+            "inserts": 14,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 134800,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 8.75e-07,
+            "lookup_p99_seconds": 1.25e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-99523b9edcda44468656446728e46bd4",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 1,
+      "workload": "retrieval",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30585527858375,
+        "first_ns": 30607456545958,
+        "ended_ns": 30607740521041,
+        "ttft_ms": 21928.687583,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 22212.662666
+      },
+      "short_solo": {
+        "started_ns": 30607863407875,
+        "first_ns": 30608414265625,
+        "ended_ns": 30608637837791,
+        "ttft_ms": 550.85775,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 774.429916
+      },
+      "long": {
+        "started_ns": 30608759597791,
+        "first_ns": 30638333120333,
+        "ended_ns": 30638656512333,
+        "ttft_ms": 29573.522542,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 29896.914542
+      },
+      "short": {
+        "started_ns": 30608807071416,
+        "first_ns": 30613034486458,
+        "ended_ns": 30614728468625,
+        "ttft_ms": 4227.415042,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 5921.397209
+      },
+      "wave_ms": 29900.363,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 158.0,
+        "steps_executed": 761,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 11,
+        "total_prompt_tokens": 83682,
+        "total_completion_tokens": 687,
+        "generation_tps": 22.39,
+        "prompt_tps": 548.77,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 170
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.85,
+          "peak_memory_gb": 7.85,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 12,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19791.57,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20752960716,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 12,
+            "inserts": 22,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 268124,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 8.75e-07,
+            "lookup_p99_seconds": 1.25e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-4b850424979a4b0c82f9003435033d20",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed512",
+      "cycle": 1,
+      "workload": "retrieval",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30585527858375,
+        "first_ns": 30607456545958,
+        "ended_ns": 30607740521041,
+        "ttft_ms": 21928.687583,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 22212.662666
+      },
+      "short_solo": {
+        "started_ns": 30638782369541,
+        "first_ns": 30639415672416,
+        "ended_ns": 30639607671666,
+        "ttft_ms": 633.302875,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 825.302125
+      },
+      "long": {
+        "started_ns": 30639722422000,
+        "first_ns": 30670837485125,
+        "ended_ns": 30671191592333,
+        "ttft_ms": 31115.063125,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 31469.170333
+      },
+      "short": {
+        "started_ns": 30639759842041,
+        "first_ns": 30644953081583,
+        "ended_ns": 30646488208375,
+        "ttft_ms": 5193.239542,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 6728.366334
+      },
+      "wave_ms": 31472.892666,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 189.0,
+        "steps_executed": 812,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 14,
+        "total_prompt_tokens": 100692,
+        "total_completion_tokens": 702,
+        "generation_tps": 26.07,
+        "prompt_tps": 475.88,
+        "adaptive_prefill": {
+          "chunk_size": 512,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 175
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 7.85,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 15,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19791.57,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20752960716,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 15,
+            "inserts": 28,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 336004,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 7.09e-07,
+            "lookup_p99_seconds": 1.25e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-e73dd6646cf94642a45bd2776e542cc1",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed2048",
+      "cycle": 1,
+      "workload": "prose",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30688683792625,
+        "first_ns": 30712926821000,
+        "ended_ns": 30716715647250,
+        "ttft_ms": 24243.028375,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 28031.854625
+      },
+      "short_solo": {
+        "started_ns": 30717512058583,
+        "first_ns": 30717922326666,
+        "ended_ns": 30724076710041,
+        "ttft_ms": 410.268083,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 6564.651458
+      },
+      "long": {
+        "started_ns": 30724194934625,
+        "first_ns": 30766294940000,
+        "ended_ns": 30774107444083,
+        "ttft_ms": 42100.005375,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 49912.509458
+      },
+      "short": {
+        "started_ns": 30724233348750,
+        "first_ns": 30739903892500,
+        "ended_ns": 30769824567458,
+        "ttft_ms": 15670.54375,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 45591.218708
+      },
+      "wave_ms": 49916.222459,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 39.2,
+        "steps_executed": 215,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 4,
+        "total_prompt_tokens": 33280,
+        "total_completion_tokens": 197,
+        "generation_tps": 15.6,
+        "prompt_tps": 719.89,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 0
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 5.82,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 5,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19432.91,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20376882380,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 5,
+            "inserts": 8,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 67196,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 9.59e-07,
+            "lookup_p99_seconds": 1.083e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-012b8e8bf5c54e6eb5d6b7c9b0d505a6",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed2048",
+      "cycle": 1,
+      "workload": "prose",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30688683792625,
+        "first_ns": 30712926821000,
+        "ended_ns": 30716715647250,
+        "ttft_ms": 24243.028375,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $7 \\pmod{101}$ and",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "d41b9c5451866e3c962687027e286edf114982a7492e35a23d8a81b49f965027",
+        "done": true,
+        "total_ms": 28031.854625
+      },
+      "short_solo": {
+        "started_ns": 30774406095541,
+        "first_ns": 30774986609041,
+        "ended_ns": 30777997604458,
+        "ttft_ms": 580.5135,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`, `x * 20 % 104`). The increasing modulus values (101, 104, 107, etc",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "88856dcd75e35fd4aa4f5765e01f18fc97156fcd65407e08a0d0a091a81e9f00",
+        "done": true,
+        "total_ms": 3591.508917
+      },
+      "long": {
+        "started_ns": 30778115379625,
+        "first_ns": 30820068872125,
+        "ended_ns": 30830645702041,
+        "ttft_ms": 41953.4925,
+        "output_text": "These code records define a sequence of 621 modular linear congruential generators (LCGs), each implementing the recurrence relation $x_{n+1} = (a_n \\cdot x_n) \\pmod{m_n}$. The parameters $a_n$ and $m_n$ follow a strict arithmetic progression: the multiplier increases by 13, and the modulus increases by 3, starting from $(7, 101)$ and ending at",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16412,
+          "completion_tokens": 96,
+          "total_tokens": 16508
+        },
+        "finish_reason": "length",
+        "output_sha256": "7245ec7200b641a21dbf18ff96dc8e1e9faff4577e1701f08b07f53b45d88f34",
+        "done": true,
+        "total_ms": 52530.322416
+      },
+      "short": {
+        "started_ns": 30778163145166,
+        "first_ns": 30795150760375,
+        "ended_ns": 30825310612666,
+        "ttft_ms": 16987.615209,
+        "output_text": "These code records define a sequence of modular multiplication functions, likely representing a cryptographic challenge or a puzzle involving **Chinese Remainder Theorem (CRT)** reconstruction. Each function maps an input `x` to an output modulo a distinct prime or composite number (e.g., `x * 7 % 101`). The increasing modulus values (101, 104, 107, etc.) suggest a system designed to recover the original integer `x",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 284,
+          "completion_tokens": 96,
+          "total_tokens": 380
+        },
+        "finish_reason": "length",
+        "output_sha256": "8789cf7b69971f4f2093a9f55bb55577f879aecef89157fdf2260bc5a6b7185d",
+        "done": true,
+        "total_ms": 47147.4675
+      },
+      "wave_ms": 52534.3695,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 93.2,
+        "steps_executed": 473,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 7,
+        "total_prompt_tokens": 50260,
+        "total_completion_tokens": 485,
+        "generation_tps": 31.88,
+        "prompt_tps": 506.73,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 59
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.75,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 8,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19432.91,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20376882380,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 8,
+            "inserts": 14,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 134800,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 9.59e-07,
+            "lookup_p99_seconds": 1.084e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-2d0e3e1d14af4772ae382647d33fa7c7",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16412,
+            "completion_tokens": 0,
+            "max_tokens": 96,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed2048",
+      "cycle": 1,
+      "workload": "retrieval",
+      "repeat": 0,
+      "long_solo": {
+        "started_ns": 30831283903750,
+        "first_ns": 30851017336000,
+        "ended_ns": 30851337669875,
+        "ttft_ms": 19733.43225,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 20053.766125
+      },
+      "short_solo": {
+        "started_ns": 30851467079958,
+        "first_ns": 30852202497416,
+        "ended_ns": 30852372079625,
+        "ttft_ms": 735.417458,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 904.999667
+      },
+      "long": {
+        "started_ns": 30852500539666,
+        "first_ns": 30882616250208,
+        "ended_ns": 30882970140750,
+        "ttft_ms": 30115.710542,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 30469.601084
+      },
+      "short": {
+        "started_ns": 30852546181708,
+        "first_ns": 30874747101625,
+        "ended_ns": 30876014312208,
+        "ttft_ms": 22200.919917,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 23468.1305
+      },
+      "wave_ms": 30473.465667,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 167.5,
+        "steps_executed": 655,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 11,
+        "total_prompt_tokens": 83682,
+        "total_completion_tokens": 687,
+        "generation_tps": 29.65,
+        "prompt_tps": 408.77,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 117
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.83,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 12,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19432.91,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20376882380,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 12,
+            "inserts": 22,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 268124,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 9.16e-07,
+            "lookup_p99_seconds": 1.084e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-5070b003b5044a69bd53979afb03bc26",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.02,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    },
+    {
+      "arm": "fixed2048",
+      "cycle": 1,
+      "workload": "retrieval",
+      "repeat": 1,
+      "long_solo": {
+        "started_ns": 30831283903750,
+        "first_ns": 30851017336000,
+        "ended_ns": 30851337669875,
+        "ttft_ms": 19733.43225,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 20053.766125
+      },
+      "short_solo": {
+        "started_ns": 30883106365791,
+        "first_ns": 30883611350833,
+        "ended_ns": 30883835879208,
+        "ttft_ms": 504.985042,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 729.513417
+      },
+      "long": {
+        "started_ns": 30883964009375,
+        "first_ns": 30907073957708,
+        "ended_ns": 30907428971625,
+        "ttft_ms": 23109.948333,
+        "output_text": "7319",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 16422,
+          "completion_tokens": 5,
+          "total_tokens": 16427
+        },
+        "finish_reason": "stop",
+        "output_sha256": "cd91c5876cd288087223b6e1b844a78dfeb0d2298d56814e3388934274fb9277",
+        "done": true,
+        "total_ms": 23464.96225
+      },
+      "short": {
+        "started_ns": 30884005536958,
+        "first_ns": 30896023946000,
+        "ended_ns": 30897580180208,
+        "ttft_ms": 12018.409042,
+        "output_text": "9283",
+        "reasoning": "",
+        "usage": {
+          "prompt_tokens": 294,
+          "completion_tokens": 5,
+          "total_tokens": 299
+        },
+        "finish_reason": "stop",
+        "output_sha256": "0e1a5a785140c34c7fc92aab54b59eff0c38182c5272978c8a7b0187c6d6c726",
+        "done": true,
+        "total_ms": 13574.64325
+      },
+      "wave_ms": 23468.952667,
+      "observed_status": {
+        "status": "generating",
+        "model": "prefill-probe",
+        "uptime_s": 199.0,
+        "steps_executed": 683,
+        "num_running": 1,
+        "num_waiting": 0,
+        "total_requests_processed": 14,
+        "total_prompt_tokens": 100692,
+        "total_completion_tokens": 702,
+        "generation_tps": 22.26,
+        "prompt_tps": 601.75,
+        "adaptive_prefill": {
+          "chunk_size": 2048,
+          "protected_chunks": 0,
+          "reduced_chunks": 0
+        },
+        "shared_prefix_waits": 0,
+        "decode_stall": {
+          "chunk_size": null,
+          "bounded_chunks": 122
+        },
+        "mtp_prompt_lookup": {},
+        "idle_cache_clear": {
+          "enabled": false,
+          "seconds": 0.0,
+          "clear_count": 0,
+          "last_clear_at": null
+        },
+        "metal": {
+          "active_memory_gb": 2.37,
+          "peak_memory_gb": 9.67,
+          "cache_memory_gb": 0.0
+        },
+        "cache": {
+          "hits": 0,
+          "misses": 15,
+          "hit_rate": 0.0,
+          "evictions": 0,
+          "tokens_saved": 0,
+          "current_memory_mb": 0.0,
+          "max_memory_mb": 19432.91,
+          "current_memory_bytes": 0,
+          "max_memory_bytes": 20376882380,
+          "memory_utilization": 0.0,
+          "entry_count": 0,
+          "load_skipped": 0,
+          "save_drift_drops": 0,
+          "non_trimmable_skips": 0,
+          "non_trimmable_entries": 0,
+          "radix": {
+            "hits": 0,
+            "misses": 15,
+            "inserts": 28,
+            "removes": 0,
+            "deduped_prefix_bytes_saved": 336004,
+            "node_count": 0,
+            "entry_count": 0,
+            "max_depth": 0,
+            "lookup_p50_seconds": 7.92e-07,
+            "lookup_p99_seconds": 1.084e-06
+          }
+        },
+        "requests": [
+          {
+            "request_id": "chatcmpl-5e9ed52cd7c54a6a8a3a50abf990e63e",
+            "status": "running",
+            "phase": "prefill",
+            "elapsed_s": 0.01,
+            "prompt_tokens": 16422,
+            "completion_tokens": 0,
+            "max_tokens": 32,
+            "progress": 0.0,
+            "tokens_per_second": null,
+            "ttft_s": null,
+            "cache_hit_type": "miss",
+            "cached_tokens": 0
+          }
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "fixed2048": {
+      "prose": {
+        "short_ttft_ms": 14472.373521000001,
+        "short_solo_ttft_ms": 475.378,
+        "long_total_ms": 41742.670729000005,
+        "long_solo_total_ms": 23942.4440415
+      },
+      "retrieval": {
+        "short_ttft_ms": 10947.433,
+        "short_solo_ttft_ms": 480.3811875,
+        "long_total_ms": 21166.419396,
+        "long_solo_total_ms": 17250.542374999997
+      }
+    },
+    "fixed512": {
+      "prose": {
+        "short_ttft_ms": 3868.463396,
+        "short_solo_ttft_ms": 477.0680415,
+        "long_total_ms": 40528.170833,
+        "long_solo_total_ms": 23609.040604
+      },
+      "retrieval": {
+        "short_ttft_ms": 4030.5258335,
+        "short_solo_ttft_ms": 499.35983350000004,
+        "long_total_ms": 28866.1334795,
+        "long_solo_total_ms": 18523.2671455
+      }
+    },
+    "adaptive2048": {
+      "prose": {
+        "short_ttft_ms": 3911.0575,
+        "short_solo_ttft_ms": 508.0765415,
+        "long_total_ms": 41519.8933545,
+        "long_solo_total_ms": 19810.5183955
+      },
+      "retrieval": {
+        "short_ttft_ms": 4011.3479165,
+        "short_solo_ttft_ms": 551.56475,
+        "long_total_ms": 23951.7863125,
+        "long_solo_total_ms": 21290.043542
+      }
+    }
+  },
+  "complete": true,
+  "archive_note": "Machine paths in commands normalized; original command hashes and original results hash retained in manifest. Trace files are byte-identical originals."
+}

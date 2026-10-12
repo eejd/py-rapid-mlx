@@ -1,0 +1,4562 @@
+[
+  {
+    "arm": "fixed2048",
+    "cycle": 0,
+    "repeat": 0,
+    "workload": "prose",
+    "short_started_ns": 29750771259166,
+    "short_first_ns": 29763729210041,
+    "dispatches": [
+      {
+        "started_ns": 29750764685208,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0010605454916987611,
+          0.000988010660643468,
+          0.0010109755048830493,
+          0.0012460000000089622
+        ],
+        "ended_ns": 29752553362666
+      },
+      {
+        "started_ns": 29752554191333,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.000988010660643468,
+          0.0010109755048830493,
+          0.0012460000000089622,
+          0.0008731669921875351
+        ],
+        "ended_ns": 29756710637625
+      },
+      {
+        "started_ns": 29756747898125,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 4096,
+            "total": 16412,
+            "segments": [
+              12288,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0010109755048830493,
+          0.0012460000000089622,
+          0.0008731669921875351,
+          0.001803734664496422
+        ],
+        "ended_ns": 29760979996041
+      },
+      {
+        "started_ns": 29760987807041,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 6144,
+            "total": 16412,
+            "segments": [
+              10240,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012460000000089622,
+          0.0008731669921875351,
+          0.001803734664496422,
+          0.0020395274096377566
+        ],
+        "ended_ns": 29763352230666
+      },
+      {
+        "started_ns": 29763378351916,
+        "selected": 224,
+        "dispatched": 224,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 8192,
+            "total": 16412,
+            "segments": [
+              8192,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0008731669921875351,
+          0.001803734664496422,
+          0.0020395274096377566,
+          0.0011360140175789013
+        ],
+        "ended_ns": 29763723138708
+      },
+      {
+        "started_ns": 29763723803708,
+        "selected": 224,
+        "dispatched": 224,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 8416,
+            "total": 16412,
+            "segments": [
+              7968,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.001803734664496422,
+          0.0020395274096377566,
+          0.0011360140175789013,
+          0.0014070312499987786
+        ],
+        "ended_ns": 29764109815583
+      }
+    ]
+  },
+  {
+    "arm": "fixed2048",
+    "cycle": 0,
+    "repeat": 1,
+    "workload": "prose",
+    "short_started_ns": 29786699216291,
+    "short_first_ns": 29799973419583,
+    "dispatches": [
+      {
+        "started_ns": 29786692301458,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0015684861640608005,
+          0.0018190557013895159,
+          0.0016583180312466084,
+          0.0010036284179761878
+        ],
+        "ended_ns": 29788479631208
+      },
+      {
+        "started_ns": 29788480418166,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0018190557013895159,
+          0.0016583180312466084,
+          0.0010036284179761878,
+          0.0008724606323244899
+        ],
+        "ended_ns": 29792603509416
+      },
+      {
+        "started_ns": 29792626291250,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 4096,
+            "total": 16412,
+            "segments": [
+              12288,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0016583180312466084,
+          0.0010036284179761878,
+          0.0008724606323244899,
+          0.0017892642144106377
+        ],
+        "ended_ns": 29797462768166
+      },
+      {
+        "started_ns": 29797477028958,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 6144,
+            "total": 16412,
+            "segments": [
+              10240,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0010036284179761878,
+          0.0008724606323244899,
+          0.0017892642144106377,
+          0.0023307879518066022
+        ],
+        "ended_ns": 29799599074958
+      },
+      {
+        "started_ns": 29799624861625,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 8192,
+            "total": 16412,
+            "segments": [
+              8192,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0008724606323244899,
+          0.0017892642144106377,
+          0.0023307879518066022,
+          0.0010081802163082187
+        ],
+        "ended_ns": 29799970551625
+      },
+      {
+        "started_ns": 29799971138583,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 8384,
+            "total": 16412,
+            "segments": [
+              8000,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0017892642144106377,
+          0.0023307879518066022,
+          0.0010081802163082187,
+          0.0016296536458260864
+        ],
+        "ended_ns": 29800277555375
+      }
+    ]
+  },
+  {
+    "arm": "fixed2048",
+    "cycle": 0,
+    "repeat": 0,
+    "workload": "retrieval",
+    "short_started_ns": 29836140825458,
+    "short_first_ns": 29845610377250,
+    "dispatches": [
+      {
+        "started_ns": 29836121238416,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0007940902709968611,
+          0.0008070158281245909,
+          0.000969041239745394,
+          0.001231384408595245
+        ],
+        "ended_ns": 29837374536583
+      },
+      {
+        "started_ns": 29837375258041,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0008070158281245909,
+          0.000969041239745394,
+          0.001231384408595245,
+          0.0006117633666988809
+        ],
+        "ended_ns": 29840371273666
+      },
+      {
+        "started_ns": 29840382622125,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 4096,
+            "total": 16422,
+            "segments": [
+              12311,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.000969041239745394,
+          0.001231384408595245,
+          0.0006117633666988809,
+          0.0012872383257421169
+        ],
+        "ended_ns": 29843474965000
+      },
+      {
+        "started_ns": 29843490788958,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 6144,
+            "total": 16422,
+            "segments": [
+              10263,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001231384408595245,
+          0.0006117633666988809,
+          0.0012872383257421169,
+          0.0014996297686717109
+        ],
+        "ended_ns": 29845078440875
+      },
+      {
+        "started_ns": 29845088986541,
+        "selected": 320,
+        "dispatched": 320,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 8192,
+            "total": 16422,
+            "segments": [
+              8215,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0006117633666988809,
+          0.0012872383257421169,
+          0.0014996297686717109,
+          0.0007333073935544832
+        ],
+        "ended_ns": 29845606278250
+      },
+      {
+        "started_ns": 29845606677708,
+        "selected": 320,
+        "dispatched": 320,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 8512,
+            "total": 16422,
+            "segments": [
+              7895,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0012872383257421169,
+          0.0014996297686717109,
+          0.0007333073935544832,
+          0.0014341121093707442
+        ],
+        "ended_ns": 29846162371916
+      }
+    ]
+  },
+  {
+    "arm": "fixed2048",
+    "cycle": 0,
+    "repeat": 1,
+    "workload": "retrieval",
+    "short_started_ns": 29855753320208,
+    "short_first_ns": 29865629777166,
+    "dispatches": [
+      {
+        "started_ns": 29855747367458,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.000988147379393567,
+          0.0010557895102536463,
+          0.0012245908513766042,
+          0.001082242831532922
+        ],
+        "ended_ns": 29857088117708
+      },
+      {
+        "started_ns": 29857088903583,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0010557895102536463,
+          0.0012245908513766042,
+          0.001082242831532922,
+          0.0006544598183602091
+        ],
+        "ended_ns": 29860242793750
+      },
+      {
+        "started_ns": 29860253081291,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 4096,
+            "total": 16422,
+            "segments": [
+              12311,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012245908513766042,
+          0.001082242831532922,
+          0.0006544598183602091,
+          0.0013550859656213104
+        ],
+        "ended_ns": 29863428506000
+      },
+      {
+        "started_ns": 29863444527708,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 6144,
+            "total": 16422,
+            "segments": [
+              10263,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001082242831532922,
+          0.0006544598183602091,
+          0.0013550859656213104,
+          0.0015399383486895105
+        ],
+        "ended_ns": 29865130636208
+      },
+      {
+        "started_ns": 29865143242333,
+        "selected": 320,
+        "dispatched": 320,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 8192,
+            "total": 16422,
+            "segments": [
+              8215,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0006544598183602091,
+          0.0013550859656213104,
+          0.0015399383486895105,
+          0.0007970522255860146
+        ],
+        "ended_ns": 29865620513083
+      },
+      {
+        "started_ns": 29865628041208,
+        "selected": 320,
+        "dispatched": 320,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 8512,
+            "total": 16422,
+            "segments": [
+              7895,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0013550859656213104,
+          0.0015399383486895105,
+          0.0007970522255860146,
+          0.0014177188781332006
+        ],
+        "ended_ns": 29866103680500
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 0,
+    "repeat": 0,
+    "workload": "prose",
+    "short_started_ns": 29911839117166,
+    "short_first_ns": 29914941043333,
+    "dispatches": [
+      {
+        "started_ns": 29911832055750,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.001059674072266148,
+          0.0015800261230509705,
+          0.0010982343750001178,
+          0.0007276599960874819
+        ],
+        "ended_ns": 29912312392666
+      },
+      {
+        "started_ns": 29912313269583,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 512,
+            "total": 16412,
+            "segments": [
+              15872,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0015800261230509705,
+          0.0010982343750001178,
+          0.0007276599960874819,
+          0.0009373782558554922
+        ],
+        "ended_ns": 29913128835083
+      },
+      {
+        "started_ns": 29913136076000,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 1024,
+            "total": 16412,
+            "segments": [
+              15360,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0010982343750001178,
+          0.0007276599960874819,
+          0.0009373782558554922,
+          0.001060943196615464
+        ],
+        "ended_ns": 29913911366333
+      },
+      {
+        "started_ns": 29913911614291,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 1536,
+            "total": 16412,
+            "segments": [
+              14848,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0007276599960874819,
+          0.0009373782558554922,
+          0.001060943196615464,
+          0.0014382060148455925
+        ],
+        "ended_ns": 29914378840958
+      },
+      {
+        "started_ns": 29914385309250,
+        "selected": 320,
+        "dispatched": 320,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0009373782558554922,
+          0.001060943196615464,
+          0.0014382060148455925,
+          0.0008315708808623867
+        ],
+        "ended_ns": 29914936628000
+      },
+      {
+        "started_ns": 29914937094458,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2368,
+            "total": 16412,
+            "segments": [
+              14016,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.001060943196615464,
+          0.0014382060148455925,
+          0.0008315708808623867,
+          0.001303520312501405
+        ],
+        "ended_ns": 29915185341333
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 0,
+    "repeat": 1,
+    "workload": "prose",
+    "short_started_ns": 29950067672666,
+    "short_first_ns": 29953182605041,
+    "dispatches": [
+      {
+        "started_ns": 29950060611500,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.002077858718735115,
+          0.001339699875018141,
+          0.0021292174453151347,
+          0.0012110872421970953
+        ],
+        "ended_ns": 29950554025916
+      },
+      {
+        "started_ns": 29950554758208,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 512,
+            "total": 16412,
+            "segments": [
+              15872,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.001339699875018141,
+          0.0021292174453151347,
+          0.0012110872421970953,
+          0.0009628991699202061
+        ],
+        "ended_ns": 29951404931333
+      },
+      {
+        "started_ns": 29951436033375,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 1024,
+            "total": 16412,
+            "segments": [
+              15360,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0021292174453151347,
+          0.0012110872421970953,
+          0.0009628991699202061,
+          0.0011061863606774598
+        ],
+        "ended_ns": 29952231249125
+      },
+      {
+        "started_ns": 29952231571125,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 1536,
+            "total": 16412,
+            "segments": [
+              14848,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012110872421970953,
+          0.0009628991699202061,
+          0.0011061863606774598,
+          0.0014751875380292023
+        ],
+        "ended_ns": 29952684423791
+      },
+      {
+        "started_ns": 29952696257583,
+        "selected": 320,
+        "dispatched": 320,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0009628991699202061,
+          0.0011061863606774598,
+          0.0014751875380292023,
+          0.0007420541171896389
+        ],
+        "ended_ns": 29953180081458
+      },
+      {
+        "started_ns": 29953180534416,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2368,
+            "total": 16412,
+            "segments": [
+              14016,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0011061863606774598,
+          0.0014751875380292023,
+          0.0007420541171896389,
+          0.0013173595062426103
+        ],
+        "ended_ns": 29953439227333
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 0,
+    "repeat": 0,
+    "workload": "retrieval",
+    "short_started_ns": 30003315402416,
+    "short_first_ns": 30005907160666,
+    "dispatches": [
+      {
+        "started_ns": 30003309286083,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.000781423748044574,
+          0.0007515080566378174,
+          0.0007462942695326547,
+          0.0007185873655935308
+        ],
+        "ended_ns": 30003643379041
+      },
+      {
+        "started_ns": 30003644078583,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 512,
+            "total": 16422,
+            "segments": [
+              15895,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0007515080566378174,
+          0.0007462942695326547,
+          0.0007185873655935308,
+          0.0006517406425814443
+        ],
+        "ended_ns": 30004316539958
+      },
+      {
+        "started_ns": 30004322458208,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 1024,
+            "total": 16422,
+            "segments": [
+              15383,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0007462942695326547,
+          0.0007185873655935308,
+          0.0006517406425814443,
+          0.0008493576169390524
+        ],
+        "ended_ns": 30005047140500
+      },
+      {
+        "started_ns": 30005047418166,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 1536,
+            "total": 16422,
+            "segments": [
+              14871,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0007185873655935308,
+          0.0006517406425814443,
+          0.0008493576169390524,
+          0.0013775750171157338
+        ],
+        "ended_ns": 30005522466500
+      },
+      {
+        "started_ns": 30005528011166,
+        "selected": 352,
+        "dispatched": 352,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0006517406425814443,
+          0.0008493576169390524,
+          0.0013775750171157338,
+          0.0008627909335956474
+        ],
+        "ended_ns": 30005904408708
+      },
+      {
+        "started_ns": 30005904839125,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2400,
+            "total": 16422,
+            "segments": [
+              14007,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0008493576169390524,
+          0.0013775750171157338,
+          0.0008627909335956474,
+          0.0010028721590887553
+        ],
+        "ended_ns": 30006146782041
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 0,
+    "repeat": 1,
+    "workload": "retrieval",
+    "short_started_ns": 30020887406833,
+    "short_first_ns": 30024721043458,
+    "dispatches": [
+      {
+        "started_ns": 30020870637333,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0013513169765602129,
+          0.001241353109371346,
+          0.0017064141639259573,
+          0.0009659147240150775
+        ],
+        "ended_ns": 30021384954000
+      },
+      {
+        "started_ns": 30021385586500,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 512,
+            "total": 16422,
+            "segments": [
+              15895,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.001241353109371346,
+          0.0017064141639259573,
+          0.0009659147240150775,
+          0.001003718261721076
+        ],
+        "ended_ns": 30022353318541
+      },
+      {
+        "started_ns": 30022367232125,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 1024,
+            "total": 16422,
+            "segments": [
+              15383,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0017064141639259573,
+          0.0009659147240150775,
+          0.001003718261721076,
+          0.0012226883691519807
+        ],
+        "ended_ns": 30023538115083
+      },
+      {
+        "started_ns": 30023538406166,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 1536,
+            "total": 16422,
+            "segments": [
+              14871,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0009659147240150775,
+          0.001003718261721076,
+          0.0012226883691519807,
+          0.002225833967682574
+        ],
+        "ended_ns": 30024313249375
+      },
+      {
+        "started_ns": 30024326199500,
+        "selected": 224,
+        "dispatched": 224,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.001003718261721076,
+          0.0012226883691519807,
+          0.002225833967682574,
+          0.001346929279293363
+        ],
+        "ended_ns": 30024718730375
+      },
+      {
+        "started_ns": 30024719141166,
+        "selected": 224,
+        "dispatched": 224,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2272,
+            "total": 16422,
+            "segments": [
+              14135,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0012226883691519807,
+          0.002225833967682574,
+          0.001346929279293363,
+          0.001500356401785601
+        ],
+        "ended_ns": 30025122177750
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 0,
+    "repeat": 0,
+    "workload": "prose",
+    "short_started_ns": 30081212417250,
+    "short_first_ns": 30085410472583,
+    "dispatches": [
+      {
+        "started_ns": 30081198554041,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0008052491655270444,
+          0.0007679302778313968,
+          0.0008792855424797352,
+          0.001014186523434546
+        ],
+        "ended_ns": 30083252312708
+      },
+      {
+        "started_ns": 30083253249958,
+        "selected": 2048,
+        "dispatched": 224,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0007679302778313968,
+          0.0008792855424797352,
+          0.001014186523434546,
+          0.0010025762534180416
+        ],
+        "ended_ns": 30083888885416
+      },
+      {
+        "started_ns": 30083904213958,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2272,
+            "total": 16412,
+            "segments": [
+              14112,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 224,
+            "total": 284,
+            "segments": [
+              32,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0008792855424797352,
+          0.001014186523434546,
+          0.0010025762534180416,
+          0.0014172543705350499
+        ],
+        "ended_ns": 30084439799916
+      },
+      {
+        "started_ns": 30084450211083,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2432,
+            "total": 16412,
+            "segments": [
+              13952,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001014186523434546,
+          0.0010025762534180416,
+          0.0014172543705350499,
+          0.002789052302091477
+        ],
+        "ended_ns": 30084759832958
+      },
+      {
+        "started_ns": 30084760140000,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2496,
+            "total": 16412,
+            "segments": [
+              13888,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0010025762534180416,
+          0.0014172543705350499,
+          0.002789052302091477,
+          0.0034014702417822502
+        ],
+        "ended_ns": 30085040455333
+      },
+      {
+        "started_ns": 30085068288958,
+        "selected": 128,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2560,
+            "total": 16412,
+            "segments": [
+              13824,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0014172543705350499,
+          0.002789052302091477,
+          0.0034014702417822502,
+          0.002843799468735142
+        ],
+        "ended_ns": 30085376445125
+      },
+      {
+        "started_ns": 30085376916666,
+        "selected": 128,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2688,
+            "total": 16412,
+            "segments": [
+              13696,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.002789052302091477,
+          0.0034014702417822502,
+          0.002843799468735142,
+          0.0019511044922069232
+        ],
+        "ended_ns": 30085717117916
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 0,
+    "repeat": 1,
+    "workload": "prose",
+    "short_started_ns": 30137374928958,
+    "short_first_ns": 30140998988625,
+    "dispatches": [
+      {
+        "started_ns": 30137359967458,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0020459101562469834,
+          0.001976130392855729,
+          0.003082032546899427,
+          0.001201365558600287
+        ],
+        "ended_ns": 30139264199500
+      },
+      {
+        "started_ns": 30139265121208,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.001976130392855729,
+          0.003082032546899427,
+          0.001201365558600287,
+          0.0009296000771481516
+        ],
+        "ended_ns": 30139422471041
+      },
+      {
+        "started_ns": 30139426202000,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2112,
+            "total": 16412,
+            "segments": [
+              14272,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 64,
+            "total": 284,
+            "segments": [
+              192,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.003082032546899427,
+          0.001201365558600287,
+          0.0009296000771481516,
+          0.0012232057265748608
+        ],
+        "ended_ns": 30139607039375
+      },
+      {
+        "started_ns": 30139607296500,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2176,
+            "total": 16412,
+            "segments": [
+              14208,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 128,
+            "total": 284,
+            "segments": [
+              128,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001201365558600287,
+          0.0009296000771481516,
+          0.0012232057265748608,
+          0.0014121735000003355
+        ],
+        "ended_ns": 30139951267458
+      },
+      {
+        "started_ns": 30139961241250,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2336,
+            "total": 16412,
+            "segments": [
+              14048,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0009296000771481516,
+          0.0012232057265748608,
+          0.0014121735000003355,
+          0.0011940403645793493
+        ],
+        "ended_ns": 30140388416833
+      },
+      {
+        "started_ns": 30140388957041,
+        "selected": 2048,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2496,
+            "total": 16412,
+            "segments": [
+              13888,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012232057265748608,
+          0.0014121735000003355,
+          0.0011940403645793493,
+          0.0022839409518679715
+        ],
+        "ended_ns": 30140651678083
+      },
+      {
+        "started_ns": 30140672970500,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2592,
+            "total": 16412,
+            "segments": [
+              13792,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0014121735000003355,
+          0.0011940403645793493,
+          0.0022839409518679715,
+          0.0020901944479116232
+        ],
+        "ended_ns": 30140996437083
+      },
+      {
+        "started_ns": 30140996933875,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2784,
+            "total": 16412,
+            "segments": [
+              13600,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0011940403645793493,
+          0.0022839409518679715,
+          0.0020901944479116232,
+          0.0014417949218833808
+        ],
+        "ended_ns": 30141340637666
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 0,
+    "repeat": 0,
+    "workload": "retrieval",
+    "short_started_ns": 30190528518583,
+    "short_first_ns": 30194565532750,
+    "dispatches": [
+      {
+        "started_ns": 30190508712375,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0012273119711903036,
+          0.0011211299028310862,
+          0.0011890379028312026,
+          0.001214767921147772
+        ],
+        "ended_ns": 30192451886958
+      },
+      {
+        "started_ns": 30192452619958,
+        "selected": 2048,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0011211299028310862,
+          0.0011890379028312026,
+          0.001214767921147772,
+          0.0009486134238283483
+        ],
+        "ended_ns": 30192926712583
+      },
+      {
+        "started_ns": 30192936210625,
+        "selected": 2048,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2240,
+            "total": 16422,
+            "segments": [
+              14167,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 192,
+            "total": 294,
+            "segments": [
+              87,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0011890379028312026,
+          0.001214767921147772,
+          0.0009486134238283483,
+          0.0012327877604150217
+        ],
+        "ended_ns": 30193466029916
+      },
+      {
+        "started_ns": 30193472275083,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2432,
+            "total": 16422,
+            "segments": [
+              13975,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001214767921147772,
+          0.0009486134238283483,
+          0.0012327877604150217,
+          0.0018986188781297078
+        ],
+        "ended_ns": 30193913087500
+      },
+      {
+        "started_ns": 30193913422833,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2560,
+            "total": 16422,
+            "segments": [
+              13847,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0009486134238283483,
+          0.0012327877604150217,
+          0.0018986188781297078,
+          0.003103717133802695
+        ],
+        "ended_ns": 30194195269875
+      },
+      {
+        "started_ns": 30194210181833,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2624,
+            "total": 16422,
+            "segments": [
+              13783,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0012327877604150217,
+          0.0018986188781297078,
+          0.003103717133802695,
+          0.0029223059843843657
+        ],
+        "ended_ns": 30194563387791
+      },
+      {
+        "started_ns": 30194563808958,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2784,
+            "total": 16422,
+            "segments": [
+              13623,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0018986188781297078,
+          0.003103717133802695,
+          0.0029223059843843657,
+          0.0018258557249964725
+        ],
+        "ended_ns": 30194936077000
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 0,
+    "repeat": 1,
+    "workload": "retrieval",
+    "short_started_ns": 30216234627750,
+    "short_first_ns": 30220220309416,
+    "dispatches": [
+      {
+        "started_ns": 30216219662875,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0015232896728516465,
+          0.0016337437133788768,
+          0.0016584182503979956,
+          0.001371768222215058
+        ],
+        "ended_ns": 30218093292375
+      },
+      {
+        "started_ns": 30218094335166,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0016337437133788768,
+          0.0016584182503979956,
+          0.001371768222215058,
+          0.0009146422529298093
+        ],
+        "ended_ns": 30218464981958
+      },
+      {
+        "started_ns": 30218471019666,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2176,
+            "total": 16422,
+            "segments": [
+              14231,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 128,
+            "total": 294,
+            "segments": [
+              151,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0016584182503979956,
+          0.001371768222215058,
+          0.0009146422529298093,
+          0.0014451100234396108
+        ],
+        "ended_ns": 30218834068541
+      },
+      {
+        "started_ns": 30218834417250,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2304,
+            "total": 16422,
+            "segments": [
+              14103,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 256,
+            "total": 294,
+            "segments": [
+              23,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001371768222215058,
+          0.0009146422529298093,
+          0.0014451100234396108,
+          0.0014177114257734047
+        ],
+        "ended_ns": 30219268592666
+      },
+      {
+        "started_ns": 30219283894916,
+        "selected": 2048,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2464,
+            "total": 16422,
+            "segments": [
+              13943,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0009146422529298093,
+          0.0014451100234396108,
+          0.0014177114257734047,
+          0.002372023683070597
+        ],
+        "ended_ns": 30219591461708
+      },
+      {
+        "started_ns": 30219591714041,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2560,
+            "total": 16422,
+            "segments": [
+              13847,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0014451100234396108,
+          0.0014177114257734047,
+          0.002372023683070597,
+          0.002795243936369926
+        ],
+        "ended_ns": 30219809644166
+      },
+      {
+        "started_ns": 30219819626416,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2624,
+            "total": 16422,
+            "segments": [
+              13783,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0014177114257734047,
+          0.002372023683070597,
+          0.002795243936369926,
+          0.0027543229062416685
+        ],
+        "ended_ns": 30220218051791
+      },
+      {
+        "started_ns": 30220218562875,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2784,
+            "total": 16422,
+            "segments": [
+              13623,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.002372023683070597,
+          0.002795243936369926,
+          0.0027543229062416685,
+          0.00207471822500338
+        ],
+        "ended_ns": 30220523881708
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 1,
+    "repeat": 0,
+    "workload": "prose",
+    "short_started_ns": 30281420785541,
+    "short_first_ns": 30285796557416,
+    "dispatches": [
+      {
+        "started_ns": 30281400907916,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0011458663125001323,
+          0.0011594636230469746,
+          0.0012473203124994114,
+          0.001305586914057244
+        ],
+        "ended_ns": 30283807384250
+      },
+      {
+        "started_ns": 30283808255625,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0011594636230469746,
+          0.0012473203124994114,
+          0.001305586914057244,
+          0.0011748447675774543
+        ],
+        "ended_ns": 30284266845000
+      },
+      {
+        "started_ns": 30284284888333,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2208,
+            "total": 16412,
+            "segments": [
+              14176,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 160,
+            "total": 284,
+            "segments": [
+              96,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012473203124994114,
+          0.001305586914057244,
+          0.0011748447675774543,
+          0.0014308151031286799
+        ],
+        "ended_ns": 30284768234041
+      },
+      {
+        "started_ns": 30284782893291,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2368,
+            "total": 16412,
+            "segments": [
+              14016,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001305586914057244,
+          0.0011748447675774543,
+          0.0014308151031286799,
+          0.001887734863288415
+        ],
+        "ended_ns": 30285244603000
+      },
+      {
+        "started_ns": 30285244951708,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2496,
+            "total": 16412,
+            "segments": [
+              13888,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0011748447675774543,
+          0.0014308151031286799,
+          0.001887734863288415,
+          0.0029781841419471967
+        ],
+        "ended_ns": 30285439805250
+      },
+      {
+        "started_ns": 30285449129416,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2560,
+            "total": 16412,
+            "segments": [
+              13824,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0014308151031286799,
+          0.001887734863288415,
+          0.0029781841419471967,
+          0.0022337167968657923
+        ],
+        "ended_ns": 30285794251833
+      },
+      {
+        "started_ns": 30285794667916,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2720,
+            "total": 16412,
+            "segments": [
+              13664,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.001887734863288415,
+          0.0029781841419471967,
+          0.0022337167968657923,
+          0.0018776841125145438
+        ],
+        "ended_ns": 30286128984375
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 1,
+    "repeat": 1,
+    "workload": "prose",
+    "short_started_ns": 30327078336750,
+    "short_first_ns": 30330183750583,
+    "dispatches": [
+      {
+        "started_ns": 30327063888583,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.002018912328139777,
+          0.0018516976979299216,
+          0.0020085703125118926,
+          0.001193195148445625
+        ],
+        "ended_ns": 30328333513708
+      },
+      {
+        "started_ns": 30328334767916,
+        "selected": 2048,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0018516976979299216,
+          0.0020085703125118926,
+          0.001193195148445625,
+          0.0006196684365225025
+        ],
+        "ended_ns": 30328587482625
+      },
+      {
+        "started_ns": 30328591732958,
+        "selected": 2048,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2144,
+            "total": 16412,
+            "segments": [
+              14240,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 96,
+            "total": 284,
+            "segments": [
+              160,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0020085703125118926,
+          0.001193195148445625,
+          0.0006196684365225025,
+          0.001311603729163835
+        ],
+        "ended_ns": 30328837007166
+      },
+      {
+        "started_ns": 30328837378916,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2240,
+            "total": 16412,
+            "segments": [
+              14144,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 192,
+            "total": 284,
+            "segments": [
+              64,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001193195148445625,
+          0.0006196684365225025,
+          0.001311603729163835,
+          0.0012769767812415012
+        ],
+        "ended_ns": 30329189795708
+      },
+      {
+        "started_ns": 30329192804458,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2400,
+            "total": 16412,
+            "segments": [
+              13984,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0006196684365225025,
+          0.001311603729163835,
+          0.0012769767812415012,
+          0.0015729010446453426
+        ],
+        "ended_ns": 30329543973375
+      },
+      {
+        "started_ns": 30329544329333,
+        "selected": 2048,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2528,
+            "total": 16412,
+            "segments": [
+              13856,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001311603729163835,
+          0.0012769767812415012,
+          0.0015729010446453426,
+          0.002265089516121436
+        ],
+        "ended_ns": 30329785998125
+      },
+      {
+        "started_ns": 30329789096041,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2624,
+            "total": 16412,
+            "segments": [
+              13760,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0012769767812415012,
+          0.0015729010446453426,
+          0.002265089516121436,
+          0.001819605031262957
+        ],
+        "ended_ns": 30330181314125
+      },
+      {
+        "started_ns": 30330181777208,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2816,
+            "total": 16412,
+            "segments": [
+              13568,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0015729010446453426,
+          0.002265089516121436,
+          0.001819605031262957,
+          0.0017147868958318213
+        ],
+        "ended_ns": 30330474134208
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 1,
+    "repeat": 0,
+    "workload": "retrieval",
+    "short_started_ns": 30392525111833,
+    "short_first_ns": 30396423056833,
+    "dispatches": [
+      {
+        "started_ns": 30392507379291,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0013680363974621912,
+          0.0013663164267576633,
+          0.0013924724121103793,
+          0.0012590807921152585
+        ],
+        "ended_ns": 30394393298083
+      },
+      {
+        "started_ns": 30394393972041,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0013663164267576633,
+          0.0013924724121103793,
+          0.0012590807921152585,
+          0.0009206577758789081
+        ],
+        "ended_ns": 30394894319875
+      },
+      {
+        "started_ns": 30394908668208,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2208,
+            "total": 16422,
+            "segments": [
+              14199,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 160,
+            "total": 294,
+            "segments": [
+              119,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0013924724121103793,
+          0.0012590807921152585,
+          0.0009206577758789081,
+          0.0015616727874999015
+        ],
+        "ended_ns": 30395433121791
+      },
+      {
+        "started_ns": 30395448810833,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2368,
+            "total": 16422,
+            "segments": [
+              14039,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012590807921152585,
+          0.0009206577758789081,
+          0.0015616727874999015,
+          0.0018794557956986397
+        ],
+        "ended_ns": 30395854279541
+      },
+      {
+        "started_ns": 30395854551875,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2496,
+            "total": 16422,
+            "segments": [
+              13911,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0009206577758789081,
+          0.0015616727874999015,
+          0.0018794557956986397,
+          0.0028548444859065776
+        ],
+        "ended_ns": 30396087863000
+      },
+      {
+        "started_ns": 30396092015333,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2560,
+            "total": 16422,
+            "segments": [
+              13847,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0015616727874999015,
+          0.0018794557956986397,
+          0.0028548444859065776,
+          0.0024340397031323846
+        ],
+        "ended_ns": 30396420873708
+      },
+      {
+        "started_ns": 30396421274416,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2720,
+            "total": 16422,
+            "segments": [
+              13687,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0018794557956986397,
+          0.0028548444859065776,
+          0.0024340397031323846,
+          0.001704059637518185
+        ],
+        "ended_ns": 30396750780666
+      }
+    ]
+  },
+  {
+    "arm": "adaptive2048",
+    "cycle": 1,
+    "repeat": 1,
+    "workload": "retrieval",
+    "short_started_ns": 30417127650041,
+    "short_first_ns": 30421525305500,
+    "dispatches": [
+      {
+        "started_ns": 30417110472875,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0014271991171863618,
+          0.0013610857949224453,
+          0.0016603752646598283,
+          0.0013150279247321941
+        ],
+        "ended_ns": 30419297033250
+      },
+      {
+        "started_ns": 30419297681625,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0013610857949224453,
+          0.0016603752646598283,
+          0.0013150279247321941,
+          0.001067450459473207
+        ],
+        "ended_ns": 30419685308583
+      },
+      {
+        "started_ns": 30419705191000,
+        "selected": 2048,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2176,
+            "total": 16422,
+            "segments": [
+              14231,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 128,
+            "total": 294,
+            "segments": [
+              151,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0016603752646598283,
+          0.0013150279247321941,
+          0.001067450459473207,
+          0.0015119322890626563
+        ],
+        "ended_ns": 30420048405625
+      },
+      {
+        "started_ns": 30420048642750,
+        "selected": 2048,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2304,
+            "total": 16422,
+            "segments": [
+              14103,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 256,
+            "total": 294,
+            "segments": [
+              23,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0013150279247321941,
+          0.001067450459473207,
+          0.0015119322890626563,
+          0.001340346519540958
+        ],
+        "ended_ns": 30420521238500
+      },
+      {
+        "started_ns": 30420539808458,
+        "selected": 2048,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2464,
+            "total": 16422,
+            "segments": [
+              13943,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001067450459473207,
+          0.0015119322890626563,
+          0.001340346519540958,
+          0.0025820475846935823
+        ],
+        "ended_ns": 30420881629250
+      },
+      {
+        "started_ns": 30420881899625,
+        "selected": 2048,
+        "dispatched": 64,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2560,
+            "total": 16422,
+            "segments": [
+              13847,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0015119322890626563,
+          0.001340346519540958,
+          0.0025820475846935823,
+          0.0031066253818359904
+        ],
+        "ended_ns": 30421148710083
+      },
+      {
+        "started_ns": 30421168062541,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2624,
+            "total": 16422,
+            "segments": [
+              13783,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.001340346519540958,
+          0.0025820475846935823,
+          0.0031066253818359904,
+          0.0030529479218444067
+        ],
+        "ended_ns": 30421523143791
+      },
+      {
+        "started_ns": 30421523571125,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2784,
+            "total": 16422,
+            "segments": [
+              13623,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0025820475846935823,
+          0.0031066253818359904,
+          0.0030529479218444067,
+          0.0018058770812558577
+        ],
+        "ended_ns": 30421902634458
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 1,
+    "repeat": 0,
+    "workload": "prose",
+    "short_started_ns": 30485921419541,
+    "short_first_ns": 30490543413958,
+    "dispatches": [
+      {
+        "started_ns": 30485914598333,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0015495188789032,
+          0.001399462158204301,
+          0.001371886718750659,
+          0.001049587726555501
+        ],
+        "ended_ns": 30486495674833
+      },
+      {
+        "started_ns": 30486496498083,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 512,
+            "total": 16412,
+            "segments": [
+              15872,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.001399462158204301,
+          0.001371886718750659,
+          0.001049587726555501,
+          0.0011340592460911125
+        ],
+        "ended_ns": 30487902522708
+      },
+      {
+        "started_ns": 30487938706000,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 1024,
+            "total": 16412,
+            "segments": [
+              15360,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001371886718750659,
+          0.001049587726555501,
+          0.0011340592460911125,
+          0.0018298060429676373
+        ],
+        "ended_ns": 30489255408250
+      },
+      {
+        "started_ns": 30489255693708,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 1536,
+            "total": 16412,
+            "segments": [
+              14848,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001049587726555501,
+          0.0011340592460911125,
+          0.0018298060429676373,
+          0.0024427039257878375
+        ],
+        "ended_ns": 30490128047958
+      },
+      {
+        "started_ns": 30490149067833,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0011340592460911125,
+          0.0018298060429676373,
+          0.0024427039257878375,
+          0.0014607666015606924
+        ],
+        "ended_ns": 30490540817375
+      },
+      {
+        "started_ns": 30490541243833,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2240,
+            "total": 16412,
+            "segments": [
+              14144,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0018298060429676373,
+          0.0024427039257878375,
+          0.0014607666015606924,
+          0.001721254989585456
+        ],
+        "ended_ns": 30490930610625
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 1,
+    "repeat": 1,
+    "workload": "prose",
+    "short_started_ns": 30535138020958,
+    "short_first_ns": 30539954975333,
+    "dispatches": [
+      {
+        "started_ns": 30535131391416,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.002180392187506186,
+          0.0018949627625033827,
+          0.004098247406318478,
+          0.0013776401367238122
+        ],
+        "ended_ns": 30535787337041
+      },
+      {
+        "started_ns": 30535788134750,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 512,
+            "total": 16412,
+            "segments": [
+              15872,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0018949627625033827,
+          0.004098247406318478,
+          0.0013776401367238122,
+          0.0012802722988283222
+        ],
+        "ended_ns": 30537322750708
+      },
+      {
+        "started_ns": 30537359725916,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 1024,
+            "total": 16412,
+            "segments": [
+              15360,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.004098247406318478,
+          0.0013776401367238122,
+          0.0012802722988283222,
+          0.001997435654947329
+        ],
+        "ended_ns": 30538696130750
+      },
+      {
+        "started_ns": 30538696484666,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 1536,
+            "total": 16412,
+            "segments": [
+              14848,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0013776401367238122,
+          0.0012802722988283222,
+          0.001997435654947329,
+          0.002479222016698728
+        ],
+        "ended_ns": 30539504145125
+      },
+      {
+        "started_ns": 30539520163916,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0012802722988283222,
+          0.001997435654947329,
+          0.002479222016698728,
+          0.001391477703130306
+        ],
+        "ended_ns": 30539952738583
+      },
+      {
+        "started_ns": 30539953169625,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2240,
+            "total": 16412,
+            "segments": [
+              14144,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.001997435654947329,
+          0.002479222016698728,
+          0.001391477703130306,
+          0.0019585661874922757
+        ],
+        "ended_ns": 30540341897958
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 1,
+    "repeat": 0,
+    "workload": "retrieval",
+    "short_started_ns": 30608807071416,
+    "short_first_ns": 30613034486458,
+    "dispatches": [
+      {
+        "started_ns": 30608788533791,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.001362636554688379,
+          0.001459477621096994,
+          0.0012630696621087623,
+          0.0012902901756313694
+        ],
+        "ended_ns": 30609402697458
+      },
+      {
+        "started_ns": 30609403432875,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 512,
+            "total": 16422,
+            "segments": [
+              15895,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.001459477621096994,
+          0.0012630696621087623,
+          0.0012902901756313694,
+          0.0011987227382803667
+        ],
+        "ended_ns": 30610608674291
+      },
+      {
+        "started_ns": 30610634940208,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 1024,
+            "total": 16422,
+            "segments": [
+              15383,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012630696621087623,
+          0.0012902901756313694,
+          0.0011987227382803667,
+          0.0015229147180772708
+        ],
+        "ended_ns": 30611896615166
+      },
+      {
+        "started_ns": 30611896923458,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 1536,
+            "total": 16422,
+            "segments": [
+              14871,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012902901756313694,
+          0.0011987227382803667,
+          0.0015229147180772708,
+          0.0023984352034163514
+        ],
+        "ended_ns": 30612657779416
+      },
+      {
+        "started_ns": 30612672515833,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0011987227382803667,
+          0.0015229147180772708,
+          0.0023984352034163514,
+          0.0013261972656266607
+        ],
+        "ended_ns": 30613032384875
+      },
+      {
+        "started_ns": 30613032759166,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2240,
+            "total": 16422,
+            "segments": [
+              14167,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0015229147180772708,
+          0.0023984352034163514,
+          0.0013261972656266607,
+          0.001643114364583198
+        ],
+        "ended_ns": 30613361848708
+      }
+    ]
+  },
+  {
+    "arm": "fixed512",
+    "cycle": 1,
+    "repeat": 1,
+    "workload": "retrieval",
+    "short_started_ns": 30639759842041,
+    "short_first_ns": 30644953081583,
+    "dispatches": [
+      {
+        "started_ns": 30639753063958,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.002146575603518386,
+          0.002263927898439988,
+          0.0021581592597641475,
+          0.0014980179211531606
+        ],
+        "ended_ns": 30640433403083
+      },
+      {
+        "started_ns": 30640434218458,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 512,
+            "total": 16422,
+            "segments": [
+              15895,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.002263927898439988,
+          0.0021581592597641475,
+          0.0014980179211531606,
+          0.0013279057617197054
+        ],
+        "ended_ns": 30642035076625
+      },
+      {
+        "started_ns": 30642061964458,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 1024,
+            "total": 16422,
+            "segments": [
+              15383,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0021581592597641475,
+          0.0014980179211531606,
+          0.0013279057617197054,
+          0.002022965707963616
+        ],
+        "ended_ns": 30643592671125
+      },
+      {
+        "started_ns": 30643592998166,
+        "selected": 512,
+        "dispatched": 512,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 1536,
+            "total": 16422,
+            "segments": [
+              14871,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0014980179211531606,
+          0.0013279057617197054,
+          0.002022965707963616,
+          0.002909892505701426
+        ],
+        "ended_ns": 30644457077916
+      },
+      {
+        "started_ns": 30644480066958,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0013279057617197054,
+          0.002022965707963616,
+          0.002909892505701426,
+          0.0015342326660103822
+        ],
+        "ended_ns": 30644950659125
+      },
+      {
+        "started_ns": 30644951062291,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2208,
+            "total": 16422,
+            "segments": [
+              14199,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.002022965707963616,
+          0.002909892505701426,
+          0.0015342326660103822,
+          0.002415405724991615
+        ],
+        "ended_ns": 30645393846958
+      }
+    ]
+  },
+  {
+    "arm": "fixed2048",
+    "cycle": 1,
+    "repeat": 0,
+    "workload": "prose",
+    "short_started_ns": 30724233348750,
+    "short_first_ns": 30739903892500,
+    "dispatches": [
+      {
+        "started_ns": 30724226557875,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0016318465576183883,
+          0.0007909122114249101,
+          0.0007315239052729794,
+          0.001085948730477071
+        ],
+        "ended_ns": 30727148822541
+      },
+      {
+        "started_ns": 30727149744000,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0007909122114249101,
+          0.0007315239052729794,
+          0.001085948730477071,
+          0.0014266801958005004
+        ],
+        "ended_ns": 30730575437916
+      },
+      {
+        "started_ns": 30730605819208,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 4096,
+            "total": 16412,
+            "segments": [
+              12288,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0007315239052729794,
+          0.001085948730477071,
+          0.0014266801958005004,
+          0.0014865419019085063
+        ],
+        "ended_ns": 30737539944500
+      },
+      {
+        "started_ns": 30737587110916,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 6144,
+            "total": 16412,
+            "segments": [
+              10240,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 5,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001085948730477071,
+          0.0014266801958005004,
+          0.0014865419019085063,
+          0.0033417094178309842
+        ],
+        "ended_ns": 30739639150583
+      },
+      {
+        "started_ns": 30739646049833,
+        "selected": 128,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 8192,
+            "total": 16412,
+            "segments": [
+              8192,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0014266801958005004,
+          0.0014865419019085063,
+          0.0033417094178309842,
+          0.0009801269531237722
+        ],
+        "ended_ns": 30739901371125
+      },
+      {
+        "started_ns": 30739901922000,
+        "selected": 128,
+        "dispatched": 128,
+        "processing": [
+          {
+            "uid": 4,
+            "processed": 8320,
+            "total": 16412,
+            "segments": [
+              8064,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0014865419019085063,
+          0.0033417094178309842,
+          0.0009801269531237722,
+          0.0017456435546989724
+        ],
+        "ended_ns": 30740276740041
+      }
+    ]
+  },
+  {
+    "arm": "fixed2048",
+    "cycle": 1,
+    "repeat": 1,
+    "workload": "prose",
+    "short_started_ns": 30778163145166,
+    "short_first_ns": 30795150760375,
+    "dispatches": [
+      {
+        "started_ns": 30778145580000,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0020537276458298948,
+          0.0019449678214219343,
+          0.002106181768749593,
+          0.001197668617180625
+        ],
+        "ended_ns": 30779670270541
+      },
+      {
+        "started_ns": 30779670958958,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 2048,
+            "total": 16412,
+            "segments": [
+              14336,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0019449678214219343,
+          0.002106181768749593,
+          0.001197668617180625,
+          0.0007442802734374254
+        ],
+        "ended_ns": 30785028172083
+      },
+      {
+        "started_ns": 30785080711083,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 4096,
+            "total": 16412,
+            "segments": [
+              12288,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 256,
+            "total": 284,
+            "segments": [
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.002106181768749593,
+          0.001197668617180625,
+          0.0007442802734374254,
+          0.0023249116935772918
+        ],
+        "ended_ns": 30791167773125
+      },
+      {
+        "started_ns": 30791181145416,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 6144,
+            "total": 16412,
+            "segments": [
+              10240,
+              27,
+              1
+            ]
+          },
+          {
+            "uid": 8,
+            "processed": 283,
+            "total": 284,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.001197668617180625,
+          0.0007442802734374254,
+          0.0023249116935772918,
+          0.0029334786944568204
+        ],
+        "ended_ns": 30794631895166
+      },
+      {
+        "started_ns": 30794680093458,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 8192,
+            "total": 16412,
+            "segments": [
+              8192,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0007442802734374254,
+          0.0023249116935772918,
+          0.0029334786944568204,
+          0.001606543070312938
+        ],
+        "ended_ns": 30795148108916
+      },
+      {
+        "started_ns": 30795148601208,
+        "selected": 160,
+        "dispatched": 160,
+        "processing": [
+          {
+            "uid": 7,
+            "processed": 8352,
+            "total": 16412,
+            "segments": [
+              8032,
+              27,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0023249116935772918,
+          0.0029334786944568204,
+          0.001606543070312938,
+          0.002455196612504551
+        ],
+        "ended_ns": 30795606135375
+      }
+    ]
+  },
+  {
+    "arm": "fixed2048",
+    "cycle": 1,
+    "repeat": 0,
+    "workload": "retrieval",
+    "short_started_ns": 30852546181708,
+    "short_first_ns": 30874747101625,
+    "dispatches": [
+      {
+        "started_ns": 30852529928958,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0012388008217776303,
+          0.0012997856040044553,
+          0.0012983667602544102,
+          0.0015384501182838463
+        ],
+        "ended_ns": 30854625140000
+      },
+      {
+        "started_ns": 30854626049750,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0012997856040044553,
+          0.0012983667602544102,
+          0.0015384501182838463,
+          0.001022856587891141
+        ],
+        "ended_ns": 30859487620208
+      },
+      {
+        "started_ns": 30859499537083,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 4096,
+            "total": 16422,
+            "segments": [
+              12311,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0012983667602544102,
+          0.0015384501182838463,
+          0.001022856587891141,
+          0.002088889664805108
+        ],
+        "ended_ns": 30864669377916
+      },
+      {
+        "started_ns": 30864692020500,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 6144,
+            "total": 16422,
+            "segments": [
+              10263,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 12,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0015384501182838463,
+          0.001022856587891141,
+          0.002088889664805108,
+          0.0025071483186225835
+        ],
+        "ended_ns": 30874306597583
+      },
+      {
+        "started_ns": 30874327737458,
+        "selected": 96,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 8192,
+            "total": 16422,
+            "segments": [
+              8215,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.001022856587891141,
+          0.002088889664805108,
+          0.0025071483186225835,
+          0.004650074768065338
+        ],
+        "ended_ns": 30874744565750
+      },
+      {
+        "started_ns": 30874745187208,
+        "selected": 96,
+        "dispatched": 96,
+        "processing": [
+          {
+            "uid": 11,
+            "processed": 8288,
+            "total": 16422,
+            "segments": [
+              8119,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.002088889664805108,
+          0.0025071483186225835,
+          0.004650074768065338,
+          0.0032178919270791084
+        ],
+        "ended_ns": 30875131001958
+      }
+    ]
+  },
+  {
+    "arm": "fixed2048",
+    "cycle": 1,
+    "repeat": 1,
+    "workload": "retrieval",
+    "short_started_ns": 30884005536958,
+    "short_first_ns": 30896023946000,
+    "dispatches": [
+      {
+        "started_ns": 30883998490500,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0008056598715810992,
+          0.0008189757080074855,
+          0.0008848119255935584,
+          0.0010296412759848977
+        ],
+        "ended_ns": 30885238858541
+      },
+      {
+        "started_ns": 30885239696708,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 2048,
+            "total": 16422,
+            "segments": [
+              14359,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 1,
+        "decoding": 0,
+        "samples": [
+          0.0008189757080074855,
+          0.0008848119255935584,
+          0.0010296412759848977,
+          0.0006054148354497357
+        ],
+        "ended_ns": 30888189144541
+      },
+      {
+        "started_ns": 30888204337416,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 4096,
+            "total": 16422,
+            "segments": [
+              12311,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 279,
+            "total": 294,
+            "segments": [
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0008848119255935584,
+          0.0010296412759848977,
+          0.0006054148354497357,
+          0.0012671771057146427
+        ],
+        "ended_ns": 30893220482083
+      },
+      {
+        "started_ns": 30893236339708,
+        "selected": 2048,
+        "dispatched": 2048,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 6144,
+            "total": 16422,
+            "segments": [
+              10263,
+              14,
+              1
+            ]
+          },
+          {
+            "uid": 15,
+            "processed": 293,
+            "total": 294,
+            "segments": [
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 0,
+        "samples": [
+          0.0010296412759848977,
+          0.0006054148354497357,
+          0.0012671771057146427,
+          0.002432623019399591
+        ],
+        "ended_ns": 30895721157833
+      },
+      {
+        "started_ns": 30895731577250,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 8192,
+            "total": 16422,
+            "segments": [
+              8215,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0006054148354497357,
+          0.0012671771057146427,
+          0.002432623019399591,
+          0.0011667151083987193
+        ],
+        "ended_ns": 30896021594416
+      },
+      {
+        "started_ns": 30896022142958,
+        "selected": 192,
+        "dispatched": 192,
+        "processing": [
+          {
+            "uid": 14,
+            "processed": 8384,
+            "total": 16422,
+            "segments": [
+              8023,
+              14,
+              1
+            ]
+          }
+        ],
+        "queued": 0,
+        "decoding": 1,
+        "samples": [
+          0.0012671771057146427,
+          0.002432623019399591,
+          0.0011667151083987193,
+          0.0012880950520942254
+        ],
+        "ended_ns": 30896300338208
+      }
+    ]
+  }
+]
