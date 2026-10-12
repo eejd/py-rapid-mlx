@@ -133,7 +133,7 @@ def test_agents_test_keeps_public_alias(monkeypatch):
 
     monkeypatch.setattr("rapid_mlx.agents.testing.AgentTestRunner", FakeRunner)
     args = SimpleNamespace(
-        agent_name="crush",
+        agent_name="aider",
         base_url="http://127.0.0.1:18740/v1",
         model="mlx-community/Qwen3.5-4B-MLX-4bit",
         _original_alias="qwen3.5-4b-4bit",
