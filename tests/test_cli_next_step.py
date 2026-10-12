@@ -98,6 +98,11 @@ def test_ls_dispatch_ends_with_hint(monkeypatch):
     [
         (16.0, "qwen3.5-4b-4bit", "qwen3.5-4b-4bit"),
         (24.0, "qwen3.5-4b-4bit", "qwen3.5-4b-4bit"),
+        (
+            24.0,
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            "bonsai-27b-2bit",
+        ),
         (16.0, "qwen3.5-27b-4bit", "qwen3.5-4b-4bit"),
         (16.0, "bonsai-27b-2bit", "qwen3.5-4b-4bit"),
         (8.0, "qwen3.5-4b-4bit", "lfm2.5-2.6b-4bit"),

@@ -13061,7 +13061,7 @@ def _print_next_step(alias: str | None = None) -> None:
 
     ram_gb = physical_ram_gb()
     selected = recommendation_tier(ram_gb, validate_catalog=False).picks[0].alias
-    if alias:
+    if alias and "/" not in alias:
         from rapid_mlx.model_aliases import resolve_profile
         from rapid_mlx.model_sizes import size_bytes
         from rapid_mlx.recommendations import (
