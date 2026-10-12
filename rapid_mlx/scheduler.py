@@ -6819,16 +6819,24 @@ class Scheduler:
         for owner in (getattr(model, "language_model", None), model):
             head = getattr(owner, "mtp", None)
             layers = getattr(head, "layers", None)
-            if not isinstance(layers, (list, tuple)):
+            if layers is None:
                 continue
+            if not isinstance(layers, (list, tuple)) or not layers:
+                raise ValueError("MTP draft cache layer geometry unavailable")
             for layer in layers:
                 attention = getattr(layer, "self_attn", None)
                 kv_heads = getattr(attention, "num_key_value_heads", None)
                 head_dim = getattr(attention, "head_dim", None)
-                if isinstance(kv_heads, int) and isinstance(head_dim, int):
-                    # K and V, two bytes each (the continuous route is bf16).
-                    total += 2 * kv_heads * head_dim * 2
+                if any(
+                    type(value) is not int or value <= 0
+                    for value in (kv_heads, head_dim)
+                ):
+                    raise ValueError("MTP draft attention cache geometry unavailable")
+                # K and V, two bytes each (the continuous route is bf16).
+                total += 2 * kv_heads * head_dim * 2
             break
+        if total <= 0:
+            raise ValueError("MTP draft cache geometry unavailable")
         self._mtp_draft_kv_per_token_cache = total
         return total
 

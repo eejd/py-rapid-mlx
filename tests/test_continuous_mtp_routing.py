@@ -1605,7 +1605,47 @@ def test_lane_bytes_estimate_adds_the_mtp_head_kv_to_the_target_projection():
     bare = Scheduler.__new__(Scheduler)
     bare._estimate_request_kv_bytes = lambda _request: 7
     bare.model = SimpleNamespace()
-    assert bare._continuous_mtp_lane_bytes(request) == 7
+    with pytest.raises(ValueError, match="draft cache geometry unavailable"):
+        bare._continuous_mtp_lane_bytes(request)
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize(
+    "layers",
+    [
+        [],
+        object(),
+        [SimpleNamespace()],
+        [
+            SimpleNamespace(
+                self_attn=SimpleNamespace(num_key_value_heads=0, head_dim=256)
+            )
+        ],
+        [
+            SimpleNamespace(
+                self_attn=SimpleNamespace(num_key_value_heads=2, head_dim=None)
+            )
+        ],
+    ],
+)
+def test_unknown_draft_geometry_refuses_projection_without_caching_zero(layers):
+    from rapid_mlx.scheduler import Scheduler
+
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.model = SimpleNamespace(mtp=SimpleNamespace(layers=layers))
+    with pytest.raises(ValueError, match="geometry unavailable"):
+        scheduler._mtp_draft_kv_bytes_per_token()
+    assert not hasattr(scheduler, "_mtp_draft_kv_per_token_cache")
+    scheduler.model = SimpleNamespace(
+        mtp=SimpleNamespace(
+            layers=[
+                SimpleNamespace(
+                    self_attn=SimpleNamespace(num_key_value_heads=2, head_dim=256)
+                )
+            ]
+        )
+    )
+    assert scheduler._mtp_draft_kv_bytes_per_token() == 2048
 
 
 @pytest.mark.requires_mlx
@@ -1824,3 +1864,26 @@ def test_missing_lane_estimator_refuses_even_empty_cache_admission(monkeypatch):
     batch_gen.next()
     assert created == []
     assert [sequence[0] for sequence in batch_gen._unprocessed_sequences] == [1, 2]
+
+
+@pytest.mark.requires_mlx
+def test_unknown_production_draft_geometry_keeps_ordinary_queue_ownership(monkeypatch):
+    from rapid_mlx.scheduler import Scheduler
+
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.model = SimpleNamespace(mtp=SimpleNamespace(layers=[]))
+    scheduler._estimate_request_kv_bytes = lambda _request: 1024
+    batch_gen = _SchedulerBatchGenerator()
+    sources = [_scheduler_sequence(1), _scheduler_sequence(2)]
+    batch_gen._unprocessed_sequences.extend(sources)
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(
+        monkeypatch,
+        batch_gen,
+        requests,
+        mapping,
+        estimator=scheduler._continuous_mtp_lane_bytes,
+    )
+    batch_gen.next()
+    assert created == []
+    assert list(batch_gen._unprocessed_sequences) == sources
