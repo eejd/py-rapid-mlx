@@ -2420,40 +2420,53 @@ def _safe_hub_model_id(model_id: str) -> str:
     ]
 
 
+def _is_transient_hub_error(exc: BaseException) -> bool:
+    """Recognize recoverable transport failures on an explicit cause chain."""
+    import httpx
+    from huggingface_hub.errors import (
+        HfHubHTTPError,
+        OfflineModeIsEnabled,
+        RepositoryNotFoundError,
+    )
+    from requests.exceptions import ChunkedEncodingError
+
+    from rapid_mlx.telemetry.model_events import pull_error_class
+
+    transient = pull_error_class(exc) == "network"
+    current = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (OfflineModeIsEnabled, RepositoryNotFoundError)):
+            return False
+        if isinstance(current, HfHubHTTPError) and getattr(
+            current.response, "status_code", None
+        ) in (401, 403, 404):
+            return False
+        if isinstance(current, (httpx.RemoteProtocolError, ChunkedEncodingError)):
+            transient = True
+        if isinstance(current, HfHubHTTPError) and getattr(
+            current.response, "status_code", None
+        ) in (429, 500, 502, 503, 504):
+            transient = True
+        current = current.__cause__
+    return transient
+
+
 def _retry_hub_download(operation, model_id: str):
     """Retry transient Hub transfers against the same on-disk cache.
 
-    Completed files, mirror partials, and Hub ``.incomplete`` blobs survive
-    each attempt. The Hub resumes a blob when the server honors Range.
+    Completed Hub files and mirror partials survive each attempt. Some Hub
+    versions also resume their ``.incomplete`` blob; others use per-attempt
+    scratch files, so an in-flight file can restart.
     """
     import time
-
-    from huggingface_hub.errors import (
-        HfHubHTTPError,
-        LocalEntryNotFoundError,
-        OfflineModeIsEnabled,
-    )
-
-    from rapid_mlx.telemetry.model_events import pull_error_class
 
     for attempt in range(3):
         try:
             return operation()
         except Exception as exc:
-            transient = pull_error_class(exc) == "network"
-            offline = False
-            current = exc
-            seen = set()
-            while current is not None and id(current) not in seen:
-                seen.add(id(current))
-                if isinstance(current, HfHubHTTPError) and getattr(
-                    current.response, "status_code", None
-                ) in (429, 500, 502, 503, 504):
-                    transient = True
-                if isinstance(current, (LocalEntryNotFoundError, OfflineModeIsEnabled)):
-                    offline = True
-                current = current.__cause__
-            if not transient or offline or attempt == 2:
+            if not _is_transient_hub_error(exc) or attempt == 2:
                 raise
             delay = 2**attempt
             print(
@@ -2572,8 +2585,10 @@ def render_hub_error(exc: BaseException, model_id: str) -> str | None:
                 OfflineModeIsEnabled,
                 requests_exceptions.ConnectionError,
                 requests_exceptions.Timeout,
+                requests_exceptions.ChunkedEncodingError,
                 httpx.NetworkError,
                 httpx.TimeoutException,
+                httpx.RemoteProtocolError,
                 socket.gaierror,
                 TimeoutError,
                 urllib.error.URLError,
@@ -2730,12 +2745,9 @@ def _ensure_model_downloaded(
                 revision=pinned_image_revision,
             )
         except Exception as exc:
-            from rapid_mlx.telemetry.model_events import (
-                emit_model_pull_failed,
-                pull_error_class,
-            )
+            from rapid_mlx.telemetry.model_events import emit_model_pull_failed
 
-            if pull_error_class(exc) == "network":
+            if _is_transient_hub_error(exc):
                 mirror_ok = False
                 print("  Mirror connection interrupted; trying Hugging Face.")
             else:
@@ -2881,10 +2893,7 @@ def _ensure_model_downloaded(
         # Typed permanent failures stop here; starting a loader cannot repair
         # a missing repository or grant access to a gated one. Network and
         # offline failures retain the best-effort loader retry.
-        from rapid_mlx.telemetry.model_events import (
-            emit_model_pull_failed,
-            pull_error_class,
-        )
+        from rapid_mlx.telemetry.model_events import emit_model_pull_failed
 
         rendered = render_hub_error(e, model_name)
         if rendered is not None and pull_error_class(e) in {"gated", "not_found"}:
@@ -10669,8 +10678,8 @@ def _pull_repository(
     _was_cached: bool | None = None
     _mirror_out: dict = {}
 
-    # Reclaim legacy per-attempt scratch files for this repo. The helper keeps
-    # current Hub's resumable ``<etag>.incomplete`` files, regardless of age.
+    # Reclaim abandoned per-attempt scratch files for this repo. The helper
+    # keeps resumable ``<etag>.incomplete`` files, regardless of age.
     try:
         from rapid_mlx._download_gate import _format_size, reap_orphan_incomplete_blobs
 
@@ -10708,7 +10717,7 @@ def _pull_repository(
             pull_error_class,
         )
 
-        if pull_error_class(exc) == "network":
+        if _is_transient_hub_error(exc):
             mirror_ok = False
             print("  Mirror connection interrupted; trying Hugging Face.")
         else:
@@ -10764,10 +10773,10 @@ def _pull_repository(
     # or one or more files failed both R2 and HF in the per-file pool.
     # snapshot_download will retry from HF with its own (more robust)
     # error reporting.
-    # The Hub reuses completed blobs and resumes a matching ``.incomplete``
-    # blob with Range. Servers that ignore Range can still restart that file.
+    # The Hub reuses completed blobs. In-flight files may resume or restart,
+    # depending on the installed Hub version and server Range support.
     print(f"\n  Pulling {repo_id} from HuggingFace ...")
-    print("  Interrupted files will resume where the server supports it.")
+    print("  Completed files stay cached; an in-flight file may restart.")
     try:
         from rapid_mlx.model_aliases import resolve_subfolder
 

@@ -39,12 +39,17 @@ def test_retry_reuses_same_cache_and_stops_after_success(monkeypatch, capsys):
 
 def test_retry_is_bounded_for_network_and_server_errors(monkeypatch):
     import requests
-    from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
+
+    wrapped = LocalEntryNotFoundError("uncached")
+    wrapped.__cause__ = httpx.ConnectError("private URL")
 
     monkeypatch.setattr("time.sleep", lambda _: None)
     for failure in (
         requests.ConnectionError("dropped"),
         _hub_error(HfHubHTTPError, 503),
+        wrapped,
+        httpx.RemoteProtocolError("peer closed with secret URL"),
     ):
         calls = []
 
@@ -58,12 +63,17 @@ def test_retry_is_bounded_for_network_and_server_errors(monkeypatch):
 
 
 def test_permanent_hub_errors_are_not_retried(monkeypatch):
-    from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+    from huggingface_hub.errors import (
+        GatedRepoError,
+        OfflineModeIsEnabled,
+        RepositoryNotFoundError,
+    )
 
     monkeypatch.setattr("time.sleep", lambda _: pytest.fail("unexpected backoff"))
     for failure in (
         _hub_error(GatedRepoError, 403),
         _hub_error(RepositoryNotFoundError, 404),
+        OfflineModeIsEnabled("offline"),
     ):
         calls = []
 
@@ -120,6 +130,12 @@ def test_gated_and_misspelled_repo_guidance(monkeypatch):
     assert "qwen3-0.6b-4bit" in missing
     assert "namespace/repository-name" in missing
     assert "secret response body" not in missing
+
+    protocol = cli.render_hub_error(
+        httpx.RemoteProtocolError("peer closed with secret URL"), "owner/model"
+    )
+    assert "could not reach Hugging Face" in protocol
+    assert "secret URL" not in protocol
 
 
 @pytest.mark.parametrize(
@@ -190,3 +206,28 @@ def test_serve_prefetch_retries_snapshot_with_pinned_revision(monkeypatch):
         (repo, {"revision": "fixed-sha"}),
         (repo, {"revision": "fixed-sha"}),
     ]
+
+
+def test_pull_protocol_disconnect_has_bounded_retry_and_safe_guidance(
+    monkeypatch, capsys, tmp_path
+):
+    monkeypatch.setattr(cli, "_try_mirror_prefetch", lambda *_a, **_kw: False)
+    monkeypatch.setattr(cli, "_hf_cache_root", lambda _repo: tmp_path)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    calls = []
+
+    def download(*_args, **_kwargs):
+        calls.append(1)
+        raise httpx.RemoteProtocolError("peer closed with private URL")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    with pytest.raises(SystemExit) as caught:
+        cli._pull_repository(
+            argparse.Namespace(model="owner/repo", bits=None, format=None),
+            emit_lifecycle_event=False,
+        )
+    assert caught.value.code == 1
+    assert len(calls) == 3
+    stderr = capsys.readouterr().err
+    assert "could not reach Hugging Face" in stderr
+    assert "private URL" not in stderr

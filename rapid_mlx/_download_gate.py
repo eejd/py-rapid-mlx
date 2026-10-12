@@ -232,9 +232,9 @@ def reap_orphan_incomplete_blobs(
 
     Returns ``(files_removed, bytes_reclaimed)``; ``(0, 0)`` on any problem.
 
-    Only legacy per-attempt names (``<etag>.<8 hex>.incomplete``) are
-    abandoned. Current Hub versions use ``<etag>.incomplete`` and resume from
-    those bytes, even after a long pause; never delete a resumable file here.
+    Only per-attempt names (``<etag>.<8 hex>.incomplete``) are abandoned.
+    Hub versions that use ``<etag>.incomplete`` can resume from those bytes,
+    even after a long pause; never delete a resumable file here.
 
     Deleting a model already removes its whole ``models--<repo>`` directory, so
     this exists for the repos a user KEEPS, where the files would otherwise
