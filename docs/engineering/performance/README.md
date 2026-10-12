@@ -6,6 +6,8 @@ summary statistics, and limitations.
 
 ## Reports
 
+- [First-token prefill budgets and segment-tail work (2026-10-12)](2026-10-12-first-token-budget.md)
+
 - [Prefill interference before the first output token (2026-10-11)](2026-10-11-first-token-prefill.md)
 
 - [GLM-5.3 Flash load-window memory (2026-10-10)](2026-10-10-glm53-shardwise-load.md)

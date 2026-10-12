@@ -1,0 +1,15 @@
+{
+  "recorded_at_utc": "2026-10-12T18:20:02Z",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "chip": "Apple M3 Ultra",
+  "memory_bytes": 274877906944,
+  "shared_host": true,
+  "other_training_processes": 1,
+  "other_pytest_processes": 0,
+  "load_average": [
+    4.11279296875,
+    3.259765625,
+    3.14111328125
+  ],
+  "note": "Other jobs left running; no exclusive host or GPU reservation."
+}

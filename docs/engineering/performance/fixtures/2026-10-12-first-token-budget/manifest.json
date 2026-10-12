@@ -1,0 +1,26 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "budget/cycle0-adaptive2048-1000ms.trace.jsonl": "4d354392e62cd6ec9734ee02998f3ed792adb099a3e2f6d3fb8864a6cf69b455",
+    "budget/cycle0-adaptive2048.trace.jsonl": "903e0296589005b9c615fcc834e6b4a754108f2191a483f90094c7ae0c7b8e24",
+    "budget/cycle0-fixed2048.trace.jsonl": "f9a9d3f26284385360366f375c0b0dec6a0851cdcf90224dbc7f3e18f5d33a84",
+    "budget/cycle0-fixed512.trace.jsonl": "5130d32837ed434f02e30d814840fc8c687f7d9986c11ed49ebda1cd32937126",
+    "budget/cycle1-adaptive2048-1000ms.trace.jsonl": "34f6d4fc98e0825087bf92f367c110b3e286dddb14197988dacdd831c9d81e7f",
+    "budget/cycle1-adaptive2048.trace.jsonl": "c6634e2d441bad486de46a7f5bd9ea953ac27653f1cf8f029ac285ff44ae5684",
+    "budget/cycle1-fixed2048.trace.jsonl": "1a74a05c5f4dbfb24b64b74a56e71ecda1b35c5a8388efc3f40adea53dc0af9c",
+    "budget/cycle1-fixed512.trace.jsonl": "2469f26d287e5042fefa8aea31a7a0686744261b9e439e2c01018de3e59fbadf",
+    "budget/results.json": "814f44d669f92bd378c34d9ca2b14ef341e2a014870d3840adba678156581313",
+    "environment.json": "6c17dcde8cba40a003f34633d31fe07219214dcafc20826bfa9769f2d4c7ac9d",
+    "tail/cycle0-adaptive2048-tail.trace.jsonl": "d0a2ea59ce665c7b5f99e1839bcbeb504be0a5562c374f97bb4854895f1205ac",
+    "tail/cycle0-adaptive2048.trace.jsonl": "38c759c2c2474cf65a2d8e654742e47f30140fbc3ee248a37bcab5e35278086a",
+    "tail/cycle0-fixed2048.trace.jsonl": "26824936cc172541cc7f5093ecfbc53bb6e79c7405a252d36ce42f87b59c3527",
+    "tail/cycle0-fixed512.trace.jsonl": "e42aba33b459b95aa7051d245ccf1331c333af1212fe318ef0d4014aa1391b96",
+    "tail/cycle1-adaptive2048-tail.trace.jsonl": "81c033c7ee18ed32c2b84d08955b80a0ffb1af7bddbd161e0c974ab7414ad40a",
+    "tail/cycle1-adaptive2048.trace.jsonl": "c8aa8a9f52c219afae862c64706d5b3c721eb2600cf0c49260ccc69a13bb4a26",
+    "tail/cycle1-fixed2048.trace.jsonl": "99a5aa5f4101d42fd8b329c60d418c1a19a6d457dee2222cd11fd5c1cfeb438e",
+    "tail/cycle1-fixed512.trace.jsonl": "fd16bb7e759fca2ba2a271baa042a4a85a5bd09614a379040d1dc64b74cd4400",
+    "tail/results.json": "9adc3e487b24a8708ac764a54b67fac4361831723cf23367043640daf895db96",
+    "tail-dispatch-windows.json": "78012e3579902a0f0250d95b09fe80bb38630fb437950cce9051681cc63bad0b",
+    "validate.py": "bbdf0e0093d29ac146c7c37b0b179c1579620244b9d785a0bb4735efa5b4f5da"
+  }
+}
