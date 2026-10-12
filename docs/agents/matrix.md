@@ -2,7 +2,7 @@
 
 Goose and Crush have separate current setup guides: [Goose](goose.md) and [Crush](crush.md). They are not cells in this historical family matrix.
 
-This page renders the Tier-1 **agent × model-family** integration matrix
+This page renders the **agent × model-family** integration matrix
 truthfully from the authoritative test suite in
 `tests/integrations/` — the matrix cells
 (`test_agents_matrix.py`), the family aliases and strict-xfail rules
@@ -60,6 +60,10 @@ truthfully from the authoritative test suite in
 
 ## Agent × Family (12 agents × 5 families)
 
+Pi Coding Agent has a [local setup guide](pi.md) and a
+`rapid-mlx agents pi --test` harness, but is not yet a cell in this
+12-agent family matrix.
+
 Source: `tests/integrations/README.md` "Current cell status" (pilot run
 2026-07-06, four always-on families; Hy3 column is `xfail(strict=True)` from
 0.11.0).
@@ -70,9 +74,9 @@ Source: `tests/integrations/README.md` "Current cell status" (pilot run
 | <a id="agent-claude-code"></a>[claude-code](claude-code.md) | `/v1/messages` | ✅ | ✅ | ✅ | ✅ | XFAIL (Ultra) |
 | <a id="agent-opencode"></a>[opencode](opencode.md) | `/v1/chat/completions` | ✅ | ✅ | XFAIL (arch) | ✅ | XFAIL (Ultra) |
 | <a id="agent-qwen-code"></a>[qwen-code](qwen-code.md) | `/v1/chat/completions` | ✅ | ✅ | XFAIL (arch) | ✅ | XFAIL (Ultra) |
-| <a id="agent-openhands"></a>[openhands](openhands.md) | Docker → `/v1/chat/completions` | ✅ | ✅ | ✅ | XFAIL (format) | XFAIL (Ultra) |
+| <a id="agent-openhands"></a>[openhands](openhands.md) | pinned 0.9.0 Docker → `/v1/chat/completions` | ✅ | ✅ | ✅ | XFAIL (format) | XFAIL (Ultra) |
 | <a id="agent-hermes-agent"></a>[hermes-agent](hermes-agent.md) | `/v1/chat/completions` | ✅ | ✅ | XFAIL (arch) | ✅ | XFAIL (Ultra) |
-| <a id="agent-aider"></a>aider | bash CLI → `/v1/chat/completions` | ✅ | ✅ | ✅ | ✅ | XFAIL (Ultra) |
+| <a id="agent-aider"></a>[aider](aider.md) | bash CLI → `/v1/chat/completions` | ✅ | ✅ | ✅ | ✅ | XFAIL (Ultra) |
 | <a id="agent-kilo-code"></a>kilo-code | `/v1/chat/completions` | ✅ | ✅ | XFAIL (arch) | ✅ | XFAIL (Ultra) |
 | <a id="agent-deepseek-harness"></a>[deepseek-harness](deepseek-harness.md) | `/v1/chat/completions` | ✅ | ✅ | XFAIL (arch) | ✅ | XFAIL (Ultra) |
 | <a id="agent-copilot"></a>copilot | `/v1/chat/completions` (wire smoke) | ✅ | ✅ | XFAIL (arch) | ✅ | XFAIL (Ultra) |
