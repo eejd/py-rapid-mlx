@@ -97,6 +97,20 @@ def test_existing_home_folder_with_trailing_space_is_preserved(monkeypatch, tmp_
     assert local_paths.resolved_model_ref("'~/literal space '") == str(model)
 
 
+def test_existing_folder_with_trailing_space_keeps_missing_file_diagnostic(tmp_path):
+    model = tmp_path / "literal space "
+    model.mkdir()
+    missing = model / "model.safetensors"
+    failure = FileNotFoundError(2, "missing", str(missing))
+    message = local_model_failure_message(
+        str(model), failure, include_supplied_path=True
+    )
+    assert message == (
+        f"The local model directory {str(model)!r} is missing required files: "
+        "model.safetensors."
+    )
+
+
 def test_nearest_child_directories_are_bounded_even_without_close_match(tmp_path):
     parent = tmp_path / "models"
     parent.mkdir()

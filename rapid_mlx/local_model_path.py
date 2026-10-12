@@ -16,6 +16,8 @@ _HF_REPO_ID = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
 def _typed_ref(model_ref: str) -> str:
     """Remove shell quotes accidentally passed literally and surrounding space."""
+    if os.path.exists(os.path.expanduser(model_ref)):
+        return model_ref
     value = model_ref.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
         inside = value[1:-1]
@@ -27,10 +29,7 @@ def resolved_model_ref(model_ref: str) -> str:
     """Use an absolute path for local input, preserving Hub repo ids."""
     # A literal existing directory can legitimately end in a space. Only
     # repair whitespace/quotes when that exact spelling does not resolve.
-    if os.path.exists(os.path.expanduser(model_ref)):
-        value = model_ref
-    else:
-        value = _typed_ref(model_ref)
+    value = _typed_ref(model_ref)
     # An unprefixed org/name is a Hub id when the whole path is missing,
     # regardless of whether an unrelated local org directory exists.
     if _HF_REPO_ID.fullmatch(value) and not os.path.exists(value):
