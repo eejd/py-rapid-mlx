@@ -674,6 +674,43 @@ def test_loader_architecture_failure_has_same_guidance(monkeypatch, capsys):
     assert pf.BYOM_DOCS_URL in err
 
 
+def test_architecture_guidance_falls_back_when_catalog_is_unreadable(monkeypatch):
+    def unreadable():
+        raise OSError("catalog unavailable")
+
+    monkeypatch.setattr("rapid_mlx.model_aliases.list_builtin_aliases", unreadable)
+    lines = pf.render_architecture_guidance(
+        "owner/Qwen3.5-4B-NewArch", {"architectures": ["NewForCausalLM"]}, None
+    )
+    assert "Architecture NewForCausalLM" in lines[0]
+    assert pf.BYOM_DOCS_URL in lines[-1]
+
+
+def test_loader_architecture_guidance_survives_unreadable_config(monkeypatch, capsys):
+    def unreadable(*args):
+        raise OSError("config unavailable")
+
+    monkeypatch.setattr(cli, "_resolve_checkpoint_config", unreadable)
+    cli._print_model_load_error(
+        types.SimpleNamespace(model="owner/Custom-4B"),
+        ValueError("Model type custom_x not supported."),
+    )
+    assert pf.BYOM_DOCS_URL in capsys.readouterr().err
+
+
+def test_loader_architecture_guidance_handles_nonstring_model_type(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli,
+        "_resolve_checkpoint_config",
+        lambda *args: {"model_type": 123, "architectures": ["CustomForCausalLM"]},
+    )
+    cli._print_model_load_error(
+        types.SimpleNamespace(model="owner/Custom-4B"),
+        ValueError("Model type custom_x not supported."),
+    )
+    assert "Architecture CustomForCausalLM" in capsys.readouterr().err
+
+
 def test_render_memory():
     insp = _insp(weight_bytes=40 * GIB)
     lines = pf.render_failure(insp, _evaluate(insp))
