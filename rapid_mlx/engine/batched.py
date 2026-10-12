@@ -2619,10 +2619,11 @@ class BatchedEngine(BaseEngine):
             # and again after each unfinished build completes, including queued
             # work that has not reached matcher construction yet. Its existing
             # future retains admission until genuine completion.
+            def release_after_build(_done: Future, tokenizer: Any = tokenizer) -> None:
+                release_model_matchers(tokenizer)
+
             for future in late_grammar_builds:
-                future.add_done_callback(
-                    lambda _done, tokenizer=tokenizer: release_model_matchers(tokenizer)
-                )
+                future.add_done_callback(release_after_build)
             release_model_matchers(tokenizer)
 
         if (
