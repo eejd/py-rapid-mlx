@@ -232,17 +232,9 @@ def reap_orphan_incomplete_blobs(
 
     Returns ``(files_removed, bytes_reclaimed)``; ``(0, 0)`` on any problem.
 
-    huggingface_hub downloads each blob to a per-attempt scratch file named
-    ``<etag>.<8 hex>.incomplete`` and unlinks it in a ``finally``. The unique
-    name is deliberate upstream (a shared name corrupts the cache on filesystems
-    where ``flock`` silently succeeds for every caller), but it means an
-    interrupted attempt is never resumed — and a process killed by a signal
-    never runs that ``finally``. The desktop cancels a download with SIGTERM and
-    then SIGKILL, so every cancel, quit or crash strands one file per blob that
-    was in flight, and nothing in the cache ever reclaims them. Measured on a
-    developer machine: three files for a single blob, written 49, 75 and 170
-    hours apart — one per interrupted attempt, days apart, with no concurrency
-    involved.
+    Only legacy per-attempt names (``<etag>.<8 hex>.incomplete``) are
+    abandoned. Current Hub versions use ``<etag>.incomplete`` and resume from
+    those bytes, even after a long pause; never delete a resumable file here.
 
     Deleting a model already removes its whole ``models--<repo>`` directory, so
     this exists for the repos a user KEEPS, where the files would otherwise
@@ -277,6 +269,8 @@ def reap_orphan_incomplete_blobs(
     reclaimed = 0
     for name in names:
         if not name.endswith(".incomplete"):
+            continue
+        if name[: -len(".incomplete")].count(".") != 1:
             continue
         path = os.path.join(blobs_dir, name)
         try:

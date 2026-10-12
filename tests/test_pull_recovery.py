@@ -1,0 +1,192 @@
+"""CLI Hub recovery with a mocked downloader; no model or network required."""
+
+import argparse
+from types import SimpleNamespace
+
+import httpx
+import pytest
+
+from rapid_mlx import cli
+
+
+def _hub_error(error_type, status):
+    response = httpx.Response(
+        status, request=httpx.Request("GET", "https://huggingface.co/x")
+    )
+    return error_type("secret response body", response=response)
+
+
+def test_retry_reuses_same_cache_and_stops_after_success(monkeypatch, capsys):
+    import requests
+
+    sleeps = []
+    monkeypatch.setattr("time.sleep", sleeps.append)
+    cache = {"finished": False}
+    calls = []
+
+    def transfer():
+        calls.append(cache["finished"])
+        if not cache["finished"]:
+            cache["finished"] = True
+            raise requests.ConnectionError("private URL")
+        return "snapshot"
+
+    assert cli._retry_hub_download(transfer, "owner/repo") == "snapshot"
+    assert calls == [False, True]
+    assert sleeps == [1]
+    assert "private URL" not in capsys.readouterr().err
+
+
+def test_retry_is_bounded_for_network_and_server_errors(monkeypatch):
+    import requests
+    from huggingface_hub.errors import HfHubHTTPError
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    for failure in (
+        requests.ConnectionError("dropped"),
+        _hub_error(HfHubHTTPError, 503),
+    ):
+        calls = []
+
+        def transfer(failure=failure, calls=calls):
+            calls.append(1)
+            raise failure
+
+        with pytest.raises(type(failure)):
+            cli._retry_hub_download(transfer, "owner/repo")
+        assert len(calls) == 3
+
+
+def test_permanent_hub_errors_are_not_retried(monkeypatch):
+    from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+    monkeypatch.setattr("time.sleep", lambda _: pytest.fail("unexpected backoff"))
+    for failure in (
+        _hub_error(GatedRepoError, 403),
+        _hub_error(RepositoryNotFoundError, 404),
+    ):
+        calls = []
+
+        def transfer(failure=failure, calls=calls):
+            calls.append(1)
+            raise failure
+
+        with pytest.raises(type(failure)):
+            cli._retry_hub_download(transfer, "owner/repo")
+        assert len(calls) == 1
+
+
+def test_pull_retries_mocked_snapshot_and_keeps_revision(monkeypatch, tmp_path):
+    import requests
+
+    monkeypatch.setattr(cli, "_try_mirror_prefetch", lambda *_a, **_kw: False)
+    monkeypatch.setattr(cli, "_hf_cache_root", lambda _repo: tmp_path)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    calls = []
+
+    def download(repo, **kwargs):
+        calls.append((repo, kwargs.copy()))
+        if len(calls) == 1:
+            raise requests.ConnectionError("dropped")
+        return str(tmp_path)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    cli._pull_repository(
+        argparse.Namespace(model="owner/repo", bits=None, format=None),
+        revision_override="fixed-sha",
+    )
+    assert calls == [
+        ("owner/repo", {"revision": "fixed-sha"}),
+        ("owner/repo", {"revision": "fixed-sha"}),
+    ]
+
+
+def test_gated_and_misspelled_repo_guidance(monkeypatch):
+    from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+    gated = cli.render_hub_error(_hub_error(GatedRepoError, 403), "owner/private")
+    assert "https://huggingface.co/owner/private" in gated
+    assert "hf auth login" in gated
+    assert "HF_TOKEN" in gated
+
+    monkeypatch.setattr(
+        "rapid_mlx.model_aliases.list_aliases",
+        lambda: {"qwen3-0.6b-4bit": "mlx-community/Qwen3-0.6B-4bit"},
+    )
+    missing = cli.render_hub_error(
+        _hub_error(RepositoryNotFoundError, 404),
+        "mlx-community/Qwen3-0.6B-4bi",
+    )
+    assert "qwen3-0.6b-4bit" in missing
+    assert "namespace/repository-name" in missing
+    assert "secret response body" not in missing
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(403, "hf auth login"), (404, "Closest catalog aliases")],
+)
+def test_pull_exits_with_actionable_permanent_error(
+    monkeypatch, capsys, tmp_path, status, expected
+):
+    from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+    repo = "mlx-community/Qwen3-0.6B-4bi"
+    failure_type = GatedRepoError if status == 403 else RepositoryNotFoundError
+    failure = _hub_error(failure_type, status)
+    monkeypatch.setattr(cli, "_try_mirror_prefetch", lambda *_a, **_kw: False)
+    monkeypatch.setattr(cli, "_hf_cache_root", lambda _repo: tmp_path)
+    monkeypatch.setattr(
+        "rapid_mlx.model_aliases.list_aliases",
+        lambda: {"qwen3-0.6b-4bit": "mlx-community/Qwen3-0.6B-4bit"},
+    )
+    calls = []
+
+    def download(*_args, **_kwargs):
+        calls.append(1)
+        raise failure
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    with pytest.raises(SystemExit) as caught:
+        cli._pull_repository(
+            argparse.Namespace(model=repo, bits=None, format=None),
+            emit_lifecycle_event=False,
+        )
+    assert caught.value.code == 1
+    assert len(calls) == 1
+    output = capsys.readouterr()
+    assert expected in output.out + output.err
+    assert "secret response body" not in output.out + output.err
+    assert "Downloaded" not in output.out + output.err
+
+
+def test_serve_prefetch_retries_snapshot_with_pinned_revision(monkeypatch):
+    import requests
+
+    repo = "owner/model"
+    monkeypatch.setattr(cli, "_cache_runnability", lambda _model: False)
+    monkeypatch.setattr(cli, "_offline_hub_mode_active", lambda: False)
+    monkeypatch.setattr(cli, "_check_disk_space", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_try_mirror_prefetch", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "rapid_mlx._download_gate.call_with_deadline",
+        lambda _func, _timeout, *_args, **_kwargs: SimpleNamespace(
+            sha="fixed-sha", siblings=[]
+        ),
+    )
+    monkeypatch.setattr("rapid_mlx._download_gate.pin_main_ref", lambda *_a: None)
+    calls = []
+
+    def download(model, **kwargs):
+        calls.append((model, kwargs.copy()))
+        if len(calls) == 1:
+            raise requests.ConnectionError("dropped")
+        return "/tmp/fake-snapshot"
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    cli._ensure_model_downloaded(repo)
+    assert calls == [
+        (repo, {"revision": "fixed-sha"}),
+        (repo, {"revision": "fixed-sha"}),
+    ]

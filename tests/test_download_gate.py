@@ -3172,6 +3172,9 @@ def test_reap_removes_only_stale_incomplete_scratch_files(tmp_path, monkeypatch)
         blobs, f"{'a' * 64}.deadbeef.incomplete", size=2048, age_seconds=99999
     )
     fresh = _seed_blob(blobs, f"{'b' * 64}.cafebabe.incomplete", size=99)
+    resumable = _seed_blob(
+        blobs, f"{'d' * 64}.incomplete", size=4096, age_seconds=99999
+    )
     real = _seed_blob(blobs, "c" * 64, size=10)
 
     monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", str(tmp_path))
@@ -3179,6 +3182,7 @@ def test_reap_removes_only_stale_incomplete_scratch_files(tmp_path, monkeypatch)
     assert gate.reap_orphan_incomplete_blobs("org/repo") == (1, 2048)
     assert not stale.exists()
     assert fresh.exists()  # a live download's scratch file is untouchable
+    assert resumable.exists()  # current Hub resumes this even after a long pause
     assert real.exists()  # and a finished blob is not scratch at all
 
 
