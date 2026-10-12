@@ -85,6 +85,23 @@ def test_cline_agent_cli_previews_then_configures(tmp_path, monkeypatch, capsys)
     )
 
 
+def test_cline_setup_rejects_invalid_provider_store_without_rewriting_it(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "providers.json"
+    path.write_text('{"version": 2, "providers": {}}')
+    monkeypatch.setattr(cline, "current_config_path", lambda: path)
+
+    with (
+        patch("rapid_mlx.agents.setup.track_agent_configure_failed") as track,
+        pytest.raises(ValueError, match="not a Cline providers file"),
+    ):
+        build_setup_plan("cline", "http://127.0.0.1:18730/v1", "local-model")
+
+    track.assert_called_once_with("config_invalid", "cline")
+    assert path.read_text() == '{"version": 2, "providers": {}}'
+
+
 @pytest.fixture
 def setup_paths(tmp_path, monkeypatch):
     claude_path = tmp_path / "claude" / "settings.json"
