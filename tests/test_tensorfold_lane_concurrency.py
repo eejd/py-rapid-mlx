@@ -293,3 +293,189 @@ def test_execution_policy_cannot_unlock_default_gpu_callbacks():
             cors_origins=[],
             execution_policy=server.BackendExecutionPolicy(2, executor),
         )
+
+
+@pytest.fixture
+def stalled_provider(monkeypatch):
+    """A scheduler stop leaves jobs without terminal chunks, as in 0.6.6."""
+    import queue
+    import sys
+    from types import ModuleType
+
+    from rapid_mlx.speculative.tensorfold_qwen27 import TensorFoldQwen27Backend
+    from rapid_mlx.speculative import tensorfold_qwen27_server as adapter
+
+    class Cancellation:
+        def __init__(self):
+            self.event = Event()
+
+        def cancel(self):
+            self.event.set()
+
+        def check(self):
+            if self.event.is_set():
+                raise RuntimeError("cancelled")
+
+    class ChatJob:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            self.chunks = queue.Queue()
+            self.cached_tokens = 0
+            self.error = self.stream = None
+
+    class StopPolicy:
+        def __init__(self, *_args):
+            self.ignore_eos = False
+            self.strings = ()
+            self.eos_ids = set()
+
+    for name, attrs in {
+        "tensorfold.engine.lane_engine": {"SuffixLookupProposer": lambda **_: None},
+        "tensorfold.server.cancellation": {"Cancellation": Cancellation},
+        "tensorfold.server.scheduler": {"ChatJob": ChatJob},
+        "tensorfold.server.stopping": {"StopPolicy": StopPolicy},
+    }.items():
+        module = ModuleType(name)
+        module.__dict__.update(attrs)
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(adapter, "_StableIncrementalText", lambda *_: None)
+    submitted, stopped = Event(), Event()
+    jobs = []
+
+    def submit(job):
+        jobs.append(job)
+        submitted.set()
+
+    app = SimpleNamespace(
+        max_batch_size=2,
+        tokenizer=SimpleNamespace(encode=lambda _: [1]),
+        tokenizer_lock=threading.Lock(),
+        stop_ids=set(),
+        min_match=1,
+        _resolve_sampling=lambda *_: None,
+        scheduler=SimpleNamespace(submit=submit, stop=stopped.set),
+    )
+    backend = TensorFoldQwen27Backend(app)
+    # Set the forthcoming opt-in explicitly so the same test reproduces the old bug.
+    provider = TensorFoldRequestProvider(backend)
+    provider._close_cancellable = True
+    yield backend, provider, submitted, stopped, jobs
+    for job in jobs:
+        job.cancellation.cancel()
+    backend._executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_close_terminates_provider_without_scheduler_terminal(stalled_provider, stream):
+    backend, provider, submitted, stopped, jobs = stalled_provider
+    operation = (
+        (lambda: next(provider._outputs("prompt")))
+        if stream
+        else (lambda: provider.generate(None, None, "prompt"))
+    )
+    future = backend._executor.submit(operation)
+    assert submitted.wait(2)
+    closed = Event()
+
+    def close():
+        backend.close()
+        closed.set()
+
+    thread = threading.Thread(target=close, daemon=True)
+    thread.start()
+    try:
+        assert closed.wait(0.5), (
+            "close hung after scheduler stopped without terminal chunks"
+        )
+        assert stopped.is_set()
+        assert future.done()
+        assert not backend._active
+    finally:
+        # Even on the unfixed implementation, release the worker and bounded test.
+        for job in jobs:
+            job.cancellation.cancel()
+        thread.join(2)
+
+
+async def test_close_releases_deferred_nonstream_reservation(stalled_provider):
+    from fastapi import HTTPException
+
+    backend, provider, submitted, _, _ = stalled_provider
+    admission = server._DFlashAdmission(2)
+    reservation = admission.reserve()
+    reservation.claim()
+    with pytest.raises(HTTPException) as exc:
+        await server._non_stream_completion(
+            prompt="prompt",
+            request=SimpleNamespace(),
+            served_model_name="pilot",
+            gen_kwargs={},
+            model=None,
+            processor=SimpleNamespace(),
+            timeout=0.05,
+            admission_reservation=reservation,
+            generate_fn=provider.generate,
+            execution_policy=server.BackendExecutionPolicy(2, backend._executor),
+        )
+    assert exc.value.status_code == 504
+    assert submitted.is_set()
+    assert admission._reservations == 1
+    await asyncio.wait_for(asyncio.to_thread(backend.close), 1)
+    for _ in range(100):
+        if not admission._reservations:
+            break
+        await asyncio.sleep(0.01)
+    assert admission._reservations == 0
+
+
+def test_close_terminates_scheduler_and_executor_queued_jobs(stalled_provider):
+    backend, provider, submitted, _, jobs = stalled_provider
+    futures = [
+        backend._executor.submit(provider.generate, None, None, "prompt")
+        for _ in range(4)
+    ]
+    assert submitted.wait(2)
+    deadline = __import__("time").monotonic() + 2
+    while len(jobs) < 2 and __import__("time").monotonic() < deadline:
+        __import__("time").sleep(0.01)
+    assert len(jobs) == 2  # Two scheduler jobs; two executor tasks still queued.
+    thread = threading.Thread(target=backend.close, daemon=True)
+    thread.start()
+    try:
+        thread.join(1)
+        assert not thread.is_alive()
+        assert all(f.done() for f in futures)
+        assert all(f.exception() is not None for f in futures)
+        assert len(jobs) == 2
+        assert not backend._active
+    finally:
+        for job in jobs:
+            job.cancellation.cancel()
+        thread.join(2)
+
+
+def test_provider_unregisters_after_scheduler_submission_failure(stalled_provider):
+    backend, provider, _, _, _ = stalled_provider
+
+    def refuse(_job):
+        raise RuntimeError("submission refused")
+
+    backend._app.scheduler.submit = refuse
+    with pytest.raises(RuntimeError, match="submission refused"):
+        provider.generate(None, None, "prompt")
+    assert not backend._active
+    backend.close()
+
+
+def test_serial_provider_still_has_existing_unregistered_worker(stalled_provider):
+    backend, provider, submitted, stopped, jobs = stalled_provider
+    provider._close_cancellable = False
+    future = server._dflash_executor.submit(provider.generate, None, None, "prompt")
+    assert submitted.wait(2)
+    assert not backend._active
+    backend.close()
+    assert stopped.is_set()
+    assert not future.done()  # Existing serial leak, intentionally outside this fix.
+    jobs[0].cancellation.cancel()
+    with pytest.raises(RuntimeError, match="cancelled"):
+        future.result(timeout=1)

@@ -422,8 +422,8 @@ class TensorFoldQwen27Backend:
         return True
 
     def close(self) -> None:
-        self._closed = True
         with self._lock:
+            self._closed = True
             active = list(self._active.values())
         for cancellation in active:
             cancellation.cancel()

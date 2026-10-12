@@ -151,9 +151,11 @@ class TensorFoldRequestProvider:
         backend: TensorFoldQwen27Backend,
         *,
         audit_path: str | None = None,
+        close_cancellable: bool = False,
         sampling_defaults: dict[str, float | int] | None = None,
     ) -> None:
         self.backend = backend
+        self._close_cancellable = close_cancellable
         self._sampling_defaults = dict(sampling_defaults or {})
         self._audit_path = audit_path
         self._audit_lock = threading.Lock()
@@ -241,9 +243,20 @@ class TensorFoldRequestProvider:
         decoded = ""
         incremental = _StableIncrementalText(tokenizer, app.tokenizer_lock)
         outputs: list[RequestOutput] = []
-        app.scheduler.submit(job)
+        registered = False
         try:
+            if self._close_cancellable:
+                # Registration and closing share one lock: close either sees
+                # this cancellation or submission is refused before it starts.
+                with self.backend._lock:
+                    if self.backend._closed:
+                        raise RuntimeError("TensorFold backend is closed")
+                    self.backend._active[request_id] = cancellation
+                    registered = True
+            app.scheduler.submit(job)
             while True:
+                if self._close_cancellable:
+                    cancellation.check()
                 try:
                     chunk = job.chunks.get(timeout=0.05)
                 except queue.Empty:
@@ -323,6 +336,9 @@ class TensorFoldRequestProvider:
             outputs.append(terminal)
         finally:
             cancellation.cancel()
+            if registered:
+                with self.backend._lock:
+                    self.backend._active.pop(request_id, None)
             self.last_token_ids = list(collected)
             self.last_outputs = outputs
             if self._audit_path:
@@ -559,6 +575,7 @@ def run_tensorfold_qwen27_server(
     provider = TensorFoldRequestProvider(
         backend,
         audit_path=os.environ.get("RAPID_MLX_TENSORFOLD_AUDIT_PATH"),
+        close_cancellable=lanes > 1,
         sampling_defaults=_model_sampling_defaults(main_model_repo),
     )
     from rapid_mlx.api.models import ModelInfo, SpeculativeDecodingInfo
