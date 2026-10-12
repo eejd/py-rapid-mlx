@@ -9,6 +9,7 @@ MAC_JOBS = ("build", "gui-app-build", "gui-golden-flows")
 RUNNER_EXPRESSION = (
     "${{ vars.MACOS_RUNNER == 'macos-26' && 'macos-26' || 'manzanita-standard' }}"
 )
+WATCHDOG_EXPRESSION = "${{ vars.MACOS_RUNNER == 'macos-26' && '180' || '90' }}"
 
 
 def test_desktop_jobs_use_the_allowlisted_runner_selection():
@@ -50,3 +51,19 @@ def test_runner_preflight_pins_the_required_architecture_and_toolchain_floors():
         "for command_name in codesign python3 swift swiftc xcodebuild xcrun" in source
     )
     assert 'require_command "$command_name"' in source
+
+
+def test_only_the_allowlisted_fallback_extends_the_in_process_watchdog():
+    jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+    swift_test = next(
+        step for step in jobs["build"]["steps"] if step.get("name") == "swift test"
+    )
+    assert swift_test["env"]["RAPID_DESKTOP_WATCHDOG_QUIET_SECONDS"] == (
+        WATCHDOG_EXPRESSION
+    )
+
+    watchdog = (
+        ROOT / "apps/rapid-mac/Tests/RapidTests/Support/CIHangWatchdog.swift"
+    ).read_text()
+    assert 'environment["RAPID_DESKTOP_WATCHDOG_QUIET_SECONDS"] == "180"' in watchdog
+    assert "? 180 : 90" in watchdog
