@@ -51,35 +51,24 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def graphics(path, chinese, english="", title=False):
+def graphics(path, text, title=False):
     # Typeset graphics only; photographic assets are never painted or retouched here.
     im = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    cfont = ImageFont.truetype(
-        "/System/Library/Fonts/Supplemental/Songti.ttc", 72 if title else 36
+    font = ImageFont.truetype(
+        "/System/Library/Fonts/Supplemental/Arial.ttf", 60 if title else 36
     )
-    efont = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 24)
-    x, y = (1790, 827) if title else (115, 925)
+    x, y = (1790, 850) if title else (115, 925)
     anchor = "ra" if title else "la"
     d.text(
         (x, y),
-        chinese,
-        font=cfont,
+        text,
+        font=font,
         anchor=anchor,
         fill=(248, 239, 211, 245),
         stroke_width=1,
         stroke_fill=(15, 20, 17, 170),
     )
-    if english:
-        d.text(
-            (x, y + 83),
-            english,
-            font=efont,
-            anchor=anchor,
-            fill=(246, 236, 213, 230),
-            stroke_width=1,
-            stroke_fill=(15, 20, 17, 150),
-        )
     im.save(path)
 
 
@@ -200,10 +189,10 @@ def main():
         years = t / "years.png"
         title = t / "title.png"
         battery = t / "battery.png"
-        graphics(battery, "剩余电量 1%")
-        graphics(opening, "火星 · 废弃基地")
-        graphics(years, "多年以后")
-        graphics(title, "最后一班", "THE LAST SHIFT", True)
+        graphics(battery, "POWER REMAINING: 1%")
+        graphics(opening, "MARS · ABANDONED OUTPOST")
+        graphics(years, "YEARS LATER")
+        graphics(title, "THE LAST SHIFT", title=True)
         # Shot eight begins at 20.5s. Graphics remain part of the picture, never cards.
         graph = "[2:v]format=rgba,fade=t=in:st=0.5:d=0.3:alpha=1,fade=t=out:st=2.2:d=0.3:alpha=1[o];[3:v]format=rgba,fade=t=in:st=20.7:d=0.3:alpha=1,fade=t=out:st=22:d=0.3:alpha=1[y];[4:v]format=rgba,fade=t=in:st=26.8:d=0.5:alpha=1,fade=t=out:st=29.2:d=0.8:alpha=1[t];[5:v]format=rgba,fade=t=in:st=3.15:d=0.3:alpha=1,fade=t=out:st=5:d=0.3:alpha=1[b];[0:v][o]overlay[v1];[v1][y]overlay[v2];[v2][t]overlay[v3];[v3][b]overlay[v];[0:a]volume=0.6[amb];[1:a]loudnorm=I=-25:TP=-4:LRA=8,aresample=48000,afade=t=in:d=1,afade=t=out:st=28:d=2[mus];[amb][mus][6:a]amix=inputs=3:duration=first:normalize=0,loudnorm=I=-20:TP=-1.5:LRA=9,aresample=48000[a]"
         run(

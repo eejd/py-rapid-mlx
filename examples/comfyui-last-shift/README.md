@@ -1,6 +1,8 @@
-# 最后一班 / The Last Shift
+# The Last Shift
 
 A silent, approximately 30-second science-fiction story. At a deserted Mars base, an obsolete maintenance robot has 1% power left. It notices the final seedling dying in an unheated greenhouse. It gives the greenhouse its own orange power cartridge and shuts down beside the plant. Years later, the greenhouse is flourishing. A white flower grows in its open palm.
+
+The English delivery is `media/final-en/the-last-shift-en.mp4`. All editorial text is English: “MARS · ABANDONED OUTPOST”, “POWER REMAINING: 1%”, “YEARS LATER”, and “THE LAST SHIFT”. The original export remains in `media/final/`.
 
 ## Production contract
 
@@ -24,7 +26,7 @@ Install `custom_nodes/rapid_mlx_last_shift` into ComfyUI's custom nodes director
 python batch.py --output media/shots
 swift score.swift media/score.wav
 python sound.py --output media/sound.wav
-python render.py --input media/shots --score media/score.wav --sound media/sound.wav --output media/final/the-last-shift.mp4
+python render.py --input media/shots --score media/score.wav --sound media/sound.wav --output media/final-en/the-last-shift-en.mp4
 ```
 
 All model weights use the standard shared HF cache. Media, QA images and inference receipts stay under ignored `media/`; never commit private machine addresses, lease files or tokens. Keep actual selected-shot evidence in `VERIFIED.md` after review.
