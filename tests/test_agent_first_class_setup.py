@@ -14,7 +14,40 @@ from rapid_mlx.agents.setup import (
     build_setup_plan,
     verify_server,
 )
-from rapid_mlx.launch import claude_code, continue_dev
+from rapid_mlx.launch import claude_code, cline, continue_dev
+
+
+def test_cline_setup_plan_preserves_other_providers_and_hides_keys(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "settings" / "providers.json"
+    monkeypatch.setattr(cline, "current_config_path", lambda: path)
+    path.parent.mkdir()
+    original = cline.patched_config(
+        {}, "http://old:8000", "old-model", now="2026-10-06T18:08:54.038Z"
+    )
+    original["providers"]["other"] = {
+        "settings": {"provider": "other", "apiKey": "private-secret"},
+        "updatedAt": "2026-10-06T18:08:54.038Z",
+        "tokenSource": "manual",
+    }
+    path.write_text(json.dumps(original))
+
+    plan = build_setup_plan("cline", "http://127.0.0.1:18730/v1", "local-model")
+
+    assert json.loads(path.read_text()) == original
+    assert "private-secret" not in plan.diff()
+    assert plan.after["providers"]["other"] == original["providers"]["other"]
+    assert (
+        plan.after["providers"]["openai-compatible"]["settings"]["model"]
+        == "local-model"
+    )
+    apply_setup_plan(plan)
+    assert json.loads(path.read_text()) == plan.after
+    assert list(path.parent.glob("providers.json.bak.*"))
+    assert not build_setup_plan(
+        "cline", "http://127.0.0.1:18730/v1", "local-model"
+    ).changed
 
 
 @pytest.fixture

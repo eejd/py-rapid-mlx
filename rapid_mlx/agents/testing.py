@@ -1601,13 +1601,30 @@ class AgentTestRunner:
             previous = {key: os.environ.get(key) for key in redirected}
             os.environ.update(redirected)
             try:
-                setup_agent_config(
-                    self.profile,
-                    base_url=self.base_url,
-                    model_id=self.model_id,
-                    agent_version=self.agent_version,
-                    context_length=context_length,
-                )
+                if self.profile.name == "cline":
+                    from rapid_mlx.launch import cline
+
+                    cline.write_or_patch_config(
+                        self.base_url,
+                        self.model_id,
+                        api_key=os.environ.get("RAPID_MLX_API_KEY") or "sk-noop",
+                    )
+                elif self.profile.name == "continue":
+                    from rapid_mlx.launch import continue_dev
+
+                    continue_dev.write_or_patch_config(
+                        self.base_url,
+                        self.model_id,
+                        api_key=os.environ.get("RAPID_MLX_API_KEY") or "sk-noop",
+                    )
+                else:
+                    setup_agent_config(
+                        self.profile,
+                        base_url=self.base_url,
+                        model_id=self.model_id,
+                        agent_version=self.agent_version,
+                        context_length=context_length,
+                    )
             finally:
                 for key, value in previous.items():
                     if value is None:

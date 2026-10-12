@@ -31,6 +31,45 @@ from rapid_mlx.agents.base import (
 from rapid_mlx.agents.testing import AgentTestRunner, TestStatus
 
 
+def test_continue_harness_refreshes_yaml_in_isolated_home(monkeypatch):
+    from rapid_mlx.agents import get_profile
+    from rapid_mlx.agents.testing import TestResult
+
+    profile = replace(
+        get_profile("continue"),
+        needs_function_calling=False,
+        needs_streaming=False,
+    )
+    assert profile.config.home_env == "CONTINUE_GLOBAL_DIR"
+    seen = []
+
+    def record_setup(base_url, model_id, api_key):
+        seen.append((base_url, model_id, os.environ["CONTINUE_GLOBAL_DIR"]))
+
+    with (
+        patch.object(AgentTestRunner, "_server_available", return_value=True),
+        patch.object(AgentTestRunner, "_agent_binary_available", return_value=False),
+        patch("rapid_mlx.agents.adapter.fetch_context_window", return_value=32768),
+        patch(
+            "rapid_mlx.launch.continue_dev.write_or_patch_config",
+            side_effect=record_setup,
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_plain_chat",
+            return_value=TestResult("plain_chat", TestStatus.PASS),
+        ),
+    ):
+        AgentTestRunner(
+            profile,
+            base_url="http://127.0.0.1:18730/v1",
+            model_id="local-model",
+        ).run()
+
+    assert len(seen) == 1
+    assert seen[0][:2] == ("http://127.0.0.1:18730/v1", "local-model")
+    assert seen[0][2] != os.environ.get("CONTINUE_GLOBAL_DIR")
+
+
 def _make_profile(name: str, config_type: str) -> AgentProfile:
     """Build a minimal AgentProfile good enough for AgentTestRunner.run()."""
     return AgentProfile(
