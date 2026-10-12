@@ -1315,6 +1315,7 @@ def _install_continuous_mtp_router(
     # Only the synchronous singleton handoff may remove a base row while its
     # replacement lane is already reserved in the continuous driver.
     singleton_transfer_uid: int | None = None
+    ownership_lock = threading.RLock()
 
     def _stage_initial() -> None:
         nonlocal driver
@@ -1462,7 +1463,7 @@ def _install_continuous_mtp_router(
             newly_pending = set(driver.pending_join_uids) - pending_before
             retract = newly_pending.intersection(spec.uid for spec in joining_specs)
             if retract:
-                driver.remove_uids(tuple(retract))
+                driver.retract_pending_joins(tuple(retract))
             logger.warning(
                 "[MTP-continuous] lane join failed; retaining vendored/plain "
                 "queue ownership: %s",
@@ -1475,7 +1476,7 @@ def _install_continuous_mtp_router(
         ):
             # The driver contract is atomic. A refused/incomplete receipt must
             # leave the entire source queue authoritative, with no staged copy.
-            driver.remove_uids(tuple(joining_uids))
+            driver.retract_pending_joins(tuple(joining_uids))
             return
         _remove_queued(joining_uids)
         staged_join_sequences.update(joining_sequences)
@@ -1551,12 +1552,12 @@ def _install_continuous_mtp_router(
             except Exception:
                 newly_pending = set(active_driver.pending_join_uids) - pending_before
                 if spec.uid in newly_pending:
-                    active_driver.remove_uids([spec.uid])
+                    active_driver.retract_pending_joins([spec.uid])
                 raise
             reserved = spec.uid in active_driver.pending_join_uids
             if spec.uid not in accepted or not reserved:
                 if reserved:
-                    active_driver.remove_uids([spec.uid])
+                    active_driver.retract_pending_joins([spec.uid])
                     reserved = False
                 return False
             sequence = snapshot
@@ -1572,7 +1573,7 @@ def _install_continuous_mtp_router(
             singleton_transfer_uid = None
         if not transferred:
             if reserved:
-                active_driver.remove_uids([owner])
+                active_driver.retract_pending_joins([owner])
             return
         if reserved:
             _remove_queued({owner})
@@ -1597,7 +1598,7 @@ def _install_continuous_mtp_router(
                 )
                 if not failed_join_uids:
                     raise
-                driver.remove_uids(failed_join_uids)
+                driver.retract_pending_joins(failed_join_uids)
                 restored = [
                     staged_join_sequences.pop(uid)
                     for uid in failed_join_uids
@@ -1688,9 +1689,18 @@ def _install_continuous_mtp_router(
                 )
         return base
 
-    batch_gen.next = types.MethodType(_continuous_next, batch_gen)
-    batch_gen.close = types.MethodType(_continuous_close, batch_gen)
-    batch_gen.remove = types.MethodType(_continuous_remove, batch_gen)
+    def _serialized(callback):
+        def owned(*args, **kwargs):
+            # The internal synchronous handoff re-enters remove on this thread.
+            # Other threads must wait until its reservation becomes cancellable.
+            with ownership_lock:
+                return callback(*args, **kwargs)
+
+        return owned
+
+    batch_gen.next = types.MethodType(_serialized(_continuous_next), batch_gen)
+    batch_gen.close = types.MethodType(_serialized(_continuous_close), batch_gen)
+    batch_gen.remove = types.MethodType(_serialized(_continuous_remove), batch_gen)
     batch_gen._continuous_mtp_router = router
     batch_gen._continuous_mtp_runtime = runtime
     batch_gen._continuous_mtp_driver = None

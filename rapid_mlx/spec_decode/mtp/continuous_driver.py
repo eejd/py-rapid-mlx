@@ -383,6 +383,20 @@ class ContinuousMTPDriver:
         unique = {id(package): package for package in (*held, *detached)}
         return tuple(unique.values())
 
+    def retract_pending_joins(self, uids: Sequence[int]) -> None:
+        """Retract unallocated reservations without invoking live cache detach."""
+        requested = set(uids)
+        # A cancellation can race a lane staged for the next boundary.  Such a
+        # lane owns no cache yet, so removing its pending specification is the
+        # complete operation.
+        retained_joins: list[_PendingJoin] = []
+        for pending in self._pending_joins:
+            specs = tuple(spec for spec in pending.specs if spec.uid not in requested)
+            if specs:
+                stops = {spec.uid: pending.stop_tokens[spec.uid] for spec in specs}
+                retained_joins.append(_PendingJoin(specs, stops))
+        self._pending_joins = retained_joins
+
     def remove_uids(
         self, uids: Sequence[int]
     ) -> tuple[ContinuousMTPDetachPackage, ...]:
@@ -398,16 +412,7 @@ class ContinuousMTPDriver:
             return ()
         requested = set(uids)
 
-        # A cancellation can race a lane staged for the next boundary.  Such a
-        # lane owns no cache yet, so removing its pending specification is the
-        # complete operation.
-        retained_joins: list[_PendingJoin] = []
-        for pending in self._pending_joins:
-            specs = tuple(spec for spec in pending.specs if spec.uid not in requested)
-            if specs:
-                stops = {spec.uid: pending.stop_tokens[spec.uid] for spec in specs}
-                retained_joins.append(_PendingJoin(specs, stops))
-        self._pending_joins = retained_joins
+        self.retract_pending_joins(uids)
 
         removed: list[ContinuousMTPDetachPackage] = []
         # Terminal lanes may already be detached transactionally while their

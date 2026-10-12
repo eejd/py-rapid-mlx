@@ -590,6 +590,9 @@ def test_live_installer_drives_join_detach_remove_and_compat_response(monkeypatc
             if self.fail_discard:
                 raise RuntimeError("already detached")
 
+        def retract_pending_joins(self, uids):
+            self.remove_uids(uids)
+
         def remove_uids(self, uids):
             self.calls.append(("remove", tuple(uids)))
             return (
@@ -837,6 +840,9 @@ def test_live_installer_restores_base_queue_when_deferred_join_fails(monkeypatch
         def queue_lanes(self, specs, **_kwargs):
             self.pending = tuple(spec.uid for spec in specs)
             return self.pending
+
+        def retract_pending_joins(self, uids):
+            self.remove_uids(uids)
 
         def remove_uids(self, uids):
             self.removed.append(tuple(uids))
@@ -1241,11 +1247,14 @@ class _RecordingDriver:
         self.pending = tuple(spec.uid for spec in specs)
         return self.pending
 
-    def remove_uids(self, _uids):
+    def retract_pending_joins(self, _uids):
         self.pending = tuple(uid for uid in self.pending if uid not in _uids)
         self.joined_specs = [
             spec for spec in getattr(self, "joined_specs", []) if spec.uid not in _uids
         ]
+
+    def remove_uids(self, _uids):
+        self.retract_pending_joins(_uids)
         return ()
 
     def discard_all(self):
@@ -2171,3 +2180,70 @@ def test_dynamic_join_stops_projecting_backlog_at_capacity(monkeypatch, limit):
     assert [seq[0] for seq in batch_gen._unprocessed_sequences] == list(
         range(first_queued, 21)
     )
+
+
+@pytest.mark.requires_mlx
+def test_singleton_handoff_serializes_concurrent_cancellation(monkeypatch):
+    import threading
+
+    batch_gen, _owner, driver = _absorb_setup(monkeypatch)
+    requeue = batch_gen._mtp_vendored_requeue_owner
+    attempted = threading.Event()
+    completed = threading.Event()
+    workers = []
+    completed_during_handoff = []
+
+    def cancel():
+        attempted.set()
+        batch_gen.remove([7])
+        completed.set()
+
+    def racing_requeue(*, admit):
+        def reserve(snapshot):
+            accepted = admit(snapshot)
+            worker = threading.Thread(target=cancel)
+            workers.append(worker)
+            worker.start()
+            assert attempted.wait(2)
+            completed_during_handoff.append(completed.wait(0.1))
+            return accepted
+
+        return requeue(admit=reserve)
+
+    batch_gen._mtp_vendored_requeue_owner = racing_requeue
+    batch_gen.next()
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+    assert completed_during_handoff == [False]
+    assert completed.is_set()
+    assert driver.pending_join_uids == ()
+
+
+@pytest.mark.requires_mlx
+def test_join_rollback_does_not_use_live_lane_removal(monkeypatch):
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2)]
+    )
+    requests, mapping = _requests_for(1, 2, 3)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    driver = created[0]
+    queue_lanes = driver.queue_lanes
+
+    def stage_then_raise(*args, **kwargs):
+        queue_lanes(*args, **kwargs)
+        raise RuntimeError("fault after staging")
+
+    def broken_live_removal(_uids):
+        raise RuntimeError("live detach unavailable")
+
+    driver.queue_lanes = stage_then_raise
+    driver.remove_uids = broken_live_removal
+    source = _scheduler_sequence(3)
+    batch_gen._unprocessed_sequences.append(source)
+    batch_gen.next()
+    assert list(batch_gen._unprocessed_sequences) == [source]
+    assert driver.pending_join_uids == ()
+    assert driver.lane_uids == (1, 2)

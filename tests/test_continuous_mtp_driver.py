@@ -456,3 +456,21 @@ def test_turnover_validation_empty_and_deduplicated_recording():
     package = packages[0]
     batch_driver._record_detaches((package, package))
     assert batch_driver.take_resumable_detaches() == (package,)
+
+
+def test_retract_pending_joins_preserves_live_state_and_other_reservations(monkeypatch):
+    runtime, compute, _caches = _runtime()
+    batch_driver = driver.ContinuousMTPDriver.create([_spec(1)], runtime)
+    batch_driver.next()
+    batch_driver.queue_lanes([_spec(2), _spec(3)], stop_tokens={3: {203}})
+    before = list(compute.calls)
+
+    def unavailable(*_args):
+        raise RuntimeError("live cache detach unavailable")
+
+    monkeypatch.setattr(batch_driver.batch, "detach_lanes", unavailable)
+    batch_driver.retract_pending_joins([1, 2, 99])
+    assert batch_driver.lane_uids == (1,)
+    assert batch_driver.pending_join_uids == (3,)
+    assert compute.calls == before
+    assert _triples(batch_driver.next()) == [(3, 103, None)]
