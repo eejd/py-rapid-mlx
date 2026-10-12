@@ -38,7 +38,7 @@ def resolved_model_ref(model_ref: str) -> str:
         if "/" not in value and not value.startswith(("~", ".")):
             from .model_aliases import local_dir_shadows_alias
 
-            if local_dir_shadows_alias(value):
+            if local_dir_shadows_alias(value) or os.path.exists(value):
                 return value
         return str(Path(value).expanduser().absolute())
     return value
