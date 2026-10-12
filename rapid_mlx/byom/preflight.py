@@ -630,6 +630,29 @@ def _same_family_size_aliases(ref: str) -> list[str]:
         return []
 
 
+def render_architecture_guidance(
+    ref: str, config: dict[str, Any], model_type: str | None
+) -> list[str]:
+    """Local-only help shared by preflight and a later loader failure."""
+    architecture = config.get("architectures")
+    names = (
+        [name for name in architecture if isinstance(name, str)]
+        if isinstance(architecture, (list, tuple))
+        else []
+    )
+    identity = model_type or (names[0] if names else "unknown")
+    lines = [f"✗ Architecture {identity} is not supported yet."]
+    if names:
+        lines.append(f"  config architectures: {', '.join(names[:3])}")
+    aliases = _same_family_size_aliases(ref)
+    if aliases:
+        lines.append("  Supported catalog aliases in the same family and size:")
+        lines.extend(f"    rapid-mlx serve {alias}" for alias in aliases)
+    else:
+        lines.append(f"  Bring your own model guide: {BYOM_DOCS_URL}")
+    return lines
+
+
 def render_failure(
     inspection: Inspection, verdict: Verdict, *, search_hint: bool = True
 ) -> list[str]:
@@ -659,25 +682,12 @@ def render_failure(
     if verdict.failure == UNSUPPORTED_ARCHITECTURE:
         version = _mlx_lm_version()
         runtime = f" (mlx-lm {version})" if version else ""
-        architecture = inspection.config.get("architectures")
-        names = (
-            [name for name in architecture if isinstance(name, str)]
-            if isinstance(architecture, (list, tuple))
-            else []
+        lines = render_architecture_guidance(
+            shown, inspection.config, verdict.model_type
         )
-        identity = verdict.model_type or (names[0] if names else "unknown")
-        lines = [
-            f"✗ Architecture {identity} is not supported yet.",
-            f"  This Rapid-MLX install{runtime} has no loader for it.{nothing}",
-        ]
-        if names:
-            lines.append(f"  config architectures: {', '.join(names[:3])}")
-        aliases = _same_family_size_aliases(shown)
-        if aliases:
-            lines.append("  Supported catalog aliases in the same family and size:")
-            lines.extend(f"    rapid-mlx serve {alias}" for alias in aliases)
-        else:
-            lines.append(f"  Bring your own model guide: {BYOM_DOCS_URL}")
+        lines.insert(
+            1, f"  This Rapid-MLX install{runtime} has no loader for it.{nothing}"
+        )
         return lines
     assert verdict.est_memory_bytes is not None and verdict.ram_bytes is not None
     return [

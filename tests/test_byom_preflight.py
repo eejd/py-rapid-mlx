@@ -655,6 +655,25 @@ def test_render_architecture_suggests_same_family_and_size(monkeypatch):
     assert pf.BYOM_DOCS_URL not in " ".join(lines)
 
 
+def test_loader_architecture_failure_has_same_guidance(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli,
+        "_resolve_checkpoint_config",
+        lambda model, profile: {
+            "model_type": "spark_x",
+            "architectures": ["SparkXForCausalLM"],
+        },
+    )
+    cli._print_model_load_error(
+        types.SimpleNamespace(model="owner/SparkX-4B"),
+        ValueError("Model type spark_x not supported."),
+    )
+    err = capsys.readouterr().err
+    assert "Architecture spark_x is not supported yet" in err
+    assert "config architectures: SparkXForCausalLM" in err
+    assert pf.BYOM_DOCS_URL in err
+
+
 def test_render_memory():
     insp = _insp(weight_bytes=40 * GIB)
     lines = pf.render_failure(insp, _evaluate(insp))
