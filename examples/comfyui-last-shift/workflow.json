@@ -1,0 +1,278 @@
+{
+  "config": {},
+  "extra": {
+    "ds": {
+      "offset": [
+        70,
+        90
+      ],
+      "scale": 0.85
+    }
+  },
+  "groups": [],
+  "id": "57934bc3-9ee3-4303-8bde-24649b3eccae",
+  "last_link_id": 3,
+  "last_node_id": 4,
+  "links": [
+    [
+      2,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "VIDEO"
+    ]
+  ],
+  "nodes": [
+    {
+      "flags": {},
+      "id": 1,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "COMBO",
+          "widget": {
+            "name": "image"
+          },
+          "link": null
+        }
+      ],
+      "mode": 0,
+      "order": 0,
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "pos": [
+        70,
+        200
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "size": [
+        400,
+        400
+      ],
+      "type": "LoadImage",
+      "widgets_values": [
+        "01-choice.png",
+        "image"
+      ],
+      "widgets_values_named": {
+        "image": "01-choice.png"
+      },
+      "title": "Approved film keyframe"
+    },
+    {
+      "flags": {},
+      "id": 3,
+      "inputs": [
+        {
+          "link": 2,
+          "localized_name": "image",
+          "name": "image",
+          "type": "IMAGE"
+        },
+        {
+          "link": null,
+          "localized_name": "base_url",
+          "name": "base_url",
+          "type": "STRING",
+          "widget": {
+            "name": "base_url"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "prompt",
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "width",
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "height",
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "frames",
+          "name": "frames",
+          "type": "INT",
+          "widget": {
+            "name": "frames"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          }
+        }
+      ],
+      "mode": 0,
+      "order": 2,
+      "outputs": [
+        {
+          "links": [
+            3
+          ],
+          "localized_name": "VIDEO",
+          "name": "VIDEO",
+          "type": "VIDEO"
+        }
+      ],
+      "pos": [
+        550,
+        200
+      ],
+      "properties": {
+        "Node name for S&R": "RapidMLXLastShift"
+      },
+      "size": [
+        450,
+        480
+      ],
+      "type": "RapidMLXLastShift",
+      "widgets_values": [
+        "http://127.0.0.1:18428",
+        "Slow restrained dolly forward through the abandoned Mars corridor. The old ivory robot slowly turns its single amber eye toward the dying seedling behind the greenhouse glass and remains standing still. Orange power cartridge remains in chest. Dust drifts in cold blue dawn light. Distant wind, faint servo motor. Single unbroken shot, maintain exact robot design and architecture, no walking or new objects.",
+        1024,
+        512,
+        65,
+        87101,
+        "fixed"
+      ],
+      "widgets_values_named": {
+        "base_url": "http://127.0.0.1:18428",
+        "prompt": "Slow restrained dolly forward through the abandoned Mars corridor. The old ivory robot slowly turns its single amber eye toward the dying seedling behind the greenhouse glass and remains standing still. Orange power cartridge remains in chest. Dust drifts in cold blue dawn light. Distant wind, faint servo motor. Single unbroken shot, maintain exact robot design and architecture, no walking or new objects.",
+        "width": 1024,
+        "height": 512,
+        "frames": 65,
+        "seed": 87101,
+        "control_after_generate": "fixed"
+      },
+      "title": "M4 \u00b7 LTX-2.5 film motion"
+    },
+    {
+      "flags": {},
+      "id": 4,
+      "inputs": [
+        {
+          "link": 3,
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO"
+        },
+        {
+          "link": null,
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "format",
+          "name": "format",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "codec",
+          "name": "format.codec",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "format.codec"
+          }
+        },
+        {
+          "link": null,
+          "localized_name": "codec",
+          "name": "codec",
+          "shape": 7,
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "widget": {
+            "name": "codec"
+          }
+        }
+      ],
+      "mode": 0,
+      "order": 3,
+      "outputs": [
+        {
+          "links": null,
+          "localized_name": "video",
+          "name": "video",
+          "type": "VIDEO"
+        }
+      ],
+      "pos": [
+        1100,
+        200
+      ],
+      "properties": {},
+      "size": [
+        270,
+        106
+      ],
+      "type": "SaveVideo",
+      "widgets_values": [
+        "last-shift/01-choice",
+        "mp4",
+        "auto",
+        "auto"
+      ],
+      "widgets_values_named": {
+        "codec": "auto",
+        "filename_prefix": "last-shift/01-choice",
+        "format": "mp4",
+        "format.codec": "auto"
+      }
+    }
+  ],
+  "revision": 0,
+  "version": 0.4
+}

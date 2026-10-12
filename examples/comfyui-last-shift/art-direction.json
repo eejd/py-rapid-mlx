@@ -1,0 +1,110 @@
+{
+  "tool": "built-in image generation",
+  "format": "single landscape cinematic keyframe, 2:1",
+  "style": "photoreal practical-prop science-fiction cinema; cold blue to warm golden light",
+  "constraints": [
+    "consistent robot silhouette and worn materials",
+    "one orange cartridge only",
+    "empty chest after removal",
+    "dark eye after shutdown",
+    "same seated pose across time jump",
+    "no watermark or photographic title text"
+  ],
+  "assets": [
+    {
+      "id": "robot-turnaround",
+      "references": [],
+      "brief": "Original maintenance robot R-07 identity sheet: worn ivory enamel, single amber eye, navy shoulder triangle, three-finger hands, removable orange chest cartridge."
+    },
+    {
+      "id": "01-choice",
+      "references": [
+        "robot-turnaround"
+      ],
+      "brief": "Wide cold Mars corridor, recycling hatch, robot notices last dying greenhouse seedling. Orange battery in chest."
+    },
+    {
+      "id": "02-one-percent",
+      "references": [
+        "robot-turnaround",
+        "01-choice"
+      ],
+      "brief": "Macro chest battery insert, clear 1% meter, hand at latch, cold blue light."
+    },
+    {
+      "id": "03-last-seedling",
+      "references": [
+        "01-choice"
+      ],
+      "brief": "Fragile frosted drooping two-leaf seedling in terracotta pot, heater dark, robot eye blurred through glass."
+    },
+    {
+      "id": "04-the-gift",
+      "references": [
+        "robot-turnaround",
+        "02-one-percent",
+        "01-choice"
+      ],
+      "brief": "Battery already removed: empty chest, one orange cartridge in hand beside empty heater socket."
+    },
+    {
+      "id": "05-warmth",
+      "references": [
+        "04-the-gift",
+        "03-last-seedling"
+      ],
+      "brief": "Same cartridge installed in heater, hand withdrawing, amber overhead lamp now on."
+    },
+    {
+      "id": "06-last-light",
+      "references": [
+        "robot-turnaround",
+        "01-choice",
+        "05-warmth"
+      ],
+      "brief": "Robot seated beside greenhouse wall, empty chest, dim eye, open right palm; warmed seedling and orange heater battery at right."
+    },
+    {
+      "id": "07-stillness",
+      "references": [
+        "06-last-light"
+      ],
+      "brief": "Closeup of bowed robot head with eye fully dark and chest empty; warm plant blurred behind."
+    },
+    {
+      "id": "08-years-later",
+      "references": [
+        "06-last-light"
+      ],
+      "brief": "Matching exact seated composition years later, robot unpowered and weathered, flourishing white flowering vines, flower growing in open palm."
+    },
+    {
+      "id": "09-flower",
+      "references": [
+        "08-years-later"
+      ],
+      "brief": "Closing macro of white flower growing from soil in stationary mechanical palm, dark eye and empty chest blurred behind."
+    },
+    {
+      "id": "02-one-percent-v2",
+      "references": [
+        "02-one-percent"
+      ],
+      "brief": "Remove the hand and forearm only; unobstructed orange chest battery and crisp 1% meter; camera, identity and light preserved. Selected final keyframe."
+    },
+    {
+      "id": "05-warmth-v2",
+      "references": [
+        "05-warmth"
+      ],
+      "brief": "Remove all robot parts from foreground only; unchanged installed orange cartridge, bent seedling, amber heater and greenhouse. Selected final keyframe."
+    },
+    {
+      "id": "09-flower-v2",
+      "references": [
+        "09-flower"
+      ],
+      "brief": "Tighter flower macro; all fingertips/joints cropped outside frame. Same dew-covered white flower, concave metal palm surface and blurred dark eye/empty chest. Negative space for closing title. Selected final keyframe."
+    }
+  ]
+}

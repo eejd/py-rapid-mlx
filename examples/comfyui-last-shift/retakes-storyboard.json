@@ -1,0 +1,13 @@
+[
+  {
+    "id": "02-one-percent",
+    "seed": 89102,
+    "motion_prompt": "A beautifully restrained macro movie shot. Camera makes an extremely slow straight push toward the orange battery and small amber one-percent display on the ivory robot chest. The entire robot and its three-finger hand remain absolutely motionless in the original pose, fingers completely still, no gesture or latch operation. Orange battery stays seated. Only tiny drifting dust particles move in cold blue light. Preserve every original finger and joint exactly. The battery display keeps reading 1 percent. Quiet low power warning beep, faint distant air. No other movement or new objects.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  }
+]

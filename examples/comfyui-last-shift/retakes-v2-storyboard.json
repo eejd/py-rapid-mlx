@@ -1,0 +1,13 @@
+[
+  {
+    "id": "02-one-percent-v2",
+    "seed": 90102,
+    "motion_prompt": "A pure cinematic macro insert of the orange power cartridge seated in the worn ivory robot chest. Extremely slow straight camera push only. Robot stays completely motionless. Both hands remain outside frame throughout. The tiny amber power display reads one percent and remains unchanged. Nothing opens or moves on the chest. Cold blue window light, subtle drifting dust. Faint low power beep and quiet room air. No hands entering frame, no extra objects, no morphing. One continuous restrained shot.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  }
+]

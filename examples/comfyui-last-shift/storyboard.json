@@ -1,0 +1,104 @@
+[
+  {
+    "id": "01-choice",
+    "seed": 87101,
+    "motion_prompt": "Slow restrained dolly forward through the abandoned Mars corridor. The old ivory robot slowly turns its single amber eye toward the dying seedling behind the greenhouse glass and remains standing still. Orange power cartridge remains in chest. Dust drifts in cold blue dawn light. Distant wind, faint servo motor. Single unbroken shot, maintain exact robot design and architecture, no walking or new objects.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "02-one-percent",
+    "seed": 90102,
+    "motion_prompt": "A pure cinematic macro insert of the orange power cartridge seated in the worn ivory robot chest. Extremely slow straight camera push only. Robot stays completely motionless. Both hands remain outside frame throughout. The tiny amber power display reads one percent and remains unchanged. Nothing opens or moves on the chest. Cold blue window light, subtle drifting dust. Faint low power beep and quiet room air. No hands entering frame, no extra objects, no morphing. One continuous restrained shot.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    },
+    "keyframe": "02-one-percent-v2.png"
+  },
+  {
+    "id": "03-last-seedling",
+    "seed": 87103,
+    "motion_prompt": "Very slow cinematic push toward the dying two-leaf seedling in its terracotta pot. The thin leaf trembles slightly in the cold air, tiny frost crystals glisten. Overhead heater stays dark. The blurred robot single amber eye watches through glass at left. Soft cold air sound. Preserve composition and objects, no plant growth yet.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "04-the-gift",
+    "seed": 87104,
+    "motion_prompt": "Locked close medium shot. The robot gently advances the one orange power cartridge held in its three-finger hand a few centimeters toward the empty heater socket at right. Chest cradle remains visibly EMPTY and dark. Eye remains dim amber. Slow careful restrained mechanical movement, unchanged geometry, no second battery, no extra fingers. Quiet servo whir.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "05-warmth",
+    "seed": 90105,
+    "motion_prompt": "Beautiful locked-off cinematic insert of the greenhouse now receiving warmth. One scratched orange cartridge remains securely installed in heater socket at right. Hanging heater glows steady amber above the same fragile bent seedling in terracotta pot. Tiny condensation droplets glisten and slowly roll down the glass. The leaf trembles very subtly in warm air. Extremely restrained camera creep, preserve all architecture and prop positions. No robot or hands enter frame. No plant growth yet, no new objects or cartridge movement. A quiet relay click and continuous soft heater hum, no music or speech.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    },
+    "keyframe": "05-warmth-v2.png"
+  },
+  {
+    "id": "06-last-light",
+    "seed": 87106,
+    "motion_prompt": "Very slow restrained push toward the seated exhausted robot. It lowers its bowed head a few degrees and becomes completely still, dim amber eye gradually fades to dark. Chest cradle stays EMPTY. Plant and heater at right retain warm amber light, installed orange cartridge remains visible. Three-finger hands remain resting on thighs, right palm open upward. Soft winding-down servo and heater hum. No standing, no extra limbs, no battery appearing in chest.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "07-stillness",
+    "seed": 87108,
+    "motion_prompt": "Nearly locked cinematic closeup. The powered-down robot remains absolutely motionless, bowed head and single optical eye completely DARK. Only warm reflected light grazes the glass, no glowing core. Empty chest cradle remains dark. The warm heater softly glows in background by the fragile plant, dust floats slowly. Quiet heater hum and distant air. No robot movement, no revival.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "08-years-later",
+    "seed": 87110,
+    "motion_prompt": "Locked-off matching wide shot of the greenhouse years later. The old robot remains completely motionless in its exact seated pose, single eye DARK and chest cradle EMPTY. Lush vines and white flowers gently stir in barely perceptible air, warm sunlight shimmers on leaves. A tiny white flower rests growing in the robot open right palm. Orange battery stays in heater socket at right. Gentle airy greenhouse ambience, no birds or speech, no robot resurrection, no new objects.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  },
+  {
+    "id": "09-flower",
+    "seed": 90109,
+    "motion_prompt": "An exquisite almost locked-off macro film shot of one dew-covered white five-petaled flower with golden center growing from soil in a weathered metal palm. The flower petals and two tiny leaves barely tremble in soft warm greenhouse air. The metal palm is completely still, as is the blurred powered-down robot in the background. Its optical eye stays dark and its chest stays empty. Golden natural morning light, subtle airy bokeh. Camera gently creeps forward only a tiny amount. Preserve the exact flower, soil, metal surface and composition throughout. No new objects or body parts enter the frame. Quiet room air and faint leaf rustle only, no speech or music.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    },
+    "keyframe": "09-flower-v2.png"
+  }
+]

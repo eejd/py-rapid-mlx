@@ -1,0 +1,13 @@
+[
+  {
+    "id": "05-warmth-v2",
+    "seed": 90105,
+    "motion_prompt": "Beautiful locked-off cinematic insert of the greenhouse now receiving warmth. One scratched orange cartridge remains securely installed in heater socket at right. Hanging heater glows steady amber above the same fragile bent seedling in terracotta pot. Tiny condensation droplets glisten and slowly roll down the glass. The leaf trembles very subtly in warm air. Extremely restrained camera creep, preserve all architecture and prop positions. No robot or hands enter frame. No plant growth yet, no new objects or cartridge movement. A quiet relay click and continuous soft heater hum, no music or speech.",
+    "native": {
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "fps": 24
+    }
+  }
+]

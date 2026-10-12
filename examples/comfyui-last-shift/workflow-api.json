@@ -1,0 +1,36 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "01-choice.png"
+    }
+  },
+  "3": {
+    "class_type": "RapidMLXLastShift",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "base_url": "http://127.0.0.1:18428",
+      "prompt": "",
+      "width": 1024,
+      "height": 512,
+      "frames": 65,
+      "seed": 87101
+    }
+  },
+  "4": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "3",
+        0
+      ],
+      "filename_prefix": "last-shift/01-choice",
+      "format": "mp4",
+      "format.codec": "auto",
+      "codec": "auto"
+    }
+  }
+}
