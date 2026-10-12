@@ -2588,7 +2588,9 @@ class BatchedEngine(BaseEngine):
         # its tokenizer; the automaton is much larger than the grammar string.
         from ..api.tool_grammar import release_model_matchers
 
-        release_model_matchers(self.tokenizer)
+        tokenizer = getattr(self, "_tokenizer", None)
+        if tokenizer is not None:
+            release_model_matchers(tokenizer)
 
         if (
             self._is_mllm
