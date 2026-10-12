@@ -24,6 +24,8 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+ARMS = ("fixed2048", "fixed512", "adaptive2048", "adaptive2048-1000ms")
+
 
 def first_token_chunk(
     selected: int,
@@ -71,7 +73,7 @@ def serve_child(args):
         slots = min(bg.prefill_batch_size, bg.completion_batch_size - decoding)
         samples = list(self._prefill_cost_samples)
         dispatched = selected
-        if args.arm == "adaptive2048":
+        if args.arm.startswith("adaptive2048"):
             dispatched = first_token_chunk(
                 selected, processing, queued, slots, samples, args.target_ms
             )
@@ -93,6 +95,7 @@ def serve_child(args):
             queued=queued,
             decoding=decoding,
             samples=samples,
+            target_ms=args.target_ms,
         )
         return dispatched
 
@@ -201,7 +204,14 @@ def main():
         default=["prose", "retrieval"],
     )
     ap.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
-    ap.add_argument("--arm", choices=["fixed2048", "fixed512", "adaptive2048"])
+    ap.add_argument("--arm", choices=ARMS)
+    ap.add_argument(
+        "--arms",
+        nargs="+",
+        choices=ARMS,
+        default=list(ARMS[:3]),
+        help="Experimental arms; the 1000ms arm overrides --target-ms",
+    )
     ap.add_argument("--trace", type=Path)
     args = ap.parse_args()
     if not args.model.is_dir():
@@ -217,6 +227,10 @@ def main():
         or args.target_ms <= 0
     ):
         ap.error("repeat, cycles and target must be positive")
+    if len(set(args.arms)) != len(args.arms) or len(set(args.workloads)) != len(
+        args.workloads
+    ):
+        ap.error("arms and workloads must not contain duplicates")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists():
         ap.error("output already exists")
@@ -313,9 +327,10 @@ def main():
                 row["total_ms"] = (row["ended_ns"] - started) / 1e6
                 return row
 
-        arms = ["fixed2048", "fixed512", "adaptive2048"]
+        arms = args.arms
         for cycle in range(args.cycles):
             for arm in arms if cycle % 2 == 0 else reversed(arms):
+                target_ms = 1000.0 if arm == "adaptive2048-1000ms" else args.target_ms
                 label = f"cycle{cycle}-{arm}"
                 trace = args.output.parent / (label + ".trace.jsonl")
                 cmd = [
@@ -333,7 +348,7 @@ def main():
                     "--trace",
                     str(trace),
                     "--target-ms",
-                    str(args.target_ms),
+                    str(target_ms),
                 ]
                 env = {
                     k: os.environ[k]
@@ -349,6 +364,7 @@ def main():
                 )
                 info = dict(
                     label=label,
+                    effective_target_ms=target_ms,
                     command=cmd,
                     controlled_env={
                         k: v
@@ -453,6 +469,8 @@ def main():
                             proc.wait(timeout=10)
                         info["exit_code"] = proc.returncode
                         save()
+    if any(arm.get("exit_code") not in (0, -15) for arm in result["arms"]):
+        raise RuntimeError("unclean child shutdown; campaign is incomplete")
     result["summary"] = {
         arm: {
             workload: {
