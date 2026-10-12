@@ -175,6 +175,13 @@ def _resolve_config_path(cfg) -> Path:
                 Path(os.path.expanduser(xdg_config))
                 / "goose/custom_providers/custom_rapid_mlx.json"
             )
+    if (
+        cfg.path == "~/.config/crush/crush.json"
+        and not os.environ.get("CRUSH_GLOBAL_CONFIG", "").strip()
+    ):
+        xdg_config = os.environ.get("XDG_CONFIG_HOME", "").strip()
+        if xdg_config:
+            return Path(os.path.expanduser(xdg_config)) / "crush/crush.json"
     home_env = getattr(cfg, "home_env", None)
     if not home_env:
         return default

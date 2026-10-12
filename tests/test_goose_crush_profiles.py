@@ -8,6 +8,7 @@ import pytest
 from rapid_mlx import cli
 from rapid_mlx.agents import get_profile
 from rapid_mlx.agents.adapter import setup_agent_config
+from rapid_mlx.agents.testing import AgentTestRunner, TestResult, TestStatus
 
 
 @pytest.mark.parametrize("keyed", [False, True])
@@ -81,6 +82,16 @@ def test_crush_provider_setup(tmp_path, monkeypatch, keyed):
     assert "local-secret" not in path.read_text()
 
 
+def test_crush_xdg_config_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("CRUSH_GLOBAL_CONFIG", raising=False)
+    setup_agent_config(
+        get_profile("crush"), "http://127.0.0.1:18740/v1", "qwen3.5-4b-4bit"
+    )
+    assert (tmp_path / "xdg/crush/crush.json").exists()
+
+
 def test_agents_setup_keeps_public_alias(monkeypatch):
     seen = []
     monkeypatch.setattr(
@@ -105,3 +116,63 @@ def test_agents_setup_keeps_public_alias(monkeypatch):
     )
     cli.agents_command(args)
     assert seen == ["qwen3.5-4b-4bit"]
+
+
+@pytest.mark.parametrize("agent", ["goose", "crush"])
+def test_agent_test_uses_isolated_config_and_data(agent, monkeypatch, tmp_path):
+    from rapid_mlx.agents import testing
+
+    monkeypatch.setenv("HOME", str(tmp_path / "operator"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "operator-xdg"))
+    monkeypatch.setenv("GOOSE_PATH_ROOT", str(tmp_path / "operator-goose"))
+    monkeypatch.setenv(
+        "GOOSE_ADDITIONAL_CONFIG_FILES", str(tmp_path / "operator-config.yaml")
+    )
+    monkeypatch.setenv("CRUSH_GLOBAL_DATA", str(tmp_path / "operator-crush"))
+    seen_setup = []
+    seen_child = []
+    monkeypatch.setattr(
+        "rapid_mlx.agents.adapter.fetch_context_window", lambda *_: 32768
+    )
+    monkeypatch.setattr(
+        "rapid_mlx.agents.adapter.setup_agent_config",
+        lambda *_args, **_kwargs: seen_setup.append(dict(testing.os.environ)),
+    )
+    for name in (
+        "plain_chat",
+        "single_tool_call",
+        "tool_choice",
+        "multi_turn_tool",
+        "no_tool_leak",
+        "no_tool_needed",
+        "streaming_tool_call",
+        "many_tools",
+        "streaming_basic",
+        "stress_no_leak",
+    ):
+        monkeypatch.setattr(
+            testing,
+            f"_test_{name}",
+            lambda *_args, _name=name: TestResult(_name, TestStatus.PASS),
+        )
+
+    def fake_e2e(*_args, env_overrides, **_kwargs):
+        seen_child.append(env_overrides)
+        return TestResult("e2e", TestStatus.PASS)
+
+    for name in ("chat", "file_read", "terminal"):
+        monkeypatch.setattr(testing, f"_test_e2e_{name}", fake_e2e)
+    monkeypatch.setattr(AgentTestRunner, "_server_available", lambda _self: True)
+    monkeypatch.setattr(AgentTestRunner, "_agent_binary_available", lambda _self: True)
+    report = AgentTestRunner(
+        get_profile(agent), "http://127.0.0.1:18740/v1", "qwen3.5-4b-4bit"
+    ).run()
+    assert report.results
+    assert seen_setup and seen_child
+    assert seen_setup[0]["HOME"] != str(tmp_path / "operator")
+    if agent == "goose":
+        assert seen_setup[0]["GOOSE_PATH_ROOT"] == ""
+        assert seen_setup[0]["XDG_CONFIG_HOME"].startswith(seen_setup[0]["HOME"])
+        assert seen_child[0]["GOOSE_ADDITIONAL_CONFIG_FILES"] == ""
+    else:
+        assert seen_child[0]["CRUSH_GLOBAL_DATA"].startswith(seen_child[0]["HOME"])
