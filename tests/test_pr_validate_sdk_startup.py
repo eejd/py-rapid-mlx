@@ -104,7 +104,12 @@ def test_sdk_without_valid_result_contract_cannot_pass(ctx, agent, monkeypatch, 
 
 @pytest.mark.parametrize(
     "pr_executed,base_executed,expected",
-    [(False, True, "fail"), (True, False, "fail"), (True, True, "pass")],
+    [
+        (False, True, "fail"),
+        (True, False, "fail"),
+        (True, None, "fail"),
+        (True, True, "pass"),
+    ],
 )
 def test_only_real_test_failures_can_be_baseline_dispositioned(
     ctx, agent, monkeypatch, pr_executed, base_executed, expected
@@ -143,7 +148,10 @@ def test_only_real_test_failures_can_be_baseline_dispositioned(
 
     def base(*args):
         calls.append(args)
-        return {"status": "fail", "summary": "1/2 passed", "executed": base_executed}
+        result = {"status": "fail", "summary": "1/2 passed"}
+        if base_executed is not None:
+            result["executed"] = base_executed
+        return result
 
     monkeypatch.setattr(matrix, "_run_base_check", base)
     result = matrix.StressE2EBenchStep().run(ctx)
