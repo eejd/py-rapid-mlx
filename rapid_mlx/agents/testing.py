@@ -1716,6 +1716,13 @@ class AgentTestRunner:
         if config_home_env:
             env_overrides[config_home_env] = isolated_config_home.name
         if self.profile.name == "cline":
+            # Cline has overrides for providers, MCP, state, hooks and DBs.
+            # An inherited override must never escape the throwaway home.
+            for key in os.environ:
+                if key.startswith("CLINE_"):
+                    env_overrides[key] = ""
+            env_overrides["CLINE_DIR"] = isolated_config_home.name
+            env_overrides["CLINE_DATA_DIR"] = isolated_config_home.name
             env_overrides["CLINE_PROVIDER_SETTINGS_PATH"] = str(
                 Path(isolated_config_home.name) / "settings" / "providers.json"
             )
