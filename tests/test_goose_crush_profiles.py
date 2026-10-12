@@ -118,6 +118,35 @@ def test_agents_setup_keeps_public_alias(monkeypatch):
     assert seen == ["qwen3.5-4b-4bit"]
 
 
+def test_agents_test_keeps_public_alias(monkeypatch):
+    seen = []
+
+    class FakeRunner:
+        def __init__(self, _profile, *, model_id, **_kwargs):
+            seen.append(model_id)
+
+        def _server_available(self):
+            return True
+
+        def run(self):
+            return SimpleNamespace(print_summary=lambda: True)
+
+    monkeypatch.setattr("rapid_mlx.agents.testing.AgentTestRunner", FakeRunner)
+    args = SimpleNamespace(
+        agent_name="crush",
+        base_url="http://127.0.0.1:18740/v1",
+        model="mlx-community/Qwen3.5-4B-MLX-4bit",
+        _original_alias="qwen3.5-4b-4bit",
+        test=True,
+        setup=False,
+        agent_version=None,
+    )
+    with pytest.raises(SystemExit) as result:
+        cli.agents_command(args)
+    assert result.value.code == 0
+    assert seen == ["qwen3.5-4b-4bit"]
+
+
 @pytest.mark.parametrize("agent", ["goose", "crush"])
 def test_agent_test_uses_isolated_config_and_data(agent, monkeypatch, tmp_path):
     from rapid_mlx.agents import testing
