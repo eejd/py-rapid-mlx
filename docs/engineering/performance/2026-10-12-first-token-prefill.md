@@ -41,7 +41,9 @@ and disk caches are off. Retrieval outputs must match distinct codes inserted
 halfway through the long/short prompts (7319/9283), stop normally and use at most
 32 output tokens. Prose uses a 96-token budget and checks protocol completion,
 not semantic quality. Every measured stream requires output, usage, `[DONE]`
-and zero cached tokens. TTFT excludes role-only frames.
+and zero cached tokens (the server omits the details object for zero). Archived
+final server cache statistics also report zero hits/tokens saved. TTFT excludes
+role-only frames.
 
 Medians in seconds; TTFT is for the short request and completion for the long.
 Each October 11/12-budget arm has four paired samples, the tail pilot two.
@@ -100,7 +102,7 @@ For the original October 11 matrix use `--workloads prose retrieval`; the budget
 matrix adds the 1000 ms arm, and the tail pilot adds the tail arm with `--repeat 1`.
 New results record schema/methodology hash, source revision, runtime versions,
 timestamps, client receipts and per-dispatch chunk/row/cost metadata. The PR
-also rejects missing cache usage and short arrivals after the long first token;
+also rejects malformed explicit cache usage and short arrivals after the long first token;
 archived timings were collected with the earlier source hashes below.
 
 The [evidence directory](fixtures/first-token-prefill/) contains two compressed

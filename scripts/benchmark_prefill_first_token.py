@@ -215,7 +215,9 @@ def receipt(lines, started_ns):
 
 
 def validate_cold(row, expected=None):
-    cached = (row["usage"].get("prompt_tokens_details") or {}).get("cached_tokens")
+    # The owned server omits prompt_tokens_details when cached_tokens == 0.
+    details = row["usage"].get("prompt_tokens_details")
+    cached = 0 if details is None else details.get("cached_tokens")
     if type(cached) is not int or cached != 0:
         raise ValueError(f"unexpected cache reuse: {cached}")
     if expected is not None:

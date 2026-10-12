@@ -122,15 +122,17 @@ def test_only_admissible_queued_segments_limit_prompt_chunk():
     assert segment_tail_chunk(224, [], queued, 8) == 224
 
 
-def test_missing_or_invalid_cache_usage_cannot_pass_as_cold():
+def test_invalid_cache_usage_fails_and_server_zero_omission_is_accepted():
     row = receipt(stream(), time.perf_counter_ns())
     for value in (None, False, "0", -1):
         row["usage"]["prompt_tokens_details"]["cached_tokens"] = value
         with pytest.raises(ValueError, match="cache reuse"):
             validate_cold(row, "42")
-    del row["usage"]["prompt_tokens_details"]
+    row["usage"]["prompt_tokens_details"] = {}
     with pytest.raises(ValueError, match="cache reuse"):
         validate_cold(row, "42")
+    del row["usage"]["prompt_tokens_details"]
+    validate_cold(row, "42")
 
 
 def test_short_arrival_after_long_prefill_cannot_pass_as_contention():
