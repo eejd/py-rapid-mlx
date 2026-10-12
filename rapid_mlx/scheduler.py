@@ -1275,7 +1275,9 @@ def _install_continuous_mtp_router(
             prompt_cache=list(caches) if resumed else None,
         )
 
-    def _queued_candidates(*, planned_bytes: bool = False):
+    def _queued_candidates(
+        *, planned_bytes: bool = False, stop_at_ineligible: bool = False
+    ):
         for sequence in batch_gen._unprocessed_sequences:
             try:
                 metadata = _metadata(sequence, planned_bytes=planned_bytes)
@@ -1285,6 +1287,8 @@ def _install_continuous_mtp_router(
                 break
             if metadata is not None:
                 yield sequence, metadata
+            elif stop_at_ineligible:
+                break
 
     def _lane_gate(metadata: Any):
         return assess_lane(
@@ -1427,10 +1431,10 @@ def _install_continuous_mtp_router(
         pending_before = set(driver.pending_join_uids)
         try:
             for sequence, metadata in _queued_candidates(
-                planned_bytes=budget is not None
+                planned_bytes=budget is not None, stop_at_ineligible=True
             ):
                 if not _lane_gate(metadata).eligible:
-                    continue
+                    break
                 if budget is not None:
                     cost = metadata.base_bytes
                     if cost > budget:

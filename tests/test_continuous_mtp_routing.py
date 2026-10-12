@@ -690,6 +690,12 @@ def test_live_installer_drives_join_detach_remove_and_compat_response(monkeypatc
     _, responses = batch_gen.next()
     assert [item.uid for item in responses] == [1]
     assert driver.calls[:2] == ["next", "take-terminal"]
+    assert not any(
+        isinstance(call, tuple) and call[0] == "join" for call in driver.calls
+    )
+    # This fake base next does not consume plain rows. Model their departure
+    # before testing a later admissible FIFO prefix; joins cannot overtake them.
+    batch_gen._unprocessed_sequences.clear()
 
     batch_gen._unprocessed_sequences.extend(
         [_scheduler_sequence(uid) for uid in (4, 5, 6)]
@@ -2247,3 +2253,29 @@ def test_join_rollback_does_not_use_live_lane_removal(monkeypatch):
     assert list(batch_gen._unprocessed_sequences) == [source]
     assert driver.pending_join_uids == ()
     assert driver.lane_uids == (1, 2)
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize("blocked", ["sampled", "unknown", "processors"])
+def test_dynamic_join_never_overtakes_ineligible_fifo_head(monkeypatch, blocked):
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2)]
+    )
+    requests, mapping = _requests_for(1, 2, 3, 4)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    if blocked == "sampled":
+        requests["req-3"].sampling_params.temperature = 0.7
+    if blocked == "unknown":
+        mapping.pop(3)
+    source = [_scheduler_sequence(3), _scheduler_sequence(4)]
+    if blocked == "processors":
+        row = list(source[0])
+        row[6] = [object()]
+        source[0] = tuple(row)
+    batch_gen._unprocessed_sequences.extend(source)
+    batch_gen.next()
+    assert list(batch_gen._unprocessed_sequences) == source
+    assert created[0].pending_join_uids == ()
+    assert created[0].lane_uids == (1, 2)
