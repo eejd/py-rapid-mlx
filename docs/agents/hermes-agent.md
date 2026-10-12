@@ -37,14 +37,15 @@ export PATH="$PWD/hermes-agent/.venv/bin:$PATH"
 rapid-mlx serve qwen3.5-4b-4bit --port 8000
 
 rapid-mlx agents hermes --setup --yes
-hermes chat -q "Use a tool to read README.md and report its title" -Q
+hermes chat -q "Run cat README.md using the terminal tool and report its title" -Q -t terminal
 ```
 
 The `--setup` command reads the model ID and context window from the running
 server, then writes `~/.hermes/config.yaml` (or `$HERMES_HOME/config.yaml`).
 Hermes 0.21.6 reads `model.default`, `model.provider`, `model.base_url`, and
 `model.context_length` for this local endpoint. It ignores the former
-`model.max_tokens` output setting, so setup no longer writes it.
+`model.max_tokens` output setting, so a fresh setup omits it. Setup preserves
+that field in an existing config; remove it there if you want a clean file.
 
 ## Manual config
 
