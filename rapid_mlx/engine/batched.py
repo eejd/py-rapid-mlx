@@ -2085,13 +2085,14 @@ class BatchedEngine(BaseEngine):
 
         # Create and start MLLM scheduler — pass the model-owning executor so
         # _step_no_queue runs on the same thread as model load.
-        self._mllm_scheduler = MLLMScheduler(
+        mllm_scheduler = MLLMScheduler(
             model=self._model,
             processor=worker_processor,
             config=mllm_config,
             step_executor=self._model_load_executor,
             model_name=self._model_name,
         )
+        self._mllm_scheduler = mllm_scheduler
         await self._mllm_scheduler.start()
 
         config = getattr(self._mllm_instance, "config", None)
@@ -2117,7 +2118,7 @@ class BatchedEngine(BaseEngine):
                 # Both schedulers use the model-loading thread. A text-only
                 # singleton must return between prefill chunks so native
                 # peers can run without waiting for its entire prompt.
-                self._mllm_scheduler.cooperative_prefill = True
+                mllm_scheduler.cooperative_prefill = True
 
         logger.info(
             f"MLLM Scheduler started with continuous batching: "

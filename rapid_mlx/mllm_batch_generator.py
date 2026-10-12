@@ -1423,7 +1423,9 @@ class MLLMBatchGenerator:
         self.uid_counter = 0
         # Enabled only when a qualified native text peer shares our executor.
         self.cooperative_prefill = False
-        self._pending_prefill = None
+        self._pending_prefill: (
+            tuple[MLLMBatchRequest, Generator[None, None, MLLMBatch]] | None
+        ) = None
 
         # Statistics
         self._stats = MLLMBatchStats()
@@ -3633,7 +3635,7 @@ class MLLMBatchGenerator:
             try:
                 next(steps)
             except StopIteration as done:
-                return done.value
+                return cast(mx.array, done.value)
 
     def _vision_encoding_steps(
         self, request: MLLMBatchRequest, cache: list[Any] | None = None
@@ -3905,7 +3907,7 @@ class MLLMBatchGenerator:
             try:
                 next(steps)
             except StopIteration as done:
-                return done.value
+                return cast(MLLMBatch, done.value)
 
     def _process_prompt_steps(
         self, requests: list[MLLMBatchRequest], *, cooperative: bool
