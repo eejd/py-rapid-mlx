@@ -302,8 +302,8 @@ def stalled_provider(monkeypatch):
     import sys
     from types import ModuleType
 
-    from rapid_mlx.speculative.tensorfold_qwen27 import TensorFoldQwen27Backend
     from rapid_mlx.speculative import tensorfold_qwen27_server as adapter
+    from rapid_mlx.speculative.tensorfold_qwen27 import TensorFoldQwen27Backend
 
     class Cancellation:
         def __init__(self):
@@ -479,3 +479,93 @@ def test_serial_provider_still_has_existing_unregistered_worker(stalled_provider
     jobs[0].cancellation.cancel()
     with pytest.raises(RuntimeError, match="cancelled"):
         future.result(timeout=1)
+
+
+async def test_close_releases_deferred_stream_reservation(stalled_provider):
+    backend, provider, submitted, _, _ = stalled_provider
+    admission = server._DFlashAdmission(2)
+    reservation = admission.reserve()
+    reservation.claim()
+    request = server.ChatCompletionRequest(
+        model="pilot", messages=[{"role": "user", "content": "hi"}]
+    )
+    chunks = [
+        chunk
+        async for chunk in server._stream_completion(
+            prompt="prompt",
+            request=request,
+            served_model_name="pilot",
+            gen_kwargs={},
+            model=None,
+            processor=SimpleNamespace(),
+            timeout=0.05,
+            admission_reservation=reservation,
+            stream_generate_fn=provider.stream_generate,
+            execution_policy=server.BackendExecutionPolicy(2, backend._executor),
+        )
+    ]
+    assert b"timed out" in b"".join(chunks)
+    assert submitted.is_set()
+    assert admission._reservations == 1
+    # Match the synchronous shutdown hook: callbacks run after the owned
+    # executor has joined its cancelled workers and stopped accepting tasks.
+    backend.close()
+    for _ in range(100):
+        if not admission._reservations:
+            break
+        await asyncio.sleep(0.01)
+    assert admission._reservations == 0
+
+
+@pytest.mark.parametrize("started", [False, True])
+async def test_concurrent_closed_or_unstarted_generator_cleanup_after_executor_join(
+    started,
+):
+    def chunks():
+        yield "chunk"
+
+    generator = chunks()
+    if started:
+        assert next(generator) == "chunk"
+        with pytest.raises(StopIteration):
+            next(generator)
+    executor = ThreadPoolExecutor(max_workers=1)
+    policy = server.BackendExecutionPolicy(1, executor)
+    executor.shutdown(wait=True)
+    admission = server._DFlashAdmission(1)
+    reservation = admission.reserve()
+    reservation.claim()
+    lease = server._DFlashStreamLease(
+        asyncio.get_running_loop(), reservation, None, policy
+    )
+    lease.set_generator(generator)
+    await lease._close_generator_and_release()
+    assert admission._reservations == 0
+
+
+def test_close_and_provider_registration_are_atomic(stalled_provider):
+    backend, provider, _, stopped, jobs = stalled_provider
+    preparing, resume = Event(), Event()
+
+    def encode(_prompt):
+        preparing.set()
+        assert resume.wait(2)
+        return [1]
+
+    backend._app.tokenizer.encode = encode
+    future = backend._executor.submit(provider.generate, None, None, "prompt")
+    assert preparing.wait(2)
+    thread = threading.Thread(target=backend.close, daemon=True)
+    thread.start()
+    try:
+        assert stopped.wait(1)
+        resume.set()
+        thread.join(1)
+        assert not thread.is_alive()
+        with pytest.raises(RuntimeError, match="closed"):
+            future.result(timeout=1)
+        assert not jobs
+        assert not backend._active
+    finally:
+        resume.set()
+        thread.join(2)

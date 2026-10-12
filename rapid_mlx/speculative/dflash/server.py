@@ -611,6 +611,17 @@ class _DFlashStreamLease:
 
     async def _close_generator_and_release(self) -> None:
         generator = self._generator
+        if (
+            self._lock is None
+            and inspect.isgenerator(generator)
+            and inspect.getgeneratorstate(generator)
+            in (inspect.GEN_CLOSED, inspect.GEN_CREATED)
+        ):
+            # A backend can join its executor during shutdown before deferred
+            # cleanup callbacks run. These states execute no generator body,
+            # so no executor submission or model work is needed to close them.
+            generator.close()
+            self._generator = generator = None
         if generator is not None:
 
             def _close_gen() -> None:
