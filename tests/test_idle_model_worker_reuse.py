@@ -1,11 +1,17 @@
 """Idle unload releases native state without churning the MLX stream worker."""
 
+import ast
 import asyncio
 import concurrent.futures
 import gc
+import logging
+import sys
 import threading
+import time
+import types
 import weakref
 from collections import OrderedDict
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -173,7 +179,20 @@ async def test_mllm_load_materializes_random_state_on_model_worker(monkeypatch):
 async def test_mllm_random_state_import_only_allows_missing_mlx(monkeypatch, missing):
     import builtins
 
-    from rapid_mlx import engine_core
+    # The fake loader never uses tensors: keep its worker initializer isolated
+    # from the optional runtime before testing the production import guard.
+    engine_core = types.ModuleType("rapid_mlx.engine_core")
+    engine_core._init_mlx_step_thread = lambda: None
+    monkeypatch.setitem(sys.modules, "rapid_mlx.engine_core", engine_core)
+    mllm_scheduler = types.ModuleType("rapid_mlx.mllm_scheduler")
+    mllm_scheduler.MLLMScheduler = Mock()
+    mllm_scheduler.MLLMSchedulerConfig = types.SimpleNamespace(
+        __dataclass_fields__={"prefill_step_size": types.SimpleNamespace(default=4096)}
+    )
+    monkeypatch.setitem(sys.modules, "rapid_mlx.mllm_scheduler", mllm_scheduler)
+    scheduler = types.ModuleType("rapid_mlx.scheduler")
+    scheduler.SchedulerConfig = Mock()
+    monkeypatch.setitem(sys.modules, "rapid_mlx.scheduler", scheduler)
     from rapid_mlx.engine import batched as batched_mod
     from rapid_mlx.models import mllm as mllm_mod
     from rapid_mlx.utils import chat_template_registry
@@ -277,6 +296,44 @@ async def test_idle_lifecycle_falls_back_to_stop():
     assert engine._loaded is False
 
 
+def _source_executor_lifecycle_classes():
+    """Execute the actual tensor-free lifecycle methods on every CI host."""
+    source = Path(__file__).parents[1] / "rapid_mlx" / "engine_core.py"
+    tree = ast.parse(source.read_text(), filename=str(source))
+    methods = {
+        "EngineCore": {"start", "stop", "_run_on_step_thread"},
+        "AsyncEngineCore": {"stop"},
+    }
+    classes = []
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name in methods:
+            node.body = [
+                method
+                for method in node.body
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and method.name in methods[node.name]
+            ]
+            assert {method.name for method in node.body} == methods[node.name]
+            classes.append(node)
+    module = ast.Module(
+        body=[
+            ast.ImportFrom(
+                module="__future__", names=[ast.alias("annotations")], level=0
+            )
+        ]
+        + classes,
+        type_ignores=[],
+    )
+    namespace = {
+        "asyncio": asyncio,
+        "concurrent": concurrent,
+        "time": time,
+        "logger": logging.getLogger(__name__),
+    }
+    exec(compile(ast.fix_missing_locations(module), str(source), "exec"), namespace)
+    return namespace["EngineCore"], namespace["AsyncEngineCore"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dual_scheduler", [False, True])
 async def test_mllm_idle_stop_releases_model_but_reuses_worker(
@@ -297,8 +354,7 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(
     engine._model_load_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     worker = engine._model_load_executor
     if dual_scheduler:
-        from rapid_mlx.engine_core import AsyncEngineCore, EngineCore
-
+        EngineCore, AsyncEngineCore = _source_executor_lifecycle_classes()
         core = EngineCore.__new__(EngineCore)
         core._running = False
         core._task = None
