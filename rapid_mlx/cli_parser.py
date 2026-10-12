@@ -706,9 +706,9 @@ def _add_serve_parser(
         default=500.0,
         metavar="MS",
         help=(
-            "While a request is decoding, size prompt chunks of a concurrent "
-            "prefill so the decoder waits about this long between tokens "
-            "(default: 500). 0 disables the bound."
+            "Target duration of prompt chunks while requests compete for "
+            "their first or next output token (default: 500). A single "
+            "uncontended prompt keeps its configured chunk. 0 disables the bound."
         ),
     )
     serve_parser.add_argument(

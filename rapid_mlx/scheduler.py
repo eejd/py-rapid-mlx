@@ -674,10 +674,12 @@ class SchedulerConfig:
     # beside it. ``0`` disables the wait. Appended for positional callers.
     shared_prefix_wait_tokens: int = 1024
 
-    # Decode-stall bound for prefill beside live decode. mlx-lm runs one
-    # decode step and then one prompt chunk per ``BatchGenerator.next()``, so
+    # Contention bound for prefill beside live decode or another prompt.
+    # mlx-lm runs one decode step and one prompt chunk per next() call, so
     # a decoding request waits a whole chunk between tokens while a long
-    # prompt prefills next to it. While at least one row is decoding, the
+    # prompt prefills next to it. A short prompt also waits for that chunk
+    # before its first token can be returned. While a row is decoding or
+    # at least two prompt rows can share the next dispatch, the
     # chunk is capped so its predicted time stays near this target; an
     # uncontended prefill keeps the configured chunk. ``0`` disables the
     # bound. Appended for positional callers.
@@ -6691,7 +6693,7 @@ class Scheduler:
             self._adaptive_prefill_protected_chunks += 1
             if selected < configured:
                 self._adaptive_prefill_reduced_chunks += 1
-        # The memory policy above is sticky within one prefill; the decode
+        # The memory policy above is sticky within one prefill; the contention
         # bound is not, so it is applied to the dispatched size only and
         # never recorded as the memory-selected chunk.
         dispatched = self._bound_prefill_chunk_for_decode(selected)
@@ -6741,11 +6743,12 @@ class Scheduler:
             samples.append(elapsed / tokens)
 
     def _bound_prefill_chunk_for_decode(self, selected: int) -> int:
-        """Cap the next prompt chunk so a decoding neighbour is not stalled.
+        """Cap prompt work while a neighbour waits for its next or first token.
 
         ``selected`` is the chunk the memory policy would dispatch. While a
-        row is decoding, the chunk is sized so that its predicted time, at the
-        slowest recently observed per-row-token cost, stays near
+        row is decoding or multiple prompts can share the next dispatch, the
+        chunk is sized so its predicted time at the slowest recently observed
+        per-row-token cost stays near
         ``decode_stall_target_ms``. Each sample amortizes the fixed
         per-forward cost over its chunk, so the bound settles at the chunk
         whose whole forward meets the target rather than collapsing. Chunks
@@ -6759,14 +6762,24 @@ class Scheduler:
         try:
             decoding = len(getattr(bg, "_generation_batch", ()) or ())
         except TypeError:
-            decoding = 0
+            return selected
         processing = getattr(bg, "_currently_processing", ()) or ()
         queued = getattr(bg, "_unprocessed_sequences", ()) or ()
         rows = len(processing)
         if queued:
-            slots = max(0, int(getattr(bg, "prefill_batch_size", 1)) - rows)
+            prefill_slots = max(0, int(getattr(bg, "prefill_batch_size", 1)) - rows)
+            # Match BatchGenerator._next admission. A queued request behind
+            # a full prompt or completion batch cannot compete on this tick.
+            completion_slots = max(
+                0,
+                int(getattr(bg, "completion_batch_size", decoding + prefill_slots))
+                - decoding,
+            )
+            slots = min(prefill_slots, completion_slots)
             rows += min(len(queued), slots)
-        if decoding <= 0 or rows <= 0:
+        # Include prompts awaiting promotion: next() promotes them before
+        # prefilling, but returns their first generated token on a later tick.
+        if rows <= 0 or (decoding <= 0 and rows < 2):
             if getattr(self, "_decode_stall_chunk_size", None) is not None:
                 logger.info("[decode_stall] prefill chunk bound released")
                 self._decode_stall_chunk_size = None

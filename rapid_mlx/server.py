@@ -3937,8 +3937,9 @@ Examples:
         default=500.0,
         metavar="MS",
         help=(
-            "Target wait between a decoding request's tokens while another "
-            "prompt prefills (default: 500). 0 disables the bound."
+            "Target duration of prompt chunks while requests compete for "
+            "their first or next output token (default: 500). A single "
+            "uncontended prompt keeps its configured chunk. 0 disables the bound."
         ),
     )
     parser.add_argument(
