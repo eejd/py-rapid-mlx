@@ -1135,10 +1135,20 @@ def _install_continuous_mtp_router(
         offset = getattr(value, "offset", None)
         if offset is None:
             return ()
-        offset = int(offset)
-        if offset < 0:
-            raise ValueError("negative continuous MTP cache offset")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("invalid continuous MTP cache offset")
         return (offset,)
+
+    def _recurrent_cache_has_state(value: Any) -> bool:
+        children = getattr(value, "caches", None)
+        if isinstance(children, (list, tuple)):
+            return any(_recurrent_cache_has_state(child) for child in children)
+        if getattr(value, "offset", None) is not None:
+            return False
+        empty = getattr(value, "empty", None)
+        if callable(empty):
+            return not empty()
+        return int(getattr(value, "nbytes", 0)) > 0
 
     def _planning_headroom() -> int | None:
         """Live headroom for byte planning, ``None`` when it is unknowable.
@@ -1214,11 +1224,14 @@ def _install_continuous_mtp_router(
             offsets = tuple(
                 offset for cache in caches for offset in _cache_offsets(cache)
             )
-        except (TypeError, ValueError, OverflowError):
+            recurrent_state = any(_recurrent_cache_has_state(cache) for cache in caches)
+        except Exception:  # noqa: BLE001 - optional cache inspection fails closed
             return None
         if len(set(offsets)) > 1:
             return None
-        resumed = bool(offsets and offsets[0] > 0)
+        if offsets and offsets[0] == 0 and recurrent_state:
+            return None
+        resumed = bool((offsets and offsets[0] > 0) or recurrent_state)
         # Token history only accompanies a cached prefix (it is the logits
         # processors' context); a fresh lane with history is inconsistent.
         cache_ready = not history or resumed

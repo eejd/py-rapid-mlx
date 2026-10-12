@@ -1388,6 +1388,58 @@ def test_recurrent_cache_without_offset_coexists_with_agreeing_attention_positio
 
 
 @pytest.mark.requires_mlx
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("populated", [False, True])
+def test_recurrent_only_cache_preserves_state_without_inventing_a_prefix(
+    monkeypatch, nested, populated
+):
+    import mlx.core as mx
+    from mlx_lm.models.cache import ArraysCache
+
+    state = ArraysCache(1)
+    if populated:
+        state[0] = mx.array([[3.0, 7.0]])
+    caches = [SimpleNamespace(caches=[state])] if nested else [state]
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2, caches=caches)]
+    )
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    assert created[0].lane_uids == (1, 2)
+    restored = created[0].specs[1].prompt_cache
+    if not populated:
+        assert restored is None
+    else:
+        leaf = restored[0].caches[0] if nested else restored[0]
+        assert leaf is not state
+        assert mx.array_equal(leaf[0], state[0]).item()
+
+
+@pytest.mark.requires_mlx
+def test_populated_recurrent_state_with_zero_attention_position_stays_queued(
+    monkeypatch,
+):
+    import mlx.core as mx
+    from mlx_lm.models.cache import ArraysCache
+
+    state = ArraysCache(1)
+    state[0] = mx.ones((1, 2))
+    batch_gen = _SchedulerBatchGenerator()
+    source = [
+        _scheduler_sequence(1),
+        _scheduler_sequence(2, caches=[SimpleNamespace(offset=0), state]),
+    ]
+    batch_gen._unprocessed_sequences.extend(source)
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    assert created == []
+    assert list(batch_gen._unprocessed_sequences) == source
+
+
+@pytest.mark.requires_mlx
 def test_windowed_or_quantized_layer_anywhere_keeps_the_lane_off_the_cohort(
     monkeypatch,
 ):
