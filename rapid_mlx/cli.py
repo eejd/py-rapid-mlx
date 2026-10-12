@@ -3491,8 +3491,25 @@ def _normalize_speculative_config_or_exit(args):
             # single-stream on M2 Pro / M3 Ultra).  The alias registry remains
             # the single source of truth, and --no-spec-decode stays the
             # explicit user escape hatch on every surface.
-            raw_config = '{"method":"mtp"}'
-            args.speculative_config = raw_config
+            from .spec_decode.mtp import MTPEligibility, detect_mtp_eligibility
+
+            # The catalog qualifies a preset, but the local target config is
+            # authoritative for this particular checkpoint. A missing config
+            # must also fail closed: explicit MTP requests still reach the
+            # serve-time validator and retain its error.
+            hf_cfg, _ = _gather_kv_cache_dtype_inputs(args.model)
+            if (
+                detect_mtp_eligibility(hf_cfg, has_external_sidecar=True)
+                is MTPEligibility.NONE
+            ):
+                print(
+                    "Automatic MTP sidecar skipped: target config is unavailable "
+                    "or does not qualify; using plain decode.",
+                    file=sys.stderr,
+                )
+            else:
+                raw_config = '{"method":"mtp"}'
+                args.speculative_config = raw_config
 
     if raw_config is None:
         _fill_runtime_defaults(overwrite=False)
@@ -13570,7 +13587,7 @@ def agents_command(args):
             # User specified model — look up *that* model's context window
             context_length = fetch_context_window(base_url, model_id)
 
-        # Claude Code, Continue, DSH, pi and Qwen Code have first-class setup
+        # Cline, Claude Code, Continue, DSH, pi and Qwen Code have first-class setup
         # flows. They preview an exact diff, require consent, back up existing config,
         # write atomically, and verify the server afterwards. The generic
         # profile writer below still lacks the diff/consent/backup half, but
@@ -13659,6 +13676,15 @@ def agents_command(args):
                 # verification passed, was skipped with --no-check, or was
                 # deferred because no server was running yet.
                 track_agent_configured(plan.agent)
+            if profile.name == "cline":
+                from rapid_mlx.launch import cline
+
+                for note in cline.post_setup_notes(
+                    base_url,
+                    model_id,
+                    os.environ.get("RAPID_MLX_API_KEY"),
+                ):
+                    print(f"  {note}")
             print()
             return
 
