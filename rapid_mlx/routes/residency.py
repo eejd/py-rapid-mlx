@@ -139,6 +139,8 @@ def _load_failure(exc: Exception, model_ref: str) -> HTTPException:
     Check local existence only after a failed load: a resident model can still
     be reused successfully after its checkpoint has been moved on disk.
     """
+    from ..image.engine import ImageRequestError
+
     try:
         raise_if_missing_local_model(model_ref)
     except FileNotFoundError:
@@ -158,6 +160,8 @@ def _load_failure(exc: Exception, model_ref: str) -> HTTPException:
         if current is None or id(current) in seen:
             break
         seen.add(id(current))
+        if isinstance(current, ImageRequestError):
+            return HTTPException(400, str(current))
         # GatedRepoError is a RepositoryNotFoundError subclass; test it first.
         if isinstance(current, GatedRepoError):
             return HTTPException(

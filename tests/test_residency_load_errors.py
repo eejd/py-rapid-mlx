@@ -184,3 +184,90 @@ def test_cyclic_cause_and_unrelated_context_stay_safe(control_plane):
     assert response.status_code == 500
     assert response.json()["error"]["type"] == "api_error"
     assert "secret" not in response.text
+
+
+def test_unsupported_image_edit_through_resident_manager(control_plane, monkeypatch):
+    from rapid_mlx.runtime.image_lane import ImageEngine
+    from rapid_mlx.runtime.model_registry import ModelRegistry
+    from rapid_mlx.runtime.resident_models import ResidentModelManager
+
+    client, _ = control_plane
+    adapter = ImageEngine("Qwen/Qwen-Image")
+    # Keep the real manager -> adapter -> edit-builder exception path, but
+    # bypass all asset access. No model is constructed for this family/mode.
+    monkeypatch.setattr("rapid_mlx.model_downloads.require_local", lambda _name: None)
+    monkeypatch.setattr(adapter._engine, "_ensure_runtime_assets", lambda: None)
+    monkeypatch.setattr(adapter._engine, "_verify_weights_complete", lambda: None)
+
+    async def loader(model_name, model_path, performance, image_mode):
+        assert model_name == "Qwen/Qwen-Image"
+        assert image_mode == "editing"
+        adapter.ensure_resident(mode=image_mode)
+        pytest.fail("unsupported editing must fail before publication")
+
+    manager = ResidentModelManager(ModelRegistry(), loader, memory_reader=lambda: 0)
+    monkeypatch.setattr(residency, "_manager", lambda: manager)
+    response = client.post(
+        "/v1/models/load",
+        json={"model": "Qwen/Qwen-Image", "image_mode": "editing"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "message": "qwen-image does not support image editing.",
+            "type": "invalid_request_error",
+            "code": None,
+            "param": None,
+        }
+    }
+    assert manager.loads_total == 0
+
+
+def test_wrapped_image_request_error(control_plane):
+    from rapid_mlx.image.engine import ImageRequestError
+
+    client, manager = control_plane
+    error = RuntimeError("loader wrapper secret")
+    error.__cause__ = ImageRequestError("qwen-image does not support image editing.")
+    manager.load.side_effect = error
+    response = client.post(
+        "/v1/models/load",
+        json={"model": "Qwen/Qwen-Image", "image_mode": "editing"},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == str(error.__cause__)
+
+
+def test_operational_image_runtime_error_stays_unchanged(control_plane):
+    from rapid_mlx.image.engine import ImageRuntimeError
+
+    client, manager = control_plane
+    manager.load.side_effect = ImageRuntimeError("loader secret /Users/private/model")
+    response = client.post("/v1/models/load", json={"model": "Qwen/Qwen-Image"})
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {
+            "message": "Failed to load resident model: ImageRuntimeError",
+            "type": "api_error",
+            "code": None,
+            "param": None,
+        }
+    }
+
+
+def test_residency_import_and_failure_without_image_extra():
+    import subprocess
+    import sys
+
+    script = """
+import builtins
+original_import = builtins.__import__
+def without_image_extra(name, *args, **kwargs):
+    if name.split('.')[0] in {'mlx', 'mflux'}:
+        raise ModuleNotFoundError(name)
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = without_image_extra
+from rapid_mlx.routes import residency
+assert residency._load_failure(RuntimeError('failure'), 'org/model').status_code == 500
+"""
+    subprocess.run([sys.executable, "-c", script], check=True, capture_output=True)

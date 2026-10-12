@@ -1530,6 +1530,58 @@ def test_unsupported_edit_builder_is_request_error():
 
 
 @pytest.mark.parametrize("method", ["generate", "generate_with_performance"])
+def test_hidream_adapter_loads_before_token_limit_error(monkeypatch, method):
+    import sys
+
+    from rapid_mlx.image.engine import ImageRequestError
+
+    events = []
+    processor = object()
+    runtime = types.ModuleType("rapid_mlx.image.hidream_runtime.runtime")
+    runtime.MAX_PROMPT_TOKENS = 1024
+
+    def encode(prompt, tokenizer):
+        assert prompt == "fox"
+        assert tokenizer is processor
+        events.append("token_counted")
+        return types.SimpleNamespace(shape=(1, 1025))
+
+    runtime._encode_prompt_ids = encode
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    adapter = ImageEngine("HiDream-O1-Image-Dev")
+    backend = adapter._engine
+
+    def build():
+        events.append("loaded")
+        return types.SimpleNamespace(processor=processor)
+
+    monkeypatch.setattr(
+        "rapid_mlx.model_downloads.require_local",
+        lambda _name: events.append("assets_available"),
+    )
+    monkeypatch.setattr(backend, "_ensure_runtime_assets", lambda: None)
+    monkeypatch.setattr(backend, "_verify_weights_complete", lambda: None)
+    monkeypatch.setattr(backend, "_build_model", build)
+    monkeypatch.setattr(
+        adapter, "_emit_model_served", lambda: events.append("model_served")
+    )
+    assert not adapter.is_resident
+    with pytest.raises(
+        ImageRequestError, match="HiDream-O1 prompts are limited to 1024 tokens."
+    ):
+        getattr(adapter, method)(prompt="fox", num_inference_steps=28)
+    events.append("request_error")
+    assert adapter.is_resident
+    assert events == [
+        "assets_available",
+        "loaded",
+        "model_served",
+        "token_counted",
+        "request_error",
+    ]
+
+
+@pytest.mark.parametrize("method", ["generate", "generate_with_performance"])
 def test_image_adapter_validates_before_preload_and_backend_loading(
     monkeypatch, method
 ):
