@@ -362,7 +362,12 @@ CPU-only partial pipeline that explicitly omits the model matrix also omits
 its SDK prerequisite check; partial runs cannot use `--queue-on-success`.
 
 The SDK matrix requires each registered script's nonempty final test-count
-summary and matching exit status. Missing imports, setup failures, silent
+summary, matching exit status, and one `PR_VALIDATE_SDK_COMPLETE: <result_prefix>` receipt after its summary
+and normal cleanup. A summary alone does not attest successful teardown, even
+when a failed test and a teardown failure share exit code 1. Older base scripts
+without this receipt cannot provide baseline-waiver evidence; the matrix fails
+closed rather than inferring cleanup from their output.
+Missing imports, setup failures, silent
 exits and incomplete results block validation; reproducing them on base does
 not make them pre-existing test failures. Real completed test failures retain
 the existing base-comparison policy. Model-specific registry exclusions and

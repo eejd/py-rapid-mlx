@@ -807,23 +807,37 @@ def _run_agent(
     # teardown crashes must block even if base has the same environment.
     prefix = agent.get("result_prefix")
     matches = (
-        re.findall(
-            rf"^{re.escape(prefix)}: (\d+)/(\d+) passed(?:, (\d+) skipped)?$",
-            proc.stdout or "",
-            re.MULTILINE,
+        list(
+            re.finditer(
+                rf"^{re.escape(prefix)}: (\d+)/(\d+) passed(?:, (\d+) skipped)?$",
+                proc.stdout or "",
+                re.MULTILINE,
+            )
         )
         if isinstance(prefix, str) and prefix
         else []
     )
     executed = False
-    if len(matches) == 1:
-        passed, total, skipped = (int(value or 0) for value in matches[0])
+    completions = (
+        list(
+            re.finditer(
+                rf"^PR_VALIDATE_SDK_COMPLETE: {re.escape(prefix)}$",
+                proc.stdout or "",
+                re.MULTILINE,
+            )
+        )
+        if isinstance(prefix, str) and prefix
+        else []
+    )
+    if len(matches) == 1 and len(completions) == 1:
+        passed, total, skipped = (int(value or 0) for value in matches[0].groups())
         expected_exit = 0 if passed + skipped == total else 1
         # Zero passed can be a real all-failed battery too; zero executed
         # (all skipped) is never adequate integration evidence.
         valid_counts = total > 0 and passed + skipped <= total and skipped < total
         executed = (
             valid_counts
+            and completions[0].start() > matches[0].end()
             and proc.returncode == expected_exit
             and "Traceback (most recent call last)" not in (proc.stderr or "")
         )

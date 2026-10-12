@@ -65,6 +65,8 @@ def agent(ctx):
 def test_sdk_requires_completed_nonempty_results(
     ctx, agent, monkeypatch, code, stdout, stderr, executed, status
 ):
+    if stdout:
+        stdout += "PR_VALIDATE_SDK_COMPLETE: Toy SDK\n"
     monkeypatch.setattr(
         matrix.subprocess,
         "run",
@@ -76,6 +78,57 @@ def test_sdk_requires_completed_nonempty_results(
     assert result["executed"] is executed
     assert result["status"] == status
     assert Path(result["artifact"]).read_text() == stdout + stderr
+
+
+@pytest.mark.parametrize("teardown_failure", [False, True])
+def test_real_failed_battery_requires_clean_teardown_receipt(
+    ctx, agent, monkeypatch, teardown_failure
+):
+    # Both children exit 1 after printing real failed-test counts. The second
+    # fails cleanup without a traceback, so only the first supplies evidence
+    # eligible for a baseline comparison.
+    script = ctx.repo_root / agent["script"]
+    script.write_text(
+        "print('Toy SDK: 1/2 passed', flush=True)\n"
+        + (
+            "print('client cleanup failed', flush=True)\nraise SystemExit(1)\n"
+            if teardown_failure
+            else "print('PR_VALIDATE_SDK_COMPLETE: Toy SDK', flush=True)\nraise SystemExit(1)\n"
+        )
+    )
+    real_run = matrix.subprocess.run
+
+    def isolated_run(argv, **kwargs):
+        return real_run([sys.executable, *argv[1:]], **kwargs)
+
+    monkeypatch.setattr(matrix.subprocess, "run", isolated_run)
+    result = matrix._run_agent(
+        ctx, matrix.ModelChoice("toy", "toy/model", 1, "golden", []), agent
+    )
+    assert result["status"] == "fail"
+    assert result["executed"] is (not teardown_failure)
+    assert "Toy SDK: 1/2 passed" in Path(result["artifact"]).read_text()
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "Toy SDK: 2/2 passed\n",
+        "PR_VALIDATE_SDK_COMPLETE: Toy SDK\nToy SDK: 2/2 passed\n",
+        "Toy SDK: 2/2 passed\nPR_VALIDATE_SDK_COMPLETE: Toy SDK\nPR_VALIDATE_SDK_COMPLETE: Toy SDK\n",
+    ],
+)
+def test_incomplete_or_ambiguous_completion_receipt_blocks(
+    ctx, agent, monkeypatch, stdout
+):
+    monkeypatch.setattr(
+        matrix.subprocess, "run", lambda *a, **kw: CompletedProcess(a, 0, stdout, "")
+    )
+    result = matrix._run_agent(
+        ctx, matrix.ModelChoice("toy", "toy/model", 1, "golden", []), agent
+    )
+    assert result["executed"] is False
+    assert result["status"] == "fail"
 
 
 def test_missing_registered_script_blocks(ctx, agent):
