@@ -1834,8 +1834,6 @@ class BatchedEngine(BaseEngine):
             )
 
         def _load_mllm() -> MLXMultimodalLM:
-            import mlx.core as mx
-
             instance = MLXMultimodalLM(
                 self._model_name,
                 trust_remote_code=self._trust_remote_code,
@@ -1845,7 +1843,14 @@ class BatchedEngine(BaseEngine):
             # before checkpoint tensors replace them. The process-global RNG
             # key otherwise retains their Split/RandomBits graph across every
             # idle reload, even after the model and Metal buffers are gone.
-            mx.eval(mx.random.state)
+            try:
+                import mlx.core as mx
+            except ModuleNotFoundError as exc:
+                if exc.name != "mlx":
+                    raise
+                # CPU-only tests substitute a fake loader without MLX.
+            else:
+                mx.eval(mx.random.state)
             return instance
 
         # Reason string for the text-only degrade, set only when we intend to
