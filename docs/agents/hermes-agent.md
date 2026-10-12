@@ -20,21 +20,31 @@ the current per-family status.
 | Auto-setup | `rapid-mlx agents hermes --setup` |
 | Test suite | `rapid-mlx agents hermes --test` (runs `test_hermes.py`) |
 
-## TL;DR
+## Current release (v0.21.6)
+
+The [v0.21.6 source release](https://github.com/NousResearch/hermes-agent/releases/tag/v0.21.6)
+requires Python 3.14 for its runtime dependencies. PyPI currently publishes
+0.15.2, so `pip install hermes-agent` does not install this release. In a
+fresh directory, install the source release with `uv`:
 
 ```bash
-# 1. Install Hermes Agent (a venv is recommended — see troubleshooting)
-pip install hermes-agent
+git clone --depth 1 --branch v0.21.6 https://github.com/NousResearch/hermes-agent.git
+uv venv --python 3.14 hermes-agent/.venv
+uv pip install --python hermes-agent/.venv/bin/python -e hermes-agent
+export PATH="$PWD/hermes-agent/.venv/bin:$PATH"
 
-# 2. Start rapid-mlx
-rapid-mlx serve qwen3.6-35b-4bit --port 8000
+# Start rapid-mlx, then configure Hermes in another terminal.
+rapid-mlx serve qwen3.5-4b-4bit --port 8000
 
-# 3. Point Hermes at the local server
-rapid-mlx agents hermes --setup    # writes ~/.hermes/config.yaml
-
-# 4. Run it
-hermes chat -q "explain this repo" -Q
+rapid-mlx agents hermes --setup --yes
+hermes chat -q "Use a tool to read README.md and report its title" -Q
 ```
+
+The `--setup` command reads the model ID and context window from the running
+server, then writes `~/.hermes/config.yaml` (or `$HERMES_HOME/config.yaml`).
+Hermes 0.21.6 reads `model.default`, `model.provider`, `model.base_url`, and
+`model.context_length` for this local endpoint. It ignores the former
+`model.max_tokens` output setting, so setup no longer writes it.
 
 ## Manual config
 
@@ -43,12 +53,11 @@ hermes chat -q "explain this repo" -Q
 ```yaml
 model:
   provider: "custom"
-  default: "qwen3.6-35b-4bit"
+  default: "qwen3.5-4b-4bit"
   base_url: "http://localhost:8000/v1"
-  context_length: 32768
-  max_tokens: 4096
+  context_length: 262144
 platform_toolsets:
-  cli: [terminal, file, code_execution, web, browser, skills]
+  cli: [terminal, file, code_execution, web, browser, skills, image_gen]
 ```
 
 ## Per-family setup
@@ -114,8 +123,8 @@ model:
   flag.
 - **Gemma 4 `[Calling tool` mimicry** — after many tool turns Gemma 4 may
   parrot Hermes' UI text. Fixed in rapid-mlx v0.4.3+.
-- **`pip install hermes-agent` fails** — clone and install from source into
-  a venv; some systems can't resolve the PyPI wheel.
+- **A Python 3.11 or 3.12 source install starts without its runtime
+  dependencies** — use Python 3.14 for the current source release.
 
 ## See also
 
