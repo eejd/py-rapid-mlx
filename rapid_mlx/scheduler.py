@@ -1425,6 +1425,7 @@ def _install_continuous_mtp_router(
         joining_specs: list[SelfMTPLaneSpec] = []
         joining_stops: dict[int, frozenset[int]] = {}
         joining_sequences: dict[int, Any] = {}
+        pending_before = set(driver.pending_join_uids)
         try:
             for sequence, metadata in _queued_candidates(
                 planned_bytes=budget is not None
@@ -1458,8 +1459,12 @@ def _install_continuous_mtp_router(
                 return
             accepted = driver.queue_lanes(joining_specs, stop_tokens=joining_stops)
         except Exception as exc:  # noqa: BLE001 - optional route fails closed
-            # A staged join owns no continuous cache yet.  Keep the base queue
-            # authoritative when validation or allocation rejects the join.
+            # Retract only this attempt's new reservations before retaining
+            # the source queue, including a driver fault after partial staging.
+            newly_pending = set(driver.pending_join_uids) - pending_before
+            retract = newly_pending.intersection(spec.uid for spec in joining_specs)
+            if retract:
+                driver.remove_uids(tuple(retract))
             logger.warning(
                 "[MTP-continuous] lane join failed; retaining vendored/plain "
                 "queue ownership: %s",
@@ -1540,9 +1545,16 @@ def _install_continuous_mtp_router(
                     else None
                 ),
             )
-            accepted = active_driver.queue_lanes(
-                [spec], stop_tokens={spec.uid: metadata.stop_tokens}
-            )
+            pending_before = set(active_driver.pending_join_uids)
+            try:
+                accepted = active_driver.queue_lanes(
+                    [spec], stop_tokens={spec.uid: metadata.stop_tokens}
+                )
+            except Exception:
+                newly_pending = set(active_driver.pending_join_uids) - pending_before
+                if spec.uid in newly_pending:
+                    active_driver.remove_uids([spec.uid])
+                raise
             reserved = spec.uid in active_driver.pending_join_uids
             if spec.uid not in accepted or not reserved:
                 if reserved:

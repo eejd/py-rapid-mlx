@@ -1878,6 +1878,7 @@ def test_unplannable_lane_is_never_admitted_on_a_guess(monkeypatch):
         "probe_error",
         "infinite",
         "join_error",
+        "join_partial_error",
         "join_refused",
         "remove_refused",
     ],
@@ -1918,6 +1919,14 @@ def test_singleton_admission_failure_preserves_owner_cache_and_progress(
             raise RuntimeError("join refused")
 
         driver.queue_lanes = reject
+    if case == "join_partial_error":
+        queue_lanes = driver.queue_lanes
+
+        def stage_then_raise(*args, **kwargs):
+            queue_lanes(*args, **kwargs)
+            raise RuntimeError("fault after staging singleton reservation")
+
+        driver.queue_lanes = stage_then_raise
     if case == "remove_refused":
         batch_gen.refuse_removal = True
     batch_gen.next()
@@ -1968,7 +1977,7 @@ def test_infinite_lane_estimate_is_unplannable(monkeypatch):
 
 
 @pytest.mark.requires_mlx
-@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("partial", [False, True, "raise_after_staging"])
 def test_unconfirmed_dynamic_join_keeps_original_queue_ownership(monkeypatch, partial):
     batch_gen = _SchedulerBatchGenerator()
     batch_gen._unprocessed_sequences.extend(
@@ -1981,6 +1990,9 @@ def test_unconfirmed_dynamic_join_keeps_original_queue_ownership(monkeypatch, pa
     original = driver.queue_lanes
 
     def refuse(specs, **kwargs):
+        if partial == "raise_after_staging":
+            original(specs[:1], **kwargs)
+            raise RuntimeError("fault after partial dynamic staging")
         if partial:
             return original(specs[:1], **kwargs)
         return ()
@@ -2089,3 +2101,32 @@ def test_invalid_lane_projection_never_becomes_a_small_reservation(
     batch_gen.next()
     assert created == []
     assert list(batch_gen._unprocessed_sequences) == source
+
+
+@pytest.mark.requires_mlx
+def test_partial_join_rollback_preserves_earlier_pending_reservation(monkeypatch):
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2)]
+    )
+    requests, mapping = _requests_for(1, 2, 3, 4)
+    created = _install_recording_router(monkeypatch, batch_gen, requests, mapping)
+    batch_gen.next()
+    driver = created[0]
+    batch_gen._unprocessed_sequences.append(_scheduler_sequence(3))
+    batch_gen.next()
+    assert driver.pending_join_uids == (3,)
+    # Keep the earlier reservation pending while the next attempt faults.
+    driver.next = lambda: []
+
+    def stage_then_raise(specs, **_kwargs):
+        driver.pending += tuple(spec.uid for spec in specs)
+        raise RuntimeError("fault after a later reservation")
+
+    driver.queue_lanes = stage_then_raise
+    source = _scheduler_sequence(4)
+    batch_gen._unprocessed_sequences.append(source)
+    batch_gen.next()
+    assert list(batch_gen._unprocessed_sequences) == [source]
+    assert driver.pending_join_uids == (3,)
+    assert driver.lane_uids == (1, 2)
