@@ -268,9 +268,9 @@ def reap_orphan_incomplete_blobs(
     removed = 0
     reclaimed = 0
     for name in names:
-        if not name.endswith(".incomplete"):
-            continue
-        if name[: -len(".incomplete")].count(".") != 1:
+        # The Hub creates a lowercase eight-hex nonce for each attempt.
+        # Age alone does not establish ownership of an unknown blob name.
+        if re.fullmatch(r"[^.]+\.[0-9a-f]{8}\.incomplete", name) is None:
             continue
         path = os.path.join(blobs_dir, name)
         try:
