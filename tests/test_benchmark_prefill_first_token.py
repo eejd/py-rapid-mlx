@@ -1,0 +1,100 @@
+"""Contracts for the isolated first-token prefill research harness."""
+
+import json
+import time
+
+import pytest
+
+from scripts.benchmark_prefill_first_token import (
+    first_token_chunk,
+    receipt,
+    validate_cold,
+)
+
+
+def test_single_prompt_keeps_configured_size_but_admitted_peer_arms_bound():
+    processing = [[[[0] * 16000], 0, 16000]]
+    assert first_token_chunk(2048, processing, 0, 8, [0.001], 500) == 2048
+    assert first_token_chunk(2048, processing, 1, 8, [0.001], 500) == 224
+    assert first_token_chunk(2048, processing, 1, 1, [0.001], 500) == 2048
+
+
+def test_every_row_visits_checkpoint_grid_during_contention():
+    processing = [[[[0]], 2008, 16000], [[[0]], 100, 16000]]
+    visited = [set(), set()]
+    for _ in range(200):
+        chunk = first_token_chunk(2048, processing, 0, 8, [0.0036], 500)
+        assert 0 < chunk <= 2048
+        for row, seen in zip(processing, visited):
+            row[1] += chunk
+            seen.add(row[1])
+    for seen in visited:
+        assert {2048, 4096, 6144} <= seen
+
+
+def test_existing_memory_bound_is_never_enlarged():
+    processing = [[[[0]], 0, 16000], [[[0]], 0, 16000]]
+    assert first_token_chunk(32, processing, 0, 8, [0.1], 500) == 32
+    assert first_token_chunk(2048, processing, 0, 8, [], 500) == 128
+    assert first_token_chunk(2048, processing, 0, 8, [0.001], 0) == 2048
+
+
+def event(**kw):
+    return "data: " + json.dumps(kw)
+
+
+def stream(*, done=True, finish="stop", text="42", cached=0):
+    rows = [
+        event(choices=[{"delta": {"role": "assistant"}}]),
+        event(choices=[{"delta": {"content": text}, "finish_reason": finish}]),
+        event(
+            usage={
+                "prompt_tokens": 300,
+                "completion_tokens": 2,
+                "total_tokens": 302,
+                "prompt_tokens_details": {"cached_tokens": cached},
+            }
+        ),
+    ]
+    if done:
+        rows.append("data: [DONE]")
+    return rows
+
+
+def test_stream_requires_terminal_output_usage_and_correct_answer():
+    row = receipt(stream(), time.perf_counter_ns())
+    validate_cold(row, "42")
+    for changes in ({"done": False}, {"finish": None}, {"text": ""}):
+        with pytest.raises(ValueError, match="incomplete"):
+            receipt(stream(**changes), time.perf_counter_ns())
+    with pytest.raises(ValueError, match="cache reuse"):
+        validate_cold(receipt(stream(cached=256), time.perf_counter_ns()), "42")
+    with pytest.raises(ValueError, match="incorrect exact answer"):
+        validate_cold(receipt(stream(text="43"), time.perf_counter_ns()), "42")
+    with pytest.raises(ValueError, match="incorrect exact answer"):
+        validate_cold(receipt(stream(finish="length"), time.perf_counter_ns()), "42")
+
+
+def test_promotion_boundary_stays_protected_until_first_generation_step():
+    processing = [[[[0] * 10000], 4096, 16000], [[[9]], 283, 284]]
+    assert first_token_chunk(2048, processing, 0, 8, [0.001], 500) == 224
+    # Once the short row is promoted, normal decode protection owns the bound.
+    assert first_token_chunk(192, processing[:1], 0, 8, [0.001], 500) == 192
+
+
+def test_two_new_prompts_are_bounded_before_entering_processing_batch():
+    assert first_token_chunk(2048, [], 2, 8, [0.001], 500) == 224
+    assert first_token_chunk(2048, [], 2, 1, [0.001], 500) == 2048
+
+
+def test_stream_errors_and_missing_usage_cannot_pass_as_results():
+    with pytest.raises(ValueError, match="bad request"):
+        receipt([event(error={"message": "bad request"})], time.perf_counter_ns())
+    with pytest.raises(ValueError, match="invalid usage"):
+        receipt(
+            [
+                event(choices=[{"delta": {"content": "42"}, "finish_reason": "stop"}]),
+                "data: [DONE]",
+            ],
+            time.perf_counter_ns(),
+        )
