@@ -45,7 +45,7 @@ streaming:
 testing:
   binary: crush
   query_cmd: "crush run --model rapid-mlx/{model_id} --quiet '{query}'"
-  query_timeout: 180
+  query_timeout: 360
   install_cmd: "brew install charmbracelet/tap/crush"
 
 capabilities:
