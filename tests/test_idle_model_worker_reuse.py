@@ -5,6 +5,7 @@ import concurrent.futures
 import gc
 import threading
 import weakref
+from collections import OrderedDict
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -212,6 +213,7 @@ async def test_idle_lifecycle_falls_back_to_stop():
 async def test_mllm_idle_stop_releases_model_but_reuses_worker(
     monkeypatch, dual_scheduler
 ):
+    from rapid_mlx.api import tool_grammar
     from rapid_mlx.engine.batched import BatchedEngine
 
     class Model:
@@ -231,7 +233,21 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(
     engine._model = model
     engine._mllm_instance = model
     engine._tokenizer = None
-    engine._processor = None
+
+    class Tokenizer:
+        pass
+
+    tokenizer = Tokenizer()
+    lltok = object()
+    setattr(tokenizer, tool_grammar._LLTOKENIZER_ATTR, lltok)
+    matcher_key = (id(lltok), "schema")
+    monkeypatch.setattr(
+        tool_grammar,
+        "_compiled_matcher_cache",
+        OrderedDict({matcher_key: (lltok, object(), 6)}),
+    )
+    monkeypatch.setattr(tool_grammar, "_compiled_matcher_cache_bytes", 6)
+    engine._processor = Mock(tokenizer=tokenizer)
     engine._prompt_host_cache = Mock()
     engine._loaded = True
 
@@ -244,6 +260,8 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(
         assert engine._model_load_executor is worker
         assert worker.submit(lambda: 1).result(timeout=2) == 1
         assert engine._mllm_scheduler is None
+        assert matcher_key not in tool_grammar._compiled_matcher_cache
+        assert tool_grammar._compiled_matcher_cache_bytes == 0
         if dual_scheduler:
             text_engine.stop.assert_awaited_once()
             text_engine.engine.close.assert_called_once()
