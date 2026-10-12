@@ -366,8 +366,9 @@ async def test_mllm_idle_stop_releases_model_but_reuses_worker(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("build_error", [False, True])
+@pytest.mark.parametrize("drain_seconds", [0, 0.01])
 async def test_stuck_grammar_build_does_not_block_unload_and_cleans_late_cache(
-    monkeypatch, build_error
+    monkeypatch, build_error, drain_seconds
 ):
     from rapid_mlx.api import tool_grammar
     from rapid_mlx.engine import batched as batched_mod
@@ -385,7 +386,9 @@ async def test_stuck_grammar_build_does_not_block_unload_and_cleans_late_cache(
     engine._tool_grammar_futures_lock = threading.Lock()
     engine._tool_grammar_futures = set()
     monkeypatch.setattr(engine, "_abort_all_guided_requests", lambda: None)
-    monkeypatch.setattr(batched_mod, "TOOL_GRAMMAR_DRAIN_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(
+        batched_mod, "TOOL_GRAMMAR_DRAIN_SECONDS", drain_seconds, raising=False
+    )
     released = []
     monkeypatch.setattr(tool_grammar, "release_model_matchers", released.append)
     pending = concurrent.futures.Future()
