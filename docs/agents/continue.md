@@ -1,6 +1,6 @@
 # Continue
 
-Continue VS Code 2.1.0 and `cn` CLI 1.5.47 use `~/.continue/config.yaml` for
+Continue VS Code 2.0.0 and `cn` CLI 1.5.47 use `~/.continue/config.yaml` for
 local models. `cn` also accepts `--config <path>` and can remember another
 selected configuration; use `--config ~/.continue/config.yaml` when checking
 the file setup wrote. Its OpenAI provider entry uses `model`, `apiBase`, and a
