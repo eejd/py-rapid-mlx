@@ -8,6 +8,7 @@ import pytest
 from scripts.benchmark_prefill_first_token import (
     first_token_chunk,
     receipt,
+    segment_tail_chunk,
     validate_cold,
 )
 
@@ -98,3 +99,23 @@ def test_stream_errors_and_missing_usage_cannot_pass_as_results():
             ],
             time.perf_counter_ns(),
         )
+
+
+def test_short_segment_tail_reduces_padding_without_growing_cost_bound():
+    long = [[[0] * 10000], 2048, 16000]
+    short = [[[0] * 55, [0] * 14, [0]], 224, 294]
+    assert segment_tail_chunk(224, [long, short], [], 8) == 55
+    assert segment_tail_chunk(32, [long, short], [], 8) == 32
+    short[0] = [[0] * 14, [0]]
+    assert segment_tail_chunk(160, [long, short], [], 8) == 14
+    short[0] = [[0]]
+    assert segment_tail_chunk(160, [long, short], [], 8) == 160
+    assert segment_tail_chunk(2048, [long], [], 8) == 2048
+
+
+def test_only_admissible_queued_segments_limit_prompt_chunk():
+    long = [[[0] * 10000], 2048, 16000]
+    queued = [(7, [[0] * 27, [0]], 32, None)]
+    assert segment_tail_chunk(224, [long], queued, 8) == 27
+    assert segment_tail_chunk(224, [long], queued, 1) == 224
+    assert segment_tail_chunk(224, [], queued, 8) == 224

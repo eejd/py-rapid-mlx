@@ -22,9 +22,16 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from itertools import islice
 from pathlib import Path
 
-ARMS = ("fixed2048", "fixed512", "adaptive2048", "adaptive2048-1000ms")
+ARMS = (
+    "fixed2048",
+    "fixed512",
+    "adaptive2048",
+    "adaptive2048-1000ms",
+    "adaptive2048-tail",
+)
 
 
 def first_token_chunk(
@@ -55,6 +62,26 @@ def first_token_chunk(
     return bounded
 
 
+def segment_tail_chunk(
+    bound: int, processing: Sequence, queued: Sequence, slots: int
+) -> int:
+    """Avoid padding a finishing prompt segment to its long neighbour's chunk.
+
+    Only shrink the existing cost/grid bound. A final single token is promoted
+    rather than prefetched, so it must not force the remaining long row to 1.
+    Queued rows count only if they can actually join this tick.
+    """
+    admitted = list(islice(queued, max(0, slots - len(processing))))
+    if len(processing) + len(admitted) < 2:
+        return bound
+    segments = [row[0] for row in processing] + [row[1] for row in admitted]
+    for parts in segments:
+        if not parts or not parts[0] or (len(parts) == 1 and len(parts[0]) == 1):
+            continue
+        bound = min(bound, len(parts[0]))
+    return bound
+
+
 def serve_child(args):
     from rapid_mlx.cli import cli_entrypoint
     from rapid_mlx.scheduler import Scheduler
@@ -77,6 +104,10 @@ def serve_child(args):
             dispatched = first_token_chunk(
                 selected, processing, queued, slots, samples, args.target_ms
             )
+            if args.arm == "adaptive2048-tail":
+                dispatched = segment_tail_chunk(
+                    dispatched, processing, bg._unprocessed_sequences, slots
+                )
             bg.prefill_step_size = dispatched
             bg._prompt_batch.prefill_step_size = dispatched
         self._first_token_probe_trace = dict(
