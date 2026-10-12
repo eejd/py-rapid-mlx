@@ -179,6 +179,8 @@ class ImageEngine:
         self, **kwargs
     ) -> tuple[bytes, dict[str, float | int | None]]:  # noqa: ANN003
         """Generate one image and atomically return its denoise timing."""
+        # Validate before preloading to avoid downloading invalid requests' weights.
+        self._engine.validate_request(**kwargs)
         self._engine._ensure_loaded(  # noqa: SLF001
             for_edit=bool(kwargs.get("image_paths"))
         )
@@ -198,6 +200,16 @@ class ImageEngine:
         image_paths: list[str] | None = None,
     ) -> bytes:
         """Generate one image; returns PNG bytes. Raises ``ImageRuntimeError``."""
+        # Validate before preloading to avoid downloading invalid requests' weights.
+        self._engine.validate_request(
+            prompt=prompt,
+            width=width,
+            height=height,
+            num_inference_steps=num_inference_steps,
+            guidance=guidance,
+            negative_prompt=negative_prompt,
+            image_paths=image_paths,
+        )
         self._engine._ensure_loaded(for_edit=bool(image_paths))  # noqa: SLF001
         self._emit_model_served()
         return self._engine.generate(

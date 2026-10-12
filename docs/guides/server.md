@@ -183,6 +183,15 @@ are marked; multimodal and MCP surfaces link to their own guides.
 | `/v1/cua/runs/{id}/approval` | POST | Resolve the current gate with `{"gate_id": "...", "approved": true|false}` |
 | `/v1/cua/runs/{id}/cancel` | POST | Cancel a run |
 
+Image parameters that a model cannot accept return HTTP 400 with
+`error.type: "invalid_request_error"`, `code: "invalid_image_request"`,
+`param: null`, and the model's validation message. Retrying the same parameters
+cannot succeed. These checks run before lazy weight downloads or loading;
+HiDream's token limit check requires its tokenizer. Operational image failures
+still return HTTP 500 with `type: "image_generation_error"` and
+`code: "image_generation_failed"`. Cancellation returns HTTP 200 with
+`cancelled: true` and any images already completed.
+
 ### Cache persistence and diagnostics
 
 Cache export/import currently support text serving. A loaded vision-capable

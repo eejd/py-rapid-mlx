@@ -17,6 +17,10 @@ can actually understand.
 
 ## [Unreleased]
 
+### Fixed
+
+- Invalid image settings now report the model’s validation message as a client error before downloading or loading weights, avoiding unnecessary retries.
+
 
 ## [0.16.1] — 2026-10-12
 
