@@ -326,18 +326,20 @@ def build_setup_plan(
         assert path is not None
         path = path.resolve()
         try:
-            before = cline.load_providers(path)
+            cline_before = cline.load_providers(path)
         except ValueError:
             if emit_telemetry:
                 track_agent_configure_failed("config_invalid", agent)
             raise
-        after = cline.patched_config(
-            before,
+        cline_after = cline.patched_config(
+            cline_before,
             base_url,
             model,
             api_key=os.environ.get("RAPID_MLX_API_KEY") or "sk-noop",
         )
-        return SetupPlan("cline", "Cline", path, before, after, base_url, model)
+        return SetupPlan(
+            "cline", "Cline", path, cline_before, cline_after, base_url, model
+        )
     if agent in {"claude", "claude-code"}:
         path = claude_code.current_config_path()
         assert path is not None
