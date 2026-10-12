@@ -660,6 +660,7 @@ def test_live_installer_drives_join_detach_remove_and_compat_response(monkeypatc
         requests=requests,
         uid_to_request_id=uid_to_request_id,
         free_bytes_getter=lambda: 16 * 1024**3,
+        lane_bytes_estimator=lambda request: 1024,
         stop_tokens={99},
     )
 
@@ -774,6 +775,7 @@ def test_live_installer_retains_base_queue_when_initial_prepare_fails(monkeypatc
         requests={"req-1": _scheduler_request(), "req-2": _scheduler_request()},
         uid_to_request_id={1: "req-1", 2: "req-2"},
         free_bytes_getter=lambda: 16 * 1024**3,
+        lane_bytes_estimator=lambda request: 1024,
     )
 
     assert batch_gen.next()[1][0].uid == 99
@@ -870,6 +872,7 @@ def test_live_installer_restores_base_queue_when_deferred_join_fails(monkeypatch
         requests=requests,
         uid_to_request_id={1: "req-1", 2: "req-2", 3: "req-3"},
         free_bytes_getter=lambda: 16 * 1024**3,
+        lane_bytes_estimator=lambda request: 1024,
     )
     batch_gen.next()
     joining = _scheduler_sequence(3)
@@ -909,6 +912,7 @@ def test_live_installer_handles_empty_pressure_and_optional_base_hooks(monkeypat
         config,
         requests={"req-1": _scheduler_request()},
         uid_to_request_id={1: "req-1"},
+        lane_bytes_estimator=lambda request: 1024,
         free_bytes_getter=lambda: (_ for _ in ()).throw(RuntimeError("pressure")),
     )
     assert batch_gen.next() == ([], [])
@@ -923,6 +927,7 @@ def test_live_installer_handles_empty_pressure_and_optional_base_hooks(monkeypat
         config,
         requests={"req-2": _scheduler_request()},
         uid_to_request_id={2: "req-2"},
+        lane_bytes_estimator=lambda request: 1024,
     )
     assert no_getter.next() == ([], [])
 
@@ -1030,6 +1035,7 @@ def test_live_installer_forms_fixed_initial_cohort_without_dynamic_join(monkeypa
         requests=requests,
         uid_to_request_id=uid_to_request_id,
         free_bytes_getter=lambda: 16 * 1024**3,
+        lane_bytes_estimator=lambda request: 1024,
     )
 
     prompt_responses, completion_responses = batch_gen.next()
@@ -1254,7 +1260,7 @@ def _install_recording_router(
     *,
     dynamic=True,
     free_bytes=16 * 1024**3,
-    estimator=None,
+    estimator=lambda request: 1024,
     max_lanes=8,
 ):
     from rapid_mlx.scheduler import SchedulerConfig, _install_continuous_mtp_router
@@ -1803,3 +1809,18 @@ def test_resumed_cache_clone_failure_preserves_source_queue(monkeypatch, joining
         assert created == []
         assert list(batch_gen._unprocessed_sequences) == [source[0], resumed]
     assert resumed[3][0].offset == 12
+
+
+@pytest.mark.requires_mlx
+def test_missing_lane_estimator_refuses_even_empty_cache_admission(monkeypatch):
+    batch_gen = _SchedulerBatchGenerator()
+    batch_gen._unprocessed_sequences.extend(
+        [_scheduler_sequence(1), _scheduler_sequence(2)]
+    )
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(
+        monkeypatch, batch_gen, requests, mapping, estimator=None
+    )
+    batch_gen.next()
+    assert created == []
+    assert [sequence[0] for sequence in batch_gen._unprocessed_sequences] == [1, 2]

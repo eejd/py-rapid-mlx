@@ -1224,9 +1224,7 @@ def _install_continuous_mtp_router(
                 except Exception:  # noqa: BLE001 - fail closed for this lane
                     base_bytes = _UNPLANNABLE_LANE_BYTES
             else:
-                base_bytes = sum(
-                    int(getattr(cache, "nbytes", 0) or 0) for cache in caches
-                )
+                base_bytes = _UNPLANNABLE_LANE_BYTES
         return ContinuousMTPRequestMetadata(
             lane_id=request_id,
             uid=int(uid),
