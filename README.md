@@ -7,10 +7,14 @@
 <p align="center">
   <strong>Rapid-MLX is an open-source (Apache 2.0) OpenAI- and Anthropic-compatible LLM inference server for Apple Silicon, built on MLX, focused on reliable tool calling for coding agents.</strong>
   <br>
-  <strong>Faster decode than oMLX and LM Studio on Qwen3.5-9B, Qwen3.8-27B, and Qwen3.6-35B — same base 4-bit weights.</strong>
+  <strong>Up to 4× faster than Apple's MLX (mlx-lm), 1.5× on a typical task — same model, same weights.</strong>
+  <br>
+  <em>Decode speed, Qwen3.5-9B 4-bit on a Mac mini M4 Pro, greedy decoding, both servers at their defaults — <a href="https://rapidmlx.com/compare/mlx-lm">per-task results, method, and raw data</a>.</em>
 </p>
 
-**Measured speed on a Mac Studio M5 Max (36 GB)** — Rapid-MLX 0.16.1 vs
+**Faster decode than oMLX and LM Studio on Qwen3.5-9B, Qwen3.8-27B, and Qwen3.6-35B**
+
+Measured speed on a Mac Studio M5 Max (36 GB) — Rapid-MLX 0.16.1 vs
 oMLX 0.7.0 and LM Studio, using the same base 4-bit weights for each model.
 
 | Model | Metric | Rapid-MLX | oMLX | LM Studio |
@@ -75,6 +79,8 @@ LM Studio [Anthropic compatibility](https://lmstudio.ai/docs/developer/anthropic
 [mlx-lm server docs](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/SERVER.md) and [`server.py`](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/server.py).
 Ollama prompt-cache reuse is from our [benchmark notes](https://rapidmlx.com/blog/assets/engine-bench-2026-08/results.json).
 — = not verified for this table. Spot an error? Please [open an issue](https://github.com/raullenchai/Rapid-MLX/issues).</sub>
+
+vs Apple's mlx-lm: per-task results and raw data at https://rapidmlx.com/compare/mlx-lm.
 
 ---
 
