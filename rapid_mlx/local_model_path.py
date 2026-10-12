@@ -18,7 +18,8 @@ def _typed_ref(model_ref: str) -> str:
     """Remove shell quotes accidentally passed literally and surrounding space."""
     value = model_ref.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        value = value[1:-1].strip()
+        inside = value[1:-1]
+        value = inside if os.path.exists(os.path.expanduser(inside)) else inside.strip()
     return value
 
 
