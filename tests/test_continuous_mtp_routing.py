@@ -1993,3 +1993,24 @@ def test_unknown_production_draft_geometry_keeps_ordinary_queue_ownership(monkey
     batch_gen.next()
     assert created == []
     assert list(batch_gen._unprocessed_sequences) == sources
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize("estimate", [-1, 0, False, True, 1.5, "1024"])
+def test_invalid_lane_projection_never_becomes_a_small_reservation(
+    monkeypatch, estimate
+):
+    batch_gen = _SchedulerBatchGenerator()
+    source = [_scheduler_sequence(1), _scheduler_sequence(2)]
+    batch_gen._unprocessed_sequences.extend(source)
+    requests, mapping = _requests_for(1, 2)
+    created = _install_recording_router(
+        monkeypatch,
+        batch_gen,
+        requests,
+        mapping,
+        estimator=lambda _request: estimate,
+    )
+    batch_gen.next()
+    assert created == []
+    assert list(batch_gen._unprocessed_sequences) == source

@@ -1248,7 +1248,9 @@ def _install_continuous_mtp_router(
         if planned_bytes:
             if callable(lane_bytes_estimator):
                 try:
-                    base_bytes = max(0, int(lane_bytes_estimator(request)))
+                    base_bytes = lane_bytes_estimator(request)
+                    if type(base_bytes) is not int or base_bytes <= 0:
+                        raise _ContinuousMTPProjectionError
                 except Exception as exc:  # noqa: BLE001 - fail closed for this lane
                     raise _ContinuousMTPProjectionError from exc
             else:
