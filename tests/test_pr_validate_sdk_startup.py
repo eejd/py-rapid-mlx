@@ -111,6 +111,38 @@ def test_real_failed_battery_requires_clean_teardown_receipt(
 
 
 @pytest.mark.parametrize(
+    "failure", ["RuntimeError('late cleanup failed')", "SystemExit(1)"]
+)
+def test_real_atexit_failure_after_receipt_is_not_execution_evidence(
+    ctx, agent, monkeypatch, failure
+):
+    script = ctx.repo_root / agent["script"]
+    script.write_text(
+        "import atexit\n"
+        "def teardown():\n"
+        f"    raise {failure}\n"
+        "atexit.register(teardown)\n"
+        "print('Toy SDK: 1/2 passed', flush=True)\n"
+        "print('PR_VALIDATE_SDK_COMPLETE: Toy SDK', flush=True)\n"
+        "raise SystemExit(1)\n"
+    )
+    real_run = matrix.subprocess.run
+
+    def isolated_run(argv, **kwargs):
+        return real_run([sys.executable, *argv[1:]], **kwargs)
+
+    monkeypatch.setattr(matrix.subprocess, "run", isolated_run)
+    result = matrix._run_agent(
+        ctx, matrix.ModelChoice("toy", "toy/model", 1, "golden", []), agent
+    )
+    assert result["executed"] is False
+    assert result["status"] == "fail"
+    output = Path(result["artifact"]).read_text()
+    assert "PR_VALIDATE_SDK_COMPLETE: Toy SDK" in output
+    assert "Traceback (most recent call last)" in output
+
+
+@pytest.mark.parametrize(
     "stdout",
     [
         "Toy SDK: 2/2 passed\n",
@@ -234,6 +266,24 @@ def test_sdk_prerequisites_use_matrix_interpreter_without_running_scripts(
     assert "sdk.py" not in argv
     assert kwargs["cwd"] == str(ctx.repo_root)
     assert kwargs["timeout"] == 60
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [None, [], "invalid", {}, {"agents": None}, {"agents": {}}, {"agents": []}],
+)
+def test_malformed_top_level_sdk_registry_fails_without_launching(
+    ctx, monkeypatch, registry
+):
+    monkeypatch.setattr(sdk_env_check, "_load_registry", lambda: registry)
+    monkeypatch.setattr(
+        sdk_env_check.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("malformed registry must not launch"),
+    )
+    result = sdk_env_check.SDKEnvCheckStep().run(ctx)
+    assert result.status == "fail"
+    assert "malformed SDK registry" in result.summary
 
 
 def test_sdk_env_failure_stops_before_costly_tests_without_fail_fast(ctx):

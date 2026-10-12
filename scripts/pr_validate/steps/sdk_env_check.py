@@ -19,7 +19,14 @@ class SDKEnvCheckStep(Step):
         return StressE2EBenchStep().should_run(ctx)
 
     def run(self, ctx: Context) -> StepResult:
-        agents = _load_registry()["agents"]
+        registry = _load_registry()
+        agents = registry.get("agents") if isinstance(registry, dict) else None
+        if not isinstance(agents, list) or not agents:
+            return StepResult(
+                name=self.name,
+                status="fail",
+                summary="malformed SDK registry: nonempty agents list required",
+            )
         modules: set[str] = set()
         for agent in agents:
             if not isinstance(agent, dict) or not all(
