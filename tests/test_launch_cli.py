@@ -142,6 +142,11 @@ class TestCline:
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
         assert cline._cline_data_dir() == tmp_path / "home" / ".cline" / "data"
 
+    def test_provider_settings_path_override(self, tmp_path, monkeypatch):
+        path = tmp_path / "custom" / "providers.json"
+        monkeypatch.setenv("CLINE_PROVIDER_SETTINGS_PATH", str(path))
+        assert cline.current_config_path() == path
+
     def test_new_file_matches_what_cline_auth_writes(self, fake_home, monkeypatch):
         """Golden: byte-for-byte what ``cline auth -p openai -b … -k sk-noop
         -m qwen3.5-4b-4bit`` (Cline CLI 3.0.68) wrote into a fresh HOME."""

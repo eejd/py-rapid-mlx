@@ -1598,6 +1598,10 @@ class AgentTestRunner:
             redirected = {"HOME": isolated_config_home.name}
             if config_home_env:
                 redirected[config_home_env] = isolated_config_home.name
+            if self.profile.name == "cline":
+                redirected["CLINE_PROVIDER_SETTINGS_PATH"] = str(
+                    Path(isolated_config_home.name) / "settings" / "providers.json"
+                )
             previous = {key: os.environ.get(key) for key in redirected}
             os.environ.update(redirected)
             try:
@@ -1711,6 +1715,10 @@ class AgentTestRunner:
             env_overrides["RAPID_MLX_API_KEY"] = "not-needed"
         if config_home_env:
             env_overrides[config_home_env] = isolated_config_home.name
+        if self.profile.name == "cline":
+            env_overrides["CLINE_PROVIDER_SETTINGS_PATH"] = str(
+                Path(isolated_config_home.name) / "settings" / "providers.json"
+            )
 
         # --- API tests ---
         report.results.append(_test_plain_chat(self.base_url, self.model_id))

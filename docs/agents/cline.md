@@ -3,7 +3,8 @@
 Cline CLI 3.0.70 and the VS Code extension 4.1.23 can send OpenAI-compatible
 chat completions to Rapid-MLX. The CLI's provider store is
 `~/.cline/data/settings/providers.json`; `CLINE_DATA_DIR` overrides its data
-root, and `CLINE_DIR` overrides the parent of `data`. The provider entry is
+root, `CLINE_DIR` overrides the parent of `data`, and
+`CLINE_PROVIDER_SETTINGS_PATH` overrides the provider file itself. The provider entry is
 `openai-compatible` with `baseUrl`, `apiKey`, and `model` fields. Cline's MCP
 settings file is unrelated to model routing.
 
