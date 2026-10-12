@@ -695,3 +695,43 @@ class TestLegacySemanticsAlignment:
         assert extracted.keys.shape == (1, 2, 3, 4)
         assert extracted.values.shape == (1, 2, 3, 4)
         assert extracted.offset == 3
+
+
+def test_cooperative_prompt_resumes_same_cache_and_preprocesses_once():
+    leaves = _arrays_leaves()
+    gen = _stub_generator(leaves)
+    gen.active_batch = None
+    gen.cooperative_prefill = True
+    gen._pending_prefill = None
+    gen.uid_counter = 0
+    request = _make_request(0)
+    gen.unprocessed_requests = [request]
+    events = []
+    original_preprocess = gen._preprocess_request
+
+    def preprocess(req):
+        events.append(("prepare", req.uid))
+        original_preprocess(req)
+
+    def encoding(req, cache):
+        for position in (1, 2, 3):
+            events.append((position, id(cache)))
+            yield
+        return mx.zeros((1, 1, VOCAB))
+
+    gen._preprocess_request = preprocess
+    gen._vision_encoding_steps = encoding
+    with _no_prompt_processing(gen):
+        for _ in range(3):
+            assert gen.next() == []
+            assert gen.has_pending()
+            assert gen.active_batch is None
+            assert gen.unprocessed_requests == [request]
+        with pytest.raises(_StopGenerationError):
+            gen.next()
+    assert events == [("prepare", 0), (1, id(leaves)), (2, id(leaves)), (3, id(leaves))]
+    assert gen._stats.prompt_tokens == 4
+    assert gen._pending_prefill is None
+    assert gen.active_batch.uids == [0]
+    assert gen.active_batch.cache_layout == "singleton_regular"
+    assert gen.unprocessed_requests == []
