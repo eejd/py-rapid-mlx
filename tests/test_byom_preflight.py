@@ -1030,6 +1030,25 @@ def test_golden_working_paths_are_unchanged(
     assert err == ""
 
 
+def test_serve_dispatches_typed_local_path_as_absolute(monkeypatch, capsys, tmp_path):
+    model = tmp_path / "my model"
+    model.mkdir()
+    monkeypatch.setattr(pf, "run_cli_preflight", lambda args, **kwargs: None)
+    seen, out, err = _run_main_golden(
+        monkeypatch, capsys, ["serve", f"'{model}  '"], GOLDEN_PASSING
+    )
+    assert seen == [("serve", str(model))]
+    assert err == ""
+
+
+def test_bare_alias_shadow_retains_catalog_resolution(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "qwen3.5-4b-4bit").mkdir()
+    from rapid_mlx.local_model_path import resolved_model_ref
+
+    assert resolved_model_ref("qwen3.5-4b-4bit") == "qwen3.5-4b-4bit"
+
+
 def test_fetch_hub_config_timeout_is_no_verdict(monkeypatch):
     def _late(fn, *a, **kw):
         raise TimeoutError
