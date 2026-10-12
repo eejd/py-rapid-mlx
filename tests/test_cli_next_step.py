@@ -152,10 +152,16 @@ def test_piped_help_has_no_hint(monkeypatch):
     assert "Next:" not in out.getvalue()
 
 
-def test_version_has_no_hint(monkeypatch):
+@pytest.mark.parametrize("argv", [["version"], ["--version"], ["-V"]])
+def test_version_has_no_hint(argv, monkeypatch):
     out = Terminal()
-    monkeypatch.setattr(sys, "argv", ["rapid-mlx", "version"])
+    monkeypatch.setattr(sys, "argv", ["rapid-mlx", *argv])
     monkeypatch.setattr(sys, "stdout", out)
-    cli.main()
+    if argv == ["version"]:
+        cli.main()
+    else:
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 0
     assert out.getvalue().strip().startswith("rapid-mlx ")
     assert "Next:" not in out.getvalue()
