@@ -32,6 +32,7 @@ from pathlib import Path
 from .common import (
     DEFAULT_DOMAIN,
     DEFAULT_LABEL,
+    http_probe_authority,
     log_dir_for,
 )
 from .install import _plist_path, _port_busy
@@ -201,7 +202,10 @@ def _endpoint_health(
             ) as sock:
                 sock.settimeout(remaining(deadline))
                 sock.sendall(
-                    b"GET /livez HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+                    (
+                        f"GET /livez HTTP/1.1\r\nHost: {http_probe_authority(host, port)}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode("ascii")
                 )
                 status_data = bytearray()
                 while len(status_data) < 8192 and b"\r\n\r\n" not in status_data:
@@ -228,7 +232,10 @@ def _endpoint_health(
             ) as sock:
                 sock.settimeout(remaining(deadline))
                 sock.sendall(
-                    b"GET /readyz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+                    (
+                        f"GET /readyz HTTP/1.1\r\nHost: {http_probe_authority(host, port)}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode("ascii")
                 )
                 data = bytearray()
                 content_length: int | None = None
@@ -527,6 +534,7 @@ def collect_status(
     plist = _read_installed_plist(label)
 
     model = port_declared = host_declared = executable = declared_user = None
+    embedding_model = None
     config_file = config_sha256 = config_error = None
     config_valid = False
     endpoint_configured = False
@@ -566,6 +574,7 @@ def collect_status(
                 effective = load_config(identity[2])
                 executable = effective.executable
                 model = effective.model
+                embedding_model = effective.embedding_model
                 host_declared = effective.host
                 port_declared = effective.port
                 config_sha256 = config_digest(effective)
@@ -674,6 +683,7 @@ def collect_status(
             registered and pid is None and last_exit not in (None, 0)
         ),
         "model": model,
+        "embedding_model": embedding_model,
         "host": effective_host,
         "port": effective_port,
         "livez": live,
@@ -752,6 +762,8 @@ def _render_human(s: dict) -> str:
         )
     if s["model"]:
         lines.append(f"  model:                 {s['model']}")
+    if s.get("embedding_model"):
+        lines.append(f"  embedding model:       {s['embedding_model']}")
     if s.get("config_file"):
         digest = (s.get("config_sha256") or "invalid")[:12]
         staged = " (PENDING changes)" if s.get("pending_config") else ""

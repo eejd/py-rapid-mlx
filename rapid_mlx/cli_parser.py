@@ -9,6 +9,7 @@ on this module (not on :mod:`rapid_mlx.cli`) to affect parser construction.
 """
 
 import argparse
+import sys
 import textwrap
 
 from rapid_mlx._completion import alias_completer
@@ -27,15 +28,39 @@ def _stamp_port_explicit(args: argparse.Namespace) -> argparse.Namespace:
 
 
 class _PortContextArgumentParser(argparse.ArgumentParser):
-    """Argument parser that records the effective bind-port provenance."""
+    """Record bind-port provenance and explicit serve options after parsing."""
 
     def parse_args(self, args=None, namespace=None):
+        supplied_args = sys.argv[1:] if args is None else list(args)
         if args is None and namespace is None:
             parsed = super().parse_args()
         elif namespace is None:
-            parsed = super().parse_args(args)
+            parsed = super().parse_args(supplied_args)
         else:
-            parsed = super().parse_args(args, namespace)
+            parsed = super().parse_args(supplied_args, namespace)
+        if (
+            getattr(parsed, "command", None) == "serve"
+            and getattr(parsed, "model", None) is None
+            and getattr(parsed, "embedding_model", None)
+        ):
+            for action in self._actions:
+                if not isinstance(action, argparse._SubParsersAction):
+                    continue
+                serve = action.choices["serve"]
+                options = {
+                    flag: option.option_strings[0]
+                    for option in serve._actions
+                    for flag in option.option_strings
+                }
+                explicit = []
+                for token in supplied_args:
+                    flag = token.split("=", 1)[0]
+                    if flag in options:
+                        explicit.append(options[flag])
+                # Record canonical spellings after successful stdlib parsing;
+                # preserve explicit default values and aliases. Serve already
+                # disables long-option abbreviation.
+                parsed._serve_explicit_options = tuple(dict.fromkeys(explicit))
         return _stamp_port_explicit(parsed)
 
 
@@ -1346,7 +1371,7 @@ def _add_serve_parser(
         default=None,
         metavar="ORIGIN",
         help=(
-            "Allowed CORS origins (default: * for all origins). "
+            "Allowed CORS origins (default: cross-origin browser access disabled). "
             "Example: --cors-origins http://localhost:3000 https://myapp.com"
         ),
     )
@@ -1357,10 +1382,11 @@ def _add_serve_parser(
         default=None,
         metavar="HOST",
         help=(
-            "OPT-IN Host-header allowlist (DNS-rebinding hardening): only "
+            "Host-header allowlist (DNS-rebinding protection): only "
             "requests whose Host header matches one of these values are "
-            "accepted; everything else gets 400. Off by default so "
-            "rapid-mlx share and LAN access keep working. Values may be "
+            "accepted; everything else gets 400. Default: localhost, "
+            "127.0.0.1, [::1], *.localhost. For LAN/proxy access set the "
+            "expected hostname explicitly. Values replace defaults and may be "
             "space- or comma-separated. Example: --trusted-hosts localhost "
             "127.0.0.1 (also settable via "
             "RAPID_MLX_TRUSTED_HOSTS)."
@@ -1714,7 +1740,8 @@ def _add_serve_parser(
         default=None,
         help=(
             "Pre-load an embedding model at startup (e.g. "
-            "mlx-community/embeddinggemma-300m-6bit). Requires the "
+            "mlx-community/embeddinggemma-300m-6bit). Without a positional "
+            "model, the server runs embeddings-only. Requires the "
             "[embeddings] extra. "
             + optional_extra_install_hint("embeddings", include_paths=False)
         ),

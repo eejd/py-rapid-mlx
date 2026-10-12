@@ -257,8 +257,8 @@ are the argparse defaults from `rapid_mlx/cli.py`.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--api-key` | API key for authentication; falls back to `RAPID_MLX_API_KEY` (inline value wins when both are set); if neither is set, no auth is required | None |
-| `--cors-origins` | Allowed CORS origins (space-separated); also settable via `RAPID_MLX_CORS_ALLOW_ORIGINS` (comma-separated) | `*` (all origins) |
-| `--trusted-hosts` | Opt-in Host-header allowlist (DNS-rebinding hardening): non-matching requests get HTTP 400. Space- or comma-separated; also settable via `RAPID_MLX_TRUSTED_HOSTS`. | None (not enforced) |
+| `--cors-origins` | Allowed CORS origins (space-separated); also settable via `RAPID_MLX_CORS_ALLOW_ORIGINS` (comma-separated) | Disabled (explicit opt-in) |
+| `--trusted-hosts` | Host-header allowlist (DNS-rebinding hardening): non-matching requests get HTTP 400. Space- or comma-separated; also settable via `RAPID_MLX_TRUSTED_HOSTS`. | `localhost`, `127.0.0.1`, `[::1]`, `*.localhost` |
 | `--rate-limit` | Requests per minute per client (0 = disabled) | 0 |
 | `--max-request-bytes` | Maximum HTTP request body size in bytes; larger requests are rejected with HTTP 413 before JSON parsing. 0 disables. Falls back to `RAPID_MLX_MAX_REQUEST_BYTES`. | 8 MiB (8388608) |
 | `--timeout` | Default request timeout in seconds; per-request `timeout: null` or `timeout: 0` uses this value | 1800 |
@@ -786,8 +786,9 @@ existing non-administrator service account and (for `install`/`uninstall`/
 `restart`) root.
 
 ```bash
-rapid-mlx service install --service-user USER --model MODEL \
-  [--host HOST] [--port PORT] [--dry-run] [-- SERVE_OPTIONS...]
+rapid-mlx service install --service-user USER [--model MODEL] \
+  [--embedding-model MODEL] [--host HOST] [--port PORT] [--dry-run] \
+  [-- SERVE_OPTIONS...]
 rapid-mlx service status [--json]
 rapid-mlx service logs [--follow] [--tail N]
 rapid-mlx service restart [--dry-run]
@@ -803,6 +804,10 @@ rapid-mlx service uninstall [--dry-run]
   installation while its weights are unusable. The requested lazy policy is
   persisted only after that qualification succeeds.
   `--dry-run` prints every step without changing anything.
+- `--model` defaults to `qwen3.5-4b-4bit` unless only `--embedding-model` is
+  given; then the service runs embeddings-only. `configure` accepts
+  `--embedding-model`, `--clear-model` and `--clear-embedding-model`; at least
+  one of the two models must remain.
 - Additional `serve` options must follow a `--` separator, for example
   `-- --max-num-seqs 4`. Bind overrides and secret-bearing options are
   rejected; use the service command's own `--host` and `--port` flags.
@@ -836,8 +841,8 @@ flag always wins over its env-var fallback when both are set.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RAPID_MLX_API_KEY` | unset (no auth) | Bearer API key fallback for `serve --api-key`; the inline flag value wins. `rapid-mlx share` uses the env form so the key never lands in `argv`. |
-| `RAPID_MLX_TRUSTED_HOSTS` | unset (not enforced) | Comma-separated Host-header allowlist fallback for `--trusted-hosts`; non-matching requests get HTTP 400 |
-| `RAPID_MLX_CORS_ALLOW_ORIGINS` | unset (wildcard `*`) | Comma-separated CORS origin allowlist; `--cors-origins` wins when both are set. Unset = friendly wildcard default with a startup notice; set-but-empty parses fail closed (no CORS middleware). |
+| `RAPID_MLX_TRUSTED_HOSTS` | local loopback hosts | Comma-separated Host-header allowlist fallback for `--trusted-hosts`; explicit values replace local defaults. Non-matching requests get HTTP 400 |
+| `RAPID_MLX_CORS_ALLOW_ORIGINS` | unset (cross-origin disabled) | Comma-separated CORS origin allowlist; `--cors-origins` wins when both are set. Unset or empty disables cross-origin access; foreign Origin requests are rejected before routes run. Explicit wildcard logs a startup warning. |
 | `RAPID_MLX_CORS_ALLOW_METHODS` / `_HEADERS` / `_MAX_AGE` / `_CREDENTIALS` | `POST,GET,OPTIONS` / `Content-Type,Authorization,X-Rapid-MLX-Internal` / `3600` / off | Fine-tune the CORS policy when origins come from the env var (the CLI `--cors-origins` path keeps legacy wide-open methods/headers). Credentials are always forced off with a wildcard origin, per the Fetch spec. |
 | `RAPID_MLX_MAX_REQUEST_BYTES` | 8388608 (8 MiB) | Request-body size cap fallback for `--max-request-bytes`; oversized bodies get HTTP 413 before parsing. 0 disables. |
 | `RAPID_MLX_SSE_KEEPALIVE_SECONDS` | 20 | Interval for SSE keepalive comment lines during silent prefill (defeats proxy idle timeouts). 0 disables the heartbeat. |

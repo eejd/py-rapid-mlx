@@ -8,6 +8,7 @@ import gc
 import logging
 import re
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -751,6 +752,9 @@ class ResidentModelManager:
         # charged to _accounted_usage() and visible in snapshot() until the
         # offline cleanup task completes or fails truthfully.
         self._retiring: dict[int, _Retirement] = {}
+        # Diagnostic history only: never retain engines or promise restoration.
+        # Bound by retirement events, including all request aliases per event.
+        self._evicted_names: deque[frozenset[str]] = deque(maxlen=256)
         self._lock = asyncio.Lock()
         self._ttl_task: asyncio.Task | None = None
         self.evictions_total = 0
@@ -817,6 +821,24 @@ class ResidentModelManager:
         if not name or name == "default":
             return self.registry.default_name
         return self._index.get(name, name if name in self._records else None)
+
+    def was_evicted(self, name: str) -> bool:
+        """Whether a missing request id belonged to a recent retired resident.
+
+        Live routing always wins over history, including alias reassignment.
+        This process-local hint neither reloads models nor bypasses admission.
+        """
+        return name not in self.registry and any(
+            name in names for names in self._evicted_names
+        )
+
+    def _remember_eviction(self, record: ResidencyRecord, reason: str) -> None:
+        if reason not in {"load_rollback", "shutdown"}:
+            self._evicted_names.append(
+                frozenset(
+                    {record.model_id, record.entry.model_path, *record.entry.aliases}
+                )
+            )
 
     def _index_record(self, record: ResidencyRecord) -> None:
         canonical = record.model_id
@@ -891,7 +913,11 @@ class ResidentModelManager:
             return 0
 
     def _accounted_usage(self) -> int:
-        measured = self._read_memory()
+        # Some engines construct lazy arrays: keep their full reservation in
+        # force even before the process footprint materializes those pages.
+        return max(self._read_memory(), self._reserved_usage())
+
+    def _reserved_usage(self) -> int:
         reserved = sum(
             max(record.estimated_bytes, record.measured_bytes)
             for record in self._records.values()
@@ -908,12 +934,7 @@ class ResidentModelManager:
             for record in self._roles.values()
             if record.state in {"loading", "resident"}
         )
-        # Some engines (notably mflux) construct lazy MLX arrays without
-        # faulting all weight pages into the process. The footprint delta at
-        # load time can therefore be much smaller than the memory the first
-        # request will materialize. Keep the catalog/heuristic reservation in
-        # force until the actual process footprint grows past it.
-        return max(measured, reserved)
+        return reserved
 
     def _coerce_role(self, role: str | ResidentRole | None) -> ResidentRole | None:
         """Validate a role against the closed enum before it touches the ledger.
@@ -1090,15 +1111,33 @@ class ResidentModelManager:
             > self.memory_limit_bytes
         ):
             candidates = self._eviction_candidates_locked(exclude)
-            if not candidates:
-                usage = self._accounted_usage()
+            usage = self._accounted_usage()
+            # Reject impossible admission before stopping any working engine.
+            # Only the reservation ledger establishes an irreducible floor.
+            # Process footprint can include KV/allocator growth released by a
+            # candidate's stop(), beyond its load-time measured reservation.
+            # Actual allocator release is still checked after each stop.
+            reclaimable = sum(
+                max(record.estimated_bytes, record.measured_bytes)
+                for record in candidates
+            )
+            if not candidates or (
+                max(0, self._reserved_usage() - usage_credit_bytes - reclaimable)
+                + incoming_bytes
+                > self.memory_limit_bytes
+            ):
+                eviction_reason = (
+                    "eligible idle unpinned models cannot free enough memory"
+                    if candidates
+                    else "no idle unpinned model is eligible for eviction"
+                )
                 if requested_role is None:
                     raise ResidentModelCapacityError(
                         "resident model memory ceiling exceeded: "
                         f"usage={usage / _GIB:.2f} GiB, "
                         f"incoming={incoming_bytes / _GIB:.2f} GiB, "
                         f"limit={self.memory_limit_bytes / _GIB:.2f} GiB; "
-                        "no idle unpinned model is eligible for eviction"
+                        f"{eviction_reason}"
                     )
                 coerced_role = self._coerce_role(requested_role)
                 assert coerced_role is not None
@@ -1109,7 +1148,7 @@ class ResidentModelManager:
                         f"{incoming_bytes / _GIB:.2f} GiB, "
                         f"used={usage / _GIB:.2f} GiB, "
                         f"limit={self.memory_limit_bytes / _GIB:.2f} GiB; "
-                        "no idle unpinned model is eligible for eviction"
+                        f"{eviction_reason}"
                     ),
                     reason=f"role_capacity_{requested_role.replace('-', '_')}",
                     requested_bytes=incoming_bytes,
@@ -2270,7 +2309,8 @@ class ResidentModelManager:
             # Idempotent retirement: an overlapping caller wants the same
             # engine gone. Unroute this (possibly sibling) record's alias, but
             # join the existing cleanup -- never double-stop the engine.
-            self.registry.remove_if_entry(record.model_id, record.entry)
+            if self.registry.remove_if_entry(record.model_id, record.entry) is not None:
+                self._remember_eviction(record, reason)
             self._drop_record_if_same(record)
             if (
                 existing.state == "failed"
@@ -2289,7 +2329,8 @@ class ResidentModelManager:
             assert existing.task is not None
             return asyncio.shield(existing.task)
         record.state = "retiring"
-        self.registry.remove_if_entry(record.model_id, record.entry)
+        if self.registry.remove_if_entry(record.model_id, record.entry) is not None:
+            self._remember_eviction(record, reason)
         self._drop_record_if_same(record)
         retirement = _Retirement(record=record, reason=reason, count=count)
         task = asyncio.create_task(self._cleanup_retired(identity, retirement))

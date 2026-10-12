@@ -102,7 +102,7 @@ async def health():
     model_loaded = (
         bool(primary_status["model_loaded"])
         if primary_status is not None
-        else engine is not None
+        else cfg.model_loaded
     )
     switching = primary_switching()
 
@@ -112,6 +112,8 @@ async def health():
         model_type = "video-gen"
     elif getattr(engine, "is_mllm", False):
         model_type = "mllm"
+    elif cfg.embeddings_only:
+        model_type = "embedding"
     else:
         model_type = "llm"
 
@@ -161,9 +163,7 @@ async def health_ready():
         "model": cfg.model_name,
         "state": status["state"] if status is not None else "ready",
         "model_loaded": (
-            bool(status["model_loaded"])
-            if status is not None
-            else cfg.engine is not None
+            bool(status["model_loaded"]) if status is not None else cfg.model_loaded
         ),
     }
 
@@ -210,7 +210,7 @@ async def healthz():
     model_loaded = (
         bool(lifecycle_status["model_loaded"])
         if lifecycle_status is not None
-        else cfg.engine is not None
+        else cfg.model_loaded
     )
     if cfg.draining:
         # Mirror the JSON shape the healthy path emits so operators /
@@ -475,25 +475,58 @@ async def status():
 
 @router.get("/v1/cache/stats")
 async def cache_stats():
-    """Get cache statistics."""
-    try:
-        from mlx_vlm.utils import (
-            get_multimodal_kv_cache_stats,
-            get_pil_cache_stats,
-            get_pixel_values_cache_stats,
-        )
-
+    """Describe the installed backend; readiness is exposed by /health/ready."""
+    engine = get_config().engine
+    if engine is None:
         return {
-            "multimodal_kv_cache": get_multimodal_kv_cache_stats(),
-            "pixel_values_cache": get_pixel_values_cache_stats(),
-            "pil_image_cache": get_pil_cache_stats(),
+            "message": "engine not loaded",
+            "model_type": None,
+            "multimodal_kv_cache": None,
+            "pixel_values_cache": None,
+            "pil_image_cache": None,
         }
-    except ImportError:
+    if engine.is_mllm:
+        # Older optional backends expose image-cache diagnostics independently
+        # of the engine-owned KV cache. Their presence does not classify the
+        # active model, and a missing API must not hide the other statistics.
+        image_stats = {"pixel_values_cache": None, "pil_image_cache": None}
+        try:
+            from mlx_vlm import utils as vlm_utils
+        except Exception:
+            logger.debug("Optional image-cache statistics unavailable", exc_info=True)
+        else:
+            for field, api in (
+                ("pixel_values_cache", "get_pixel_values_cache_stats"),
+                ("pil_image_cache", "get_pil_cache_stats"),
+            ):
+                try:
+                    getter = getattr(vlm_utils, api, None)
+                    if callable(getter):
+                        image_stats[field] = getter()
+                except Exception:
+                    logger.debug(
+                        "Optional %s statistics unavailable", field, exc_info=True
+                    )
+        # BaseEngine supplies get_cache_stats() returning None by default,
+        # including for serving backends without reusable-prefix counters.
+        try:
+            kv_stats = engine.get_cache_stats()
+        except Exception:
+            logger.debug("Engine cache statistics unavailable", exc_info=True)
+            kv_stats = None
         return {
-            "message": "Vision cache stats not available (text-only model loaded). "
-            "Prompt cache is managed internally by the engine.",
-            "model_type": "llm",
+            "model_type": "mllm",
+            "multimodal_kv_cache": kv_stats,
+            **image_stats,
         }
+    return {
+        "message": "Vision cache stats not available (text-only model loaded). "
+        "Prompt cache is managed internally by the engine.",
+        "model_type": "llm",
+        "multimodal_kv_cache": None,
+        "pixel_values_cache": None,
+        "pil_image_cache": None,
+    }
 
 
 @admin_router.delete("/v1/cache")

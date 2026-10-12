@@ -26,9 +26,10 @@ import threading
 import urllib.error
 import urllib.parse
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from starlette.requests import Request
 
 from rapid_mlx.share import cli as share_cli
 from rapid_mlx.share import quicksilver as qs
@@ -49,7 +50,18 @@ def _isolate(tmp_path, monkeypatch):
     state.mkdir()
     monkeypatch.setattr(share_cli, "_state_dir", lambda: state)
     qs._SECRETS.clear()
-    yield tmp_path
+    real_run = subprocess.run
+
+    def isolated_run(argv, *args, **kwargs):
+        if argv[0] == "launchctl":
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        return real_run(argv, *args, **kwargs)
+
+    with (
+        patch.object(qs.shutil, "which", return_value="/usr/local/bin/rapid-mlx"),
+        patch.object(qs.subprocess, "run", side_effect=isolated_run),
+    ):
+        yield tmp_path
     qs._SECRETS.clear()
 
 
@@ -1518,6 +1530,7 @@ def _run_patches(serve, tunnel_cls, sleep_side_effect):
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(qs.ws_tunnel, "TunnelClient", new=tunnel_cls),
         patch.object(qs, "_warmup"),
+        patch.object(qs._PoolStatus, "_scrape", return_value=None),
         patch.object(qs, "_supervisor_sleep", side_effect=sleep_side_effect),
     )
 
@@ -1619,6 +1632,7 @@ def test_run_share_serve_uses_served_model_name_catalog_id():
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(qs.ws_tunnel, "TunnelClient", new=lambda **kw: tunnel),
         patch.object(qs, "_warmup"),
+        patch.object(qs._PoolStatus, "_scrape", return_value=None),
         patch.object(qs, "_supervisor_sleep", side_effect=ctrl_c),
         patch.object(
             qs, "_open", lambda req, timeout=None: _FakeResp(_register_payload())
@@ -1740,7 +1754,7 @@ def test_run_share_serves_with_max_seqs_2_and_no_rate_limit():
     with _enter(*ctxs, patch.object(share_cli, "_spawn_serve", side_effect=fake_spawn)):
         qs.run_share(_make_args(provider_key=PROVIDER_KEY))
     extra = spawned["extra_args"]
-    assert extra[:2] == ["--max-num-seqs", "2"]
+    assert extra[:3] == ["--disable-disk-caches", "--max-num-seqs", "2"]
     assert "--rate-limit" not in extra
     assert "--no-thinking" in extra
 
@@ -1794,6 +1808,7 @@ def test_run_share_respects_user_max_seqs_override():
     # Injection skipped — the user's own --max-num-seqs passthrough wins; the
     # catalog-id --served-model-name is still added (pool addresses by catalog id).
     assert spawned["extra_args"] == [
+        "--disable-disk-caches",
         "--no-thinking",
         "--served-model-name",
         "qwen3.6-35b",
@@ -2125,7 +2140,7 @@ def test_install_service_writes_keyless_plist(capsys, tmp_path):
     assert b"--quicksilver" in data
     assert SHARE_KEY.encode() not in data and b"--provider-key" not in data
     out = capsys.readouterr().out
-    assert "launchctl bootstrap" in out
+    assert "Started com.quicksilver.node" in out
 
 
 def test_install_service_plist_keeps_registration_origin(capsys):
@@ -2355,7 +2370,7 @@ def test_run_share_forwards_explicit_rate_limit_but_never_injects_default():
         return spawned["extra_args"]
 
     extra = run_with(None)
-    assert extra[:2] == ["--max-num-seqs", "2"]
+    assert extra[:3] == ["--disable-disk-caches", "--max-num-seqs", "2"]
     assert "--rate-limit" not in extra
 
     extra = run_with(60)
@@ -2915,7 +2930,7 @@ def test_run_share_propagates_serve_exit_and_resets_after_healthy_connection():
         patch.object(
             qs.time,
             "monotonic",
-            side_effect=[100.0, 100.0 + qs._FAST_REJECT_WINDOW_SECONDS + 1],
+            side_effect=[100.0] + [100.0 + qs._FAST_REJECT_WINDOW_SECONDS + 1] * 3,
         ),
     )
     with _enter(*ctxs):
@@ -3037,6 +3052,7 @@ def test_glm_flash_never_gets_no_thinking_injected():
     extra = _run_share_capture_extra(model="glm-5.3-flash")
     assert "--no-thinking" not in extra
     assert extra == [
+        "--disable-disk-caches",
         "--max-num-seqs",
         "2",
         "--default-reasoning-effort",
@@ -3272,3 +3288,419 @@ def test_rejected_no_thinking_never_registers():
             )
         )
     assert calls == []
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_register_certificate_failure_is_terminal(wrapped):
+    import ssl
+
+    error = ssl.SSLCertVerificationError(1, "certificate verify failed")
+    if wrapped:
+        error = urllib.error.URLError(error)
+    with (
+        patch.object(qs, "_open", side_effect=error) as opened,
+        patch.object(qs, "_register_retry_sleep") as sleep,
+        pytest.raises(qs.QuickSilverError, match="SSL_CERT_FILE"),
+    ):
+        qs.register_node("https://pay.test", PROVIDER_KEY, "m", "a", "w")
+    assert opened.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_run_share_certificate_failure_stops_and_reaps_child():
+    import ssl
+
+    tunnel = _fake_tunnel(
+        ready=False, closed=True, error=ssl.SSLCertVerificationError(1, "untrusted")
+    )
+    serve, ctrl_c = _patched_run_env(None)
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    with (
+        _enter(
+            *_run_patches(serve, lambda **kw: tunnel, ctrl_c),
+            patch.object(qs, "_Heartbeat", return_value=_fake_heartbeat_class()),
+        ),
+        pytest.raises(SystemExit) as exc,
+    ):
+        qs.run_share(_make_args())
+    assert exc.value.code == 2
+    serve.terminate.assert_called_once()
+    tunnel.stop.assert_called()
+
+
+def test_install_service_starts_stable_launcher():
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    with patch.object(qs.subprocess, "run") as run:
+        qs.install_service(_make_args(), "qwen3.6-35b", "qwen3.6-35b")
+    path = Path.home() / "Library/LaunchAgents/com.quicksilver.node.qwen3.6-35b.plist"
+    argv = plistlib.loads(path.read_bytes())["ProgramArguments"]
+    assert argv[:2] == ["/usr/local/bin/rapid-mlx", "share"]
+    assert run.call_args.args[0] == [
+        "launchctl",
+        "bootstrap",
+        f"gui/{os.getuid()}",
+        str(path),
+    ]
+
+
+def test_install_service_reports_bootstrap_failure():
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    with (
+        patch.object(
+            qs.subprocess,
+            "run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0),
+                subprocess.CalledProcessError(5, "launchctl"),
+            ],
+        ),
+        pytest.raises(qs.QuickSilverError, match="bootstrap failed"),
+    ):
+        qs.install_service(_make_args(), "qwen3.6-35b", "qwen3.6-35b")
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_heartbeat_certificate_failure_stops_without_retry(wrapped):
+    import ssl
+
+    error = ssl.SSLCertVerificationError(1, "untrusted heartbeat certificate")
+    if wrapped:
+        error = urllib.error.URLError(error)
+    beat = qs._Heartbeat("https://pay.test/hb", SHARE_KEY, 1, lambda: 0)
+    with patch.object(qs, "_open", side_effect=error) as opened:
+        beat.beat_now()
+        beat.beat_now()
+    assert beat.fatal.is_set()
+    assert beat.fatal_message == qs.tls.CERTIFICATE_HINT
+    assert opened.call_count == 1
+
+
+def test_heartbeat_certificate_failure_supervisor_reports_ca_repair(capsys):
+    beat = _fake_heartbeat_class()
+    beat.fatal.set()
+    beat.fatal_message = qs.tls.CERTIFICATE_HINT
+    tunnel = _fake_tunnel()
+    serve, ctrl_c = _patched_run_env(None)
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    with (
+        _enter(*_run_patches(serve, lambda **kw: tunnel, ctrl_c)),
+        patch.object(qs, "_Heartbeat", return_value=beat),
+        pytest.raises(SystemExit) as exc,
+    ):
+        qs.run_share(_make_args())
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "SSL_CERT_FILE" in err
+    assert "revoked" not in err
+    serve.terminate.assert_called_once()
+    tunnel.stop.assert_called()
+
+
+def test_service_reinstall_restores_previous_job_on_bootstrap_failure():
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    path = Path.home() / "Library/LaunchAgents/com.quicksilver.node.qwen3.6-35b.plist"
+    path.parent.mkdir(parents=True)
+    previous = plistlib.dumps(
+        {"Label": "old-job", "ProgramArguments": ["/stable/rapid-mlx"]}
+    )
+    path.write_bytes(previous)
+    with (
+        patch.object(
+            qs.subprocess,
+            "run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0),
+                subprocess.CalledProcessError(5, "launchctl"),
+                subprocess.CompletedProcess([], 0),
+            ],
+        ) as run,
+        pytest.raises(
+            qs.QuickSilverError, match="previous service configuration restored"
+        ),
+    ):
+        qs.install_service(_make_args(), "qwen3.6-35b", "qwen3.6-35b")
+    assert path.read_bytes() == previous
+    assert run.call_count == 3
+    assert run.call_args.args[0] == [
+        "launchctl",
+        "bootstrap",
+        f"gui/{os.getuid()}",
+        str(path),
+    ]
+
+
+def test_service_reinstall_reports_failed_recovery():
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    path = Path.home() / "Library/LaunchAgents/com.quicksilver.node.qwen3.6-35b.plist"
+    path.parent.mkdir(parents=True)
+    previous = plistlib.dumps({"Label": "old-job"})
+    path.write_bytes(previous)
+    with (
+        patch.object(
+            qs.subprocess,
+            "run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0),
+                subprocess.CalledProcessError(5, "new bootstrap"),
+                subprocess.CalledProcessError(5, "old bootstrap"),
+            ],
+        ),
+        pytest.raises(qs.QuickSilverError, match="previous service recovery failed"),
+    ):
+        qs.install_service(_make_args(), "qwen3.6-35b", "qwen3.6-35b")
+    assert path.read_bytes() == previous
+
+
+def test_https_trust_setup_is_lazy_and_terminal():
+    import ssl
+
+    with patch.object(
+        qs.tls,
+        "client_context",
+        side_effect=ssl.SSLCertVerificationError(qs.tls.CERTIFICATE_HINT),
+    ) as context:
+        handler = qs._VerifiedHTTPSHandler()
+        context.assert_not_called()
+        with pytest.raises(ssl.SSLCertVerificationError, match="SSL_CERT_FILE"):
+            handler.https_open(urllib.request.Request("https://localhost/register"))
+    context.assert_called_once()
+
+
+def test_install_service_requires_stable_launcher():
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    with (
+        patch.object(qs.shutil, "which", return_value=None),
+        pytest.raises(qs.QuickSilverError, match="installed rapid-mlx command on PATH"),
+    ):
+        qs.install_service(_make_args(), "qwen3.6-35b", "qwen3.6-35b")
+
+
+def test_pool_cleanup_failure_prevents_serve_spawn(capsys):
+    from rapid_mlx.share import privacy
+
+    serve, ctrl_c = _patched_run_env(None)
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    with (
+        _enter(*_run_patches(serve, lambda **kw: _fake_tunnel(), ctrl_c)),
+        patch.object(
+            privacy, "clear_legacy_prompt_cache", side_effect=OSError("busy cache")
+        ),
+        patch.object(share_cli, "_spawn_serve") as spawn,
+        pytest.raises(SystemExit) as error,
+    ):
+        qs.run_share(_make_args())
+    assert error.value.code == 2
+    assert "could not retire legacy model prompt cache" in capsys.readouterr().err
+    spawn.assert_not_called()
+
+
+def test_pool_progress_and_status_follow_serve_lifecycle():
+    """Sample before warm-up; await accounting before opening the relay."""
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    tunnel = _fake_tunnel()
+    tunnel.ready_event.is_set.return_value = True
+    serve, ctrl_c = _patched_run_env(None)
+    heartbeat = _fake_heartbeat_class()
+    progress = MagicMock()
+    reporter = MagicMock()
+    events = []
+
+    def make_status(port, *, connected_fn, requests_started_fn, api_key):
+        assert api_key
+        assert port == 18765
+        assert events == []
+        assert not connected_fn()  # No tunnel exists until after the baseline.
+        assert not requests_started_fn()
+        events.append("pre-warmup")
+        reporter.connected_fn = connected_fn
+        reporter.requests_started_fn = requests_started_fn
+        return reporter
+
+    def warmup(*args):
+        assert events == ["pre-warmup"]
+        events.append("warmup")
+
+    def accounting_wait(*, serve_proc):
+        assert serve_proc is serve
+        assert events == ["pre-warmup", "warmup"]
+        events.append("accounted-baseline")
+
+    reporter.wait_for_warmup.side_effect = accounting_wait
+
+    def final_status(child):
+        assert child is serve
+        assert child.poll() is None
+        heartbeat.stop.assert_called_once()
+        tunnel.stop.assert_not_called()
+        child.terminate.assert_not_called()
+
+    reporter.stop.side_effect = final_status
+
+    def tunnel_factory(**kw):
+        assert events == ["pre-warmup", "warmup", "accounted-baseline"]
+        kw["requests_started_event"].set()
+        return tunnel
+
+    ctxs = _run_patches(serve, tunnel_factory, ctrl_c) + (
+        patch.object(share_cli, "_maybe_confirm_download", return_value=progress),
+        patch.object(share_cli, "_wait_for_healthz", return_value=True),
+        patch.object(qs, "_warmup", side_effect=warmup),
+        patch.object(qs, "_PoolStatus", side_effect=make_status),
+        patch.object(qs, "_Heartbeat", return_value=heartbeat),
+    )
+    with _enter(*ctxs):
+        qs.run_share(_make_args())
+        share_cli._maybe_confirm_download.assert_called_once_with(
+            "qwen3.6-35b", pool_mode=True
+        )
+        share_cli._wait_for_healthz.assert_called_once_with(
+            18765, serve, progress=progress
+        )
+        assert qs._Heartbeat.call_args.kwargs["status"] is reporter
+    heartbeat.start.assert_called_once()
+    heartbeat.stop.assert_called_once()
+    reporter.stop.assert_called_once_with(serve)
+    connected_fn = reporter.connected_fn
+    assert reporter.requests_started_fn()
+    assert connected_fn()
+    tunnel.closed_event.set()
+    assert not connected_fn()
+    tunnel.closed_event.clear()
+    tunnel.ready_event.is_set.return_value = False
+    assert not connected_fn()
+    tunnel.ready_event.is_set.return_value = True
+    tunnel.error = ConnectionError()
+    assert not connected_fn()
+
+
+@pytest.mark.parametrize("serve_rc", [0, 7])
+def test_pool_serve_exit_during_warmup_never_connects(serve_rc, capsys):
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    serve, ctrl_c = _patched_run_env(None)
+    desktop = MagicMock()
+    reporter = MagicMock()
+
+    def accounting_wait(*, serve_proc):
+        assert serve_proc is serve
+        serve.poll.return_value = serve_rc
+
+    reporter.wait_for_warmup.side_effect = accounting_wait
+    contexts = _run_patches(serve, MagicMock(), ctrl_c) + (
+        patch.object(qs._DesktopStatus, "from_args", return_value=desktop),
+        patch.object(qs, "_PoolStatus", return_value=reporter),
+        patch.object(qs, "_Heartbeat"),
+    )
+    with _enter(*contexts):
+        with pytest.raises(SystemExit) as exc:
+            qs.run_share(_make_args())
+        qs.ws_tunnel.TunnelClient.assert_not_called()
+        qs._Heartbeat.assert_not_called()
+    assert exc.value.code == (serve_rc or 1)
+    assert "serve process exited — leaving the pool" in capsys.readouterr().err
+    assert any(
+        call.args == ("error",)
+        and call.kwargs["message"] == "The local model server stopped unexpectedly."
+        for call in desktop.publish.call_args_list
+    )
+    reporter.stop.assert_called_once_with(serve)
+    serve.terminate.assert_not_called()
+
+
+def test_pool_failed_health_never_starts_status_and_reaps_serve():
+    qs._save_cache("qwen3.6-35b", dict(_register_payload(), alias="qwen3.6-35b"))
+    serve, ctrl_c = _patched_run_env(None)
+    ctxs = _run_patches(serve, lambda **kw: _fake_tunnel(), ctrl_c) + (
+        patch.object(share_cli, "_wait_for_healthz", return_value=False),
+        patch.object(qs, "_PoolStatus"),
+    )
+    with _enter(*ctxs):
+        with pytest.raises(SystemExit) as exc:
+            qs.run_share(_make_args())
+        qs._PoolStatus.assert_not_called()
+    assert exc.value.code == 1
+    serve.terminate.assert_called_once()
+
+
+def test_local_fetch_rewrites_public_host_without_dropping_bearer():
+    client = ws_tunnel.TunnelClient(local_port=8898)
+    conn = MagicMock()
+    conn.getresponse.return_value.read1.return_value = b""
+    conn.getresponse.return_value.getheaders.return_value = []
+    conn.getresponse.return_value.status = 200
+    client._sync_send = MagicMock()
+    with patch.object(ws_tunnel, "OneShotHTTPConnection", return_value=conn):
+        client._perform_local_fetch(
+            "local",
+            "POST",
+            "/v1/chat/completions",
+            {
+                "hOsT": "public.example",
+                "Authorization": "Bearer test-only",
+                "Origin": "https://frontend.example",
+            },
+            b"{}",
+        )
+    assert conn.request.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer test-only",
+        "Origin": "https://frontend.example",
+    }
+
+
+def test_pool_browser_request_reaches_default_protected_backend(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from rapid_mlx.middleware import browser_security
+
+    monkeypatch.setattr(browser_security, "_configured_hosts", None)
+    monkeypatch.delenv("RAPID_MLX_TRUSTED_HOSTS", raising=False)
+    app = FastAPI()
+    seen = []
+
+    @app.post("/v1/chat/completions")
+    async def chat(request: Request):
+        seen.append(dict(request.headers))
+        assert request.headers["authorization"] == "Bearer local-only"
+        return {"ok": True}
+
+    browser_security.install_browser_security(app, origins=[])
+    backend = TestClient(app, base_url="http://127.0.0.1:8898")
+    tunnel = ws_tunnel.TunnelClient(
+        local_port=8898, override_authorization="local-only"
+    )
+    tunnel._send = AsyncMock()
+
+    def forward(_function, req_id, method, path, headers, body):
+        # Exercise the real local-fetch Host rewrite and ASGI security stack.
+        conn = MagicMock()
+
+        def request(method, path, *, body, headers):
+            response = backend.request(method, path, content=body, headers=headers)
+            assert response.status_code == 200
+
+        conn.request.side_effect = request
+        conn.getresponse.return_value.read1.return_value = b""
+        conn.getresponse.return_value.getheaders.return_value = []
+        conn.getresponse.return_value.status = 200
+        with patch.object(ws_tunnel, "OneShotHTTPConnection", return_value=conn):
+            tunnel._perform_local_fetch(req_id, method, path, headers, body)
+
+    with patch.object(asyncio, "to_thread", new=AsyncMock(side_effect=forward)):
+        asyncio.run(
+            tunnel._serve_request(
+                {
+                    "method": "POST",
+                    "path": "/v1/chat/completions",
+                    "headers": {
+                        "Host": "public.example",
+                        "oRiGiN": "https://public.example",
+                        "Authorization": "Bearer pool-only",
+                    },
+                },
+                "browser",
+            )
+        )
+    assert not tunnel._send.call_args_list, tunnel._send.call_args_list
+    assert len(seen) == 1
+    assert "origin" not in seen[0]
+    assert seen[0]["host"] == "127.0.0.1:8898"

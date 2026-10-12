@@ -62,7 +62,11 @@ class TestAnthropicContentBlock:
     def test_image_block(self):
         block = AnthropicContentBlock(
             type="image",
-            source={"type": "base64", "media_type": "image/png", "data": "abc"},
+            source={
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIklEQVR4nGNkaGAgCTCRppxhVANRgIk4ZQgwqoEYQHIoAQC7HwCg8pZY7gAAAABJRU5ErkJggg==",
+            },
         )
         assert block.type == "image"
         assert block.source["type"] == "base64"
@@ -99,7 +103,11 @@ class TestAnthropicMessage:
             AnthropicContentBlock(type="text", text="look at this"),
             AnthropicContentBlock(
                 type="image",
-                source={"type": "base64", "media_type": "image/png", "data": "abc"},
+                source={
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIklEQVR4nGNkaGAgCTCRppxhVANRgIk4ZQgwqoEYQHIoAQC7HwCg8pZY7gAAAABJRU5ErkJggg==",
+                },
             ),
         ]
         msg = AnthropicMessage(role="user", content=blocks)
@@ -124,10 +132,12 @@ class TestAnthropicToolDef:
     """Tests for AnthropicToolDef model."""
 
     def test_minimal(self):
-        tool = AnthropicToolDef(name="get_weather")
+        tool = AnthropicToolDef(
+            name="get_weather", input_schema={"type": "object", "properties": {}}
+        )
         assert tool.name == "get_weather"
         assert tool.description is None
-        assert tool.input_schema is None
+        assert tool.input_schema == {"type": "object", "properties": {}}
 
     def test_full(self):
         tool = AnthropicToolDef(
@@ -188,7 +198,11 @@ class TestAnthropicRequest:
             model="default",
             messages=[AnthropicMessage(role="user", content="hi")],
             max_tokens=100,
-            tools=[AnthropicToolDef(name="search")],
+            tools=[
+                AnthropicToolDef(
+                    name="search", input_schema={"type": "object", "properties": {}}
+                )
+            ],
         )
         assert len(req.tools) == 1
         assert req.tools[0].name == "search"
