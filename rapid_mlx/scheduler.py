@@ -6865,9 +6865,11 @@ class Scheduler:
                 attention = getattr(layer, "self_attn", None)
                 kv_heads = getattr(attention, "num_key_value_heads", None)
                 head_dim = getattr(attention, "head_dim", None)
-                if any(
-                    type(value) is not int or value <= 0
-                    for value in (kv_heads, head_dim)
+                if (
+                    type(kv_heads) is not int
+                    or kv_heads <= 0
+                    or type(head_dim) is not int
+                    or head_dim <= 0
                 ):
                     raise ValueError("MTP draft attention cache geometry unavailable")
                 # K and V, two bytes each (the continuous route is bf16).
