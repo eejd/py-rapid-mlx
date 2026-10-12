@@ -259,3 +259,24 @@ def test_pull_variant_metadata_retries_before_transfer(monkeypatch, tmp_path):
     )
     assert len(probe_calls) == 2
     assert snapshot_calls == [{"allow_patterns": ["4bit/*"]}]
+
+
+def test_transient_mirror_failure_falls_back_to_hub(monkeypatch, tmp_path, capsys):
+    def mirror(*_args, **_kwargs):
+        raise httpx.RemoteProtocolError("mirror peer closed with secret URL")
+
+    monkeypatch.setattr(cli, "_try_mirror_prefetch", mirror)
+    monkeypatch.setattr(cli, "_hf_cache_root", lambda _repo: tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        "huggingface_hub.snapshot_download",
+        lambda repo, **kwargs: calls.append((repo, kwargs)) or str(tmp_path),
+    )
+    cli._pull_repository(
+        argparse.Namespace(model="owner/repo", bits=None, format=None),
+        emit_lifecycle_event=False,
+    )
+    assert calls == [("owner/repo", {})]
+    output = capsys.readouterr().out
+    assert "trying Hugging Face" in output
+    assert "secret URL" not in output
