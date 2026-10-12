@@ -6,7 +6,7 @@ import json
 import pytest
 
 from rapid_mlx.agents import get_profile
-from rapid_mlx.agents.adapter import _merge_json, setup_agent_config
+from rapid_mlx.agents.adapter import _merge_json, _MergeParseError, setup_agent_config
 
 
 @pytest.fixture(autouse=True)
@@ -130,3 +130,12 @@ def test_other_agents_name_keyed_lists_still_replace():
     assert (
         json.loads(_merge_json(json.dumps(existing), json.dumps(incoming))) == incoming
     )
+
+
+@pytest.mark.parametrize("model", [{}, "missing-name"])
+def test_goose_rejects_rendered_models_without_names(model):
+    existing = json.dumps({"models": [{"name": "user-model"}]})
+    rendered = json.dumps({"models": [model]})
+
+    with pytest.raises(_MergeParseError, match="rendered Goose model must have a name"):
+        _merge_json(existing, rendered, preserve_goose_models=True)
