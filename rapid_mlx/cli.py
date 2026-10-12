@@ -2573,7 +2573,7 @@ def render_hub_error(exc: BaseException, model_id: str) -> str | None:
         ) in (429, 500, 502, 503, 504):
             return (
                 f"  Error: Hugging Face is temporarily unavailable for "
-                f"'{rendered_model_id}' after three attempts.\n"
+                f"'{rendered_model_id}'.\n"
                 "  Try `rapid-mlx pull` again when the service recovers; "
                 "completed cached files will be reused."
             )
@@ -10725,10 +10725,7 @@ def _pull_repository(
             )
         )
     except Exception as exc:
-        from rapid_mlx.telemetry.model_events import (
-            emit_model_pull_failed,
-            pull_error_class,
-        )
+        from rapid_mlx.telemetry.model_events import emit_model_pull_failed
 
         if _is_transient_hub_error(exc):
             mirror_ok = False

@@ -350,3 +350,14 @@ def test_variant_metadata_error_is_guided_without_hiding_unknown_errors(
     with pytest.raises(RuntimeError) as caught_unknown:
         cli._pull_repository(args, emit_lifecycle_event=False)
     assert caught_unknown.value is unknown
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_shared_error_renderer_does_not_claim_unobserved_attempts(status):
+    from huggingface_hub.errors import HfHubHTTPError
+
+    # Metadata callers may render a single failure without running the retry helper.
+    rendered = cli.render_hub_error(_hub_error(HfHubHTTPError, status), "owner/model")
+    assert "temporarily unavailable" in rendered
+    assert "completed cached files will be reused" in rendered
+    assert "after three attempts" not in rendered
