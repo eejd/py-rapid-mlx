@@ -1314,6 +1314,9 @@ def _install_continuous_mtp_router(
     # the next driver boundary.  Retain the exact source tuples until that
     # boundary succeeds so a deferred admission failure can restore ownership.
     staged_join_sequences: dict[int, Any] = {}
+    # Only the synchronous singleton handoff may remove a base row while its
+    # replacement lane is already reserved in the continuous driver.
+    singleton_transfer_uid: int | None = None
 
     def _stage_initial() -> None:
         nonlocal driver
@@ -1488,6 +1491,7 @@ def _install_continuous_mtp_router(
         cohort can admit is handed over, so an ineligible (sampled, tool,
         processor) owner keeps its verifier instead of churning.
         """
+        nonlocal singleton_transfer_uid
         requeue = getattr(batch_gen, "_mtp_vendored_requeue_owner", None)
         owner = getattr(batch_gen, "_mtp_vendored_admission_owner", None)
         if owner is None or not callable(requeue):
@@ -1509,7 +1513,7 @@ def _install_continuous_mtp_router(
         sequence: tuple[Any, ...] | None = None
 
         def reserve(snapshot: tuple[Any, ...]) -> bool:
-            nonlocal reserved, sequence
+            nonlocal reserved, sequence, singleton_transfer_uid
             occupied = len(active_driver.lane_uids) + len(
                 active_driver.pending_join_uids
             )
@@ -1546,6 +1550,7 @@ def _install_continuous_mtp_router(
                     reserved = False
                 return False
             sequence = snapshot
+            singleton_transfer_uid = spec.uid
             return True
 
         try:
@@ -1553,6 +1558,8 @@ def _install_continuous_mtp_router(
         except Exception as exc:  # noqa: BLE001 - optional handoff fails closed
             logger.warning("[MTP-continuous] singleton admission refused: %s", exc)
             transferred = False
+        finally:
+            singleton_transfer_uid = None
         if not transferred:
             if reserved:
                 active_driver.remove_uids([owner])
@@ -1642,8 +1649,19 @@ def _install_continuous_mtp_router(
     def _continuous_remove(self, uids, *args, **kwargs):
         removed_packages = ()
         if driver is not None:
-            removed_packages = driver.remove_uids(uids)
-            for uid in uids:
+            # Vendored handoff removes the old singleton through this wrapper.
+            # Do not cancel its replacement reservation during that exact call.
+            # Subsequent cancellation/removal must still retract it normally.
+            driver_uids = [
+                uid
+                for uid in uids
+                if not (
+                    uid == singleton_transfer_uid and uid in driver.pending_join_uids
+                )
+            ]
+            if driver_uids:
+                removed_packages = driver.remove_uids(driver_uids)
+            for uid in driver_uids:
                 staged_join_sequences.pop(uid, None)
         base = {}
         if callable(original_remove):

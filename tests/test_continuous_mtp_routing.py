@@ -1605,6 +1605,8 @@ class _SingletonBatchGenerator(_SchedulerBatchGenerator):
             return False
         if getattr(self, "refuse_removal", False):
             return False
+        # Production's vendored handoff removes through the installed router.
+        self.remove([owner])
         self.requeued.append(owner)
         self._generation_batch.uids = []
         self._mtp_vendored_admission_owner = None
@@ -1644,16 +1646,29 @@ def _absorb_setup(
 
 
 @pytest.mark.requires_mlx
-def test_live_dynamic_cohort_absorbs_an_eligible_singleton(monkeypatch):
+@pytest.mark.parametrize("cancel_before_attach", [False, True])
+def test_live_dynamic_cohort_absorbs_an_eligible_singleton(
+    monkeypatch, cancel_before_attach
+):
     batch_gen, _owner, driver = _absorb_setup(monkeypatch)
 
     batch_gen.next()
 
     assert batch_gen.requeued == [7]
     assert driver.joined == [(7,)]
+    assert driver.pending_join_uids == (7,)
+    assert batch_gen.removed == [(7,)]
     joined = driver.joined_specs[0]
     assert tuple(joined.prompt) == (99,)
     assert joined.prompt_cache is not None
+    if cancel_before_attach:
+        # A later cancellation still retracts the reservation normally.
+        batch_gen.remove([7])
+        assert driver.pending_join_uids == ()
+    else:
+        batch_gen.next()
+        assert driver.pending_join_uids == ()
+        assert driver.lane_uids == (1, 2, 7)
 
 
 @pytest.mark.requires_mlx
