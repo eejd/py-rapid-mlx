@@ -3827,9 +3827,11 @@ class MLLMBatchGenerator:
                         cache,
                         prefix_len=request.shared_prefix_store_at,
                     )
-                # No stream context or lazy cache writes cross this boundary.
-                # The caller returns to the executor queue before resuming.
-                yield
+                # Short prompts may split only to store a cache boundary.
+                # Keep those forwards in one executor turn; only genuinely
+                # long uncached work needs to give a peer scheduling time.
+                if prompt_length > chunk:
+                    yield
             output = self.model(input_ids[:, -1:], cache=cache, pixel_values=None)
         elif (
             getattr(self, "_is_gemma4_unified_vlm", False)

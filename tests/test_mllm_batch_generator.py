@@ -3285,3 +3285,23 @@ def test_close_releases_suspended_prefill():
     gen.close()
     assert gen._pending_prefill is None
     assert released == [True]
+
+
+def test_short_cache_boundary_split_does_not_yield_executor():
+    model = _ChunkRecordingModel()
+    gen = _make_bare_generator(512, model)
+    request = _make_ids_request(100)
+    request.prefix_boundary = 50
+    request.shared_prefix_store_at = 75
+    stores = []
+    gen._store_exact_text_prefix = lambda req, cache, prefix_len: stores.append(
+        prefix_len
+    )
+    cache = [_FakeCache()]
+    with pytest.raises(StopIteration) as done:
+        next(gen._vision_encoding_steps(request, cache))
+    assert done.value.value.shape == (1, 1, model.vocab)
+    assert [n for n, _ in model.calls] == [50, 25, 24, 1]
+    assert stores == [50, 75]
+    assert cache[0].tokens_seen == 100
+    assert request.vision_encoded
