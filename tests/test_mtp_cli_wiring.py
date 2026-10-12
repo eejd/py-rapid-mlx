@@ -3059,17 +3059,19 @@ def test_scheduler_installs_continuous_router_before_vendored_fallback(monkeypat
     ],
 )
 def test_scheduler_continuous_mtp_headroom_uses_unified_process_pressure(
+    monkeypatch,
     cap,
     metal,
     resident,
     expected,
 ):
-    from rapid_mlx.scheduler import Scheduler
+    from rapid_mlx import scheduler as scheduler_module
+    from rapid_mlx.runtime import process_memory
 
-    scheduler = Scheduler.__new__(Scheduler)
+    scheduler = scheduler_module.Scheduler.__new__(scheduler_module.Scheduler)
     scheduler._resolve_metal_cap_bytes = lambda: cap
-    scheduler._current_metal_active_bytes = lambda: metal
-    scheduler._current_process_resident_bytes = lambda: resident
+    monkeypatch.setattr(scheduler_module.mx, "get_active_memory", lambda: metal)
+    monkeypatch.setattr(process_memory, "get_phys_footprint", lambda: resident)
 
     assert scheduler._continuous_mtp_free_bytes() == expected
 

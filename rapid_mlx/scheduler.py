@@ -6769,7 +6769,7 @@ class Scheduler:
         logged.add(key)
         logger.debug(message, exc_info=True)
 
-    def _current_metal_active_bytes(self) -> int:
+    def _current_metal_active_bytes(self, *, require_measurement: bool = False) -> int:
         """Best-effort snapshot of MLX-reported Metal active memory.
 
         Wrapped in try/except so a non-Metal host (CI, Linux GPU shim,
@@ -6778,6 +6778,8 @@ class Scheduler:
         try:
             return int(mx.get_active_memory())
         except Exception:
+            if require_measurement:
+                raise
             self._log_admission_fallback(
                 "metal_active",
                 "Metal active-memory probe failed; admission treats MLX "
@@ -6785,7 +6787,9 @@ class Scheduler:
             )
             return 0
 
-    def _current_process_resident_bytes(self) -> int:
+    def _current_process_resident_bytes(
+        self, *, require_measurement: bool = False
+    ) -> int:
         """Best-effort process footprint for unified-memory pressure.
 
         MLX active memory omits Python objects, token buffers and some Metal
@@ -6809,6 +6813,8 @@ class Scheduler:
 
             return int(psutil.Process().memory_info().rss)
         except Exception:
+            if require_measurement:
+                raise
             self._log_admission_fallback(
                 "process_rss",
                 "RSS probe failed; admission treats process footprint as 0 bytes",
@@ -6819,17 +6825,27 @@ class Scheduler:
         """Best-effort live headroom for continuous-MTP cohort admission.
 
         The router applies its own hard reserve to this value.  ``None`` means
-        the platform cap is unavailable, so new cohort/join admission retains
+        the platform cap or usage is unavailable, so cohort/join admission retains
         ordinary queue/singleton ownership. ``0`` means a known cap with no
         headroom and admits nothing that costs memory.
         """
         cap = self._resolve_metal_cap_bytes()
         if cap <= 0:
             return None
-        resident = max(
-            self._current_metal_active_bytes(),
-            self._current_process_resident_bytes(),
-        )
+        measurements = []
+        for probe in (
+            self._current_metal_active_bytes,
+            self._current_process_resident_bytes,
+        ):
+            try:
+                value = probe(require_measurement=True)
+            except Exception:  # noqa: BLE001 - optional admission fails closed
+                continue
+            if type(value) is int and value >= 0:
+                measurements.append(value)
+        if not measurements:
+            return None
+        resident = max(measurements)
         return max(0, cap - resident)
 
     def _continuous_mtp_lane_bytes(self, request: Request) -> int:

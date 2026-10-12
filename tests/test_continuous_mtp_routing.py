@@ -1682,6 +1682,55 @@ def test_singleton_stays_put_when_the_cohort_cannot_absorb_it(monkeypatch, case)
 
 
 @pytest.mark.requires_mlx
+@pytest.mark.parametrize(
+    ("metal", "footprint", "rss", "expected"),
+    [
+        (None, None, None, None),
+        (None, 600, None, 400),
+        (None, None, 700, 300),
+        (800, None, None, 200),
+        (400, 600, None, 400),
+        (1200, None, None, 0),
+        (0, None, None, 1000),
+        (-1, None, None, None),
+    ],
+)
+def test_continuous_headroom_requires_a_successful_usage_probe(
+    monkeypatch, metal, footprint, rss, expected
+):
+    import psutil
+
+    from rapid_mlx import scheduler as scheduler_module
+    from rapid_mlx.runtime import process_memory
+
+    def probe(value):
+        if value is None:
+            raise RuntimeError("usage probe unavailable")
+        return value
+
+    scheduler = scheduler_module.Scheduler.__new__(scheduler_module.Scheduler)
+    scheduler._resolve_metal_cap_bytes = lambda: 1000
+    monkeypatch.setattr(scheduler_module.mx, "get_active_memory", lambda: probe(metal))
+    monkeypatch.setattr(process_memory, "get_phys_footprint", lambda: probe(footprint))
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda: SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=probe(rss))),
+    )
+
+    assert scheduler._continuous_mtp_free_bytes() == expected
+    # Existing admission callers keep their established best-effort fallback.
+    if metal is None:
+        assert scheduler._current_metal_active_bytes() == 0
+    if footprint is None and rss is None:
+        assert scheduler._current_process_resident_bytes() == 0
+
+    # A failed snapshot must not poison later successful measurements.
+    monkeypatch.setattr(scheduler_module.mx, "get_active_memory", lambda: 900)
+    assert scheduler._continuous_mtp_free_bytes() == 100
+
+
+@pytest.mark.requires_mlx
 def test_lane_bytes_estimate_adds_the_mtp_head_kv_to_the_target_projection():
     from rapid_mlx.scheduler import Scheduler
 
