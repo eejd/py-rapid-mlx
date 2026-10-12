@@ -31,7 +31,8 @@ config:
           }]
         }
       },
-      "models": {"large": {"provider": "rapid-mlx", "model": "{model_id}"}}
+      "models": {"large": {"provider": "rapid-mlx", "model": "{model_id}"}},
+      "options": {"request_timeout": 300}
     }
 
 models:

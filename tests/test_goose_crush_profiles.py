@@ -77,6 +77,7 @@ def test_crush_provider_setup(tmp_path, monkeypatch, keyed):
         "provider": "rapid-mlx",
         "model": "qwen3.5-4b-4bit",
     }
+    assert data["options"]["request_timeout"] == 300
     assert "local-secret" not in path.read_text()
 
 
