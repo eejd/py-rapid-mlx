@@ -2433,7 +2433,7 @@ def _is_transient_hub_error(exc: BaseException) -> bool:
     from rapid_mlx.telemetry.model_events import pull_error_class
 
     transient = pull_error_class(exc) == "network"
-    current = exc
+    current: BaseException | None = exc
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
@@ -2870,7 +2870,7 @@ def _ensure_model_downloaded(
 
         download_revision = pinned_image_revision or resolved_sha
         before = _model_pull_blob_identifier(model_name)
-        download_kwargs = {"revision": download_revision}
+        download_kwargs: dict[str, object] = {"revision": download_revision}
         if allow_patterns:
             download_kwargs["allow_patterns"] = allow_patterns
         snapshot_dir = _retry_hub_download(
@@ -10861,7 +10861,9 @@ def _pull_repository(
         _mirror_fetched = _mirror_out.get("network_fetch", False)
         _cache_root = _hf_cache_root(repo_id)
         _before = _blob_identifier(_cache_root)
-        download_kwargs = {"revision": revision_override} if revision_override else {}
+        download_kwargs: dict[str, object] = (
+            {"revision": revision_override} if revision_override else {}
+        )
         if _allow:
             download_kwargs["allow_patterns"] = _allow
         path = _retry_hub_download(
