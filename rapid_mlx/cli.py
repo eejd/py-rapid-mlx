@@ -10912,11 +10912,11 @@ def _pull_repository(
         if is_404:
             shown = getattr(args, "_original_alias", repo_id)
             print(f"\n  Error: Model '{shown}' not found on HuggingFace.")
-            _print_unknown_model_help(
-                shown, full_path_example="mlx-community/Qwen3.5-9B-4bit"
+            print(_hub_not_found_hint(shown), end="")
+            print(
+                "  Use an exact `namespace/repository-name` ID, for example "
+                "`mlx-community/Qwen3.5-9B-4bit`."
             )
-            if "/" in shown:
-                print(_hub_not_found_hint(shown), end="")
             sys.exit(1)
         raise
     print(f"  Cached at: {path}")
