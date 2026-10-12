@@ -362,8 +362,17 @@ CPU-only partial pipeline that explicitly omits the model matrix also omits
 its SDK prerequisite check; partial runs cannot use `--queue-on-success`.
 
 The SDK matrix requires each registered script's nonempty final test-count
-summary, matching exit status, and one `PR_VALIDATE_SDK_COMPLETE: <result_prefix>` receipt after its summary
-and normal cleanup. A summary alone does not attest successful teardown, even
+summary, matching battery outcome, and one supervisor-issued
+`PR_VALIDATE_SDK_COMPLETE: <result_prefix>` receipt after normal cleanup.
+
+The SDK child announces `PR_VALIDATE_SDK_READY` after explicit cleanup. The
+supervisor captures its battery exit outcome separately, requires interpreter
+shutdown to exit zero without a traceback, and only then issues completion.
+A failed test battery can therefore be compared with baseline, while a late
+shutdown failure (including silent `atexit` exit 1) cannot supply execution
+evidence. Direct integration-script execution keeps its normal 0/1 exit codes.
+
+A summary alone does not attest successful teardown, even
 when a failed test and a teardown failure share exit code 1. Older base scripts
 without this receipt cannot provide baseline-waiver evidence; the matrix fails
 closed rather than inferring cleanup from their output.

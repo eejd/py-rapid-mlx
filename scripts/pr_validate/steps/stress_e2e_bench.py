@@ -756,6 +756,64 @@ def _run_stress(
     }
 
 
+# Separate the SDK battery outcome from interpreter shutdown. A completed failed
+# battery exits the child with 0; only the supervisor restores its outcome after
+# shutdown succeeds. An atexit os._exit(1) cannot masquerade as a test failure.
+_SDK_CHILD = """
+import runpy, sys
+from pathlib import Path
+script = sys.argv[1]
+sys.argv = [script]
+sys.path.insert(0, str(Path(script).parent))
+try:
+    runpy.run_path(script, run_name="__main__")
+except SystemExit as exc:
+    code = 0 if exc.code is None else exc.code
+    if not isinstance(code, int) or code not in (0, 1):
+        raise
+else:
+    code = 0
+print(f"PR_VALIDATE_SDK_OUTCOME: {code}", flush=True)
+"""
+
+
+def _supervise_sdk(
+    script: Path, prefix: str | None, **kwargs
+) -> subprocess.CompletedProcess:
+    proc = subprocess.run(  # noqa: S603
+        ["python3.12", "-c", _SDK_CHILD, str(script)], **kwargs
+    )
+    stdout = proc.stdout or ""
+    outcomes = list(
+        re.finditer(r"^PR_VALIDATE_SDK_OUTCOME: ([01])$", stdout, re.MULTILINE)
+    )
+    ready = (
+        list(
+            re.finditer(
+                rf"^PR_VALIDATE_SDK_READY: {re.escape(prefix)}$", stdout, re.MULTILINE
+            )
+        )
+        if isinstance(prefix, str) and prefix
+        else []
+    )
+    # The child can only announce readiness. Completion is issued here after
+    # the entire interpreter has exited, including atexit and stream flushing.
+    if (
+        proc.returncode == 0
+        and len(outcomes) == len(ready) == 1
+        and outcomes[0].start() > ready[0].end()
+        and "PR_VALIDATE_SDK_COMPLETE:" not in stdout
+        and "Traceback (most recent call last)" not in (proc.stderr or "")
+    ):
+        return subprocess.CompletedProcess(
+            proc.args,
+            int(outcomes[0].group(1)),
+            stdout + f"PR_VALIDATE_SDK_COMPLETE: {prefix}\n",
+            proc.stderr,
+        )
+    return subprocess.CompletedProcess(proc.args, 125, stdout, proc.stderr)
+
+
 def _run_agent(
     ctx: Context,
     choice: ModelChoice,
@@ -792,8 +850,9 @@ def _run_agent(
     # MLLMModel decode overhead); 1800s gives both that and pydantic_ai
     # on qwen3.6 reasonable headroom without inflating the per-agent
     # ceiling beyond what a stuck process would justify.
-    proc = subprocess.run(  # noqa: S603
-        ["python3.12", str(script)],
+    proc = _supervise_sdk(
+        script,
+        agent.get("result_prefix"),
         capture_output=True,
         text=True,
         env=env,

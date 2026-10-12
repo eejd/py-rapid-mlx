@@ -68,8 +68,8 @@ def test_sdk_requires_completed_nonempty_results(
     if stdout:
         stdout += "PR_VALIDATE_SDK_COMPLETE: Toy SDK\n"
     monkeypatch.setattr(
-        matrix.subprocess,
-        "run",
+        matrix,
+        "_supervise_sdk",
         lambda *a, **kw: CompletedProcess(a, code, stdout, stderr),
     )
     result = matrix._run_agent(
@@ -93,7 +93,7 @@ def test_real_failed_battery_requires_clean_teardown_receipt(
         + (
             "print('client cleanup failed', flush=True)\nraise SystemExit(1)\n"
             if teardown_failure
-            else "print('PR_VALIDATE_SDK_COMPLETE: Toy SDK', flush=True)\nraise SystemExit(1)\n"
+            else "print('PR_VALIDATE_SDK_READY: Toy SDK', flush=True)\nraise SystemExit(1)\n"
         )
     )
     real_run = matrix.subprocess.run
@@ -123,7 +123,7 @@ def test_real_atexit_failure_after_receipt_is_not_execution_evidence(
         f"    raise {failure}\n"
         "atexit.register(teardown)\n"
         "print('Toy SDK: 1/2 passed', flush=True)\n"
-        "print('PR_VALIDATE_SDK_COMPLETE: Toy SDK', flush=True)\n"
+        "print('PR_VALIDATE_SDK_READY: Toy SDK', flush=True)\n"
         "raise SystemExit(1)\n"
     )
     real_run = matrix.subprocess.run
@@ -138,8 +138,42 @@ def test_real_atexit_failure_after_receipt_is_not_execution_evidence(
     assert result["executed"] is False
     assert result["status"] == "fail"
     output = Path(result["artifact"]).read_text()
-    assert "PR_VALIDATE_SDK_COMPLETE: Toy SDK" in output
+    assert "PR_VALIDATE_SDK_COMPLETE: Toy SDK" not in output
     assert "Traceback (most recent call last)" in output
+
+
+@pytest.mark.parametrize("passed,total", [(2, 2), (1, 2), (0, 2)])
+@pytest.mark.parametrize("late_exit", [None, 1, 2])
+def test_supervisor_distinguishes_battery_outcome_from_silent_shutdown(
+    ctx, agent, monkeypatch, passed, total, late_exit
+):
+    (ctx.repo_root / agent["script"]).write_text(
+        "import atexit, os\n"
+        + (
+            f"atexit.register(lambda: os._exit({late_exit}))\n"
+            if late_exit is not None
+            else ""
+        )
+        + f"print('Toy SDK: {passed}/{total} passed', flush=True)\n"
+        + "print('PR_VALIDATE_SDK_READY: Toy SDK', flush=True)\n"
+        + f"raise SystemExit({int(passed != total)})\n"
+    )
+    real_run = matrix.subprocess.run
+    monkeypatch.setattr(
+        matrix.subprocess,
+        "run",
+        lambda argv, **kw: real_run([sys.executable, *argv[1:]], **kw),
+    )
+    result = matrix._run_agent(
+        ctx, matrix.ModelChoice("toy", "toy/model", 1, "golden", []), agent
+    )
+    assert result["executed"] is (late_exit is None)
+    assert result["status"] == (
+        "pass" if late_exit is None and passed == total else "fail"
+    )
+    output = Path(result["artifact"]).read_text()
+    assert ("PR_VALIDATE_SDK_COMPLETE: Toy SDK" in output) is (late_exit is None)
+    assert "Traceback" not in output
 
 
 @pytest.mark.parametrize(
@@ -154,7 +188,7 @@ def test_incomplete_or_ambiguous_completion_receipt_blocks(
     ctx, agent, monkeypatch, stdout
 ):
     monkeypatch.setattr(
-        matrix.subprocess, "run", lambda *a, **kw: CompletedProcess(a, 0, stdout, "")
+        matrix, "_supervise_sdk", lambda *a, **kw: CompletedProcess(a, 0, stdout, "")
     )
     result = matrix._run_agent(
         ctx, matrix.ModelChoice("toy", "toy/model", 1, "golden", []), agent
@@ -176,8 +210,8 @@ def test_missing_registered_script_blocks(ctx, agent):
 def test_sdk_without_valid_result_contract_cannot_pass(ctx, agent, monkeypatch, prefix):
     agent["result_prefix"] = prefix
     monkeypatch.setattr(
-        matrix.subprocess,
-        "run",
+        matrix,
+        "_supervise_sdk",
         lambda *a, **kw: CompletedProcess(a, 0, "Toy SDK: 2/2 passed\n", ""),
     )
     result = matrix._run_agent(

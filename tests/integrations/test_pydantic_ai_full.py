@@ -190,5 +190,5 @@ def main():
 
 if __name__ == "__main__":
     code = main()
-    print("PR_VALIDATE_SDK_COMPLETE: PydanticAI", flush=True)
+    print("PR_VALIDATE_SDK_READY: PydanticAI", flush=True)
     raise SystemExit(code)
