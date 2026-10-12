@@ -50,6 +50,41 @@ def test_cline_setup_plan_preserves_other_providers_and_hides_keys(
     ).changed
 
 
+def test_cline_agent_cli_previews_then_configures(tmp_path, monkeypatch, capsys):
+    from rapid_mlx import cli
+
+    monkeypatch.setenv("CLINE_DATA_DIR", str(tmp_path / "cline-data"))
+    monkeypatch.delenv("CLINE_PROVIDER_SETTINGS_PATH", raising=False)
+    args = SimpleNamespace(
+        agent_name="cline",
+        base_url="http://127.0.0.1:18730/v1",
+        test=False,
+        setup=True,
+        model="local-model",
+        agent_version=None,
+        dry_run=True,
+        yes=True,
+        no_check=True,
+    )
+
+    cli.agents_command(args)
+    assert "Cline configuration" in capsys.readouterr().out
+    path = cline.current_config_path()
+    assert path is not None and not path.exists()
+
+    args.dry_run = False
+    cli.agents_command(args)
+    output = capsys.readouterr().out
+    assert "Cline CLI: ready" in output
+    assert "API Provider: OpenAI Compatible" in output
+    assert (
+        json.loads(path.read_text())["providers"]["openai-compatible"]["settings"][
+            "model"
+        ]
+        == "local-model"
+    )
+
+
 @pytest.fixture
 def setup_paths(tmp_path, monkeypatch):
     claude_path = tmp_path / "claude" / "settings.json"
