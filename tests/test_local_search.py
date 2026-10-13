@@ -1548,6 +1548,99 @@ def test_failed_replacement_preserves_index(tmp_path):
     store.close()
 
 
+@pytest.mark.parametrize("already_pending", [False, True])
+def test_add_folder_cancels_and_requeues_active_once(
+    tmp_path, monkeypatch, already_pending
+):
+    async def scenario():
+        one = folder(tmp_path, "one")
+        two = folder(tmp_path, "two")
+        (one / "apple.txt").write_text("apple orchard")
+        (one / "banana.txt").write_text("banana grove")
+        (two / "cherry.txt").write_text("cherry harvest")
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake, batch_size=1)
+        entered, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        embed = search._embed_async
+        index = search._index
+        start_worker = search._start_worker
+        attempts, queued = [], []
+        calls = 0
+
+        async def paused_embed(inputs, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                # The first file is committed; the second has not been embedded.
+                entered.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    await release.wait()
+                    raise
+            return await embed(inputs, **kwargs)
+
+        async def observed_index(registered):
+            attempts.append(registered["id"])
+            await index(registered)
+
+        def observed_start_worker():
+            queued.append(list(search.pending))
+            start_worker()
+
+        monkeypatch.setattr(search, "_embed_async", paused_embed)
+        monkeypatch.setattr(search, "_index", observed_index)
+        adding = None
+        try:
+            first = (await search.add_folder(str(one)))[0]["id"]
+            await asyncio.wait_for(entered.wait(), SYNC_TIMEOUT)
+            worker = search.task
+            assert not worker.done()
+            assert search.progress["folder_id"] == first
+            assert search.store.folder(first)["files_indexed"] == 1
+            assert len(fake.calls) == 1
+            assert search.pending == []
+            if already_pending:
+                # Public queue() can enqueue an active root for another pass.
+                await search.queue(first)
+            monkeypatch.setattr(search, "_start_worker", observed_start_worker)
+            adding = asyncio.create_task(search.add_folder(str(two)))
+            await asyncio.wait_for(cancelled.wait(), SYNC_TIMEOUT)
+            # Task.cancelling() needs Python 3.11; the event proves cancellation.
+            assert not worker.done()
+            assert not adding.done()
+            assert len(fake.calls) == 1
+            release.set()
+            second = (await adding)[0]["id"]
+            assert worker.cancelled()
+            assert queued == [[first, second]]
+            await search.wait_idle()
+            assert attempts == [first, first, second]
+            assert search.pending == []
+            for fid, count in ((first, 2), (second, 1)):
+                registered = search.store.folder(fid)
+                assert registered["state"] == "idle"
+                assert registered["files_indexed"] == count
+                assert all(
+                    row["status"] == "indexed"
+                    for row in search.store.files(fid).values()
+                )
+            assert len(search.store.vectors) == 3
+            assert sorted(text for batch in fake.calls for text in batch) == [
+                "title: apple | text: apple orchard",
+                "title: banana | text: banana grove",
+                "title: cherry | text: cherry harvest",
+            ]
+        finally:
+            release.set()
+            if adding is not None:
+                await adding
+            await search.close()
+
+    asyncio.run(scenario())
+
+
 def test_active_delete_keeps_next_folder_job(tmp_path):
     async def scenario():
         one = folder(tmp_path, "one")
