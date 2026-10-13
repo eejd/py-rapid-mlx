@@ -240,7 +240,9 @@ struct LocalSearchView: View {
     private func indexingLine(_ status: LocalSearchStatus) -> some View {
         HStack(spacing: 8) {
             if status.indexing.active {
-                if status.indexing.filesTotal > 0 {
+                if status.indexing.pausedReason != nil {
+                    Image(systemName: "pause.circle").accessibilityHidden(true)
+                } else if status.indexing.filesTotal > 0 {
                     ProgressView(value: Double(status.indexing.filesDone), total: Double(max(status.indexing.filesTotal, status.indexing.filesDone)))
                         .frame(width: 70).accessibilityLabel(String(localized: "Folder indexing progress"))
                         .accessibilityIdentifier("LocalSearch.IndexProgress")
@@ -248,12 +250,10 @@ struct LocalSearchView: View {
                     ProgressView().controlSize(.small).accessibilityLabel(String(localized: "Scanning folder"))
                         .accessibilityIdentifier("LocalSearch.IndexProgress")
                 }
-                Text(status.indexing.filesTotal > 0
-                     ? String(localized: "Indexing: \(status.indexing.filesDone) of \(status.indexing.filesTotal) files")
-                     : String(localized: "Scanning and indexing: \(status.indexing.filesDone) files processed"))
-                if let folder = status.folders.first(where: { $0.id == status.indexing.folderId }) {
+                Text(status.indexing.progressLabel).help(status.indexing.progressLabel)
+                if status.indexing.pausedReason == nil, let folder = status.folders.first(where: { $0.id == status.indexing.folderId }) {
                     Text(LocalSearchPath.folderTitle(folder.path)).lineLimit(1).truncationMode(.middle).help(folder.path)
-                } else if let path = status.indexing.currentPath {
+                } else if status.indexing.pausedReason == nil, let path = status.indexing.currentPath {
                     Text(abbreviated(URL(fileURLWithPath: path).deletingLastPathComponent().path))
                         .lineLimit(1).truncationMode(.middle).help(path)
                 }
@@ -262,8 +262,8 @@ struct LocalSearchView: View {
             }
         }
         .font(.caption).foregroundStyle(.secondary)
-        .lineLimit(1)
-        .frame(height: indexLineHeight, alignment: .leading)
+        .lineLimit(status.indexing.active && status.indexing.pausedReason != nil ? nil : 1)
+        .frame(minHeight: indexLineHeight, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("LocalSearch.IndexStatus")
     }
@@ -333,7 +333,9 @@ struct LocalSearchView: View {
                 }
                 Text(LocalSearchPath.resultFolder(result, folders: model.status?.folders ?? [])).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle).help(result.path).accessibilityValue(result.path)
-                if result.kind == .text { highlighted(result).font(.callout).lineLimit(4) }
+                if let explanation = result.nameOnlyExplanation {
+                    Text(explanation).font(.callout).foregroundStyle(.secondary).lineLimit(4)
+                } else if result.kind == .text { highlighted(result).font(.callout).lineLimit(4) }
             }
         }
         .padding(.vertical, 6)
@@ -402,6 +404,9 @@ struct LocalSearchView: View {
             Text(URL(fileURLWithPath: result.path).lastPathComponent)
                 .font(.headline).lineLimit(2)
             timestampTag(result)
+            if let explanation = result.nameOnlyExplanation {
+                Text(explanation).font(.caption).foregroundStyle(.secondary).lineLimit(4)
+            }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -412,7 +417,8 @@ struct LocalSearchView: View {
         .contentShape(Rectangle())
         .id(result.id)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(URL(fileURLWithPath: result.path).lastPathComponent)
+        .accessibilityLabel(result.nameOnlyExplanation == nil
+            ? URL(fileURLWithPath: result.path).lastPathComponent : resultAccessibilityLabel(result))
         .accessibilityValue(timestampLabel(result))
         .accessibilityIdentifier("LocalSearch.Result.\(index)")
         .accessibilityAddTraits(model.selection == result.id ? [.isSelected, .isButton] : .isButton)
@@ -617,7 +623,7 @@ struct LocalSearchView: View {
         let folder = LocalSearchPath.resultFolder(result, folders: model.status?.folders ?? [])
         let date = Date(timeIntervalSince1970: result.modifiedAt).formatted(date: .abbreviated, time: .omitted)
         let page = result.page.map { String(localized: "page \($0)") } ?? ""
-        return String(localized: "\(name), \(page), \(result.snippet), in \(folder), modified \(date)")
+        return String(localized: "\(name), \(page), \(result.snippetLabel), in \(folder), modified \(date)")
     }
     private func copyPath(_ result: LocalSearchResult) {
         NSPasteboard.general.clearContents()

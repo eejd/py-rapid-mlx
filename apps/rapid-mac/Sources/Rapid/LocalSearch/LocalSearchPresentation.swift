@@ -141,7 +141,7 @@ extension LocalSearchFolder {
     var skippedExplanation: String? {
         guard let skipReasons, !skipReasons.isEmpty else { return nil }
         return skipReasons.sorted { $0.key < $1.key }.map { reason, count in
-            String(localized: "\(reason): \(count)")
+            String(localized: "\(LocalSearchSkipReason.localized(reason)): \(count)")
         }.joined(separator: "\n")
     }
 }
@@ -162,4 +162,43 @@ struct LocalSearchSection: Identifiable, Equatable {
             return Self(kind: group.kind, results: Array(group.results.prefix(group.kind == .text ? 5 : 8)), total: group.total)
         }
     }
+}
+
+
+enum LocalSearchSkipReason {
+    static func localized(_ reason: String) -> String {
+        switch reason {
+        case "Unsupported file type": String(localized: "Unsupported file type")
+        case "Too large": String(localized: "Too large")
+        case "No readable text": String(localized: "No readable text")
+        case "Scanned PDF without text": String(localized: "Scanned PDF without text")
+        case "Password-protected": String(localized: "Password-protected")
+        case "Could not be read": String(localized: "Could not be read")
+        case "Private or system file": String(localized: "Private or system file")
+        case "Audio is not supported yet": String(localized: "Audio is not supported yet")
+        default: String(localized: "File contents could not be indexed")
+        }
+    }
+}
+
+extension LocalSearchStatus.Indexing {
+    var progressLabel: String {
+        if let pausedReason {
+            return pausedReason == "chat"
+                ? String(localized: "Indexing paused while a chat response is generating — it resumes automatically")
+                : String(localized: "Indexing paused — it resumes automatically")
+        }
+        return filesTotal > 0
+            ? String(localized: "Indexing: \(filesDone) of \(filesTotal) files")
+            : String(localized: "Scanning and indexing: \(filesDone) files processed")
+    }
+}
+
+extension LocalSearchResult {
+    var nameOnlyExplanation: String? {
+        guard !contentIndexed else { return nil }
+        guard let skipReason else { return String(localized: "Matched by file name") }
+        return String(localized: "Matched by file name — \(LocalSearchSkipReason.localized(skipReason))")
+    }
+    var snippetLabel: String { nameOnlyExplanation ?? snippet }
 }

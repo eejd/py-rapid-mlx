@@ -43,6 +43,7 @@ struct LocalSearchStatus: Decodable, Sendable, Equatable {
         let currentPath: String?
         let filesDone: Int
         let filesTotal: Int
+        var pausedReason: String? = nil
     }
     struct Totals: Decodable, Sendable, Equatable {
         let files: Int
@@ -85,12 +86,14 @@ struct LocalSearchResult: Decodable, Identifiable, Sendable, Equatable {
     let size: Int
     var kind: LocalSearchKind = .text
     var timestamp: Double? = nil
+    var contentIndexed: Bool = true
+    var skipReason: String? = nil
 
 }
 
 extension LocalSearchResult {
     enum CodingKeys: String, CodingKey {
-        case path, folderId, title, snippet, highlights, score, matched, page, line, modifiedAt, size, kind, timestamp
+        case path, folderId, title, snippet, highlights, score, matched, page, line, modifiedAt, size, kind, timestamp, contentIndexed, skipReason
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -107,6 +110,8 @@ extension LocalSearchResult {
         size = try c.decode(Int.self, forKey: .size)
         kind = try c.decodeIfPresent(LocalSearchKind.self, forKey: .kind) ?? .text
         timestamp = try c.decodeIfPresent(Double.self, forKey: .timestamp)
+        contentIndexed = try c.decodeIfPresent(Bool.self, forKey: .contentIndexed) ?? true
+        skipReason = try c.decodeIfPresent(String.self, forKey: .skipReason)
     }
 }
 

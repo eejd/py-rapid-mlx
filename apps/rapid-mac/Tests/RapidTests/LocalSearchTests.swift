@@ -953,7 +953,7 @@ extension LocalSearchPresentationTests {
         #expect(absent.skipReasons == nil)
         let reasons = base.dropLast() + #", "skip_reasons":{"Permission denied":2}}"#
         let explained = try LocalSearchClient.decode(LocalSearchFolder.self, from: Data(reasons.utf8))
-        #expect(explained.skippedExplanation == "Permission denied: 2")
+        #expect(explained.skippedExplanation == "\(LocalSearchSkipReason.localized("Permission denied")): 2")
         let null = base.dropLast() + #", "skip_reasons":null}"#
         #expect(try LocalSearchClient.decode(LocalSearchFolder.self, from: Data(null.utf8)).skipReasons == nil)
     }
@@ -1176,5 +1176,32 @@ extension LocalSearchViewModelTests {
         try await stage.wait(for: "full video tab") { model.kindFilter == .video && model.state == .results }
         #expect(!stage.identifiers().contains("LocalSearch.Section.video.Header"))
         #expect(stage.identifiers().contains("LocalSearch.Result.0"))
+    }
+}
+
+extension LocalSearchAccessibilityTests {
+    @Test func pausedIndexingKeepsSearchUsableAndNameOnlyResultsAccessible() async throws {
+        let base = searchStatus(folders: [searchFolder()], active: true)
+        let status = LocalSearchStatus(enabled: true, model: base.model, folders: base.folders,
+            indexing: .init(active: true, folderId: "folder", currentPath: nil, filesDone: 2, filesTotal: 10,
+                pausedReason: "chat"), totals: base.totals)
+        var result = searchResult("scan.pdf")
+        result.contentIndexed = false
+        result.skipReason = "Scanned PDF without text"
+        let model = LocalSearchViewModel(fetchStatus: { _ in status }, fetchSearch: { _, _ in
+            .init(results: [result], tookMs: 0, mode: "keyword")
+        })
+        let server = ServerManager(testingState: .ready(alias: "test"), binaryPath: URL(fileURLWithPath: "/usr/bin/true"))
+        let stage = GoldenStage(LocalSearchView(server: server, model: model, onStartModel: { true })
+            .environment(DownloadManager()))
+        defer { model.disappear() }
+        try await stage.wait(for: "paused indexing message") { stage.treeText().contains(status.indexing.progressLabel) }
+        #expect(model.status?.needsPolling == true)
+        #expect(!stage.identifiers().contains("LocalSearch.IndexProgress"))
+        try stage.setValue("scan", for: "LocalSearch.QueryField")
+        try await stage.waitForIdentifier("LocalSearch.Result.0")
+        let row = try #require(stage.tree().first { $0.id == "LocalSearch.Result.0" })
+        #expect(row.text.contains(result.snippetLabel))
+        #expect(stage.identifiers().contains("LocalSearch.ResultsList"))
     }
 }
