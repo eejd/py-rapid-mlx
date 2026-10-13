@@ -65,22 +65,49 @@ def query_terms(query: str) -> list[str]:
     return list(dict.fromkeys(re.findall(r"\w+(?:[./-]\w+)*", query, re.UNICODE)))
 
 
+def name_tokens(value: str) -> list[str]:
+    """Split before casefolding so Unicode case and camel boundaries survive."""
+    tokens = []
+    for word in re.findall(r"[^\W_]+", value):
+        start = 0
+        for i in range(1, len(word)):
+            previous, current = word[i - 1], word[i]
+            if (previous.isdigit() != current.isdigit()
+                    or (previous.islower() and current.isupper())
+                    or (previous.isupper() and current.isupper()
+                        and i + 1 < len(word) and word[i + 1].islower())):
+                tokens.append(word[start:i].casefold())
+                start = i
+        tokens.append(word[start:].casefold())
+    return tokens
+
+
+def filename_match(query: str, terms: list[str], filename: str) -> tuple[bool, float]:
+    """Full-stem equality and name-token coverage; zero coverage means no match."""
+    tokens = name_tokens(filename)
+    wanted = {token for term in terms for token in name_tokens(term)}
+
+    def matches(term, token):
+        return term == token or (re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", term)
+                                 is not None and term in token)
+
+    if not wanted or not all(any(matches(term, token) for token in tokens) for term in wanted):
+        return False, 0.0
+    covered = sum(any(matches(term, token) for term in wanted) for token in tokens)
+    return name_tokens(query) == name_tokens(Path(filename).stem), covered / len(tokens)
+
+
 def lexical_tier(query: str, terms: list[str], text: str, filename: str) -> int:
     """Evidence classes, not calibrated relevance weights.
 
-    Complete basename > ordered phrase > unordered basename terms > partial.
+    Whole filename tokens > ordered phrase > basename substrings > partial.
     Whitespace folds in bodies; punctuation stays literal for identifiers.
-    Filename separators fold only for ordered filename-token matching.
+    Filename word matching includes stem and extension tokens.
     """
     phrase = " ".join(query.casefold().split())
-    name = Path(filename).stem.casefold()
-    name_words = " ".join(re.findall(r"[^\W_]+", name))
-    query_words = " ".join(re.findall(r"[^\W_]+", query.casefold()))
-    if query_words and query_words == name_words:
+    if filename_match(query, terms, filename)[1]:
         return 3
     if phrase and phrase in " ".join(text.casefold().split()):
-        return 2
-    if query_words and " " + query_words + " " in " " + name_words + " ":
         return 2
     if terms and all(term.casefold() in filename.casefold() for term in terms):
         return 1

@@ -329,6 +329,26 @@ def scan(root: Path) -> tuple[list[Path], int]:
     return sorted(files), skipped
 
 
+def stat_safe(path: Path, root: Path):
+    """Check a name-only source without opening its content or following links."""
+    import stat
+
+    relative = path.relative_to(root)
+    with open_root(root) as root_fd:
+        fd = os.dup(root_fd)
+        try:
+            for part in relative.parts[:-1]:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            info = os.stat(relative.name, dir_fd=fd, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                raise SkippedError("unsupported")
+            return info
+        finally:
+            os.close(fd)
+
+
 @contextmanager
 def open_safe(path: Path, root: Path, max_bytes: int, root_fd: int | None = None):
     """Pin the regular source inode without following any path component links."""

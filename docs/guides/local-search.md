@@ -70,6 +70,10 @@ text) are embedded; all remaining chunks stay keyword-searchable with their
 line or page locators. The entire index retains at most 262,144 embedded chunks
 (`MAX_CORPUS_EMBEDDED_CHUNKS`), across all folders and modalities. Later files
 remain keyword-only; removing indexed files frees capacity for reindexing.
+Files partially embedded because the corpus budget ran out are recorded as
+incomplete and upgraded on a later reindex when additional capacity is available.
+Unchanged complete files and budget-limited files with no additional room do
+not re-embed.
 Images need one free slot; videos conservatively need 120 free slots before
 embedding, so a nearly full corpus may keep a video keyword-only. This bounds the
 cost of large generated logs and data files and reduces repetitive semantic
@@ -141,7 +145,7 @@ Status is shaped as:
   "model": {"id": "mlx-community/embeddinggemma-2-4bit", "downloaded": false, "loaded": false, "vision": false},
   "folders": [],
   "indexing": {"active": false, "folder_id": null, "current_path": null, "files_done": 0, "files_total": 0},
-  "totals": {"files": 0, "chunks": 0, "index_bytes": 0, "files_by_kind": {"text": 0, "image": 0, "video": 0}}
+  "totals": {"name_only_files": 0, "files": 0, "chunks": 0, "index_bytes": 0, "files_by_kind": {"text": 0, "image": 0, "video": 0}}
 }
 ```
 
@@ -160,6 +164,25 @@ skipped). Reasons use this fixed English vocabulary:
 | Could not be read | Read, parse, or media-decoding failure |
 | Private or system file | Hidden or secret-looking individual file |
 | Audio is not supported yet | Recognized audio format |
+
+Every content skip in the table except `Private or system file` retains a
+**name-only** entry. Scanned, encrypted, unreadable, oversized and unsupported
+files, including audio, can be found by file name or stem. They have no extracted
+content chunk or vector and consume no semantic slots; content words cannot
+match them. Extension and size rejection do not read file content. Private files
+and files under pruned hidden, system or package directories never surface by
+name. Explicitly selected roots inside location exclusions remain separate from
+an ancestor registration if that ancestor's walk would skip them.
+
+Name-only entries retain the existing skipped-file status, fingerprint and reason.
+They still count in `files_skipped` and `skip_reasons`, and remain excluded from
+`files_indexed`, `totals.files` and `totals.files_by_kind`. The additive integer
+`totals.name_only_files` counts searchable name-only entries. Each folder admits
+at most 200,000 (`MAX_NAME_ONLY_FILES_PER_FOLDER`), in stored file-ID order;
+additional skipped files contribute only to skip counts. Existing skipped rows
+become searchable without deleting the index or reading unchanged content.
+Rename, modification, deletion and folder removal/absorption update these entries
+on reindex. A file that becomes readable transitions to normal content indexing.
 
 For example, `skip_reasons: {"Scanned PDF without text": 3, "Unsupported file type": 2}`.
 Each file's reason and fingerprint are persisted. Counts survive restarts and
@@ -209,6 +232,13 @@ Older engines without `groups` retain the flat results view.
 Results contain
 `path`, `folder_id`, `title`, `snippet`, `highlights`, `score`, `matched`, `page`,
 `line`, `modified_at` (Unix seconds), `size` (bytes), `kind`, and `timestamp`.
+Two additive optional fields are emitted on every result: `content_indexed`
+(boolean, true for normal results) and `skip_reason` (null normally; the skip
+label for name-only results). Name-only results have `content_indexed: false`,
+empty `snippet` and `highlights`, `matched: ["keyword"]`, and null `page`/`line`.
+They compete in the same filename lexical tiers as other files. Their extension
+places them in the image or video group when recognized, otherwise the text
+(documents) group.
 `timestamp` is seconds for video and null otherwise. Media has empty `snippet`,
 empty `highlights`, null `page`/`line`, and matches on visual semantics and/or
 filename keywords. Video results collapse to the best qualifying frame per file;
@@ -223,17 +253,30 @@ identifiers remain mandatory. When none are distinctive, the entire literal
 query substring is required in the body; a basename containing all query terms
 can also match independently. FTS5 trigram candidates retain BM25 ordering with
 equal body/filename column weights. Short terms use literal substring matching;
-short-only queries scan inside SQLite where possible. Frequency checks stop once
+short-only queries scan inside SQLite where possible. Keyword matching uses at
+most 64 distinct terms (`MAX_KEYWORD_TERMS`), preferring distinctive terms, then
+longer terms, with lexical order as a deterministic tie breaker. The original
+query remains available for phrase evidence and semantic search. This bounds
+SQLite expression depth for all queries within the 8,192-character API limit.
+If SQLite still rejects query processing, the route returns a structured 400
+`invalid_query` error rather than an unhandled 500. Frequency checks stop once
 a term is known to be common, and their bounded cache is invalidated on index
 changes.
 
-Ranking distinguishes four ordered evidence classes: complete basename,
-ordered full phrase in the body or basename, all terms in a basename, and
+Ranking distinguishes four ordered evidence classes: all query terms as whole
+filename tokens, ordered full phrase in the body, basename substrings, and
 partial keyword/semantic evidence. Body whitespace folds so PDF line wrapping
-can match; punctuation remains literal for identifiers. Filename word separators
-fold for ordered matching. A full phrase outranks semantic-only and partial
-keyword hits, even when a weaker result has both legs. Within the complete-name
-and phrase classes, lexical ordering is preserved. A phrase occurring in several
+can match; punctuation remains literal for identifiers. Filename tokens include
+the stem and extension, split on non-alphanumeric characters, digit/letter and
+camelCase boundaries, and compare with Unicode casefolding. CJK query terms can
+match substrings within name tokens. A single whole filename word qualifies;
+`memo` in `memory_notes.md` does not. Filename matches outrank content-only hits,
+including content substrings. Within the filename tier, full-stem equality comes
+first, then the fraction of name tokens covered by the query, then existing
+lexical tie breakers. Indexed and name-only files use the same rule, including
+group previews and lexical evidence for group ordering. A full phrase outranks
+semantic-only and partial keyword hits, even when a weaker result has both legs.
+Within the phrase class, lexical ordering is preserved. A phrase occurring in several
 documents cannot identify which copy, summary, or manuscript the user intended.
 These classes express lookup behavior; their boundaries are not fitted to an
 evaluation query set. Scores map the four classes to disjoint intervals in 0–1
@@ -317,8 +360,7 @@ for keyword candidates and returned snippets. Replacement, removal, folder
 absorption, and metadata updates invalidate that cache. The frequency cache
 retains at most 1,024 terms to bound memory, independently of corpus size; eviction
 only repeats a computation and never changes a result. Existing indexes require
-no rebuild or re-embedding: these are search-time changes, with no schema or
-HTTP-field changes. CPU replay timings exclude query embedding and model loading;
+no rebuild or re-embedding: these are search-time changes, with no schema rebuild. CPU replay timings exclude query embedding and model loading;
 real embedding latency and responsiveness under chat load still need hardware
 measurement.
 
@@ -374,7 +416,8 @@ File reads, extraction, chunking, and eligibility run off the HTTP event loop;
 a separate single CPU worker owns SQLite and search computation. Every root
 component opens relative to a pinned directory descriptor with `O_NOFOLLOW`;
 the root descriptor stays open throughout discovery and extraction. Search
-checks source paths through that same component-wise no-follow discipline.
+checks source paths through that same component-wise no-follow discipline;
+name-only hits use metadata checks without opening file content.
 PDF and Office parsing use killable subprocesses with a ten-second wall deadline
 and a 512 MiB memory budget; timeout/failure becomes “Could not be read”.
 Cancellation kills and reaps the child. Allocation limits apply on Linux; on

@@ -15,11 +15,13 @@ from .chunking import CHUNKING_VERSION, Chunk
 from .eligibility import ELIGIBILITY_VERSION, semantic_chunk
 from .extraction import (
     AUDIO_SUFFIXES, EXTRACTION_VERSION, MAX_EMBEDDED_CHUNKS_PER_FILE,
-    SKIP_REASONS, skip_reason,
+    SKIP_REASONS, skip_reason, excluded, excluded_location, file_kind,
 )
 
 MAX_CORPUS_EMBEDDED_CHUNKS = 262_144
 KEYWORD_CANDIDATE_LIMIT = 4096
+MAX_NAME_ONLY_FILES_PER_FOLDER = 200_000
+MAX_KEYWORD_TERMS = 64
 SCHEMA_VERSION = "2"
 DISTINCTIVE_FRACTION = 0.10
 DISTINCTIVE_MIN_FILES = 1
@@ -34,6 +36,7 @@ class Store:
         self.path = path
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
+        self.db.create_function("local_basename", 1, lambda path: path.rsplit("/", 1)[-1].casefold(), deterministic=True)
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA foreign_keys=ON;
@@ -265,10 +268,10 @@ class Store:
         if key not in self._search_cache:
             # File strings are shared by all of a file's chunks. Fetching them
             # once avoids allocating thousands of repeated paths/metadata rows.
-            file_sql = "SELECT id,path,folder_id,title,size,mtime,content_hash FROM files"
+            file_sql = "SELECT id,path,folder_id,title,size,mtime,content_hash FROM files WHERE status NOT LIKE 'skipped:%'"
             file_params = []
             if folder_ids is not None:
-                file_sql += " WHERE folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
+                file_sql += " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
                 file_params = folder_ids
             files = {r["id"]: dict(r) for r in self.db.execute(file_sql, file_params)}
             sql = """SELECT chunks.id, chunks.file_id, chunks.kind, chunks.locator
@@ -282,13 +285,30 @@ class Store:
                 sql += " WHERE " + " AND ".join(clauses)
             self._search_cache.clear()
             self._search_cache[key] = {
-                r["id"]: {**files[r["file_id"]], **dict(r)}
+                r["id"]: {**files[r["file_id"]], **dict(r), "content_indexed": True, "skip_reason": None}
                 for r in self.db.execute(sql, params)
             }
+            for row in self.name_only_rows(folder_ids):
+                kind = file_kind(Path(row["path"]))
+                if (folder_ids is None or row["folder_id"] in folder_ids) and (kinds is None or kind in kinds):
+                    self._search_cache[key][-row["id"]] = {
+                        **row, "id": -row["id"], "file_id": row["id"], "kind": kind,
+                        "locator": "{}", "content_indexed": False,
+                        "skip_reason": row["status"].split(":", 1)[1].strip(),
+                    }
             self._view_scope = (self._search_cache[key],
                                 {r["folder_id"] for r in self._search_cache[key].values()},
                                 {r["kind"] for r in self._search_cache[key].values()})
         return self._search_cache[key]
+
+    def name_only_rows(self, folder_ids=None):
+        scope = "" if folder_ids is None else " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
+        params = ["skipped: " + SKIP_REASONS["private"], *(folder_ids or []), MAX_NAME_ONLY_FILES_PER_FOLDER]
+        return [dict(row) for row in self.db.execute("""
+            SELECT * FROM (
+                SELECT files.*, row_number() OVER (PARTITION BY folder_id ORDER BY id) AS ordinal
+                FROM files WHERE status LIKE 'skipped:%' AND status != ?
+            """ + scope + ") WHERE ordinal <= ?", params)]
 
     def chunk_text(self, chunk_id: int) -> str:
         row = self.db.execute("SELECT text FROM chunks WHERE id=?", (chunk_id,)).fetchone()
@@ -310,9 +330,9 @@ class Store:
         nested = []
         for row in self.db.execute("SELECT id,path FROM folders"):
             existing = Path(row["path"])
-            if path.is_relative_to(existing):
+            if path.is_relative_to(existing) and walk_reaches(existing, path):
                 return row["id"], False
-            if existing.is_relative_to(path):
+            if existing.is_relative_to(path) and walk_reaches(path, existing):
                 nested.append(row["id"])
         folder_id = uuid.uuid4().hex
         with self.db:
@@ -341,7 +361,7 @@ class Store:
 
     def folders(self) -> list[dict]:
         folders = [dict(r) for r in self.db.execute("""
-            SELECT folders.*, (SELECT count(*) FROM files WHERE folder_id=folders.id AND status IN ('indexed','keyword','pending')) AS files_indexed,
+            SELECT folders.*, (SELECT count(*) FROM files WHERE folder_id=folders.id AND status IN ('indexed','keyword','pending','budget')) AS files_indexed,
             (SELECT count(*) FROM chunks JOIN files ON file_id=files.id WHERE folder_id=folders.id) AS chunks
             FROM folders ORDER BY path
         """)]
@@ -402,7 +422,7 @@ class Store:
         return {
             r["path"]: dict(r)
             for r in self.db.execute(
-                "SELECT * FROM files WHERE folder_id=?", (folder_id,)
+                "SELECT files.*, (SELECT count(vector) FROM chunks WHERE file_id=files.id) AS embedded FROM files WHERE folder_id=?", (folder_id,)
             )
         }
 
@@ -505,6 +525,11 @@ class Store:
             self._remove_file_stats(old_file)
         for chunk_id in old_ids:
             self._drop_vector(chunk_id)
+        owner = self.db.execute("SELECT folder_id FROM files WHERE id=?", (file_id,)).fetchone()
+        if owner is None:
+            self._invalidate_search()
+            return
+        folder_id = owner[0]
         states = {}
         members = {}
         for chunk_id, (value, kind) in additions.items():
@@ -673,7 +698,11 @@ class Store:
         distinctive: list[str] | None = None,
         evidence: dict[int, int] | None = None,
     ) -> list[int]:
-        from .search import lexical_tier
+        from .search import filename_match, lexical_tier
+
+        terms = bounded_terms(terms, distinctive)
+        if distinctive is not None:
+            distinctive = [term for term in distinctive if term in terms]
 
         if not allowed:
             return []
@@ -701,7 +730,7 @@ class Store:
         elif all(term.isascii() or term.lower() == term.upper() for term in precise):
             # LIKE has no short trigram postings, but does the unavoidable scan
             # inside SQLite and materializes only matching bodies in Python.
-            patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            patterns = ["%" + term.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
                         for term in precise]
             where = " AND ".join("(text LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\')" for _ in patterns)
             candidates = list(self.db.execute(
@@ -720,7 +749,13 @@ class Store:
                 "ORDER BY bm25(chunks_fts),rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT),
                 ("filename : (" + self._match_expression(filename_terms) + ")",),
             ) if r[0] not in existing)
-        ranked, strengths = [], {}
+        if terms:
+            patterns = ["%" + term.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in terms]
+            where = " AND ".join("local_basename(path) LIKE ? ESCAPE '\\'" for _ in patterns)
+            candidates.extend((-row["id"], "", Path(row["path"]).name) for row in self.db.execute(
+                "SELECT files.id,path FROM local_allowed JOIN files ON files.id=-local_allowed.id WHERE local_allowed.id<0 AND " + where +
+                " ORDER BY local_allowed.id DESC LIMIT " + str(KEYWORD_CANDIDATE_LIMIT), patterns))
+        ranked, strengths, name_matches = [], {}, {}
         for chunk_id, text, filename in candidates:
             if chunk_id not in allowed:
                 continue
@@ -729,10 +764,11 @@ class Store:
                     or (terms and all(t.casefold() in name for t in terms))):
                 continue
             strengths[chunk_id] = lexical_tier(phrase, terms, text, filename)
+            name_matches[chunk_id] = filename_match(phrase, terms, filename)
             ranked.append(chunk_id)
-        # Stable BM25 ties remain stable; choose a full phrase before a weak
-        # matching chunk from the same file, before file-level collapse.
-        ranked.sort(key=lambda i: -strengths[i])
+        # Filename hits share the top tier, with exact stems then token coverage.
+        # Stable BM25 ties and content-only ordering remain unchanged.
+        ranked.sort(key=lambda i: (-strengths[i], -name_matches[i][0], -name_matches[i][1]))
         if evidence is not None:
             evidence.update(strengths)
         return ranked
@@ -745,13 +781,18 @@ class Store:
             "SELECT count(*), count(vector) FROM chunks"
         ).fetchone()
         for row in self.db.execute(
-            "SELECT path FROM files WHERE status IN ('indexed','keyword','pending')"
+            "SELECT path FROM files WHERE status IN ('indexed','keyword','pending','budget')"
         ):
             counts[file_kind(Path(row["path"]))] += 1
         return {
             "files_by_kind": counts,
+            "name_only_files": self.db.execute("""
+                SELECT coalesce(sum(min(n,?)),0) FROM (
+                    SELECT count(*) AS n FROM files WHERE status LIKE 'skipped:%'
+                    AND status != ? GROUP BY folder_id)
+            """, (MAX_NAME_ONLY_FILES_PER_FOLDER, "skipped: " + SKIP_REASONS["private"])).fetchone()[0],
             "files": self.db.execute(
-                "SELECT count(*) FROM files WHERE status IN ('indexed','keyword','pending')"
+                "SELECT count(*) FROM files WHERE status IN ('indexed','keyword','pending','budget')"
             ).fetchone()[0],
             "chunks": chunks,
             "embedded_chunks": embedded,
@@ -773,15 +814,18 @@ class Store:
 class StoreWorker:
     """A single CPU worker owns SQLite, including construction and teardown.
 
-    Synchronous access is for small route helpers and inspection only; expensive
-    indexing and search methods are awaited through call().
+    Synchronous access is for offline inspection only; loop callers await call().
     """
     def __init__(self, *args):
         from concurrent.futures import ThreadPoolExecutor
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-search-db")
         self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-search-writer")
-        self._store = self._executor.submit(Store, *args).result()
-        self.path = self._store.path
+        self._ready = self._executor.submit(Store, *args)
+        self.path = args[0]
+
+    @property
+    def _store(self):
+        return self._ready.result()
 
     def __getattr__(self, name):
         value = self._executor.submit(getattr, self._store, name).result()
@@ -793,6 +837,7 @@ class StoreWorker:
         import asyncio
         from functools import partial
         loop = asyncio.get_running_loop()
+        await asyncio.wrap_future(self._ready)
         async def replace():
             room = await loop.run_in_executor(self._executor, self._store.embedding_room, args[1])
             change = await loop.run_in_executor(self._writer, partial(self._write_file, args, kwargs, room))
@@ -824,3 +869,23 @@ class StoreWorker:
         self._writer.shutdown()
         self._executor.submit(self._store.close).result()
         self._executor.shutdown()
+
+
+def bounded_terms(terms, distinctive=None):
+    """Bound SQL expression depth; prefer rare terms, then longer literals."""
+    unique = list(dict.fromkeys(terms))
+    if len(unique) <= MAX_KEYWORD_TERMS:
+        return unique
+    rare = set(distinctive or ())
+    return sorted(unique, key=lambda term: (term not in rare, -len(term), term))[:MAX_KEYWORD_TERMS]
+
+
+def walk_reaches(root, descendant):
+    """A selected root overrides location pruning only within its own subtree."""
+    for relative in [Path(), *descendant.relative_to(root).parents, descendant.relative_to(root)]:
+        path = root / relative
+        if path == root:
+            continue
+        if excluded(path, directory=True) or excluded_location(path, root) or (path / "pyvenv.cfg").exists():
+            return False
+    return True

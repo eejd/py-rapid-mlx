@@ -29,11 +29,11 @@ from .extraction import (
     read_safe,
     scan_batches,
     validate_folder,
-    open_root, open_safe, VIDEO_MAX_BYTES,
+    open_root, open_safe, stat_safe, VIDEO_MAX_BYTES, TEXT_SUFFIXES, OFFICE_SUFFIXES, MAX_BYTES,
 )
 from .eligibility import semantic_chunk
 from .search import KINDS, fuse, grouped_rankings, query_statistics, query_terms, semantic_ranking, snippet, top_files
-from .store import StoreWorker
+from .store import StoreWorker, bounded_terms
 from .parsing import parse_document
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ def local_model_path(model_id: str) -> str | None:
 
     from ..cli import _cache_runnability
     from ..model_metadata import (
+        _cached_file, _complete_cached_checkpoint,
         resolve_offline_cached_snapshot,
         resolve_unreferenced_cached_snapshot,
     )
@@ -62,6 +63,12 @@ def local_model_path(model_id: str) -> str | None:
         ) or resolve_offline_cached_snapshot(model_id)
         if resolved is not None:
             return str(resolved)
+        config = _cached_file(model_id, "config.json")
+        if config is not None:
+            from huggingface_hub.constants import HF_HUB_CACHE
+            repo = Path(HF_HUB_CACHE) / ("models--" + model_id.replace("/", "--"))
+            resolved = _complete_cached_checkpoint(repo, config.parent, model_id)
+            return str(resolved) if resolved is not None else None
         return str(snapshot_download(model_id, local_files_only=True))
     except (OSError, ValueError):
         return None
@@ -94,6 +101,7 @@ class LocalSearch:
         self.engine = None
         self.model_worker = model_worker
         self._model_gate = asyncio.Lock()
+        self._coordination = asyncio.Lock()
         self._owner_worker = None
         self.worker_error = None
         self.batch_size = max(1, min(4, batch_size))
@@ -114,16 +122,20 @@ class LocalSearch:
         }
 
     def start(self):
-        for folder in self.store.folders():
-            self.queue(folder["id"])
+        self.task = asyncio.create_task(self._resume())
 
-    def queue(self, folder_id: str):
-        if self.closed or not self.store.folder(folder_id):
+    async def _resume(self):
+        for folder in await self.store.call("folders"):
+            await self.queue(folder["id"])
+        await self._run()
+
+    async def queue(self, folder_id: str):
+        if self.closed or not await self.store.call("folder", folder_id):
             return
         if folder_id not in self.pending:
             self.pending.append(folder_id)
         if self.progress["folder_id"] != folder_id:
-            self.store.set_folder(folder_id, "queued")
+            await self.store.call("set_folder", folder_id, "queued")
         self._start_worker()
 
     def _start_worker(self):
@@ -137,28 +149,23 @@ class LocalSearch:
         model_path = await asyncio.to_thread(self.resolve_model, self.model_id)
         folders = await self.store.call("folders")
         totals = await self.store.call("totals")
-        return self._status(model_path, folders, totals)
-
-    def _status(self, model_path, folders, totals) -> dict:
-        downloaded = model_path is not None
-        # A status poll after an explicit model pull resumes waiting folders.
-        if downloaded and callable(self._worker()):
-            for folder in folders:
-                if (
-                    folder["state"] == "waiting_for_model"
-                    and self.progress["folder_id"] != folder["id"]
-                ):
-                    self.queue(folder["id"])
+        vision = await asyncio.to_thread(self._vision_available, model_path)
         for folder in folders:
-            if not Path(folder["path"]).is_dir():
+            if not await asyncio.to_thread(Path(folder["path"]).is_dir):
                 folder["state"] = "missing"
+            elif model_path is not None and callable(self._worker()) and folder["state"] == "waiting_for_model" and self.progress["folder_id"] != folder["id"]:
+                await self.queue(folder["id"])
+        return self._status(model_path, folders, totals, vision)
+
+    def _status(self, model_path, folders, totals, vision=None) -> dict:
+        downloaded = model_path is not None
         return {
             "enabled": True,
             "model": {
                 "id": self.model_id,
                 "downloaded": downloaded,
                 "loaded": bool(self.engine and self.engine.is_loaded),
-                "vision": self._vision_available(model_path),
+                "vision": self._vision_available(model_path) if vision is None else vision,
             },
             "folders": folders,
             "indexing": dict(self.progress),
@@ -181,29 +188,29 @@ class LocalSearch:
         except (OSError, ValueError):
             return False
 
-    def add_folder(self, value: str) -> tuple[dict, bool]:
-        path = validate_folder(value)
-        folder_id, created = self.store.add_folder(path)
-        self.pending = [i for i in self.pending if self.store.folder(i)]
-        active_id = self.progress["folder_id"]
-        if (
-            active_id
-            and not self.store.folder(active_id)
-            and self.task
-            and not self.task.cancelling()
-        ):
-            # No await between absorption and cancellation: the old indexer
-            # cannot commit against its removed root before cancellation lands.
-            self.task.cancel()
-        self.queue(folder_id)
-        return self.store.folder(folder_id), created
+    async def add_folder(self, value: str) -> tuple[dict, bool]:
+        path = await asyncio.to_thread(validate_folder, value)
+        async with self._coordination:
+            # Drain the current write before absorption. Cancellation cannot
+            # race a commit against a root being removed on the DB worker.
+            active_id = self.progress["folder_id"]
+            if active_id:
+                await self._cancel_worker()
+                if active_id not in self.pending:
+                    self.pending.append(active_id)
+            folder_id, created = await self.store.call("add_folder", path)
+            live = {f["id"] for f in await self.store.call("folders")}
+            self.pending = [i for i in self.pending if i in live]
+            await self.queue(folder_id)
+            return await self.store.call("folder", folder_id), created
 
     async def delete_folder(self, folder_id: str):
-        if self.progress["folder_id"] == folder_id:
-            await self._cancel_worker()
-        self.pending = [i for i in self.pending if i != folder_id]
-        await self.store.call("delete_folder", folder_id)
-        self._start_worker()
+        async with self._coordination:
+            if self.progress["folder_id"] == folder_id:
+                await self._cancel_worker()
+            self.pending = [i for i in self.pending if i != folder_id]
+            await self.store.call("delete_folder", folder_id)
+            self._start_worker()
 
     async def _cancel_worker(self):
         if self.task and not self.task.done():
@@ -219,7 +226,7 @@ class LocalSearch:
         await self._cancel_worker()
         if self.engine is not None:
             await self._model_call(self._release_embedder, _teardown=True)
-        self.store.close()
+        await asyncio.to_thread(self.store.close)
 
     def _worker(self):
         if self.model_worker is not None:
@@ -370,7 +377,7 @@ class LocalSearch:
                 del batch
                 await asyncio.sleep(self.yield_seconds)
         finally:
-            frames.close()
+            await asyncio.to_thread(frames.close)
         return chunks, vectors if available else None, available, error
 
     async def _run(self):
@@ -403,8 +410,18 @@ class LocalSearch:
 
     async def _index(self, folder: dict):
         root = Path(folder["path"])
-        with open_root(root) as root_fd:
+        pinned = open_root(root)
+        opening = asyncio.create_task(asyncio.to_thread(pinned.__enter__))
+        try:
+            root_fd = await asyncio.shield(opening)
+        except asyncio.CancelledError:
+            await opening
+            await asyncio.to_thread(pinned.__exit__, None, None, None)
+            raise
+        try:
             await self._index_pinned(folder, root, root_fd)
+        finally:
+            await asyncio.to_thread(pinned.__exit__, None, None, None)
 
     async def _index_pinned(self, folder, root, root_fd):
         batches = scan_batches(root, root_fd)
@@ -412,7 +429,7 @@ class LocalSearch:
             old = await self.store.call("files", folder["id"])
             existing = set()
             skipped = 0
-            index_directory = self.store.path.parent.resolve()
+            index_directory = await asyncio.to_thread(self.store.path.parent.resolve)
 
             async def discovered_paths():
                 nonlocal skipped
@@ -430,7 +447,7 @@ class LocalSearch:
                     skipped += count
                     await self.store.call("set_folder", folder["id"], "indexing", skipped=skipped)
                     for path in paths:
-                        if path.parent.resolve() == index_directory:
+                        if path.parent == index_directory:
                             continue
                         existing.add(str(path))
                         yield path
@@ -448,7 +465,7 @@ class LocalSearch:
                 self.progress["current_path"] = str(path)
                 previous = old.get(str(path))
                 try:
-                    info = path.lstat()
+                    info = await asyncio.to_thread(path.lstat)
                     if excluded(path):
                         raise SkippedError(SKIP_REASONS["private"])
                     if (
@@ -456,7 +473,8 @@ class LocalSearch:
                         and previous["size"] == info.st_size
                         and previous["mtime_ns"] == info.st_mtime_ns
                         and previous["status"] != "pending"
-                        and not (available and previous["status"] == "keyword")
+                        and not (available and previous["status"] in {"keyword", "budget"}
+                                 and await self.store.call("embedding_room", path) > previous.get("embedded", 0))
                     ):
                         if previous["status"].startswith("skipped"):
                             skipped += 1
@@ -470,7 +488,7 @@ class LocalSearch:
                         model_error = error or model_error
                         if error:
                             available = False
-                        after = path.lstat()
+                        after = await asyncio.to_thread(path.lstat)
                         if (info.st_size, info.st_mtime_ns, info.st_ino) != (
                             after.st_size,
                             after.st_mtime_ns,
@@ -493,6 +511,10 @@ class LocalSearch:
                         raise SkippedError(SKIP_REASONS["unsupported"])
                     if path.suffix.lower() in AUDIO_SUFFIXES:
                         raise SkippedError(SKIP_REASONS["audio"])
+                    if path.suffix.lower() not in TEXT_SUFFIXES | OFFICE_SUFFIXES | {".pdf"} and path.name.lower() not in {"makefile", "dockerfile", "license", "readme"}:
+                        raise SkippedError(SKIP_REASONS["unsupported"])
+                    if info.st_size > MAX_BYTES:
+                        raise SkippedError(SKIP_REASONS["size"])
                     data, info = await cpu_call(read_safe, path, root, root_fd=root_fd)
                     digest = await asyncio.to_thread(lambda: hashlib.sha256(data).hexdigest())
                     if (
@@ -552,12 +574,13 @@ class LocalSearch:
                         digest,
                         chunks,
                         vectors,
-                        "indexed" if vectors is not None or not eligible else "keyword",
+                        ("budget" if available and eligible and remaining < min(len(eligible), MAX_EMBEDDED_CHUNKS_PER_FILE)
+                         else "indexed" if vectors is not None or not eligible else "keyword"),
                     )
                 except SkippedError as exc:
                     skipped += 1
                     try:
-                        skipped_info = path.lstat()
+                        skipped_info = await asyncio.to_thread(path.lstat)
                     except FileNotFoundError:
                         if previous:
                             await self.store.call("remove_file", previous["id"])
@@ -578,7 +601,7 @@ class LocalSearch:
                     # Unreadable documents do not abort the folder.
                     skipped += 1
                     try:
-                        skipped_info = path.lstat()
+                        skipped_info = await asyncio.to_thread(path.lstat)
                     except OSError:
                         if previous:
                             await self.store.call("remove_file", previous["id"])
@@ -602,7 +625,7 @@ class LocalSearch:
                 completed=True,
             )
         finally:
-            batches.close()
+            await asyncio.to_thread(batches.close)
 
     async def search(
         self,
@@ -616,6 +639,8 @@ class LocalSearch:
         terms = query_terms(query)
         rows = await self.store.call("search_rows", folder_ids, kinds)
         distinctive = await self.store.call("distinctive_terms", terms)
+        terms = bounded_terms(terms, distinctive)
+        distinctive = [term for term in distinctive if term in terms]
         highlight_terms = distinctive or [query.strip()]
         evidence = {}
         keyword = top_files(
@@ -666,9 +691,13 @@ class LocalSearch:
                 # Do not expose stale results after a source/root has been replaced
                 # by a link pointing outside the registered folder.
                 try:
-                    with open_safe(path, root, VIDEO_MAX_BYTES) as (_, info):
-                        if info.st_size != row["size"] or info.st_mtime != row["mtime"]:
-                            continue
+                    if row["content_indexed"]:
+                        with open_safe(path, root, VIDEO_MAX_BYTES) as (_, info):
+                            current = info
+                    else:
+                        current = stat_safe(path, root)
+                    if current.st_size != row["size"] or current.st_mtime != row["mtime"]:
+                        continue
                 except (OSError, ValueError):
                     continue
                 seen.add(row["path"])
@@ -684,10 +713,11 @@ class LocalSearch:
             row = rows[chunk_id]
             text, highlights = (
                 await asyncio.to_thread(snippet, await self.store.call("chunk_text", chunk_id), highlight_terms)
-                if row["kind"] == "text" else ("", [])
+                if row["kind"] == "text" and row["content_indexed"] else ("", [])
             )
             locator = json.loads(row["locator"])
             result_cache[chunk_id] = {
+                "content_indexed": row["content_indexed"], "skip_reason": row["skip_reason"],
                 "kind": row["kind"],
                 "timestamp": locator.get("timestamp") if row["kind"] == "video" else None,
                 "path": row["path"], "folder_id": row["folder_id"],

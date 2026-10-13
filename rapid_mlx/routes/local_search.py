@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frozen local-search MVP wire contract; mounted only by the opt-in lifespan."""
 
+import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -53,8 +54,8 @@ def service(request: Request):
     return request.app.state.local_search
 
 
-def require_folder(engine, folder_id):
-    if engine.store.folder(folder_id) is None:
+async def require_folder(engine, folder_id):
+    if await engine.store.call("folder", folder_id) is None:
         error("Folder not found", "folder_not_found", "folder_id", 404)
 
 
@@ -66,7 +67,7 @@ async def status(request: Request):
 @router.post("/folders")
 async def add_folder(body: FolderRequest, request: Request, response: Response):
     try:
-        folder, created = service(request).add_folder(body.path)
+        folder, created = await service(request).add_folder(body.path)
     except ValueError as exc:
         error(str(exc), "invalid_folder_path", "path")
     except OSError:
@@ -82,7 +83,7 @@ async def add_folder(body: FolderRequest, request: Request, response: Response):
 @router.delete("/folders/{folder_id}", status_code=204)
 async def delete_folder(folder_id: str, request: Request):
     engine = service(request)
-    require_folder(engine, folder_id)
+    await require_folder(engine, folder_id)
     await engine.delete_folder(folder_id)
     return Response(status_code=204)
 
@@ -91,11 +92,11 @@ async def delete_folder(folder_id: str, request: Request):
 async def reindex(body: ReindexRequest, request: Request):
     engine = service(request)
     if body.folder_id is not None:
-        require_folder(engine, body.folder_id)
-        engine.queue(body.folder_id)
+        await require_folder(engine, body.folder_id)
+        await engine.queue(body.folder_id)
     else:
-        for folder in engine.store.folders():
-            engine.queue(folder["id"])
+        for folder in await engine.store.call("folders"):
+            await engine.queue(folder["id"])
     return await engine.status_async()
 
 
@@ -106,5 +107,8 @@ async def search(body: SearchRequest, request: Request):
     engine = service(request)
     if body.folder_ids is not None:
         for folder_id in body.folder_ids:
-            require_folder(engine, folder_id)
-    return await engine.search(body.query, body.limit, body.folder_ids, body.kinds, body.group_limit)
+            await require_folder(engine, folder_id)
+    try:
+        return await engine.search(body.query, body.limit, body.folder_ids, body.kinds, body.group_limit)
+    except sqlite3.OperationalError:
+        error("Query could not be processed", "invalid_query", "query")
