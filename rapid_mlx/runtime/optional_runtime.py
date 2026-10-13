@@ -345,6 +345,8 @@ def _install_argv(exc: OptionalRuntimeMissing, method: str) -> list[str]:
 
 def _install_optional_extra(exc: OptionalRuntimeMissing, method: str = "pip") -> None:
     """Install one pinned extra, then replace this process on success."""
+    from rapid_mlx.telemetry import posthog_sender
+
     install_argv = _install_argv(exc, method)
     completed = subprocess.run(install_argv, check=False)
     if completed.returncode != 0:
@@ -357,8 +359,6 @@ def _install_optional_extra(exc: OptionalRuntimeMissing, method: str = "pip") ->
     # ``exec`` skips atexit callbacks. Drain the two already-enqueued failure
     # terminals before replacing this process so the new PID can be measured
     # as a separate attempted -> ready journey.
-    from rapid_mlx.telemetry import posthog_sender
-
     posthog_sender.get_sender().flush(2.0)
     restart_argv = [sys.executable, *sys.orig_argv[1:]]
     os.execv(sys.executable, restart_argv)
@@ -400,9 +400,7 @@ def handle_optional_runtime_missing(
             else importlib.util.find_spec("pip") is not None
         )
     )
-    is_interactive = (
-        can_install and not assume_yes and _is_tty(sys.stdin) and _is_tty(sys.stderr)
-    )
+    is_interactive = can_install and not assume_yes and _is_tty(sys.stdin)
     if can_install and not assume_yes and not is_interactive:
         action = (
             "repair rapid-mlx automatically, or run the command above manually."

@@ -357,7 +357,7 @@ def test_isatty_exception_is_non_tty(monkeypatch) -> None:
 def test_detached_or_stream_without_isatty_is_non_tty(
     monkeypatch, capsys, stream_name, stream
 ) -> None:
-    streams = {"stdin": _TTY("y\n"), "stderr": _TTY()}
+    streams = {"stdin": _TTY("n\n"), "stderr": _TTY()}
     streams[stream_name] = stream
     stderr = streams["stderr"]
     _isolate_handler(monkeypatch, stdin=streams["stdin"], stderr=stderr)
@@ -373,10 +373,14 @@ def test_detached_or_stream_without_isatty_is_non_tty(
     if stderr is None:
         output = capsys.readouterr().out
         assert "missing vision" in output
-        assert "Install now? [Y/n] (vision runtime)" not in output
+        assert ("Install now? [Y/n] (vision runtime)" in output) is (
+            stream_name == "stderr"
+        )
     else:
         assert "missing vision" in stderr.getvalue()
-        assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
+        assert ("Install now? [Y/n] (vision runtime)" in stderr.getvalue()) is (
+            stream_name == "stderr"
+        )
 
 
 def test_yes_installs_without_tty(monkeypatch) -> None:
