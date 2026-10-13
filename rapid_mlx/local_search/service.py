@@ -527,6 +527,11 @@ class LocalSearch:
             existing = set()
             skipped = 0
             index_directory = await asyncio.to_thread(self.store.path.parent.resolve)
+            # Only the index's own files are skipped; user files beside it are indexed.
+            index_names = {
+                self.store.path.name + suffix
+                for suffix in ("", "-wal", "-shm", "-journal")
+            }
 
             async def discovered_paths():
                 nonlocal skipped
@@ -546,7 +551,7 @@ class LocalSearch:
                         "set_folder", folder["id"], "indexing", skipped=skipped
                     )
                     for path in paths:
-                        if path.parent == index_directory:
+                        if path.parent == index_directory and path.name in index_names:
                             continue
                         existing.add(str(path))
                         yield path

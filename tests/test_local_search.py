@@ -574,6 +574,24 @@ def folder(tmp_path, name="source"):
     return root
 
 
+def test_user_files_beside_the_index_are_indexed(tmp_path):
+    async def scenario():
+        search = engine(tmp_path)
+        try:
+            await search.store.call("folders")  # the index opens lazily
+            beside = search.store.path.parent / "note.txt"
+            beside.write_text("harbour pilot schedule")
+            fid = (await search.add_folder(str(tmp_path)))[0]["id"]
+            await search.wait_idle()
+            names = {Path(p).name for p in search.store.files(fid)}
+            assert "note.txt" in names
+            assert not {n for n in names if n.startswith(search.store.path.name)}
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("suffix", [".txt", ".md", ".py", ".json", ".yaml", ".csv"])
 def test_text_extract(suffix):
     assert (
