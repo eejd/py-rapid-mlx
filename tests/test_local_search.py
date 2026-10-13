@@ -93,12 +93,88 @@ class FakeEmbedder:
         return [[0.2, 1.0, 0.0] for _ in images]
 
 
-async def wait_chat_pause(search):
-    async def waiting():
-        while search.progress.get("paused_reason") != "chat":
-            await asyncio.sleep(0.001)
+# Deadlock guards only: correctness is established by events, never elapsed time.
+SYNC_TIMEOUT = 30
 
-    await asyncio.wait_for(waiting(), 2)
+
+class BlockingCall:
+    """A worker gate that fails immediately if invoked on the event loop."""
+
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.loop_thread = threading.get_ident()
+        self.entered = asyncio.Event()
+        self.release = threading.Event()
+
+    def __call__(self):
+        assert threading.get_ident() != self.loop_thread, (
+            "blocking call ran on event loop"
+        )
+        self.loop.call_soon_threadsafe(self.entered.set)
+        assert self.release.wait(SYNC_TIMEOUT), "worker gate was never released"
+
+
+class ObservedLock(asyncio.Lock):
+    """Signal when a competing coroutine actually reaches a held lock."""
+
+    def __init__(self):
+        super().__init__()
+        self.waiting = asyncio.Event()
+
+    async def acquire(self):
+        if self.locked():
+            self.waiting.set()
+        return await super().acquire()
+
+
+async def loop_checkpoint():
+    # A queued callback acknowledges a loop turn after task start/cancellation.
+    reached = asyncio.Event()
+    asyncio.get_running_loop().call_soon(reached.set)
+    await reached.wait()
+
+
+def observe_chat_pause(search):
+    paused = asyncio.Event()
+    wait = search._wait_for_generation
+
+    class Progress(dict):
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if key == "paused_reason" and value == "chat":
+                paused.set()
+
+    async def observed():
+        search.progress = Progress(search.progress)
+        await wait()
+
+    search._wait_for_generation = observed
+    search.chat_paused = paused
+
+
+async def wait_chat_pause(search):
+    await asyncio.wait_for(search.chat_paused.wait(), SYNC_TIMEOUT)
+    assert search.progress.get("paused_reason") == "chat"
+
+
+def pause_after_embedding(search, *, batch=1, images=False):
+    """Hold a completed batch before its caller can publish or start another."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    embed = search._embed_async
+    calls = 0
+
+    async def observed(inputs, **kwargs):
+        nonlocal calls
+        result = await embed(inputs, **kwargs)
+        if kwargs.get("images", False) == images:
+            calls += 1
+            if calls == batch:
+                entered.set()
+                await release.wait()
+        return result
+
+    search._embed_async = observed
+    return entered, release
 
 
 @pytest.mark.parametrize(
@@ -122,6 +198,7 @@ def test_indexing_yields_to_generation_and_search_stays_interactive(
     async def scenario():
         fake = FakeEmbedder()
         search = engine(tmp_path, fake)
+        observe_chat_pause(search)
         root = folder(tmp_path)
         if media:
             from PIL import Image
@@ -134,15 +211,16 @@ def test_indexing_yields_to_generation_and_search_stays_interactive(
         try:
             (await search.add_folder(str(root)))
             await wait_chat_pause(search)
-            await asyncio.sleep(0.12)
             assert not fake.calls and not fake.image_calls
             assert (await search.status_async())["indexing"]["paused_reason"] == "chat"
-            result = await asyncio.wait_for(search.search("apple", 10, None), 1)
+            result = await asyncio.wait_for(
+                search.search("apple", 10, None), SYNC_TIMEOUT
+            )
             assert result["mode"] == "hybrid"
             assert len(fake.calls) == 1 and "query: apple" in fake.calls[0][0]
             assert search.progress["paused_reason"] == "chat"
             signal[activity] = 0
-            await asyncio.wait_for(search.wait_idle(), 1)
+            await asyncio.wait_for(search.wait_idle(), SYNC_TIMEOUT)
             if media:
                 assert fake.image_calls == [1]
             else:
@@ -168,12 +246,13 @@ def test_cancel_indexing_while_waiting_for_chat(tmp_path, monkeypatch):
     async def scenario():
         fake = FakeEmbedder()
         search = engine(tmp_path, fake)
+        observe_chat_pause(search)
         root = folder(tmp_path)
         (root / "apple.txt").write_text("An apple orchard produces delicious fruit.")
         try:
             registered, _ = await search.add_folder(str(root))
             await wait_chat_pause(search)
-            await asyncio.wait_for(search.delete_folder(registered["id"]), 0.5)
+            await asyncio.wait_for(search.delete_folder(registered["id"]), SYNC_TIMEOUT)
             assert not fake.calls
             assert search.task is None
             assert "paused_reason" not in search.status()["indexing"]
@@ -227,6 +306,7 @@ def test_chat_arriving_between_batches_defers_next_batch(tmp_path, monkeypatch, 
     async def scenario():
         fake = FakeEmbedder()
         search = engine(tmp_path, fake)
+        observe_chat_pause(search)
         inputs = [object()] * 4 if images else ["apple"] * 4
         try:
             await search._embed_async(inputs, images=images, background=True)
@@ -239,7 +319,7 @@ def test_chat_arriving_between_batches_defers_next_batch(tmp_path, monkeypatch, 
                 calls = fake.image_calls if images else fake.calls
                 assert len(calls) == 1
                 signal["active_requests"] = 0
-                await asyncio.wait_for(batch, 0.5)
+                await asyncio.wait_for(batch, SYNC_TIMEOUT)
                 assert len(calls) == 2
                 assert "paused_reason" not in search.progress
             finally:
@@ -268,18 +348,19 @@ def test_background_rechecks_chat_after_query_lock(tmp_path, monkeypatch):
     async def scenario():
         fake = FakeEmbedder()
         search = engine(tmp_path, fake)
+        observe_chat_pause(search)
         try:
             async with search._model_gate:
                 batch = asyncio.create_task(
                     search._embed_async(["apple"], background=True)
                 )
-                await asyncio.wait_for(checked.wait(), 1)
+                await asyncio.wait_for(checked.wait(), SYNC_TIMEOUT)
                 signal["active_requests"] = 1
             try:
                 await wait_chat_pause(search)
                 assert not fake.calls
                 signal["active_requests"] = 0
-                await asyncio.wait_for(batch, 0.5)
+                await asyncio.wait_for(batch, SYNC_TIMEOUT)
                 assert len(fake.calls) == 1
             finally:
                 if not batch.done():
@@ -294,13 +375,14 @@ def test_background_rechecks_chat_after_query_lock(tmp_path, monkeypatch):
 
 def engine(tmp_path, fake=None, **kwargs):
     fake = fake or FakeEmbedder()
-    return LocalSearch(
+    search = LocalSearch(
         tmp_path / "index",
         resolve_model=lambda _: "local-checkpoint",
         embedder_factory=lambda _: fake,
         yield_seconds=0,
         **kwargs,
     )
+    return search
 
 
 def folder(tmp_path, name="source"):
@@ -723,7 +805,7 @@ def test_absorbing_queued_or_active_folder_resumes_under_new_root(
         try:
             old, _ = await search.add_folder(str(child))
             if active:
-                await asyncio.wait_for(paused.wait(), 5)
+                await asyncio.wait_for(paused.wait(), SYNC_TIMEOUT)
                 assert len(fake.calls) == 1
             new, created = await search.add_folder(str(parent))
             assert created and new["id"] != old["id"]
@@ -1034,11 +1116,12 @@ def test_single_file_yields_and_cancels_between_embedding_batches(tmp_path):
         (root / "large.txt").write_text("apple\n" * 20000)
         fake = FakeEmbedder()
         first_batch = asyncio.Event()
+        loop = asyncio.get_running_loop()
         embed = fake.embed
 
         def observed(texts):
             vectors = embed(texts)
-            first_batch.set()
+            loop.call_soon_threadsafe(first_batch.set)
             return vectors
 
         fake.embed = observed
@@ -1100,10 +1183,11 @@ def test_batches_yield_cancel_and_resume(tmp_path):
         (root / "long.txt").write_text("apple\n" * 4000)
         fake = FakeEmbedder()
         search = engine(tmp_path, fake, batch_size=2)
+        entered, release = pause_after_embedding(search)
         fid = (await search.add_folder(str(root)))[0]["id"]
-        while not fake.calls:
-            await asyncio.sleep(0.001)
+        await asyncio.wait_for(entered.wait(), SYNC_TIMEOUT)
         await search.close()
+        release.set()
         assert search.store.path.exists()
         resumed = engine(tmp_path, fake, batch_size=2)
         resumed.start()
@@ -1472,11 +1556,12 @@ def test_active_delete_keeps_next_folder_job(tmp_path):
         (two / "short.txt").write_text("banana")
         fake = FakeEmbedder()
         search = engine(tmp_path, fake, batch_size=1)
+        entered, release = pause_after_embedding(search)
         first = (await search.add_folder(str(one)))[0]["id"]
         second = (await search.add_folder(str(two)))[0]["id"]
-        while not fake.calls:
-            await asyncio.sleep(0.001)
+        await asyncio.wait_for(entered.wait(), SYNC_TIMEOUT)
         await search.delete_folder(first)
+        release.set()
         await search.wait_idle()
         assert search.store.folder(first) is None
         assert search.store.folder(second)["files_indexed"] == 1
@@ -2415,10 +2500,11 @@ def test_media_cancellation_preserves_per_file_commit_and_resumes(tmp_path):
         write_video(root / "b.mp4", colors=(0, 255, 0, 255, 0, 255), fps=2, seconds=30)
         fake = FakeEmbedder()
         search = engine(tmp_path, fake)
+        entered, release = pause_after_embedding(search, batch=2, images=True)
         fid = (await search.add_folder(str(root)))[0]["id"]
-        while len(fake.image_calls) < 2:
-            await asyncio.sleep(0)
+        await asyncio.wait_for(entered.wait(), SYNC_TIMEOUT)
         await search._cancel_worker()
+        release.set()
         assert len(search.store.files(fid)) == 1
         assert all(row["kind"] == "image" for row in search.store.rows().values())
         await search.queue(fid)
@@ -2971,7 +3057,7 @@ def test_files_searchable_before_discovery_finishes(tmp_path, monkeypatch):
         monkeypatch.setattr(service.asyncio, "sleep", sleep)
         try:
             (await search.add_folder(str(root)))
-            await asyncio.wait_for(continued.wait(), 5)
+            await asyncio.wait_for(continued.wait(), SYNC_TIMEOUT)
             release.set()
             await search.wait_idle()
             assert search.status()["totals"]["files"] == 2
@@ -3847,13 +3933,13 @@ def test_eligibility_migration_keeps_keyword_locators_and_prose(tmp_path):
 
 def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
     """Generation and lazy materialisation share the same one-thread boundary."""
-    import time
     from concurrent.futures import ThreadPoolExecutor
 
     async def scenario():
         loop_thread = threading.get_ident()
-        events, ticks, flow = [], [], []
-        entered, release = threading.Event(), threading.Event()
+        events, streamed = [], []
+        gate = BlockingCall()
+        streaming_done = threading.Event()
         executor = ThreadPoolExecutor(max_workers=1)
 
         async def worker(func, *args, **kwargs):
@@ -3875,12 +3961,8 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
 
             def embed(self, texts):
                 events.append(("embed", threading.get_ident()))
-                before = len(ticks)
-                entered.set()
-                assert release.wait(5), (
-                    "stream must progress while embedding is blocked"
-                )
-                flow.append(len(ticks) - before)
+                gate()
+                assert streaming_done.is_set()
                 return LazyVectors()
 
             def __del__(self):
@@ -3896,17 +3978,19 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
         )
 
         async def stream():
-            assert await asyncio.to_thread(entered.wait, 5)
-            for _ in range(25):
-                ticks.append(time.monotonic())
-                if len(ticks) == 5:
-                    release.set()
-                await asyncio.sleep(0.002)
+            await asyncio.wait_for(gate.entered.wait(), SYNC_TIMEOUT)
+
+            async def fragment(n):
+                assert not gate.release.is_set()
+                streamed.append(n)
+
+            await asyncio.gather(*(fragment(n) for n in range(25)))
+            streaming_done.set()
+            gate.release.set()
 
         async def generation():
             for _ in range(25):
                 await worker(lambda: events.append(("generate", threading.get_ident())))
-                await asyncio.sleep(0.002)
 
         try:
             (await search.add_folder(str(root)))
@@ -3922,10 +4006,11 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
             }
             assert len({thread for _, thread in events}) == 1
             assert all(thread != loop_thread for _, thread in events)
-            assert len(ticks) == 25
-            assert flow[0] >= 5
+            assert streamed == list(range(25))
         finally:
-            release.set()
+            gate.release.set()
+            if not search.closed:
+                await search.close()
             executor.shutdown()
 
     asyncio.run(scenario())
@@ -4037,26 +4122,39 @@ def test_parser_killed_and_reaped(monkeypatch, stop):
 
     children = []
     spawn = asyncio.create_subprocess_exec
+    spawned = asyncio.Event()
 
     async def observed(*args, **kwargs):
         process = await spawn(*args, **kwargs)
         children.append(process)
+        spawned.set()
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", observed)
-    monkeypatch.setattr(parsing, "PARSER_TIMEOUT_SECONDS", 0.15)
+    if stop == "timeout":
+        wait_for = asyncio.wait_for
+
+        async def injected_timeout(awaitable, timeout):
+            # Keep the synchronization guard independent of the injected deadline.
+            task = asyncio.create_task(awaitable)
+            await wait_for(spawned.wait(), SYNC_TIMEOUT)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(asyncio, "wait_for", injected_timeout)
     if stop == "memory":
         monkeypatch.setattr(parsing, "PARSER_MEMORY_BYTES", 1)
 
     async def scenario():
         task = asyncio.create_task(
             parsing.run_parser(
-                [sys.executable, "-c", "import time; time.sleep(60)"], b""
+                [sys.executable, "-c", "import signal; signal.pause()"], b""
             )
         )
         if stop == "cancel":
-            while not children:
-                await asyncio.sleep(0.001)
+            await asyncio.wait_for(spawned.wait(), SYNC_TIMEOUT)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -4201,29 +4299,31 @@ def test_identical_file_embeddings_return_paraphrase_neighbours(tmp_path, count)
 
 
 def test_async_status_keeps_http_loop_responsive(tmp_path):
-    import time
-
     async def scenario():
         search = engine(tmp_path)
-        progress = []
+        gate = BlockingCall()
 
         def expensive():
-            before = len(ticks)
-            time.sleep(0.04)
-            progress.append(len(ticks) - before)
+            gate()
             return {}
 
         search.store.totals = expensive
-        ticks = []
+        status = asyncio.create_task(search.status_async())
+        try:
+            await asyncio.wait_for(gate.entered.wait(), SYNC_TIMEOUT)
 
-        async def stream():
-            for _ in range(10):
-                ticks.append(1)
-                await asyncio.sleep(0.002)
+            async def other_request():
+                assert not gate.release.is_set()
+                assert not status.done()
+                return "responsive"
 
-        await asyncio.gather(search.status_async(), stream())
-        assert len(ticks) == 10 and progress[0] >= 5
-        await search.close()
+            assert await asyncio.create_task(other_request()) == "responsive"
+        finally:
+            gate.release.set()
+            try:
+                await status
+            finally:
+                await search.close()
 
     asyncio.run(scenario())
 
@@ -4436,6 +4536,7 @@ def test_query_waits_for_only_current_index_embedding_batch(tmp_path):
             resolve_model=lambda _: None,
             model_worker=worker,
         )
+        search._model_gate = ObservedLock()
         search._embed = lambda inputs: calls.append(inputs[0]) or [[1, 0, 0]]
 
         async def indexing():
@@ -4445,7 +4546,7 @@ def test_query_waits_for_only_current_index_embedding_batch(tmp_path):
         index = asyncio.create_task(indexing())
         await entered.wait()
         query = asyncio.create_task(search._embed_async(["query"]))
-        await asyncio.sleep(0)
+        await asyncio.wait_for(search._model_gate.waiting.wait(), SYNC_TIMEOUT)
         release.set()
         await asyncio.gather(index, query)
         assert calls == ["batch-1", "query", "batch-2"]
@@ -4478,7 +4579,7 @@ def test_warm_search_does_not_queue_behind_index_transaction(tmp_path):
                 for n, chunk in enumerate(super().__iter__()):
                     if n == 1:
                         entered.set()  # The writer already has an open transaction.
-                        assert release.wait(5)
+                        assert release.wait(SYNC_TIMEOUT)
                     yield chunk
 
         second = root / "second.txt"
@@ -4497,11 +4598,11 @@ def test_warm_search_does_not_queue_behind_index_transaction(tmp_path):
         )
         query = None
         try:
-            assert await asyncio.to_thread(entered.wait, 2)
+            assert await asyncio.to_thread(entered.wait, SYNC_TIMEOUT)
             query = asyncio.create_task(search.search("apple chart", 10, None))
-            done, _ = await asyncio.wait([query], timeout=0.5)
-            assert query in done, "search queued behind a whole-file write"
-            assert (await query)["results"][0]["path"] == str(first)
+            result = await asyncio.wait_for(asyncio.shield(query), SYNC_TIMEOUT)
+            assert not release.is_set() and not indexing.done()
+            assert result["results"][0]["path"] == str(first)
         finally:
             release.set()
             await indexing
@@ -4517,8 +4618,6 @@ def test_warm_search_does_not_queue_behind_index_transaction(tmp_path):
     ["add", "delete", "reindex", "reindex_all", "search", "status", "resume"],
 )
 def test_routes_keep_heartbeat_during_busy_db(tmp_path, monkeypatch, operation):
-    import time
-
     from rapid_mlx.local_search import service as module
 
     main_thread = threading.get_ident()
@@ -4539,27 +4638,19 @@ def test_routes_keep_heartbeat_during_busy_db(tmp_path, monkeypatch, operation):
             ).json()
             await app.state.local_search.wait_idle()
             search = app.state.local_search
-            entered, release = threading.Event(), threading.Event()
+            gate = BlockingCall()
+            waiting = asyncio.Event()
+            call = search.store.call
 
-            def occupied():
-                entered.set()
-                release.wait(1)
+            async def observed_call(*args, **kwargs):
+                waiting.set()
+                return await call(*args, **kwargs)
 
-            busy = search.store._executor.submit(occupied)
-            await asyncio.to_thread(entered.wait)
-            timer = threading.Timer(0.2, release.set)
-            timer.start()
-            ticks = []
+            monkeypatch.setattr(search.store, "call", observed_call)
+            busy = search.store._executor.submit(gate)
+            request = None
 
-            async def heartbeat():
-                while not release.is_set():
-                    ticks.append(time.monotonic())
-                    await asyncio.sleep(0.005)
-                ticks.append(time.monotonic())
-
-            pulse = asyncio.create_task(heartbeat())
-            await asyncio.sleep(0)
-            try:
+            async def operation_request():
                 fid = registered["id"]
                 if operation == "add":
                     response = await client.post(
@@ -4584,15 +4675,28 @@ def test_routes_keep_heartbeat_during_busy_db(tmp_path, monkeypatch, operation):
                     await search.wait_idle()
                     response = await client.get("/v1/local-search/status")
                 assert response.status_code in {200, 202, 204}
-                await pulse
-                assert len(ticks) >= 15
-                assert max(b - a for a, b in zip(ticks, ticks[1:])) < 0.1
+                return response
+
+            try:
+                await asyncio.wait_for(gate.entered.wait(), SYNC_TIMEOUT)
+                request = asyncio.create_task(operation_request())
+                await asyncio.wait_for(waiting.wait(), SYNC_TIMEOUT)
+
+                async def heartbeat():
+                    assert not gate.release.is_set()
+                    assert not busy.done()
+                    assert not request.done()
+                    return "responsive"
+
+                assert await asyncio.create_task(heartbeat()) == "responsive"
+                gate.release.set()
+                await asyncio.wait_for(asyncio.shield(request), SYNC_TIMEOUT)
                 await search.wait_idle()
             finally:
-                release.set()
-                timer.join()
-                busy.result()
-                await pulse
+                gate.release.set()
+                await asyncio.wrap_future(busy)
+                if request is not None:
+                    await request
 
     asyncio.run(scenario())
 
@@ -5025,7 +5129,7 @@ def test_cancel_during_root_open_drains_and_closes(tmp_path, monkeypatch):
 
         def __enter__(self):
             entered.set()
-            release.wait(2)
+            assert release.wait(SYNC_TIMEOUT)
             return self.context.__enter__()
 
         def __exit__(self, *args):
@@ -5040,7 +5144,7 @@ def test_cancel_during_root_open_drains_and_closes(tmp_path, monkeypatch):
             task = asyncio.create_task(search._index({"path": str(root)}))
             await asyncio.to_thread(entered.wait)
             task.cancel()
-            await asyncio.sleep(0)
+            await loop_checkpoint()
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -5729,7 +5833,7 @@ def test_cancelled_cpu_discovery_drains_before_closing(tmp_path, monkeypatch, me
 
         def __next__(self):
             started.set()
-            release.wait(2)
+            assert release.wait(SYNC_TIMEOUT)
             if media:
                 raise OSError("decoder failed during cancellation")
             return [], 0
@@ -5752,9 +5856,9 @@ def test_cancelled_cpu_discovery_drains_before_closing(tmp_path, monkeypatch, me
                 if media
                 else search._index_pinned({"id": fid}, root, None)
             )
-            assert await asyncio.to_thread(started.wait, 2)
+            assert await asyncio.to_thread(started.wait, SYNC_TIMEOUT)
             task.cancel()
-            await asyncio.sleep(0)
+            await loop_checkpoint()
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -5805,6 +5909,8 @@ def test_zero_embedding_is_rejected_and_releases_model(tmp_path):
     [
         "spawn_cancel",
         "probe_gone",
+        "probe_init_gone",
+        "probe_init_failed",
         "invalid_output",
         "kill_race",
         "stdin_closed",
@@ -5820,6 +5926,7 @@ def test_parser_process_races_reap_child(monkeypatch, mode):
     async def scenario():
         started, release = asyncio.Event(), asyncio.Event()
         communicating = asyncio.Event()
+        probed = asyncio.Event()
 
         class Process:
             pid = 123
@@ -5852,10 +5959,10 @@ def test_parser_process_races_reap_child(monkeypatch, mode):
                 if self.returncode is not None:
                     return b""
                 if mode == "probe_gone":
-                    await asyncio.sleep(0.03)
+                    await probed.wait()
                 if mode in {"kill_race", "blocked_sender"}:
                     await asyncio.Event().wait()
-                self.returncode = 0
+                self.returncode = 1 if mode == "probe_init_failed" else 0
                 return b"invalid json" if mode == "invalid_output" else b'{"units":[]}'
 
             def kill(self):
@@ -5880,13 +5987,20 @@ def test_parser_process_races_reap_child(monkeypatch, mode):
         class Probe:
             def memory_info(self):
                 if mode in {"probe_gone", "invalid_output"}:
+                    probed.set()
                     raise psutil.NoSuchProcess(process.pid)
                 from types import SimpleNamespace
 
                 return SimpleNamespace(rss=0)
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-        monkeypatch.setattr(psutil, "Process", lambda _: Probe())
+
+        def make_probe(pid):
+            if mode in {"probe_init_gone", "probe_init_failed"}:
+                raise psutil.NoSuchProcess(pid)
+            return Probe()
+
+        monkeypatch.setattr(psutil, "Process", make_probe)
         task = asyncio.create_task(parsing._run_parser(["parser"], b""))
         await started.wait()
         if mode in {"spawn_cancel", "kill_race", "blocked_sender"}:
@@ -5897,7 +6011,7 @@ def test_parser_process_races_reap_child(monkeypatch, mode):
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert process.killed
-        elif mode == "invalid_output":
+        elif mode in {"invalid_output", "probe_init_failed"}:
             with pytest.raises(SkippedError, match="Could not be read"):
                 await task
         else:
@@ -6053,16 +6167,16 @@ def test_cancelled_cpu_read_drains_pinned_work_before_returning():
 
     def read():
         started.set()
-        release.wait(2)
+        assert release.wait(SYNC_TIMEOUT)
         finished.set()
         return b"document"
 
     async def scenario():
         task = asyncio.create_task(cpu_call(read))
         try:
-            assert await asyncio.to_thread(started.wait, 2)
+            assert await asyncio.to_thread(started.wait, SYNC_TIMEOUT)
             task.cancel()
-            await asyncio.sleep(0)
+            await loop_checkpoint()
             assert not finished.is_set()
             release.set()
             with pytest.raises(asyncio.CancelledError):
@@ -6239,14 +6353,14 @@ def test_absorption_waits_for_dequeued_root_claim(tmp_path, monkeypatch, caplog)
             old, _ = await call("add_folder", child)
             search.pending.append(old)
             search._start_worker()
-            await asyncio.wait_for(claimed.wait(), 5)
+            await asyncio.wait_for(claimed.wait(), SYNC_TIMEOUT)
             assert old not in search.pending
             assert search.progress["folder_id"] is None
             assert search._coordination.locked()
             absorbing = asyncio.create_task(
                 search.add_folder(str(parent)), name="absorb"
             )
-            await asyncio.wait_for(waiting.wait(), 5)
+            await asyncio.wait_for(waiting.wait(), SYNC_TIMEOUT)
             assert not absorbing.done()
             release.set()
             new, created = await absorbing
@@ -6298,7 +6412,7 @@ def test_search_validates_candidates_in_one_off_loop_batch(
                     assert threading.get_ident() != loop_thread
                     checks.append((name, threading.get_ident()))
                     entered.set()
-                    assert release.wait(5)
+                    assert release.wait(SYNC_TIMEOUT)
                     return original(*args, **kwargs)
 
                 return checked
@@ -6313,7 +6427,7 @@ def test_search_validates_candidates_in_one_off_loop_batch(
             query = asyncio.create_task(
                 search.search("apple", 20, None, group_limit=5 if grouped else None)
             )
-            assert await to_thread(entered.wait, 5)
+            assert await to_thread(entered.wait, SYNC_TIMEOUT)
             # The loop can run this coroutine while filesystem validation waits.
             assert not query.done()
             release.set()
@@ -6447,10 +6561,11 @@ def test_worker_queue_removed_while_waiting_for_coordination(tmp_path):
         search = engine(tmp_path)
         task = None
         try:
+            search._coordination = ObservedLock()
             search.pending.append("removed-root")
             await search._coordination.acquire()
             task = asyncio.create_task(search._run())
-            await asyncio.sleep(0)
+            await asyncio.wait_for(search._coordination.waiting.wait(), SYNC_TIMEOUT)
             assert not task.done()
             search.pending.clear()
             search._coordination.release()
@@ -6718,13 +6833,12 @@ def test_parser_output_cap_kills_child_without_waiting_for_exit(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", observed)
     monkeypatch.setattr(parsing, "MAX_BYTES", 8)
-    command = (
-        "import sys,time; sys.stdout.write('x'*65); sys.stdout.flush(); time.sleep(60)"
-    )
+    command = "import sys,signal; sys.stdout.write('x'*65); sys.stdout.flush(); signal.pause()"
     with pytest.raises(SkippedError, match="Could not be read"):
         asyncio.run(
             asyncio.wait_for(
-                parsing.run_parser([sys.executable, "-c", command], b"x" * 131_072), 2
+                parsing.run_parser([sys.executable, "-c", command], b"x" * 131_072),
+                SYNC_TIMEOUT,
             )
         )
     assert children[0].returncode is not None

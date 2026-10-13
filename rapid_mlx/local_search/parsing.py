@@ -107,9 +107,12 @@ async def _run_parser(command, data):
     communication = asyncio.create_task(communicate_bounded())
 
     async def bounded():
-        probe = psutil.Process(process.pid)
+        probe = None
         while not communication.done():
             try:
+                # Short-lived children can exit before the RSS probe is created.
+                if probe is None:
+                    probe = psutil.Process(process.pid)
                 if probe.memory_info().rss > PARSER_MEMORY_BYTES:
                     raise SkippedError(SKIP_REASONS["read"])
             except psutil.NoSuchProcess:
