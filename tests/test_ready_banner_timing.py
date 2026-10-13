@@ -167,6 +167,38 @@ def test_interactive_ready_banner_keeps_image_guidance_before_next(monkeypatch, 
     assert out.index("Images: off. use a vision model") < out.index("Next:")
 
 
+def test_interactive_ready_banner_uses_configured_key(monkeypatch, capsys):
+    cfg = get_config()
+    cfg.bind_host = "localhost"
+    cfg.bind_port = 8766
+    cfg.model_alias = "lfm2.5-1b-4bit"
+    monkeypatch.setattr(cfg, "api_key", "test-key")
+    monkeypatch.setattr(logging.getLogger(), "getEffectiveLevel", lambda: logging.INFO)
+    monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: False
+    )
+    server.print_ready_banner()
+    out = capsys.readouterr().out
+    assert "export RAPID_MLX_API_KEY=test-key" in out
+    assert "Authorization: Bearer test-key" in out
+
+
+def test_warning_log_level_does_not_add_next(monkeypatch, capsys):
+    cfg = get_config()
+    cfg.bind_host = "localhost"
+    cfg.bind_port = 8766
+    cfg.model_alias = "lfm2.5-1b-4bit"
+    monkeypatch.setattr(
+        logging.getLogger(), "getEffectiveLevel", lambda: logging.WARNING
+    )
+    monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
+    server.print_ready_banner()
+    out = capsys.readouterr().out
+    assert "Connect:" in out
+    assert "Next:" not in out
+
+
 def test_desktop_ready_banner_preserves_existing_shape(monkeypatch, capsys):
     cfg = get_config()
     cfg.bind_host = "localhost"
