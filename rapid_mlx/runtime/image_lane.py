@@ -123,6 +123,8 @@ class ImageEngine:
         """Reject unsupported explicit modes without touching model assets."""
         if mode not in (None, "generation", "editing"):
             raise ValueError(f"unsupported image residency mode: {mode!r}")
+        if mode == "generation" and not self.supports_generation:
+            raise ImageRequestError(f"{self.family} does not support image generation.")
         if mode == "editing" and not self.supports_editing:
             raise ImageRequestError(f"{self.family} does not support image editing.")
 

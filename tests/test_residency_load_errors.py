@@ -186,7 +186,20 @@ def test_cyclic_cause_and_unrelated_context_stay_safe(control_plane):
     assert "secret" not in response.text
 
 
-def test_unsupported_image_edit_through_resident_manager(control_plane, monkeypatch):
+@pytest.mark.parametrize(
+    ("model", "mode", "message"),
+    [
+        ("qwen-image", "editing", "qwen-image does not support image editing."),
+        (
+            "qwen-image-edit",
+            "generation",
+            "qwen-image-edit does not support image generation.",
+        ),
+    ],
+)
+def test_unsupported_image_mode_through_resident_manager(
+    control_plane, monkeypatch, model, mode, message
+):
     from rapid_mlx import server
     from rapid_mlx.runtime.model_registry import ModelRegistry
     from rapid_mlx.runtime.resident_models import ResidentModelManager
@@ -212,12 +225,12 @@ def test_unsupported_image_edit_through_resident_manager(control_plane, monkeypa
     monkeypatch.setattr(residency, "_manager", lambda: manager)
     response = client.post(
         "/v1/models/load",
-        json={"model": "qwen-image", "image_mode": "editing"},
+        json={"model": model, "image_mode": mode},
     )
     assert response.status_code == 400
     assert response.json() == {
         "error": {
-            "message": "qwen-image does not support image editing.",
+            "message": message,
             "type": "invalid_request_error",
             "code": None,
             "param": None,
