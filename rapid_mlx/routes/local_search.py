@@ -50,24 +50,24 @@ def error(message: str, code: str, param: str, status=400):
     )
 
 
-def service(request: Request):
+def get_service(request: Request):
     return request.app.state.local_search
 
 
-async def require_folder(engine, folder_id):
-    if await engine.store.call("folder", folder_id) is None:
+async def require_folder(service, folder_id):
+    if await service.folder(folder_id) is None:
         error("Folder not found", "folder_not_found", "folder_id", 404)
 
 
 @router.get("/status")
 async def status(request: Request):
-    return await service(request).status_async()
+    return await get_service(request).status_async()
 
 
 @router.post("/folders")
 async def add_folder(body: FolderRequest, request: Request, response: Response):
     try:
-        folder, created = await service(request).add_folder(body.path)
+        folder, created = await get_service(request).add_folder(body.path)
     except ValueError as exc:
         error(str(exc), "invalid_folder_path", "path")
     except OSError:
@@ -82,34 +82,34 @@ async def add_folder(body: FolderRequest, request: Request, response: Response):
 
 @router.delete("/folders/{folder_id}", status_code=204)
 async def delete_folder(folder_id: str, request: Request):
-    engine = service(request)
-    await require_folder(engine, folder_id)
-    await engine.delete_folder(folder_id)
+    service = get_service(request)
+    await require_folder(service, folder_id)
+    await service.delete_folder(folder_id)
     return Response(status_code=204)
 
 
 @router.post("/reindex", status_code=202)
 async def reindex(body: ReindexRequest, request: Request):
-    engine = service(request)
+    service = get_service(request)
     if body.folder_id is not None:
-        await require_folder(engine, body.folder_id)
-        await engine.queue(body.folder_id)
+        await require_folder(service, body.folder_id)
+        await service.queue(body.folder_id)
     else:
-        for folder in await engine.store.call("folders"):
-            await engine.queue(folder["id"])
-    return await engine.status_async()
+        for folder in await service.folders():
+            await service.queue(folder["id"])
+    return await service.status_async()
 
 
 @router.post("/search")
 async def search(body: SearchRequest, request: Request):
     if not body.query.strip():
         error("query must not be blank", "invalid_query", "query")
-    engine = service(request)
+    service = get_service(request)
     if body.folder_ids is not None:
         for folder_id in body.folder_ids:
-            await require_folder(engine, folder_id)
+            await require_folder(service, folder_id)
     try:
-        return await engine.search(
+        return await service.search(
             body.query, body.limit, body.folder_ids, body.kinds, body.group_limit
         )
     except sqlite3.OperationalError:

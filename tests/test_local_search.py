@@ -1190,10 +1190,13 @@ def runnable_text_snapshot(path):
     return path
 
 
-def test_local_availability_never_downloads(tmp_path, monkeypatch):
+@pytest.mark.parametrize("downloads_disabled", [False, True])
+def test_local_availability_never_downloads(tmp_path, monkeypatch, downloads_disabled):
     import huggingface_hub
 
-    from rapid_mlx import cli
+    from rapid_mlx import cli, model_downloads
+
+    monkeypatch.setattr(model_downloads, "disabled", lambda: downloads_disabled)
 
     monkeypatch.setattr(cli, "_cache_runnability", lambda _: False)
     monkeypatch.setattr(
@@ -1213,6 +1216,33 @@ def test_local_availability_never_downloads(tmp_path, monkeypatch):
     monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot)
     assert local_model_path("cached") == str(model_path)
     assert calls == [{"local_files_only": True}]
+
+
+@pytest.mark.parametrize("downloads_disabled", [False, True])
+def test_local_availability_cache_miss_fails_closed(monkeypatch, downloads_disabled):
+    import huggingface_hub
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    from rapid_mlx import cli, model_downloads, model_metadata
+
+    monkeypatch.setattr(model_downloads, "disabled", lambda: downloads_disabled)
+    monkeypatch.setattr(cli, "_cache_runnability", lambda _: True)
+    monkeypatch.setattr(
+        model_metadata, "resolve_unreferenced_cached_snapshot", lambda _: None
+    )
+    monkeypatch.setattr(
+        model_metadata, "resolve_offline_cached_snapshot", lambda _: None
+    )
+    monkeypatch.setattr(model_metadata, "_cached_file", lambda *args: None)
+    calls = []
+
+    def missing(model, **kwargs):
+        calls.append((model, kwargs))
+        raise LocalEntryNotFoundError("cache entry disappeared")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", missing)
+    assert local_model_path("test/missing") is None
+    assert calls == [("test/missing", {"local_files_only": True})]
 
 
 @asynccontextmanager
@@ -2911,10 +2941,8 @@ def test_files_searchable_before_discovery_finishes(tmp_path, monkeypatch):
             assert search.progress["files_total"] == 0
             assert not finished
             assert search.progress["files_done"] == 1
-            assert any(
-                r["path"] == str(first)
-                for r in (await search.search("apple", 20, None))["results"]
-            )
+            results = (await search.search("apple", 20, None))["results"]
+            assert any(r["path"] == str(first) for r in results)
             continued.set()
             await release.wait()
 
@@ -3815,6 +3843,7 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
     async def scenario():
         loop_thread = threading.get_ident()
         events, ticks, flow = [], [], []
+        entered, release = threading.Event(), threading.Event()
         executor = ThreadPoolExecutor(max_workers=1)
 
         async def worker(func, *args, **kwargs):
@@ -3837,7 +3866,10 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
             def embed(self, texts):
                 events.append(("embed", threading.get_ident()))
                 before = len(ticks)
-                time.sleep(0.03)
+                entered.set()
+                assert release.wait(5), (
+                    "stream must progress while embedding is blocked"
+                )
                 flow.append(len(ticks) - before)
                 return LazyVectors()
 
@@ -3854,8 +3886,11 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
         )
 
         async def stream():
+            assert await asyncio.to_thread(entered.wait, 5)
             for _ in range(25):
                 ticks.append(time.monotonic())
+                if len(ticks) == 5:
+                    release.set()
                 await asyncio.sleep(0.002)
 
         async def generation():
@@ -3880,6 +3915,7 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
             assert len(ticks) == 25
             assert flow[0] >= 5
         finally:
+            release.set()
             executor.shutdown()
 
     asyncio.run(scenario())
@@ -4113,9 +4149,12 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 core = types.ModuleType("mlx.core")
 core.__spec__ = importlib.machinery.ModuleSpec("mlx.core", loader=None)
-sys.modules["mlx.core"] = core
-import mlx
+mlx = types.ModuleType("mlx")
+mlx.__path__ = []
+mlx.__spec__ = importlib.machinery.ModuleSpec("mlx", loader=None)
 mlx.core = core
+sys.modules["mlx"] = mlx
+sys.modules["mlx.core"] = core
 import rapid_mlx.engine
 rapid_mlx.engine.BatchedEngine = MagicMock()
 import rapid_mlx.server

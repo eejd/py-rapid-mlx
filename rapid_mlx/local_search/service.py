@@ -71,9 +71,8 @@ def local_model_path(model_id: str) -> str | None:
     cannot alone enforce this feature's unconditional no-download policy.
     Resolve a runnable snapshot locally and hand the loader a filesystem path.
     """
-    from huggingface_hub import snapshot_download
-
     from ..cli import _cache_runnability
+    from ..model_downloads import ModelDownloadsDisabledError, snapshot_download
     from ..model_metadata import (
         _cached_file,
         _complete_cached_checkpoint,
@@ -99,7 +98,7 @@ def local_model_path(model_id: str) -> str | None:
         return _runnable_search_snapshot(
             Path(snapshot_download(model_id, local_files_only=True))
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, ModelDownloadsDisabledError):
         return None
 
 
@@ -176,6 +175,12 @@ class LocalSearch:
         for folder in await self.store.call("folders"):
             await self.queue(folder["id"])
         await self._run()
+
+    async def folder(self, folder_id: str) -> dict | None:
+        return await self.store.call("folder", folder_id)
+
+    async def folders(self) -> list[dict]:
+        return await self.store.call("folders")
 
     async def queue(self, folder_id: str):
         if self.closed or not await self.store.call("folder", folder_id):
@@ -936,14 +941,15 @@ class LocalSearch:
                 },
                 keyword_evidence=evidence,
             )
-            response["groups"] = [
-                {
-                    "kind": kind,
-                    "results": [await result(hit) for hit in group[:group_limit]],
-                    "total": len(group),
-                }
-                for kind, group in groups
-            ]
+            response["groups"] = []
+            for kind, group in groups:
+                response["groups"].append(
+                    {
+                        "kind": kind,
+                        "results": [await result(hit) for hit in group[:group_limit]],
+                        "total": len(group),
+                    }
+                )
         response["took_ms"] = (time.perf_counter() - start) * 1000
         return response
 

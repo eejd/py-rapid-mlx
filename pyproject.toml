@@ -431,7 +431,7 @@ ci-linux = [
     "jinja2",
     "aiohttp>=3.9.0",
     "pillow>=10.0.0",
-    # CPU video-decoding contracts run in the Linux coverage lane.
+    # Mirrors the base runtime dependency for CPU video-decoding contracts.
     "opencv-python>=4.8.0",
 ]
 # `ci-apple` = the pytest + coverage set the `test-apple-silicon` lane installs
