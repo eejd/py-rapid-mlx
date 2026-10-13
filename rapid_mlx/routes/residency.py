@@ -141,6 +141,16 @@ def _load_failure(exc: Exception, model_ref: str) -> HTTPException:
     """
     from ..image.engine import ImageRequestError
 
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    for _ in range(32):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        if isinstance(current, ImageRequestError):
+            return HTTPException(400, str(current))
+        current = current.__cause__
+
     try:
         raise_if_missing_local_model(model_ref)
     except FileNotFoundError:
@@ -154,14 +164,12 @@ def _load_failure(exc: Exception, model_ref: str) -> HTTPException:
     if message is not None:
         return HTTPException(400, message)
 
-    current: BaseException | None = exc
-    seen: set[int] = set()
+    current = exc
+    seen = set()
     for _ in range(32):
         if current is None or id(current) in seen:
             break
         seen.add(id(current))
-        if isinstance(current, ImageRequestError):
-            return HTTPException(400, str(current))
         # GatedRepoError is a RepositoryNotFoundError subclass; test it first.
         if isinstance(current, GatedRepoError):
             return HTTPException(

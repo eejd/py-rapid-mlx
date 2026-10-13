@@ -240,6 +240,38 @@ def test_unsupported_image_mode_through_resident_manager(
     assert asset_calls == []
 
 
+@pytest.mark.parametrize(
+    ("model", "mode"),
+    [("qwen-image", "editing"), ("qwen-image-edit", "generation")],
+)
+def test_unsupported_image_mode_rejected_for_resident_reuse(
+    control_plane, monkeypatch, model, mode
+):
+    from rapid_mlx.image.engine import ImageGenerationEngine
+    from rapid_mlx.runtime.image_lane import ImageEngine
+    from rapid_mlx.runtime.model_registry import ModelEntry, ModelRegistry
+    from rapid_mlx.runtime.resident_models import ResidentModelManager
+
+    client, _ = control_plane
+    engine = ImageEngine(model)
+    registry = ModelRegistry()
+    entry = ModelEntry(engine=engine, model_name=model, model_path=model)
+    registry.add(entry, is_default=True)
+    manager = ResidentModelManager(registry, AsyncMock(), memory_reader=lambda: 0)
+    manager.register_primary(entry, estimated_bytes=1)
+    monkeypatch.setattr(residency, "_manager", lambda: manager)
+    monkeypatch.setattr(
+        ImageGenerationEngine,
+        "_ensure_runtime_assets",
+        lambda _self: pytest.fail("resident mode validation touched runtime assets"),
+    )
+
+    response = client.post("/v1/models/load", json={"model": model, "image_mode": mode})
+
+    assert response.status_code == 400
+    manager.loader.assert_not_awaited()
+
+
 def test_wrapped_image_request_error(control_plane):
     from rapid_mlx.image.engine import ImageRequestError
 
@@ -253,6 +285,33 @@ def test_wrapped_image_request_error(control_plane):
     )
     assert response.status_code == 400
     assert response.json()["error"]["message"] == str(error.__cause__)
+
+
+def test_image_request_error_precedes_local_diagnostics(
+    control_plane, monkeypatch, tmp_path
+):
+    from rapid_mlx.image.engine import ImageRequestError
+
+    client, manager = control_plane
+    manager.load.side_effect = ImageRequestError("unsupported image mode")
+    monkeypatch.setattr(
+        residency,
+        "raise_if_missing_local_model",
+        lambda _ref: pytest.fail("image request error reached local diagnostics"),
+    )
+    monkeypatch.setattr(
+        residency,
+        "local_model_failure_message",
+        lambda _ref, _exc: pytest.fail("image request error reached local diagnostics"),
+    )
+
+    response = client.post(
+        "/v1/models/load",
+        json={"model": str(tmp_path), "image_mode": "editing"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "unsupported image mode"
 
 
 def test_operational_image_runtime_error_stays_unchanged(control_plane):
