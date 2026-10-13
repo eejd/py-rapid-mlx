@@ -7,6 +7,7 @@ import importlib.util
 import os
 import select
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -213,11 +214,11 @@ def _prompt_to_install(
 ) -> PromptResult:
     """Wait at most 30 seconds for an explicit interactive opt-in."""
     if is_base_runtime_extra(extra):
-        question = f"Repair rapid-mlx now (restores its {extra} runtime)? [y/N] "
+        question = f"Install now? [Y/n] ({extra} runtime) "
     else:
         size_mb = _EXTRA_INSTALL_SIZE_MB.get(extra)
         size = f" (~{size_mb} MB)" if size_mb is not None else ""
-        question = f"Install rapid-mlx[{extra}] now?{size} [y/N] "
+        question = f"Install now? [Y/n] (rapid-mlx[{extra}]{size}) "
     print(
         question,
         end="",
@@ -239,7 +240,7 @@ def _prompt_to_install(
     if response is None:
         print(file=sys.stderr)
         return PromptResult.NO_ANSWER
-    if response.strip().lower() in {"y", "yes"}:
+    if response.strip().lower() in {"", "y", "yes"}:
         return PromptResult.ACCEPTED
     return PromptResult.DECLINED
 
@@ -324,17 +325,27 @@ def _is_tty(stream: object | None) -> bool:
         return False
 
 
-def _install_optional_extra(exc: OptionalRuntimeMissing) -> None:
-    """Install one pinned extra, then replace this process on success."""
+def _install_argv(exc: OptionalRuntimeMissing, method: str) -> list[str]:
+    """Build the same repair operation advertised for the active installer."""
     from rapid_mlx import __version__
 
-    install_argv = [
+    pinned = runtime_install_spec(exc.extra, __version__)
+    if method == "uv":
+        return ["uv", "tool", "install", "--force", pinned]
+    if method == "pipx":
+        return ["pipx", "install", "--force", pinned]
+    return [
         sys.executable,
         "-m",
         "pip",
         "install",
-        runtime_install_spec(exc.extra, __version__),
+        pinned,
     ]
+
+
+def _install_optional_extra(exc: OptionalRuntimeMissing, method: str = "pip") -> None:
+    """Install one pinned extra, then replace this process on success."""
+    install_argv = _install_argv(exc, method)
     completed = subprocess.run(install_argv, check=False)
     if completed.returncode != 0:
         print(
@@ -382,8 +393,12 @@ def handle_optional_runtime_missing(
         and not managed_runtime
         and not install_detection_failed
         and not globally_managed_pipx
-        and install_method in {"pip", "install_sh", "unknown"}
-        and importlib.util.find_spec("pip") is not None
+        and install_method in {"pip", "install_sh", "unknown", "uv", "pipx"}
+        and (
+            shutil.which(install_method) is not None
+            if install_method in {"uv", "pipx"}
+            else importlib.util.find_spec("pip") is not None
+        )
     )
     is_interactive = (
         can_install and not assume_yes and _is_tty(sys.stdin) and _is_tty(sys.stderr)
@@ -437,7 +452,7 @@ def handle_optional_runtime_missing(
         failure_stage="preflight",
     )
     if accepted:
-        _install_optional_extra(exc)
+        _install_optional_extra(exc, install_method)
     if extra_recovery == "interrupted":
         raise KeyboardInterrupt
     raise SystemExit(2)

@@ -152,17 +152,15 @@ def test_tty_yes_installs_pinned_extra_and_reexecs_original_argv(monkeypatch) ->
         ("flush", 2.0),
         ("execv", "/tmp/rapid/bin/python", original),
     ]
-    assert stderr.getvalue().endswith(
-        "Repair rapid-mlx now (restores its vision runtime)? [y/N] "
-    )
+    assert stderr.getvalue().endswith("Install now? [Y/n] (vision runtime) ")
 
 
 @pytest.mark.parametrize(
     ("extra", "answer", "expected_prompt"),
     [
-        ("vision", "n\n", "Repair rapid-mlx now (restores its vision runtime)? [y/N] "),
-        ("audio", "N\n", "Install rapid-mlx[audio] now? (~600 MB) [y/N] "),
-        ("image", "\n", "Repair rapid-mlx now (restores its image runtime)? [y/N] "),
+        ("vision", "n\n", "Install now? [Y/n] (vision runtime) "),
+        ("audio", "N\n", "Install now? [Y/n] (rapid-mlx[audio] (~600 MB)) "),
+        ("image", "n\n", "Install now? [Y/n] (image runtime) "),
     ],
 )
 def test_tty_decline_keeps_exit_two_without_install(
@@ -208,10 +206,7 @@ def test_tty_timeout_defaults_no_without_reading_stdin(monkeypatch) -> None:
     with pytest.raises(SystemExit, match="2"):
         optional_runtime.handle_optional_runtime_missing(_failure(extra="video"))
 
-    assert (
-        "Repair rapid-mlx now (restores its video runtime)? [y/N] \n"
-        in stderr.getvalue()
-    )
+    assert "Install now? [Y/n] (video runtime) \n" in stderr.getvalue()
     assert outcomes == ["no_answer"]
 
 
@@ -245,9 +240,7 @@ def test_posix_prompt_keyboard_interrupt_returns_interrupted(monkeypatch) -> Non
         optional_runtime._prompt_to_install("vision")
         is optional_runtime.PromptResult.INTERRUPTED
     )
-    assert stderr.getvalue() == (
-        "Repair rapid-mlx now (restores its vision runtime)? [y/N] \n"
-    )
+    assert stderr.getvalue() == ("Install now? [Y/n] (vision runtime) \n")
 
 
 def test_closed_stdin_exception_defaults_no(monkeypatch) -> None:
@@ -264,7 +257,7 @@ def test_closed_stdin_exception_defaults_no(monkeypatch) -> None:
     with pytest.raises(SystemExit, match="2"):
         optional_runtime.handle_optional_runtime_missing(_failure())
 
-    assert "Repair rapid-mlx now (restores its vision runtime)?" in stderr.getvalue()
+    assert "Install now? [Y/n] (vision runtime)" in stderr.getvalue()
 
 
 def test_windows_console_yes_uses_polled_characters(monkeypatch) -> None:
@@ -333,9 +326,7 @@ def test_non_tty_without_yes_prints_automatic_install_guidance(monkeypatch) -> N
     with pytest.raises(SystemExit, match="2"):
         optional_runtime.handle_optional_runtime_missing(_failure())
 
-    assert (
-        "Repair rapid-mlx now (restores its vision runtime)?" not in stderr.getvalue()
-    )
+    assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
     assert _NON_INTERACTIVE_HINT in stderr.getvalue()
     assert stderr.getvalue().splitlines()[-1] == (
         "RAPID-MLX-STARTUP-FAILURE: runtime_extra_missing extra=vision"
@@ -358,9 +349,7 @@ def test_isatty_exception_is_non_tty(monkeypatch) -> None:
     with pytest.raises(SystemExit, match="2"):
         optional_runtime.handle_optional_runtime_missing(_failure())
 
-    assert (
-        "Repair rapid-mlx now (restores its vision runtime)?" not in stderr.getvalue()
-    )
+    assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
 
 
 @pytest.mark.parametrize("stream_name", ["stdin", "stderr"])
@@ -384,13 +373,10 @@ def test_detached_or_stream_without_isatty_is_non_tty(
     if stderr is None:
         output = capsys.readouterr().out
         assert "missing vision" in output
-        assert "Repair rapid-mlx now (restores its vision runtime)?" not in output
+        assert "Install now? [Y/n] (vision runtime)" not in output
     else:
         assert "missing vision" in stderr.getvalue()
-        assert (
-            "Repair rapid-mlx now (restores its vision runtime)?"
-            not in stderr.getvalue()
-        )
+        assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
 
 
 def test_yes_installs_without_tty(monkeypatch) -> None:
@@ -552,7 +538,7 @@ def test_raw_tty_one_byte_cannot_bypass_prompt_deadline() -> None:
         """
     )
     proc, master = _pty_child(script)
-    before = _read_until(master, b"Repair rapid-mlx now (restores its vision runtime)?")
+    before = _read_until(master, b"Install now? [Y/n] (vision runtime)")
     os.write(master, b"y")
     after = _read_until(master, b"RESULT=", timeout=0.7)
     proc.wait(timeout=3)
@@ -576,7 +562,7 @@ def test_canonical_partial_line_ctrl_d_defaults_no_at_deadline() -> None:
         """
     )
     proc, master = _pty_child(script)
-    before = _read_until(master, b"Repair rapid-mlx now (restores its vision runtime)?")
+    before = _read_until(master, b"Install now? [Y/n] (vision runtime)")
     os.write(master, b"y")
     time.sleep(0.02)
     os.write(master, b"\x04")
@@ -623,9 +609,7 @@ def test_non_absent_status_never_prompts_or_installs(monkeypatch, status) -> Non
             _failure(status=status), assume_yes=True
         )
 
-    assert (
-        "Repair rapid-mlx now (restores its vision runtime)?" not in stderr.getvalue()
-    )
+    assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
 
 
 def test_missing_pip_never_prompts(monkeypatch) -> None:
@@ -636,9 +620,7 @@ def test_missing_pip_never_prompts(monkeypatch) -> None:
     with pytest.raises(SystemExit, match="2"):
         optional_runtime.handle_optional_runtime_missing(_failure())
 
-    assert (
-        "Repair rapid-mlx now (restores its vision runtime)?" not in stderr.getvalue()
-    )
+    assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
     assert _NON_INTERACTIVE_HINT not in stderr.getvalue()
 
 
@@ -654,9 +636,7 @@ def test_desktop_bundle_interpreter_never_prompts(monkeypatch) -> None:
     with pytest.raises(SystemExit, match="2"):
         optional_runtime.handle_optional_runtime_missing(_failure())
 
-    assert (
-        "Repair rapid-mlx now (restores its vision runtime)?" not in stderr.getvalue()
-    )
+    assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
     assert _NON_INTERACTIVE_HINT not in stderr.getvalue()
 
 
@@ -670,9 +650,7 @@ def test_desktop_sidecar_role_never_prompts(monkeypatch) -> None:
     with pytest.raises(SystemExit, match="2"):
         optional_runtime.handle_optional_runtime_missing(_failure(), assume_yes=True)
 
-    assert (
-        "Repair rapid-mlx now (restores its vision runtime)?" not in stderr.getvalue()
-    )
+    assert "Install now? [Y/n] (vision runtime)" not in stderr.getvalue()
 
 
 def test_serve_yes_flag_and_help() -> None:
@@ -713,6 +691,37 @@ def test_repair_command_matches_detected_install_method(
     assert (
         optional_runtime.optional_extra_repair_command("vision", version="1.2.3")
         == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("uv", ["uv", "tool", "install", "--force"]),
+        ("pipx", ["pipx", "install", "--force"]),
+    ],
+)
+def test_automatic_repair_uses_the_displayed_tool_manager(
+    monkeypatch, method, expected
+):
+    monkeypatch.setattr(sys, "executable", "/tmp/runtime/bin/python")
+    failure = _failure(extra="vision")
+
+    assert optional_runtime._install_argv(failure, method) == [
+        *expected,
+        f"rapid-mlx=={rapid_mlx.__version__}",
+    ]
+
+
+def test_install_prompt_accepts_default_yes(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "stderr", _TTY())
+    monkeypatch.setattr(
+        optional_runtime, "_read_posix_prompt_response", lambda *_args: ""
+    )
+
+    assert (
+        optional_runtime._prompt_to_install("vision")
+        is optional_runtime.PromptResult.ACCEPTED
     )
 
 
@@ -767,8 +776,8 @@ def test_http_visible_repair_hides_interpreter_path(monkeypatch) -> None:
         ("pip", _TTY("n\n"), False, "absent", "declined"),
         ("pip", _NotTTY(), False, "absent", "non_interactive"),
         ("pip", _NotTTY(), True, "absent", "assume_yes"),
-        ("uv", _TTY("y\n"), False, "absent", "no_installer"),
-        ("pipx", _TTY("y\n"), False, "absent", "no_installer"),
+        ("uv", _TTY("y\n"), False, "absent", "accepted"),
+        ("pipx", _TTY("y\n"), False, "absent", "accepted"),
         ("pip", _TTY("y\n"), False, "broken", "broken_runtime"),
     ],
 )
@@ -787,7 +796,10 @@ def test_recovery_outcome_emits_before_install(
     monkeypatch.setattr(
         optional_runtime,
         "_install_optional_extra",
-        lambda _exc: order.append("install"),
+        lambda _exc, _method: order.append("install"),
+    )
+    monkeypatch.setattr(
+        optional_runtime.shutil, "which", lambda _command: "/usr/bin/tool"
     )
 
     with pytest.raises(SystemExit, match="2"):
@@ -902,7 +914,7 @@ def test_video_and_image_extras_offer_the_install_on_a_tty(monkeypatch, extra) -
         optional_runtime.handle_optional_runtime_missing(_failure(extra=extra))
 
     prompt = stderr.getvalue()
-    assert f"Repair rapid-mlx now (restores its {extra} runtime)?" in prompt
+    assert f"Install now? [Y/n] ({extra} runtime)" in prompt
     pip_argv = [
         "/tmp/rapid/bin/python",
         "-m",
