@@ -143,6 +143,8 @@ def test_tty_yes_installs_pinned_extra_and_reexecs_original_argv(monkeypatch) ->
         "-m",
         "pip",
         "install",
+        "--upgrade",
+        "--force-reinstall",
         f"rapid-mlx=={rapid_mlx.__version__}",
     ]
     assert order == [
@@ -673,14 +675,14 @@ def test_serve_yes_flag_and_help() -> None:
     [
         (
             "pip",
-            "/tmp/runtime/bin/python -m pip install rapid-mlx==1.2.3",
+            "/tmp/runtime/bin/python -m pip install --upgrade --force-reinstall rapid-mlx==1.2.3",
         ),
         (
             "install_sh",
-            "/tmp/runtime/bin/python -m pip install rapid-mlx==1.2.3",
+            "/tmp/runtime/bin/python -m pip install --upgrade --force-reinstall rapid-mlx==1.2.3",
         ),
-        ("uv", "uv tool install --force rapid-mlx==1.2.3"),
-        ("pipx", "pipx install --force rapid-mlx==1.2.3"),
+        ("uv", "uv tool upgrade --reinstall rapid-mlx"),
+        ("pipx", "pipx reinstall rapid-mlx"),
     ],
 )
 def test_repair_command_matches_detected_install_method(
@@ -701,8 +703,8 @@ def test_repair_command_matches_detected_install_method(
 @pytest.mark.parametrize(
     ("method", "expected"),
     [
-        ("uv", ["uv", "tool", "install", "--force"]),
-        ("pipx", ["pipx", "install", "--force"]),
+        ("uv", ["uv", "tool", "upgrade", "--reinstall"]),
+        ("pipx", ["pipx", "reinstall"]),
     ],
 )
 def test_automatic_repair_uses_the_displayed_tool_manager(
@@ -713,7 +715,7 @@ def test_automatic_repair_uses_the_displayed_tool_manager(
 
     assert optional_runtime._install_argv(failure, method) == [
         *expected,
-        f"rapid-mlx=={rapid_mlx.__version__}",
+        "rapid-mlx",
     ]
 
 
@@ -754,7 +756,7 @@ def test_global_pipx_repair_preserves_global_scope(monkeypatch) -> None:
 
     assert (
         optional_runtime.optional_extra_repair_command("vision", version="1.2.3")
-        == "sudo pipx install --global --force rapid-mlx==1.2.3"
+        == "sudo pipx reinstall --global rapid-mlx"
     )
 
 
@@ -769,7 +771,9 @@ def test_http_visible_repair_hides_interpreter_path(monkeypatch) -> None:
         "vision", version="1.2.3", include_paths=False
     )
 
-    assert command == "python -m pip install rapid-mlx==1.2.3"
+    assert (
+        command == "python -m pip install --upgrade --force-reinstall rapid-mlx==1.2.3"
+    )
     assert "/Users/alice" not in command
 
 
@@ -896,7 +900,7 @@ def test_broken_pip_runtime_uses_forced_reinstall_but_absent_does_not(
     )
 
     assert "--upgrade --force-reinstall" in broken
-    assert "--force-reinstall" not in absent
+    assert "--force-reinstall" in absent
 
 
 @pytest.mark.parametrize("extra", ["video", "image"])
@@ -924,6 +928,8 @@ def test_video_and_image_extras_offer_the_install_on_a_tty(monkeypatch, extra) -
         "-m",
         "pip",
         "install",
+        "--upgrade",
+        "--force-reinstall",
         f"rapid-mlx=={rapid_mlx.__version__}",
     ]
     assert ("pip", pip_argv, False) in order
@@ -955,6 +961,8 @@ def test_video_and_image_install_command_pins_the_base_package(
         "-m",
         "pip",
         "install",
+        "--upgrade",
+        "--force-reinstall",
         f"rapid-mlx=={rapid_mlx.__version__}",
     ]
     assert ("pip", pip_argv, False) in order

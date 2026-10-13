@@ -72,10 +72,10 @@ accepted extra names for existing scripts; on macOS they add nothing.
 | `all` | `pip install 'rapid-mlx[all]'` | audio + embeddings + chat + System One + Computer Use on top of the base install |
 
 When `rapid-mlx serve` finds that an optional runtime is absent, it prints a
-version-pinned repair command matched to the detected install method. For a
+repair command matched to the detected install method. For a
 runtime that ships with the base install (vision, image, video), a missing
-module means the environment is damaged, and the command reinstalls the pinned
-`rapid-mlx` package itself. pip and
+module means the environment is damaged. The pip repair forcibly reinstalls
+the running version; tool managers reinstall with their recorded options. pip and
 install.sh, uv tool, and pipx environments offer to run the displayed repair
 when stdin is a TTY, then restart the original serve command after success.
 Press Enter at `Install now? [Y/n]` to accept, or use `--yes` (or `-y`) in a

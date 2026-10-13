@@ -100,10 +100,16 @@ def optional_extra_repair_command(
         method = "unknown"
         global_pipx = False
     if method == "uv":
+        if is_base_runtime_extra(extra):
+            return "uv tool upgrade --reinstall rapid-mlx"
         return f"uv tool install --force {shlex.quote(pinned)}"
     if method == "pipx":
+        if is_base_runtime_extra(extra):
+            return "pipx reinstall rapid-mlx"
         return f"pipx install --force {shlex.quote(pinned)}"
     if global_pipx:
+        if is_base_runtime_extra(extra):
+            return "sudo pipx reinstall --global rapid-mlx"
         return f"sudo pipx install --global --force {shlex.quote(pinned)}"
     if method == "brew":
         if is_base_runtime_extra(extra):
@@ -114,7 +120,11 @@ def optional_extra_repair_command(
             f"    brew uninstall rapid-mlx && uv tool install {shlex.quote(pinned)}"
         )
     python = shlex.quote(sys.executable) if include_paths else "python"
-    reinstall = "--upgrade --force-reinstall " if status == "broken" else ""
+    reinstall = (
+        "--upgrade --force-reinstall "
+        if status == "broken" or is_base_runtime_extra(extra)
+        else ""
+    )
     return f"{python} -m pip install {reinstall}{shlex.quote(pinned)}"
 
 
@@ -331,14 +341,19 @@ def _install_argv(exc: OptionalRuntimeMissing, method: str) -> list[str]:
 
     pinned = runtime_install_spec(exc.extra, __version__)
     if method == "uv":
-        return ["uv", "tool", "install", "--force", pinned]
+        return ["uv", "tool", "upgrade", "--reinstall", "rapid-mlx"]
     if method == "pipx":
-        return ["pipx", "install", "--force", pinned]
+        return ["pipx", "reinstall", "rapid-mlx"]
     return [
         sys.executable,
         "-m",
         "pip",
         "install",
+        *(
+            ["--upgrade", "--force-reinstall"]
+            if is_base_runtime_extra(exc.extra)
+            else []
+        ),
         pinned,
     ]
 
@@ -394,6 +409,7 @@ def handle_optional_runtime_missing(
         and not install_detection_failed
         and not globally_managed_pipx
         and install_method in {"pip", "install_sh", "unknown", "uv", "pipx"}
+        and (is_base_runtime_extra(exc.extra) or install_method not in {"uv", "pipx"})
         and (
             shutil.which(install_method) is not None
             if install_method in {"uv", "pipx"}
