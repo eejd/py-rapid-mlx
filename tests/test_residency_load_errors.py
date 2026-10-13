@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Resident-load failures must reach clients as actionable, safe JSON (#4492)."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -197,14 +198,12 @@ def test_cyclic_cause_and_unrelated_context_stay_safe(control_plane):
         ),
     ],
 )
-def test_unsupported_image_mode_through_resident_manager(
-    control_plane, monkeypatch, model, mode, message
+def test_unsupported_image_mode_rejected_before_assets_in_dynamic_loader(
+    monkeypatch, model, mode, message
 ):
     from rapid_mlx import server
-    from rapid_mlx.runtime.model_registry import ModelRegistry
-    from rapid_mlx.runtime.resident_models import ResidentModelManager
+    from rapid_mlx.image.engine import ImageRequestError
 
-    client, _ = control_plane
     asset_calls = []
     monkeypatch.setattr(
         "rapid_mlx.model_downloads.require_local",
@@ -219,25 +218,32 @@ def test_unsupported_image_mode_through_resident_manager(
         lambda _self: asset_calls.append("weight verification"),
     )
 
-    manager = ResidentModelManager(
-        ModelRegistry(), server._load_dynamic_resident_model, memory_reader=lambda: 0
-    )
-    monkeypatch.setattr(residency, "_manager", lambda: manager)
-    response = client.post(
-        "/v1/models/load",
-        json={"model": model, "image_mode": mode},
-    )
-    assert response.status_code == 400
-    assert response.json() == {
-        "error": {
-            "message": message,
-            "type": "invalid_request_error",
-            "code": None,
-            "param": None,
-        }
-    }
-    assert manager.loads_total == 0
+    with pytest.raises(ImageRequestError, match=message):
+        asyncio.run(server._load_dynamic_resident_model(model, None, image_mode=mode))
     assert asset_calls == []
+
+
+@pytest.mark.parametrize(
+    ("model", "mode", "message"),
+    [
+        ("qwen-image", "editing", "qwen-image does not support image editing."),
+        (
+            "qwen-image-edit",
+            "generation",
+            "qwen-image-edit does not support image generation.",
+        ),
+    ],
+)
+def test_unsupported_image_mode_rejected_before_manager_admission(
+    control_plane, model, mode, message
+):
+    client, manager = control_plane
+
+    response = client.post("/v1/models/load", json={"model": model, "image_mode": mode})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == message
+    manager.load.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
