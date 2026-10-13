@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
 import time
 import uuid
 from pathlib import Path
@@ -37,10 +39,65 @@ DISTINCTIVE_MIN_FILES = 1
 FREQUENCY_CACHE_TERMS = 1024
 
 
+def _owner_only(fd: int, mode: int) -> None:
+    info = os.fstat(fd)
+    if info.st_uid != os.geteuid():
+        raise PermissionError("Local-search index must be owned by the current user")
+    if stat.S_IMODE(info.st_mode) != mode:
+        os.fchmod(fd, mode)
+        if stat.S_IMODE(os.fstat(fd).st_mode) != mode:
+            raise PermissionError("Could not make local-search index owner-only")
+
+
+def _prepare_index(path: Path) -> None:
+    """Secure the index before SQLite can read, recover, or write any text."""
+    names = {path.name + suffix for suffix in ("", "-wal", "-shm", "-journal")}
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        # Never chmod parents or a pre-existing directory containing unrelated
+        # entries. A private mixed directory needs no chmod and is safe to use.
+        if stat.S_IMODE(os.fstat(directory).st_mode) != 0o700:
+            entries = set(os.listdir(directory))
+            if entries - names or any(
+                not stat.S_ISREG(
+                    os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode
+                )
+                for name in entries
+            ):
+                raise PermissionError(
+                    "Local-search index directory contains unrelated files; "
+                    "choose a dedicated index directory"
+                )
+        _owner_only(directory, 0o700)
+        for name in sorted(names):
+            flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+            if name == path.name:
+                flags |= os.O_CREAT
+            try:
+                fd = os.open(name, flags, 0o600, dir_fd=directory)
+            except FileNotFoundError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise PermissionError(
+                        "Local-search index files must be regular files without hard links"
+                    )
+                _owner_only(fd, 0o600)
+            finally:
+                os.close(fd)
+    finally:
+        os.close(directory)
+
+
 class Store:
     def __init__(self, path: Path, model_id: str):
-        path.parent.mkdir(parents=True, exist_ok=True)
+        _prepare_index(path)
         self.path = path
+        # SQLite's Unix VFS creates WAL/SHM/rollback journals with the database
+        # mode, so precreation at 0600 protects even their first write. Existing
+        # companions are repaired above before SQLite can recover their content.
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.create_function(
@@ -1146,8 +1203,12 @@ class StoreWorker:
 
     def close(self):
         self._writer.shutdown()
-        self._executor.submit(self._store.close).result()
-        self._executor.shutdown()
+        try:
+            # A refused open has no connection, but its workers still need teardown.
+            if self._ready.exception() is None:
+                self._executor.submit(self._store.close).result()
+        finally:
+            self._executor.shutdown()
 
 
 def bounded_terms(terms, distinctive=None):

@@ -20,6 +20,18 @@ to remove its searchable files and chunks. SQLite may retain deleted content
 in free pages or WAL until it reuses/checkpoints them; deletion is not secure
 erasure.
 
+The index directory is owner-only (`0700`); the database and SQLite WAL,
+shared-memory and rollback-journal files are owner-only (`0600`), regardless of
+umask. The database is created with this mode before SQLite first opens it;
+new sidecars inherit its mode. On open, existing index files are tightened only
+when owned by the current user. The index directory itself is tightened only
+when it contains exclusively the database and its `-wal`, `-shm`, and `-journal`
+companions; a directory already at `0700` may contain unrelated entries because
+its permissions need no change. Parent directories are never chmodded. Choose
+a dedicated index directory. Foreign ownership, symlinks, hard-linked or
+non-regular index files, and permission-repair failures refuse opening; status
+returns a readable structured `store_open_failed` error (503).
+
 Provision `mlx-community/embeddinggemma-2-4bit` explicitly with `rapid-mlx pull`
 before expecting semantic results. These routes never download a model. While
 it is absent, files are indexed for keywords, folders report

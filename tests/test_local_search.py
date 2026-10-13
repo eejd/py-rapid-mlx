@@ -4,6 +4,8 @@
 import asyncio
 import io
 import os
+import sqlite3
+import stat
 import sys
 import threading
 import zipfile
@@ -30,6 +32,187 @@ from rapid_mlx.local_search.search import fuse, snippet
 from rapid_mlx.local_search.service import LocalSearch, local_model_path
 from rapid_mlx.local_search.store import Store
 from rapid_mlx.middleware.exception_handlers import install_exception_handlers
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_index_owner_only_under_permissive_umask(tmp_path, monkeypatch, existing):
+    path = tmp_path / "public-parent" / "index" / "index.sqlite3"
+    previous_umask = os.umask(0)
+    first = second = None
+    try:
+        if existing:
+            first = Store(path, "test")
+            path.parent.chmod(0o755)
+            for suffix in ("", "-wal", "-shm"):
+                Path(str(path) + suffix).chmod(0o644)
+            # A cold, non-hot rollback journal also needs repair before recovery.
+            journal = Path(str(path) + "-journal")
+            journal.write_bytes(b"\0" * 512)
+            journal.chmod(0o644)
+        connect = sqlite3.connect
+
+        def protected_connect(database, *args, **kwargs):
+            # Assert protection before SQLite's first opportunity to write.
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+            assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+            if existing:
+                assert stat.S_IMODE(journal.stat().st_mode) == 0o600
+            return connect(database, *args, **kwargs)
+
+        monkeypatch.setattr(sqlite3, "connect", protected_connect)
+        second = Store(path, "test")
+        assert second.db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        with second.db:
+            second.db.execute("INSERT INTO meta VALUES ('private_text', 'secret')")
+        for suffix in ("", "-wal", "-shm"):
+            assert stat.S_IMODE(Path(str(path) + suffix).stat().st_mode) == 0o600
+        assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o777
+    finally:
+        if second is not None:
+            second.close()
+        if first is not None:
+            first.close()
+        os.umask(previous_umask)
+
+
+def test_index_rollback_journal_inherits_private_mode(tmp_path):
+    previous_umask = os.umask(0)
+    store = None
+    try:
+        path = tmp_path / "index" / "index.sqlite3"
+        store = Store(path, "test")
+        store.db.execute("PRAGMA journal_mode=DELETE")
+        store.db.execute("INSERT INTO meta VALUES ('private_text', 'secret')")
+        assert stat.S_IMODE(Path(str(path) + "-journal").stat().st_mode) == 0o600
+        store.db.rollback()
+    finally:
+        if store is not None:
+            store.close()
+        os.umask(previous_umask)
+
+
+def test_private_index_directory_with_unrelated_files_needs_no_chmod(
+    tmp_path, monkeypatch
+):
+    tmp_path.chmod(0o700)
+    unrelated = tmp_path / "keep.txt"
+    unrelated.write_text("keep")
+    unrelated.chmod(0o644)
+    monkeypatch.setattr(os, "fchmod", lambda *args: pytest.fail("unexpected chmod"))
+    previous_umask = os.umask(0)
+    try:
+        store = Store(tmp_path / "index.sqlite3", "test")
+        store.close()
+        assert stat.S_IMODE(unrelated.stat().st_mode) == 0o644
+    finally:
+        os.umask(previous_umask)
+
+
+@pytest.mark.parametrize(
+    "unsafe, message",
+    [
+        ("mixed", "dedicated index directory"),
+        ("directory_entry", "dedicated index directory"),
+        ("symlink_entry", "dedicated index directory"),
+        ("foreign_directory", "owned by the current user"),
+        ("foreign_file", "owned by the current user"),
+        ("chmod_denied", "permission repair denied"),
+        ("chmod_ignored", "owner-only"),
+        ("symlink_directory", "index"),
+        ("symlink_database", "index.sqlite3"),
+        ("symlink_wal", "index.sqlite3-wal"),
+        ("symlink_shm", "index.sqlite3-shm"),
+        ("symlink_journal", "index.sqlite3-journal"),
+        ("hardlink", "without hard links"),
+        ("fifo", "regular files"),
+    ],
+)
+def test_unsafe_index_refused_with_readable_status(
+    tmp_path, monkeypatch, unsafe, message
+):
+    from rapid_mlx.routes.local_search import router
+
+    directory = tmp_path / "index"
+    directory.mkdir(mode=0o700)
+    path = directory / "index.sqlite3"
+    outside = tmp_path / "outside"
+    outside.write_text("unrelated content")
+    outside.chmod(0o644)
+    if unsafe == "mixed":
+        (directory / "unrelated.txt").write_text("keep")
+        directory.chmod(0o755)
+    elif unsafe == "directory_entry":
+        path.mkdir()
+        directory.chmod(0o755)
+    elif unsafe == "symlink_entry":
+        path.symlink_to(outside)
+        directory.chmod(0o755)
+    elif unsafe.startswith("foreign_"):
+        if unsafe == "foreign_file":
+            path.write_bytes(b"")
+            path.chmod(0o644)
+        target = (directory if unsafe == "foreign_directory" else path).stat().st_ino
+        fstat = os.fstat
+
+        def foreign_owner(fd):
+            info = fstat(fd)
+            if info.st_ino == target:
+                values = list(info)
+                values[4] = os.geteuid() + 1
+                return os.stat_result(values)
+            return info
+
+        monkeypatch.setattr(os, "fstat", foreign_owner)
+    elif unsafe.startswith("chmod_"):
+        directory.chmod(0o755)
+
+        def cannot_repair(fd, mode):
+            if unsafe == "chmod_denied":
+                raise PermissionError("permission repair denied")
+
+        monkeypatch.setattr(os, "fchmod", cannot_repair)
+    elif unsafe == "symlink_directory":
+        directory.rmdir()
+        directory.symlink_to(tmp_path, target_is_directory=True)
+    elif unsafe.startswith("symlink_"):
+        suffix = {"database": "", "wal": "-wal", "shm": "-shm", "journal": "-journal"}[
+            unsafe.removeprefix("symlink_")
+        ]
+        Path(str(path) + suffix).symlink_to(outside)
+    elif unsafe == "hardlink":
+        os.link(outside, path)
+    else:
+        os.mkfifo(path)
+    monkeypatch.setattr(sqlite3, "connect", lambda *args: pytest.fail("SQLite opened"))
+
+    async def scenario():
+        app = FastAPI()
+        install_exception_handlers(app)
+        app.include_router(router)
+        service = LocalSearch(directory, resolve_model=lambda _: None)
+        app.state.local_search = service
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+            ) as client:
+                response = await client.get("/v1/local-search/status")
+            assert response.status_code == 503
+            error = response.json()["error"]
+            assert error["code"] == "store_open_failed"
+            assert error["param"] == "local_search_dir"
+            assert message in error["message"]
+            assert stat.S_IMODE(outside.stat().st_mode) == 0o644
+            assert outside.read_text() == "unrelated content"
+            if unsafe in {"mixed", "directory_entry", "symlink_entry"}:
+                assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+        finally:
+            await service.close()
+
+    previous_umask = os.umask(0)
+    try:
+        asyncio.run(scenario())
+    finally:
+        os.umask(previous_umask)
 
 
 @pytest.fixture(autouse=True)

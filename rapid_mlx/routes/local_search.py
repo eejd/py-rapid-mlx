@@ -61,7 +61,10 @@ async def require_folder(service, folder_id):
 
 @router.get("/status")
 async def status(request: Request):
-    return await get_service(request).status_async()
+    try:
+        return await get_service(request).status_async()
+    except OSError as exc:
+        error(str(exc), "store_open_failed", "local_search_dir", 503)
 
 
 @router.post("/folders")
