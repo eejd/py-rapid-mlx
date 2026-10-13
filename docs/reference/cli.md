@@ -413,13 +413,18 @@ binary auto-routing decision has a force-on and force-off pair.
 | `--pflash-query-window` | Trailing query window used to score middle blocks | 512 |
 | `--pflash-stride-blocks` | Keep every Nth middle block as an anchor during scoring (0 disables anchors) | 8 |
 | `--pflash-include-tools` | Allow compression on prompts with tool definitions (skipped by default for tool-call reliability) | off |
+| `--pflash-threshold-basis` | What `--pflash auto` compares to `--pflash-threshold`: `total` prompt tokens, or only the `uncached` tokens not already covered by a memory-aware prefix-cache entry, so a warm conversation that grows past the threshold keeps hitting the cache instead of being compressed every turn | `total` |
 
 PFlash is lossy. A compressed prompt keeps the first `--pflash-sink-tokens`,
 the last `--pflash-tail-tokens`, and the middle blocks that score highest
 against the end of the prompt, until it reaches `--pflash-keep-ratio` of the
 original. The rest of the middle is dropped, so the model does not see it. A
 compressed request also skips the prefix cache, so a later turn of the same
-conversation prefills from scratch. Prompts with tool definitions are
+conversation prefills from scratch. With `--pflash auto` the threshold is
+compared to the whole prompt by default, so a conversation that grows past it
+is compressed on every later turn; `--pflash-threshold-basis uncached` compares
+only the part not already in the prefix cache, so such a conversation keeps
+its cache and only a cold prompt above the threshold is compressed. Prompts with tool definitions are
 skipped unless you pass `--pflash-include-tools`, and Chat Completions
 requests with a `response_format` are skipped too.
 
