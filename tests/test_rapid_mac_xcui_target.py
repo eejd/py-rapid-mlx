@@ -252,7 +252,7 @@ def test_xcui_start_waits_for_selected_model_and_start_action():
     assert selected_model in start
     assert start_action in start
     assert enabled in start
-    assert 'harness.startModel(selectedModel: picker)' in image_source
+    assert "harness.startModel(selectedModel: picker)" in image_source
     assert start.index(selected_model) < start.index(release) < start.index(click)
     assert start.index(start_action) < start.index(release)
     assert start.index(enabled) < start.index(release)
