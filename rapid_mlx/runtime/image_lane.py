@@ -111,16 +111,20 @@ class ImageEngine:
 
     def ensure_resident(self, *, mode: str | None = None) -> None:
         """Eagerly materialize lazy image weights for budgeted residency."""
-        if mode not in (None, "generation", "editing"):
-            raise ValueError(f"unsupported image residency mode: {mode!r}")
+        self.validate_residency_mode(mode)
         # ``None`` preserves the engine's family-aware default. In particular,
         # edit-only checkpoints must not be forced through the generation
         # loader when an older client omits the newly optional mode field.
         for_edit = None if mode is None else mode == "editing"
-        if for_edit and not self.supports_editing:
-            raise ImageRequestError(f"{self.family} does not support image editing.")
         self._engine._ensure_loaded(for_edit=for_edit)  # noqa: SLF001
         self._emit_model_served()
+
+    def validate_residency_mode(self, mode: str | None) -> None:
+        """Reject unsupported explicit modes without touching model assets."""
+        if mode not in (None, "generation", "editing"):
+            raise ValueError(f"unsupported image residency mode: {mode!r}")
+        if mode == "editing" and not self.supports_editing:
+            raise ImageRequestError(f"{self.family} does not support image editing.")
 
     def _emit_model_served(self) -> None:
         from ..server import _emit_primary_model_served_once

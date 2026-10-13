@@ -187,39 +187,32 @@ def test_cyclic_cause_and_unrelated_context_stay_safe(control_plane):
 
 
 def test_unsupported_image_edit_through_resident_manager(control_plane, monkeypatch):
-    from rapid_mlx.runtime.image_lane import ImageEngine
+    from rapid_mlx import server
     from rapid_mlx.runtime.model_registry import ModelRegistry
     from rapid_mlx.runtime.resident_models import ResidentModelManager
 
     client, _ = control_plane
-    adapter = ImageEngine("Qwen/Qwen-Image")
     asset_calls = []
     monkeypatch.setattr(
         "rapid_mlx.model_downloads.require_local",
         lambda _name: asset_calls.append("checkpoint"),
     )
     monkeypatch.setattr(
-        adapter._engine,
-        "_ensure_runtime_assets",
-        lambda: asset_calls.append("runtime assets"),
+        "rapid_mlx.image.engine.ImageGenerationEngine._ensure_runtime_assets",
+        lambda _self: asset_calls.append("runtime assets"),
     )
     monkeypatch.setattr(
-        adapter._engine,
-        "_verify_weights_complete",
-        lambda: asset_calls.append("weight verification"),
+        "rapid_mlx.image.engine.ImageGenerationEngine._verify_weights_complete",
+        lambda _self: asset_calls.append("weight verification"),
     )
 
-    async def loader(model_name, model_path, performance, image_mode):
-        assert model_name == "Qwen/Qwen-Image"
-        assert image_mode == "editing"
-        adapter.ensure_resident(mode=image_mode)
-        pytest.fail("unsupported editing must fail before publication")
-
-    manager = ResidentModelManager(ModelRegistry(), loader, memory_reader=lambda: 0)
+    manager = ResidentModelManager(
+        ModelRegistry(), server._load_dynamic_resident_model, memory_reader=lambda: 0
+    )
     monkeypatch.setattr(residency, "_manager", lambda: manager)
     response = client.post(
         "/v1/models/load",
-        json={"model": "Qwen/Qwen-Image", "image_mode": "editing"},
+        json={"model": "qwen-image", "image_mode": "editing"},
     )
     assert response.status_code == 400
     assert response.json() == {
