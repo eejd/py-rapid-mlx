@@ -230,6 +230,7 @@ final class RapidUITestHarness {
         app = XCUIApplication(url: appURL)
         app.launchArguments += [
             "-com.rapidmlx.rapid.telemetry.enabled", "false",
+            "-rapid.server.auto_start_on_launch.v1", "false",
         ]
         app.launchEnvironment = [
             "HOME": testHome.path,
