@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -19,6 +20,10 @@ PARSER_TIMEOUT_SECONDS = 10.0
 PARSER_MEMORY_BYTES = 512 * 1024 * 1024
 
 
+def parser_timeout_seconds(size_bytes: int) -> float:
+    return min(120.0, PARSER_TIMEOUT_SECONDS + 4 * size_bytes / (1024 * 1024))
+
+
 async def parse_document(path, data):
     if path.suffix.lower() not in {".pdf", *OFFICE_SUFFIXES}:
         return await asyncio.to_thread(extract, path, data)
@@ -31,7 +36,7 @@ async def parse_document(path, data):
 async def run_parser(command, data):
     try:
         return await asyncio.wait_for(
-            _run_parser(command, data), timeout=PARSER_TIMEOUT_SECONDS
+            _run_parser(command, data), timeout=parser_timeout_seconds(len(data))
         )
     except asyncio.TimeoutError as exc:
         raise SkippedError(SKIP_REASONS["read"]) from exc
@@ -61,7 +66,45 @@ async def _run_parser(command, data):
             process.kill()
         await process.wait()
         raise
-    communication = asyncio.create_task(process.communicate(data))
+
+    async def communicate_bounded():
+        async def send():
+            try:
+                process.stdin.write(data)
+                await process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except asyncio.CancelledError:
+                process.stdin.transport.abort()
+                raise
+            finally:
+                process.stdin.close()
+                try:
+                    await process.stdin.wait_closed()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+        sender = asyncio.create_task(send())
+        output = bytearray()
+        try:
+            while True:
+                block = await process.stdout.read(
+                    min(65_536, MAX_BYTES * 8 + 1 - len(output))
+                )
+                if not block:
+                    break
+                output.extend(block)
+                if len(output) > MAX_BYTES * 8:
+                    raise SkippedError(SKIP_REASONS["read"])
+            await sender
+            await process.wait()
+            return output
+        finally:
+            if not sender.done():
+                sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
+
+    communication = asyncio.create_task(communicate_bounded())
 
     async def bounded():
         probe = psutil.Process(process.pid)
@@ -72,7 +115,7 @@ async def _run_parser(command, data):
             except psutil.NoSuchProcess:
                 break
             await asyncio.sleep(0.02)
-        output, _ = await communication
+        output = await communication
         if process.returncode or len(output) > MAX_BYTES * 8:
             raise SkippedError(SKIP_REASONS["read"])
         message = json.loads(output)
@@ -109,9 +152,11 @@ def main():
         resource.setrlimit(
             resource.RLIMIT_DATA, (PARSER_MEMORY_BYTES, PARSER_MEMORY_BYTES)
         )
-    resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
     try:
         data = sys.stdin.buffer.read(MAX_BYTES + 1)
+        # RLIMIT_CPU accepts whole seconds; round the shared deadline up.
+        cpu_seconds = math.ceil(parser_timeout_seconds(len(data)))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
         if len(data) > MAX_BYTES:
             raise SkippedError(SKIP_REASONS["size"])
         units = extract(Path("source" + sys.argv[1]), data)

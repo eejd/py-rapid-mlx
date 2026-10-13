@@ -4,7 +4,9 @@
 import re
 from dataclasses import dataclass
 
-from .extraction import Unit
+from .extraction import SkippedError, Unit
+
+MAX_CHUNKS_PER_FILE = 65_536
 
 CHUNKING_VERSION = "3"
 BOUNDARIES = (r"\n(?=#{1,6} )", r"\n\s*\n", r"\n", r"\s+|[。！？；，]")
@@ -35,7 +37,7 @@ def chunk_units(
 ) -> list[Chunk]:
     if target < 2 or not 0 <= overlap < target // 2:
         raise ValueError("overlap must be less than half the chunk target")
-    result = []
+    result: list[Chunk] = []
     for unit in units:
         start = 0
         line_position, line_number = 0, 1
@@ -51,6 +53,8 @@ def chunk_units(
             line_number += text.count("\n", line_position, position)
             line_position = position
             if raw.strip():
+                if len(result) >= MAX_CHUNKS_PER_FILE:
+                    raise SkippedError("chunk size cap")
                 result.append(
                     Chunk(
                         raw.strip(),

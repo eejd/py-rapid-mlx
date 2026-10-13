@@ -44,7 +44,12 @@ Office extraction uses ZIP/XML without additional dependencies. Spreadsheet
 extraction reads at most 10,000 cells per sheet; formulas contribute their stored
 values if present and are not evaluated. The 20 MiB cap also bounds total
 uncompressed Office archive bytes and extracted output; oversized archives are
-rejected before inflation. External Office relationships are not followed.
+rejected before inflation. Office archives admit at most 4,096 entries and a
+1,000:1 compression ratio per entry. Each XML part admits at most 64 levels
+and 100,000 elements; entity declarations are rejected. Presentation slides
+and workbook sheets are capped at 1,000 per file.
+PDFs have no page-count cap; cumulative extracted text and the parser deadline
+bound extraction. External Office relationships are not followed.
 PDFs with pages but fewer than three alphanumeric characters across their
 extracted text are classified as scanned/image-only. Encrypted PDFs are skipped,
 even when an empty password could unlock them. There is no OCR: scanned PDFs
@@ -65,6 +70,17 @@ Audio is unsupported and its checkpoint weights are always dropped. If the
 lazily imported PDF parser is unavailable, PDFs are counted as unsupported skips.
 
 The per-file caps are 20 MiB for text, 50 MiB for images, and 4 GiB for videos.
+Images and video frames admit at most 67,108,864 decoded pixels and 16,384
+pixels on either axis. Image dimensions are checked before pixel loading; Pillow
+decompression-bomb warnings and errors skip the file as “Too large”. Video
+metadata is checked before frame reads, and actual RGB-compatible uint8 frames
+are checked before resizing/conversion (at most 48 MiB of decoded pixel data).
+The pixel checks bound what the engine keeps and converts. The native video
+decoder’s own transient allocations for a malformed file are not bounded by
+these checks.
+Files producing more than 65,536 text chunks are skipped as “Too large”.
+Folder discovery descends at most 64 directory levels; deeper directories are
+omitted. There is no limit on the number of entries across the tree.
 Only the first 64 text chunks per file (roughly 75 KB, including PDF, DOCX, PPTX, and XLSX
 text) are embedded; all remaining chunks stay keyword-searchable with their
 line or page locators. The entire index retains at most 262,144 embedded chunks
@@ -420,12 +436,18 @@ component opens relative to a pinned directory descriptor with `O_NOFOLLOW`;
 the root descriptor stays open throughout discovery and extraction. Search
 checks source paths through that same component-wise no-follow discipline;
 name-only hits use metadata checks without opening file content.
-PDF and Office parsing use killable subprocesses with a ten-second wall deadline
-and a 512 MiB memory budget; timeout/failure becomes “Could not be read”.
-Cancellation kills and reaps the child. Allocation limits apply on Linux; on
+HTML parses in-process on the CPU worker with the 20 MiB input/output cap.
+PDF and Office parsing use killable subprocesses with a 512 MiB memory budget.
+Their wall deadline is `min(120, 10 + 4 × input size in MiB)` seconds; the same
+budget sets the child CPU limit, rounded up to whole seconds. Timeout/failure
+becomes “Could not be read”.
+Parser output is read incrementally and capped at 160 MiB of JSON (including
+escaping); an over-budget child is killed and reaped. Cancellation kills and
+reaps the child. Allocation limits apply on Linux; on
 macOS, resident memory is sampled every 20 ms and an over-budget child is killed
-(the peak can exceed the budget between samples). There is no parser thread. CPU-only tests use a
-deterministic fake embedder; real model retrieval and chat latency under load
+(the peak can exceed the budget between samples). PDF and Office parsers do not
+run in threads. CPU-only tests use a deterministic fake embedder; real model
+retrieval and chat latency under load
 remain the pilot's hardware qualification work.
 
 The native loader and `EmbeddingEngine` use `vision=False` by default. Only the

@@ -1791,6 +1791,8 @@ def test_video_long_decode_is_bounded(tmp_path, monkeypatch):
             return True
 
         def get(self, key):
+            if key in {cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT}:
+                return 8
             return 2 if key == cv2.CAP_PROP_FPS else 7200
 
         def set(self, key, value):
@@ -5138,7 +5140,7 @@ def test_read_safe_detects_growth_before_read(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("mode", ["seek", "read", "decoder"])
 def test_video_decoder_failures_release_capture(tmp_path, monkeypatch, mode):
-    import cv2
+    cv2 = pytest.importorskip("cv2")
 
     from rapid_mlx.local_search.extraction import media_frames
 
@@ -5799,7 +5801,16 @@ def test_zero_embedding_is_rejected_and_releases_model(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "mode", ["spawn_cancel", "probe_gone", "invalid_output", "kill_race"]
+    "mode",
+    [
+        "spawn_cancel",
+        "probe_gone",
+        "invalid_output",
+        "kill_race",
+        "stdin_closed",
+        "stdin_reset",
+        "blocked_sender",
+    ],
 )
 def test_parser_process_races_reap_child(monkeypatch, mode):
     import psutil
@@ -5816,16 +5827,36 @@ def test_parser_process_races_reap_child(monkeypatch, mode):
             killed = False
             reaped = False
 
-            async def communicate(self, data):
+            def write(self, data):
+                if mode == "stdin_closed":
+                    raise BrokenPipeError()
+
+            async def drain(self):
+                if mode == "stdin_reset":
+                    raise ConnectionResetError()
+                if mode == "blocked_sender":
+                    await asyncio.Event().wait()
+
+            def close(self):
+                pass
+
+            def abort(self):
+                pass
+
+            async def wait_closed(self):
+                if mode == "stdin_closed":
+                    raise BrokenPipeError()
+
+            async def read(self, size):
                 communicating.set()
+                if self.returncode is not None:
+                    return b""
                 if mode == "probe_gone":
                     await asyncio.sleep(0.03)
-                if mode == "kill_race":
+                if mode in {"kill_race", "blocked_sender"}:
                     await asyncio.Event().wait()
                 self.returncode = 0
-                return (
-                    b"invalid json" if mode == "invalid_output" else b'{"units":[]}'
-                ), b""
+                return b"invalid json" if mode == "invalid_output" else b'{"units":[]}'
 
             def kill(self):
                 self.killed = True
@@ -5838,6 +5869,7 @@ def test_parser_process_races_reap_child(monkeypatch, mode):
                 return self.returncode
 
         process = Process()
+        process.stdin = process.stdout = process.transport = process
 
         async def spawn(*args, **kwargs):
             started.set()
@@ -5857,8 +5889,8 @@ def test_parser_process_races_reap_child(monkeypatch, mode):
         monkeypatch.setattr(psutil, "Process", lambda _: Probe())
         task = asyncio.create_task(parsing._run_parser(["parser"], b""))
         await started.wait()
-        if mode in {"spawn_cancel", "kill_race"}:
-            if mode == "kill_race":
+        if mode in {"spawn_cancel", "kill_race", "blocked_sender"}:
+            if mode in {"kill_race", "blocked_sender"}:
                 await communicating.wait()
             task.cancel()
             release.set()
@@ -6432,3 +6464,458 @@ def test_worker_queue_removed_while_waiting_for_coordination(tmp_path):
             await search.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "size", [(8193, 8192), (16_385, 1), (0, 1), (float("nan"), 1), (1, float("inf"))]
+)
+def test_media_dimension_budget(size):
+    from rapid_mlx.local_search import extraction
+
+    with pytest.raises(SkippedError, match="size cap") as caught:
+        extraction._check_media_dimensions(*size)
+    assert extraction.skip_reason(str(caught.value)) == "Too large"
+    extraction._check_media_dimensions(8192, 8192)
+
+
+@pytest.mark.parametrize("failure", ["pixels", "dimension", "warning", "error", "seek"])
+def test_image_resource_limits_precede_pixel_decode(tmp_path, monkeypatch, failure):
+    import warnings
+
+    from PIL import Image, ImageOps
+
+    from rapid_mlx.local_search import extraction
+
+    root = folder(tmp_path)
+    path = root / "oversized.png"
+    Image.new("RGB", (2, 2)).save(path)
+    convert = []
+    monkeypatch.setattr(ImageOps, "exif_transpose", lambda image: convert.append(image))
+    if failure in {"warning", "error"}:
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 3 if failure == "warning" else 1)
+    elif failure == "pixels":
+        monkeypatch.setattr(extraction, "MAX_MEDIA_PIXELS", 3)
+    elif failure == "dimension":
+        monkeypatch.setattr(extraction, "MAX_MEDIA_DIMENSION", 1)
+    else:
+        from PIL import PngImagePlugin
+
+        original = PngImagePlugin.PngImageFile.seek
+
+        def seek(image, frame):
+            original(image, frame)
+            image._size = (8193, 8192)
+
+        monkeypatch.setattr(PngImagePlugin.PngImageFile, "seek", seek)
+    with pytest.raises(SkippedError, match="size cap"):
+        list(extraction.media_frames(path, root))
+    assert not convert
+    # The scoped filter must not leak into later image operations.
+    with warnings.catch_warnings(record=True) as observed:
+        warnings.simplefilter("always")
+        warnings.warn("outside decoder", Image.DecompressionBombWarning, stacklevel=2)
+    assert len(observed) == 1
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "metadata_pixels",
+        "metadata_dimension",
+        "actual_pixels",
+        "shape",
+        "dtype",
+        "bytes",
+        "valid",
+    ],
+)
+def test_video_resource_limits_with_fake_decoder(tmp_path, monkeypatch, mode):
+    from types import SimpleNamespace
+
+    from rapid_mlx.local_search import extraction
+
+    root = folder(tmp_path)
+    path = root / "oversized.mp4"
+    path.write_bytes(b"tiny synthetic container")
+    calls = []
+    pixels = np.zeros((2, 2, 3), dtype=np.uint8)
+    if mode == "shape":
+        pixels = np.zeros((2, 2), dtype=np.uint8)
+    elif mode == "dtype":
+        pixels = pixels.astype(np.float32)
+    elif mode == "bytes":
+        pixels = SimpleNamespace(
+            ndim=3, shape=(2, 2, 3), dtype=np.uint8, nbytes=48 * 1024 * 1024 + 1
+        )
+    monkeypatch.setattr(
+        extraction, "MAX_MEDIA_PIXELS", 3 if mode == "actual_pixels" else 4
+    )
+    monkeypatch.setattr(extraction, "MAX_MEDIA_DIMENSION", 4)
+
+    class Capture:
+        def isOpened(self):  # noqa: N802
+            return True
+
+        def get(self, key):
+            return {
+                1: 3
+                if mode == "metadata_pixels"
+                else 5
+                if mode == "metadata_dimension"
+                else 2,
+                2: 1 if mode == "actual_pixels" else 2,
+                3: 1,
+                4: 1,
+            }[key]
+
+        def set(self, *args):
+            return True
+
+        def read(self):
+            calls.append("read")
+            return True, pixels
+
+        def release(self):
+            calls.append("release")
+
+    def convert(frame, code):
+        calls.append("convert")
+        return frame
+
+    decoder = SimpleNamespace(
+        VideoCapture=lambda _: Capture(),
+        CAP_PROP_FRAME_WIDTH=1,
+        CAP_PROP_FRAME_HEIGHT=2,
+        CAP_PROP_FPS=3,
+        CAP_PROP_FRAME_COUNT=4,
+        CAP_PROP_POS_FRAMES=5,
+        INTER_AREA=0,
+        COLOR_BGR2RGB=0,
+        error=RuntimeError,
+        resize=lambda *args, **kwargs: pixels,
+        cvtColor=convert,
+    )
+    monkeypatch.setitem(sys.modules, "cv2", decoder)
+    if mode == "valid":
+        frames = list(extraction.media_frames(path, root))
+        assert len(frames) == 1 and frames[0].image.size == (2, 2)
+    else:
+        with pytest.raises(
+            SkippedError,
+            match="undecodable video" if mode in {"shape", "dtype"} else "size cap",
+        ):
+            list(extraction.media_frames(path, root))
+        assert "convert" not in calls
+        assert ("read" in calls) == (not mode.startswith("metadata"))
+    assert calls[-1] == "release"
+
+
+def test_nonfinite_video_duration_is_bounded():
+    from rapid_mlx.local_search.extraction import sample_timestamps
+
+    with pytest.raises(SkippedError, match="size cap"):
+        sample_timestamps(100, 1e-320)
+
+
+@pytest.mark.parametrize(
+    "limit",
+    [
+        "MAX_ARCHIVE_ENTRIES",
+        "MAX_COMPRESSION_RATIO",
+        "MAX_XML_DEPTH",
+        "MAX_XML_ELEMENTS",
+    ],
+)
+def test_office_structure_budgets(monkeypatch, limit):
+    from rapid_mlx.local_search import extraction
+
+    word = extraction._WORD[1:-1]
+    parts = {
+        "word/document.xml": f'<w:document xmlns:w="{word}"><w:p><w:t>apple</w:t></w:p></w:document>',
+        "unused.xml": "x" * 256,
+    }
+    monkeypatch.setattr(extraction, limit, 1)
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extract(Path("bounded.docx"), office_zip(parts))
+
+
+@pytest.mark.parametrize("suffix", [".pptx", ".xlsx"])
+def test_document_page_budget(monkeypatch, suffix):
+    from rapid_mlx.local_search import extraction
+
+    monkeypatch.setattr(extraction, "MAX_DOCUMENT_PAGES", 1)
+    data = office_fixture(suffix)[0]
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extract(Path("bounded" + suffix), data)
+
+
+def test_total_text_and_paragraph_separator_budget(monkeypatch):
+    import xml.etree.ElementTree as ET
+
+    from rapid_mlx.local_search import extraction
+
+    with pytest.raises(SkippedError, match="size cap"):
+        extract(Path("large.txt"), b"four", max_bytes=3)
+    # A named HTML reference can expand to multiple Unicode codepoints.
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extract(Path("large.html"), b"&nGt;", max_bytes=5)
+    root = ET.fromstring(
+        '<root xmlns:w="' + extraction._WORD[1:-1] + '"><w:p/><w:p/></root>'
+    )
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extraction._paragraphs(root, extraction._WORD, 1)
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extraction._join_bounded(["a", "b"], "\n", 2)
+
+
+def test_chunk_budget_across_units_and_long_lines(monkeypatch):
+    from rapid_mlx.local_search import chunking
+
+    monkeypatch.setattr(chunking, "MAX_CHUNKS_PER_FILE", 2)
+    assert len(chunk_units([Unit("x" * 16)], target=8, overlap=0)) == 2
+    with pytest.raises(SkippedError, match="size cap"):
+        chunk_units([Unit("x" * 24)], target=8, overlap=0)
+    with pytest.raises(SkippedError, match="size cap"):
+        chunk_units([Unit("a"), Unit("b"), Unit("c")])
+
+
+def test_directory_depth_budget(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import extraction
+
+    root = folder(tmp_path)
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "file.txt").touch()
+    (root / "root.txt").touch()
+    monkeypatch.setattr(extraction, "MAX_DIRECTORY_DEPTH", 0)
+    paths, skipped = scan(root)
+    assert paths == [root / "root.txt"] and skipped == 1
+
+
+@pytest.mark.parametrize("suffix", [".html", ".htm", ".pdf", ".docx", ".txt"])
+def test_document_parser_isolation_selection(monkeypatch, suffix):
+    from rapid_mlx.local_search import parsing
+
+    parser = AsyncMock(return_value=[Unit("isolated")])
+    monkeypatch.setattr(parsing, "run_parser", parser)
+    result = asyncio.run(parsing.parse_document(Path("file" + suffix), b"plain"))
+    assert result == [Unit("isolated" if suffix in {".pdf", ".docx"} else "plain")]
+    assert parser.await_count == (1 if suffix in {".pdf", ".docx"} else 0)
+
+
+def test_parser_output_cap_kills_child_without_waiting_for_exit(monkeypatch):
+    import psutil
+
+    from rapid_mlx.local_search import parsing
+
+    children = []
+    spawn = asyncio.create_subprocess_exec
+
+    async def observed(*args, **kwargs):
+        process = await spawn(*args, **kwargs)
+        children.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", observed)
+    monkeypatch.setattr(parsing, "MAX_BYTES", 8)
+    command = (
+        "import sys,time; sys.stdout.write('x'*65); sys.stdout.flush(); time.sleep(60)"
+    )
+    with pytest.raises(SkippedError, match="Could not be read"):
+        asyncio.run(
+            asyncio.wait_for(
+                parsing.run_parser([sys.executable, "-c", command], b"x" * 131_072), 2
+            )
+        )
+    assert children[0].returncode is not None
+    assert not psutil.pid_exists(children[0].pid)
+
+
+def test_oversized_decoded_image_remains_findable_by_name(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from rapid_mlx.local_search import extraction
+
+    monkeypatch.setattr(extraction, "MAX_MEDIA_PIXELS", 3)
+
+    async def scenario():
+        root = folder(tmp_path)
+        path = root / "oversized_apple.png"
+        Image.new("RGB", (2, 2)).save(path)
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+            hits = (await search.search("oversized apple", 10, None))["results"]
+            assert len(hits) == 1 and hits[0]["path"] == str(path)
+            assert hits[0]["content_indexed"] is False
+            assert hits[0]["skip_reason"] == "Too large"
+            assert not fake.image_calls
+            assert search.status()["folders"][0]["state"] == "idle"
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "size", [(6000, 4000), (9600, 6400), (8192, 8192), (8193, 8192)]
+)
+def test_camera_image_pixel_budget_indexes_content(tmp_path, size):
+    from PIL import Image
+
+    from rapid_mlx.local_search.extraction import MAX_MEDIA_PIXELS
+
+    assert Image.MAX_IMAGE_PIXELS > MAX_MEDIA_PIXELS
+    accepted = size[0] * size[1] <= MAX_MEDIA_PIXELS
+
+    async def scenario():
+        root = folder(tmp_path)
+        path = root / "camera_apple.png"
+        with Image.new("RGB", size, "red") as image:
+            image.save(path)
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+            hit = (await search.search("camera apple", 10, None))["results"][0]
+            assert hit["content_indexed"] is accepted
+            assert fake.image_calls == ([1] if accepted else [])
+            if not accepted:
+                assert hit["skip_reason"] == "Too large"
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_pdf_over_1000_pages_retains_text_and_page_locators():
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    page = PdfReader(io.BytesIO(small_pdf())).pages[0]
+    for _ in range(1501):
+        writer.add_page(page)
+    output = io.BytesIO()
+    writer.write(output)
+    from rapid_mlx.local_search.parsing import parse_document
+
+    units = asyncio.run(parse_document(Path("large.pdf"), output.getvalue()))
+    assert len(units) == 1501
+    assert units[0] == Unit("First", 1)
+    assert units[-1] == Unit("First", 1501)
+
+
+@pytest.mark.parametrize(
+    "size,seconds",
+    [
+        (0, 10),
+        (1024, 10 + 1 / 256),
+        (1024**2, 14),
+        (20 * 1024**2, 90),
+        (30 * 1024**2, 120),
+    ],
+)
+def test_parser_size_deadline_computation(size, seconds):
+    from rapid_mlx.local_search.parsing import parser_timeout_seconds
+
+    assert parser_timeout_seconds(size) == seconds
+
+
+def test_parser_wall_and_cpu_limits_share_size_deadline(monkeypatch):
+    import json
+    import resource
+    from types import SimpleNamespace
+
+    from rapid_mlx.local_search import parsing
+
+    data = b" " * (1024 * 1024)
+    sizes = []
+    limits = []
+    deadlines = []
+
+    def budget(size):
+        sizes.append(size)
+        return 14.5
+
+    async def wait_for(awaitable, timeout):
+        deadlines.append(timeout)
+        return await awaitable
+
+    monkeypatch.setattr(parsing, "parser_timeout_seconds", budget)
+    monkeypatch.setattr(parsing, "_run_parser", AsyncMock(return_value=[Unit("done")]))
+    monkeypatch.setattr(asyncio, "wait_for", wait_for)
+    assert asyncio.run(parsing.run_parser([], data)) == [Unit("done")]
+    monkeypatch.setattr(resource, "setrlimit", lambda *args: limits.append(args))
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(data)))
+    monkeypatch.setattr(sys, "argv", ["parser", ".txt"])
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    parsing.main()
+    assert sizes == [len(data), len(data)]
+    assert deadlines == [14.5]
+    assert (resource.RLIMIT_CPU, (15, 15)) in limits
+    assert "units" in json.loads(output.getvalue())
+
+
+@pytest.mark.parametrize("size,accepted", [((3840, 2160), True), ((7680, 4320), False)])
+def test_video_decoded_byte_budget_accepts_4k_skips_8k(
+    tmp_path, monkeypatch, size, accepted
+):
+    from types import SimpleNamespace
+
+    from rapid_mlx.local_search.extraction import media_frames
+
+    root = folder(tmp_path)
+    path = root / "camera.mp4"
+    path.write_bytes(b"synthetic")
+    pixels = np.zeros((size[1], size[0], 3), dtype=np.uint8)
+    calls = []
+
+    class Capture:
+        def isOpened(self):  # noqa: N802
+            return True
+
+        def get(self, key):
+            return {1: size[0], 2: size[1], 3: 1, 4: 1}[key]
+
+        def set(self, *args):
+            return True
+
+        def read(self):
+            return True, pixels
+
+        def release(self):
+            calls.append("release")
+
+    def convert(frame, code):
+        calls.append("convert")
+        return frame
+
+    monkeypatch.setitem(
+        sys.modules,
+        "cv2",
+        SimpleNamespace(
+            VideoCapture=lambda _: Capture(),
+            CAP_PROP_FRAME_WIDTH=1,
+            CAP_PROP_FRAME_HEIGHT=2,
+            CAP_PROP_FPS=3,
+            CAP_PROP_FRAME_COUNT=4,
+            CAP_PROP_POS_FRAMES=5,
+            INTER_AREA=0,
+            COLOR_BGR2RGB=0,
+            error=RuntimeError,
+            resize=lambda *args, **kwargs: np.zeros((32, 32, 3), dtype=np.uint8),
+            cvtColor=convert,
+        ),
+    )
+    if accepted:
+        frames = list(media_frames(path, root))
+        assert frames[0].image.size == size
+        assert calls == ["convert", "release"]
+    else:
+        with pytest.raises(SkippedError, match="size cap"):
+            list(media_frames(path, root))
+        assert calls == ["release"]

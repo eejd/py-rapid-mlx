@@ -7,6 +7,7 @@ import fnmatch
 import io
 import os
 import posixpath
+import warnings
 import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import contextmanager
@@ -19,6 +20,15 @@ from .eligibility import KEYWORD_ONLY_SUFFIXES
 MAX_BYTES = 20 * 1024 * 1024
 MAX_EMBEDDED_CHUNKS_PER_FILE = 64
 IMAGE_MAX_BYTES = 50 * 1024 * 1024
+MAX_MEDIA_PIXELS = 67_108_864
+VIDEO_MAX_DECODED_BYTES = 48 * 1024 * 1024
+MAX_MEDIA_DIMENSION = 16_384
+MAX_ARCHIVE_ENTRIES = 4096
+MAX_COMPRESSION_RATIO = 1000
+MAX_XML_DEPTH = 64
+MAX_XML_ELEMENTS = 100_000
+MAX_DOCUMENT_PAGES = 1000
+MAX_DIRECTORY_DEPTH = 64
 VIDEO_MAX_BYTES = 4 * 1024 * 1024 * 1024
 IMAGE_SUFFIXES = {
     ".png",
@@ -313,7 +323,8 @@ def scan_batches(root: Path, root_fd: int | None = None):
         nonlocal skipped
         skipped += 1
 
-    def walk(fd, base):
+    def walk(fd, base, depth=0):
+        nonlocal skipped
         try:
             with os.scandir(fd) as entries:
                 dirs, names = [], []
@@ -325,6 +336,9 @@ def scan_batches(root: Path, root_fd: int | None = None):
             onerror(exc)
             yield base, [], [], fd
             return
+        if depth >= MAX_DIRECTORY_DEPTH:
+            skipped += len(dirs)
+            dirs.clear()
         yield base, dirs, names, fd
         for name in dirs:
             try:
@@ -335,14 +349,15 @@ def scan_batches(root: Path, root_fd: int | None = None):
                 onerror(exc)
                 continue
             try:
-                yield from walk(child, str(Path(base) / name))
+                yield from walk(child, str(Path(base) / name), depth + 1)
             finally:
                 os.close(child)
 
     for base, dirs, names, fd in walk(root_fd, "."):
         relative = Path(base)
         files: list[Path] = []
-        for name in list(dirs):
+        retained_dirs = []
+        for name in dirs:
             path = root / relative / name
             import stat
 
@@ -368,8 +383,10 @@ def scan_batches(root: Path, root_fd: int | None = None):
             except OSError:
                 skip = True
             if skip:
-                dirs.remove(name)
                 skipped += 1
+            else:
+                retained_dirs.append(name)
+        dirs[:] = retained_dirs
         for name in sorted(names, key=lambda n: (file_kind(Path(n)) != "text", n)):
             import stat
 
@@ -481,6 +498,8 @@ def sample_timestamps(frame_count: int, fps: float) -> list[float]:
     if frame_count <= 0 or not math.isfinite(fps) or fps <= 0:
         raise SkippedError("undecodable video duration")
     duration = frame_count / fps
+    if not math.isfinite(duration):
+        raise SkippedError("size cap")
     count = math.ceil(duration / VIDEO_INTERVAL_SECONDS)
     if count > VIDEO_MAX_FRAMES:
         return [
@@ -504,6 +523,20 @@ def media_frames(path: Path, root: Path, root_fd=None):
         raise SkippedError(reason) from exc
 
 
+def _check_media_dimensions(width, height):
+    import math
+
+    if (
+        not math.isfinite(width)
+        or not math.isfinite(height)
+        or width <= 0
+        or height <= 0
+        or max(width, height) > MAX_MEDIA_DIMENSION
+        or width * height > MAX_MEDIA_PIXELS
+    ):
+        raise SkippedError("decoded size cap")
+
+
 def _decode_media_frames(path: Path, root: Path, root_fd=None):
     """Yield bounded sampled frames; the caller consumes at most four at once.
 
@@ -518,10 +551,22 @@ def _decode_media_frames(path: Path, root: Path, root_fd=None):
     with open_safe(path, root, cap, root_fd) as (stream, _):
         if kind == "image":
             try:
-                with Image.open(stream) as image:
-                    image.seek(0)
-                    yield MediaFrame(ImageOps.exif_transpose(image).convert("RGB"))
-            except (OSError, ValueError, Image.DecompressionBombError) as exc:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombWarning)
+                    with Image.open(stream) as image:
+                        _check_media_dimensions(*image.size)
+                        image.seek(0)
+                        _check_media_dimensions(*image.size)
+                        frame = ImageOps.exif_transpose(image).convert("RGB")
+                yield MediaFrame(frame)
+            except (
+                Image.DecompressionBombWarning,
+                Image.DecompressionBombError,
+            ) as exc:
+                raise SkippedError("decoded size cap") from exc
+            except SkippedError:
+                raise
+            except (OSError, ValueError) as exc:
                 reason = (
                     "unsupported HEIC"
                     if path.suffix.lower() == ".heic"
@@ -535,6 +580,10 @@ def _decode_media_frames(path: Path, root: Path, root_fd=None):
         try:
             if not capture.isOpened():
                 raise SkippedError("undecodable video")
+            _check_media_dimensions(
+                capture.get(cv2.CAP_PROP_FRAME_WIDTH),
+                capture.get(cv2.CAP_PROP_FRAME_HEIGHT),
+            )
             fps = capture.get(cv2.CAP_PROP_FPS)
             timestamps = sample_timestamps(
                 int(capture.get(cv2.CAP_PROP_FRAME_COUNT)), fps
@@ -548,6 +597,11 @@ def _decode_media_frames(path: Path, root: Path, root_fd=None):
                 ok, pixels = capture.read()
                 if not ok:
                     continue
+                if pixels.ndim != 3 or pixels.shape[2] != 3 or pixels.dtype != np.uint8:
+                    raise SkippedError("undecodable video")
+                _check_media_dimensions(pixels.shape[1], pixels.shape[0])
+                if pixels.nbytes > VIDEO_MAX_DECODED_BYTES:
+                    raise SkippedError("decoded size cap")
                 decoded += 1
                 small = cv2.resize(
                     pixels, (32, 32), interpolation=cv2.INTER_AREA
@@ -603,6 +657,8 @@ class _HTML(HTMLParser):
 
 
 def extract(path: Path, data: bytes, max_bytes: int = MAX_BYTES) -> list[Unit]:
+    if len(data) > max_bytes:
+        raise SkippedError("size cap")
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         try:
@@ -646,6 +702,8 @@ def extract(path: Path, data: bytes, max_bytes: int = MAX_BYTES) -> list[Unit]:
         parser = _HTML()
         parser.feed(text)
         text = "".join(parser.parts)
+    if len(text.encode("utf-8")) > max_bytes:
+        raise SkippedError("expanded size cap")
     return [Unit(text)]
 
 
@@ -662,7 +720,15 @@ class _OfficeXML:
         self.archive = archive
         self.remaining = max_bytes
         self.cache = {}
-        if sum(info.file_size for info in archive.infolist()) > max_bytes:
+        entries = archive.infolist()
+        if (
+            len(entries) > MAX_ARCHIVE_ENTRIES
+            or sum(info.file_size for info in entries) > max_bytes
+            or any(
+                info.file_size > max(1, info.compress_size) * MAX_COMPRESSION_RATIO
+                for info in entries
+            )
+        ):
             raise SkippedError("expanded size cap")
 
     def read(self, name):
@@ -675,7 +741,23 @@ class _OfficeXML:
             declarations = xml.replace(b"\0", b"").upper()
             if b"<!DOCTYPE" in declarations or b"<!ENTITY" in declarations:
                 raise SkippedError("unsupported XML entities")
-            self.cache[name] = ET.fromstring(xml)
+            parser = ET.XMLPullParser(events=("start", "end"))
+            depth = elements = 0
+            root = None
+            for offset in range(0, len(xml), 4096):
+                parser.feed(xml[offset : offset + 4096])
+                for event, element in parser.read_events():
+                    if event == "start":
+                        if root is None:
+                            root = element
+                        depth += 1
+                        elements += 1
+                        if depth > MAX_XML_DEPTH or elements > MAX_XML_ELEMENTS:
+                            raise SkippedError("expanded size cap")
+                    else:
+                        depth -= 1
+            parser.close()
+            self.cache[name] = root
         return self.cache[name]
 
     def relationships(self, part):
@@ -695,10 +777,33 @@ class _OfficeXML:
         }
 
 
-def _paragraphs(root, ns):
-    return "\n".join(
-        "".join(t.text or "" for t in p.iter(ns + "t")) for p in root.iter(ns + "p")
-    )
+def _join_bounded(parts, separator, max_bytes):
+    retained = []
+    total = 0
+    for text in parts:
+        total += len(text.encode("utf-8")) + (len(separator) if retained else 0)
+        if total > max_bytes:
+            raise SkippedError("expanded size cap")
+        retained.append(text)
+    return separator.join(retained)
+
+
+def _paragraphs(root, ns, max_bytes):
+    parts = []
+    total = 0
+    for paragraph in root.iter(ns + "p"):
+        texts = []
+        for element in paragraph.iter(ns + "t"):
+            text = element.text or ""
+            total += len(text.encode("utf-8"))
+            if total > max_bytes:
+                raise SkippedError("expanded size cap")
+            texts.append(text)
+        total += 1
+        if total > max_bytes:
+            raise SkippedError("expanded size cap")
+        parts.append("".join(texts))
+    return "\n".join(parts)
 
 
 def _extract_office(suffix, data, max_bytes) -> list[Unit]:
@@ -716,9 +821,11 @@ def _extract_office(suffix, data, max_bytes) -> list[Unit]:
                     in {"word/footnotes.xml", "word/endnotes.xml", "word/comments.xml"}
                 )
             )
-            text = "\n".join(_paragraphs(xml.read(name), _WORD) for name in names)
-            if len(text.encode("utf-8")) > max_bytes:
-                raise SkippedError("expanded size cap")
+            text = _join_bounded(
+                (_paragraphs(xml.read(name), _WORD, max_bytes) for name in names),
+                "\n",
+                max_bytes,
+            )
             return [Unit(text)]
         units = []
         total = 0
@@ -730,17 +837,23 @@ def _extract_office(suffix, data, max_bytes) -> list[Unit]:
                 relationships[e.attrib[_REL_ID]][1]
                 for e in xml.read(part).iter(ns + "sldId")
             ]
+            if len(parts) > MAX_DOCUMENT_PAGES:
+                raise SkippedError("expanded size cap")
             for number, slide in enumerate(parts, 1):
-                texts = [_paragraphs(xml.read(slide), _DRAWING)]
-                texts.extend(
-                    _paragraphs(xml.read(target), _DRAWING)
+                targets = [slide] + [
+                    target
                     for kind, target in xml.relationships(slide).values()
                     if kind == "notesSlide"
+                ]
+                text = _join_bounded(
+                    (
+                        _paragraphs(xml.read(target), _DRAWING, max_bytes - total)
+                        for target in targets
+                    ),
+                    "\n",
+                    max_bytes - total,
                 )
-                text = "\n".join(texts)
                 total += len(text.encode("utf-8"))
-                if total > max_bytes:
-                    raise SkippedError("expanded size cap")
                 units.append(Unit(text, number))
         else:
             shared = []
@@ -752,6 +865,8 @@ def _extract_office(suffix, data, max_bytes) -> list[Unit]:
             part = "xl/workbook.xml"
             relationships = xml.relationships(part)
             for number, sheet in enumerate(xml.read(part).iter(_SHEET + "sheet"), 1):
+                if number > MAX_DOCUMENT_PAGES:
+                    raise SkippedError("expanded size cap")
                 target = relationships[sheet.attrib[_REL_ID]][1]
                 cells = []
                 for index, cell in enumerate(xml.read(target).iter(_SHEET + "c")):
