@@ -15,6 +15,7 @@ import sys
 from ..image.engine import (
     ImageGenerationCancelled,
     ImageGenerationEngine,
+    ImageRequestError,
     ImageRuntimeError,
     _detect_family,
 )
@@ -116,6 +117,8 @@ class ImageEngine:
         # edit-only checkpoints must not be forced through the generation
         # loader when an older client omits the newly optional mode field.
         for_edit = None if mode is None else mode == "editing"
+        if for_edit and not self.supports_editing:
+            raise ImageRequestError(f"{self.family} does not support image editing.")
         self._engine._ensure_loaded(for_edit=for_edit)  # noqa: SLF001
         self._emit_model_served()
 

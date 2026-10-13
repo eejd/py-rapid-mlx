@@ -193,11 +193,21 @@ def test_unsupported_image_edit_through_resident_manager(control_plane, monkeypa
 
     client, _ = control_plane
     adapter = ImageEngine("Qwen/Qwen-Image")
-    # Keep the real manager -> adapter -> edit-builder exception path, but
-    # bypass all asset access. No model is constructed for this family/mode.
-    monkeypatch.setattr("rapid_mlx.model_downloads.require_local", lambda _name: None)
-    monkeypatch.setattr(adapter._engine, "_ensure_runtime_assets", lambda: None)
-    monkeypatch.setattr(adapter._engine, "_verify_weights_complete", lambda: None)
+    asset_calls = []
+    monkeypatch.setattr(
+        "rapid_mlx.model_downloads.require_local",
+        lambda _name: asset_calls.append("checkpoint"),
+    )
+    monkeypatch.setattr(
+        adapter._engine,
+        "_ensure_runtime_assets",
+        lambda: asset_calls.append("runtime assets"),
+    )
+    monkeypatch.setattr(
+        adapter._engine,
+        "_verify_weights_complete",
+        lambda: asset_calls.append("weight verification"),
+    )
 
     async def loader(model_name, model_path, performance, image_mode):
         assert model_name == "Qwen/Qwen-Image"
@@ -221,6 +231,7 @@ def test_unsupported_image_edit_through_resident_manager(control_plane, monkeypa
         }
     }
     assert manager.loads_total == 0
+    assert asset_calls == []
 
 
 def test_wrapped_image_request_error(control_plane):
