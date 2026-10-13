@@ -499,17 +499,21 @@ def test_serve_next_uses_bound_endpoint_served_name_and_auth():
     ep = connect.ServerEndpoints("::1", 9123, model="my served model")
     out = connect.render_serve_next(ep, api_key="key with ' quote")
     assert out.count("Next:") == 1
-    assert len(out.splitlines()) == 5
+    assert len(out.splitlines()) == 6
+    assert "curl -i -sS " in out
     assert "http://[::1]:9123/v1/chat/completions" in out
     assert "my served model" in out
     assert "Authorization: Bearer " in out
     assert "rapid-mlx agents opencode --setup" in out
-    assert "RAPID_MLX_API_KEY='key with '\"'\"' quote'" in out
+    assert "export RAPID_MLX_API_KEY='key with '\"'\"' quote'" in out
+    assert shlex.split(out.splitlines()[1]) == [
+        "export",
+        "RAPID_MLX_API_KEY=key with ' quote",
+    ]
     assert "More agents: claude-code, codex; full list: rapid-mlx agents" in out
     assert "--base-url 'http://[::1]:9123/v1'" in out
-    setup = out.splitlines()[2].split("Connect a coding agent: ", 1)[1]
+    setup = out.splitlines()[3].split("Connect a coding agent: ", 1)[1]
     assert shlex.split(setup) == [
-        "RAPID_MLX_API_KEY=key with ' quote",
         "rapid-mlx",
         "agents",
         "opencode",
@@ -525,6 +529,7 @@ def test_serve_next_uses_bound_endpoint_served_name_and_auth():
 def test_serve_next_has_no_auth_header_without_key():
     out = connect.render_serve_next(connect.ServerEndpoints("localhost", 8765, "m"))
     assert "Authorization" not in out
+    assert len(out.splitlines()) == 5
     assert (
         connect.render_serve_next(connect.ServerEndpoints("", 0, "m", listen_fd=3))
         == ""
