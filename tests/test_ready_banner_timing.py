@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import logging
 from contextlib import redirect_stdout
 
 import pytest
@@ -136,6 +137,7 @@ def test_interactive_ready_banner_ends_with_copyable_next(monkeypatch, capsys):
     cfg.model_name = "studio-assistant"
     cfg.api_key = None
     monkeypatch.setattr(server, "_served_model_name_set", True)
+    monkeypatch.setattr(logging.getLogger(), "getEffectiveLevel", lambda: logging.INFO)
     monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: False
@@ -152,6 +154,7 @@ def test_desktop_ready_banner_preserves_existing_shape(monkeypatch, capsys):
     cfg.bind_host = "localhost"
     cfg.bind_port = 8766
     cfg.model_alias = "lfm2.5-1b-4bit"
+    monkeypatch.setattr(logging.getLogger(), "getEffectiveLevel", lambda: logging.INFO)
     monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: True
@@ -167,6 +170,7 @@ def test_audio_ready_banner_has_no_chat_next(monkeypatch, capsys):
     cfg.bind_host = "localhost"
     cfg.bind_port = 8766
     cfg.model_alias = "kokoro"
+    monkeypatch.setattr(logging.getLogger(), "getEffectiveLevel", lambda: logging.INFO)
     monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: False
