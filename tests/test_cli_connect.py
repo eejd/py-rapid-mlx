@@ -529,6 +529,14 @@ def test_serve_next_has_no_auth_header_without_key():
         connect.render_serve_next(connect.ServerEndpoints("", 0, "m", listen_fd=3))
         == ""
     )
+    assert connect.render_serve_next(connect.ServerEndpoints("localhost", 8765)) == ""
+
+
+def test_serve_next_lists_agents_when_no_setup_profile_is_available(monkeypatch):
+    monkeypatch.setattr("rapid_mlx.agents.get_profile", lambda _name: None)
+    out = connect.render_serve_next(connect.ServerEndpoints("localhost", 8765, "m"))
+    assert "Connect a coding agent: rapid-mlx agents\n" in out
+    assert "List agents: rapid-mlx agents" in out
 
 
 # --- #2348: connect must accept/use the live instance base URL ---------------

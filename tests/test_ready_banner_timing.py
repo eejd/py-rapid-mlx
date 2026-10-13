@@ -149,6 +149,24 @@ def test_interactive_ready_banner_ends_with_copyable_next(monkeypatch, capsys):
     assert out.rstrip().endswith("OpenAI SDK base_url: http://localhost:8766/v1")
 
 
+def test_interactive_ready_banner_keeps_image_guidance_before_next(monkeypatch, capsys):
+    cfg = get_config()
+    cfg.bind_host = "localhost"
+    cfg.bind_port = 8766
+    cfg.model_alias = "lfm2.5-1b-4bit"
+    monkeypatch.setattr(logging.getLogger(), "getEffectiveLevel", lambda: logging.INFO)
+    monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        server, "_text_lane_image_note", lambda _cfg: "use a vision model"
+    )
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: False
+    )
+    server.print_ready_banner()
+    out = capsys.readouterr().out
+    assert out.index("Images: off. use a vision model") < out.index("Next:")
+
+
 def test_desktop_ready_banner_preserves_existing_shape(monkeypatch, capsys):
     cfg = get_config()
     cfg.bind_host = "localhost"
