@@ -60,7 +60,7 @@ def require_folder(engine, folder_id):
 
 @router.get("/status")
 async def status(request: Request):
-    return service(request).status()
+    return await service(request).status_async()
 
 
 @router.post("/folders")
@@ -96,7 +96,7 @@ async def reindex(body: ReindexRequest, request: Request):
     else:
         for folder in engine.store.folders():
             engine.queue(folder["id"])
-    return engine.status()
+    return await engine.status_async()
 
 
 @router.post("/search")

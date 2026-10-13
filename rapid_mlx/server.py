@@ -823,7 +823,7 @@ async def lifespan(app: FastAPI):
 
     start_agent_service_lifecycle()
 
-    from .local_search.runtime import startup as start_local_search
+    from .local_search_runtime import startup as start_local_search
 
     await start_local_search(app)
 
@@ -1103,7 +1103,7 @@ async def lifespan(app: FastAPI):
     _shutdown_cfg.ready = False
     _shutdown_cfg.draining = True
 
-    from .local_search.runtime import shutdown as stop_local_search
+    from .local_search_runtime import shutdown as stop_local_search
 
     await stop_local_search(app)
 
@@ -4038,7 +4038,7 @@ def main():
     set_optional_runtime_assume_yes(False)
     parser = _build_parser()
     args = parser.parse_args()
-    from .local_search.runtime import configure as configure_local_search
+    from .local_search_runtime import configure as configure_local_search
 
     configure_local_search(
         getattr(args, "enable_local_search", False),

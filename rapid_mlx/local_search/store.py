@@ -1,9 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""One WAL database and a lazily materialised float32 search matrix.
-
-All methods are owned by the server event loop. No SQLite/MLX objects cross
-threads. Each replacement is an atomic per-file transaction.
-"""
+"""Atomic SQLite index with one budgeted vector arena and cached file moments."""
 
 from __future__ import annotations
 
@@ -22,6 +18,8 @@ from .extraction import (
     SKIP_REASONS, skip_reason,
 )
 
+MAX_CORPUS_EMBEDDED_CHUNKS = 262_144
+KEYWORD_CANDIDATE_LIMIT = 4096
 SCHEMA_VERSION = "2"
 DISTINCTIVE_FRACTION = 0.10
 DISTINCTIVE_MIN_FILES = 1
@@ -151,22 +149,110 @@ class Store:
                 )""",
                 (MAX_EMBEDDED_CHUNKS_PER_FILE,),
             )
-        self.vectors = {
-            r["id"]: np.frombuffer(r["vector"], dtype="<f2").astype(np.float32)
-            for r in self.db.execute(
-                "SELECT id,vector FROM chunks WHERE vector IS NOT NULL"
-            )
-        }
+        with self.db:
+            self.db.execute("UPDATE files SET status='keyword' WHERE id IN ("
+                            "SELECT file_id FROM chunks WHERE vector IS NOT NULL ORDER BY id LIMIT -1 OFFSET ?)",
+                            (MAX_CORPUS_EMBEDDED_CHUNKS,))
+            self.db.execute("UPDATE chunks SET vector=NULL WHERE id IN ("
+                            "SELECT id FROM chunks WHERE vector IS NOT NULL ORDER BY id LIMIT -1 OFFSET ?)",
+                            (MAX_CORPUS_EMBEDDED_CHUNKS,))
+        # Reserve virtual address space once; only inserted rows become resident.
+        # vectors contains views into this arena, never a second corpus copy.
         self._matrix = None
-        self._ids: list[int] = []
+        self._slots = {}
+        self._free_slots = []
+        self._used_slots = 0
+        self.vectors = {}
+        self._file_stats = {}
+        self._folder_stats = {}
+        self._view_scope = None
         self._search_cache = {}
         self._frequency_cache = {}
         self._background_cache = None
+        self._score_scope = None
+        self._keyword_scope = None
+        self._file_count = None
+        for r in self.db.execute("SELECT id,vector FROM chunks WHERE vector IS NOT NULL ORDER BY id"):
+            self._put_vector(r["id"], np.frombuffer(r["vector"], dtype="<f2"))
+        for file in self.db.execute("SELECT id,folder_id FROM files"):
+            self._refresh_file_stats(file["id"], file["folder_id"])
+
+    def _put_vector(self, chunk_id, value):
+        if self._matrix is None:
+            self._matrix = np.empty((MAX_CORPUS_EMBEDDED_CHUNKS, len(value)), dtype=np.float32)
+        if len(value) != self._matrix.shape[1]:
+            raise ValueError("inconsistent embedding dimensions")
+        if self._free_slots:
+            slot = self._free_slots.pop()
+        else:
+            slot = self._used_slots
+            self._used_slots += 1
+        self._matrix[slot] = value
+        view = self._matrix[slot]
+        view /= max(float(np.linalg.norm(view)), 1e-12)
+        self._slots[chunk_id] = slot
+        self.vectors[chunk_id] = view
+
+    def _drop_vector(self, chunk_id):
+        if chunk_id in self._slots:
+            self._free_slots.append(self._slots.pop(chunk_id))
+            self.vectors.pop(chunk_id)
+
+    def _file_moments(self, members):
+        # File-sized scratch is used only at startup or index changes. Never
+        # retain one dimension-sized centroid per file (a second corpus at
+        # singleton-file scale); retain IDs and aggregate folder moments.
+        states = {}
+        for kind, ids in members.items():
+            total = np.zeros(self._matrix.shape[1], dtype=np.float64)
+            for chunk_id in ids:
+                total += self.vectors[chunk_id]
+            states[kind] = [total, len(ids)]
+        return states
+
+    def _refresh_file_stats(self, file_id, folder_id):
+        self._remove_file_stats(file_id)
+        members = {}
+        for row in self.db.execute("SELECT id,kind FROM chunks WHERE file_id=?", (file_id,)):
+            if row["id"] in self.vectors:
+                members.setdefault(row["kind"], []).append(row["id"])
+        if members:
+            self._file_stats[file_id] = (folder_id, members)
+            self._adjust_file_stats(folder_id, self._file_moments(members), 1)
+
+    def _remove_file_stats(self, file_id):
+        old = self._file_stats.pop(file_id, None)
+        if old is not None:
+            folder_id, members = old
+            self._adjust_file_stats(folder_id, self._file_moments(members), -1)
+
+    def _adjust_file_stats(self, folder_id, states, sign):
+        total = sum(value[0] for value in states.values())
+        count = sum(value[1] for value in states.values())
+        centroid = total / count
+        if folder_id not in self._folder_stats:
+            self._folder_stats[folder_id] = [np.zeros(len(total), dtype=np.float64), 0.0, 0, {}]
+        pooled = self._folder_stats[folder_id]
+        pooled[0] += sign * centroid
+        pooled[1] += sign * float(centroid @ centroid)
+        pooled[2] += sign
+        for kind, (total, count) in states.items():
+            state = pooled[3].setdefault(kind, [np.zeros(len(total), dtype=np.float64), 0, 0, 0.0])
+            state[0] += sign * total
+            state[1] += sign * count
+            state[2] += sign * count ** 2
+            state[3] += sign * float(total @ total)
+        if not pooled[2]:
+            del self._folder_stats[folder_id]
 
     def _invalidate_search(self):
         self._search_cache.clear()
         self._frequency_cache.clear()
         self._background_cache = None
+        self._score_scope = None
+        self._keyword_scope = None
+        self._file_count = None
+        self._view_scope = None
 
     def search_rows(self, folder_ids=None, kinds=None) -> dict[int, dict]:
         """Cache metadata, never the corpus bodies; callers treat rows as read-only.
@@ -199,6 +285,9 @@ class Store:
                 r["id"]: {**files[r["file_id"]], **dict(r)}
                 for r in self.db.execute(sql, params)
             }
+            self._view_scope = (self._search_cache[key],
+                                {r["folder_id"] for r in self._search_cache[key].values()},
+                                {r["kind"] for r in self._search_cache[key].values()})
         return self._search_cache[key]
 
     def chunk_text(self, chunk_id: int) -> str:
@@ -210,9 +299,12 @@ class Store:
 
     def _forget(self, chunk_ids: list[int]):
         self._invalidate_search()
+        live = {r[0] for r in self.db.execute("SELECT id FROM files")}
+        for file_id in list(self._file_stats):
+            if file_id not in live:
+                self._remove_file_stats(file_id)
         for chunk_id in chunk_ids:
-            self.vectors.pop(chunk_id, None)
-        self._matrix = None
+            self._drop_vector(chunk_id)
 
     def add_folder(self, path: Path) -> tuple[str, bool]:
         nested = []
@@ -235,6 +327,12 @@ class Store:
                     (folder_id, absorbed_id),
                 )
                 self.db.execute("DELETE FROM folders WHERE id=?", (absorbed_id,))
+        for file_id, (old_folder, members) in list(self._file_stats.items()):
+            if old_folder in nested:
+                states = self._file_moments(members)
+                self._adjust_file_stats(old_folder, states, -1)
+                self._file_stats[file_id] = (folder_id, members)
+                self._adjust_file_stats(folder_id, states, 1)
         self._invalidate_search()
         return folder_id, True
 
@@ -327,6 +425,11 @@ class Store:
         vectors,
         status: str,
     ):
+        room = self.embedding_room(path)
+        change = self._write_replace(folder_id, path, info, digest, chunks, vectors, status, room)
+        self._publish_replace(change)
+
+    def _write_replace(self, folder_id, path, info, digest, chunks, vectors, status, room):
         old = self.db.execute(
             "SELECT id FROM files WHERE folder_id=? AND path=?", (folder_id, str(path))
         ).fetchone()
@@ -337,7 +440,7 @@ class Store:
             [
                 r[0]
                 for r in self.db.execute(
-                    "SELECT id FROM chunks WHERE file_id=?", (old[0],)
+                    "SELECT id FROM chunks WHERE file_id=? AND vector IS NOT NULL", (old[0],)
                 )
             ]
             if old
@@ -366,6 +469,11 @@ class Store:
                     if vectors is None or vectors[index] is None
                     else np.asarray(vectors[index], dtype="<f2")
                 )
+                if vector is not None:
+                    if room <= 0:
+                        vector = None
+                    else:
+                        room -= 1
                 chunk_id = self.db.execute(
                     "INSERT INTO chunks(file_id,text,kind,locator,vector) VALUES (?,?,?,?,?)",
                     (
@@ -387,12 +495,30 @@ class Store:
                     (chunk_id, chunk.text, path.name),
                 )
                 if vector is not None:
-                    additions[chunk_id] = vector.astype(np.float32)
+                    value = vector.astype(np.float32)
+                    additions[chunk_id] = (value, chunk.kind)
+        return folder_id, file_id, old[0] if old else None, old_ids, additions
+
+    def _publish_replace(self, change):
+        folder_id, file_id, old_file, old_ids, additions = change
+        if old_file is not None:
+            self._remove_file_stats(old_file)
         for chunk_id in old_ids:
-            self.vectors.pop(chunk_id, None)
-        self.vectors.update(additions)
+            self._drop_vector(chunk_id)
+        states = {}
+        members = {}
+        for chunk_id, (value, kind) in additions.items():
+            members.setdefault(kind, []).append(chunk_id)
+            self._put_vector(chunk_id, value)
+            value = self.vectors[chunk_id]
+            if kind not in states:
+                states[kind] = [np.zeros(len(value), dtype=np.float64), 0]
+            states[kind][0] += value
+            states[kind][1] += 1
+        if states:
+            self._file_stats[file_id] = (folder_id, members)
+            self._adjust_file_stats(folder_id, states, 1)
         self._invalidate_search()
-        self._matrix = None
 
     def rows(self, folder_ids: list[str] | None = None) -> dict[int, dict]:
         if folder_ids == []:
@@ -404,96 +530,86 @@ class Store:
             params = folder_ids
         return {r["id"]: dict(r) for r in self.db.execute(sql, params)}
 
-    def _ensure_matrix(self):
-        if not self.vectors:
-            self._ids = []
-            self._matrix = None
-            return
-        if self._matrix is None:
-            self._ids = list(self.vectors)
-            self._matrix = np.stack([self.vectors[i] for i in self._ids])
-            norms = np.linalg.norm(self._matrix, axis=1, keepdims=True)
-            self._matrix /= np.maximum(norms, 1e-12)
+    def sql(self, statement, parameters=()):
+        """Materialized diagnostic query; cursor never leaves its owning thread."""
+        with self.db:
+            return list(self.db.execute(statement, parameters))
 
-    def _score_matrix(self, query) -> np.ndarray:
-        self._ensure_matrix()
-        vector = np.asarray(query, dtype=np.float32)
-        vector = vector / max(float(np.linalg.norm(vector)), 1e-12)
-        return self._matrix @ vector
+    def embedding_room(self, path):
+        old_count = self.db.execute(
+            "SELECT count(vector) FROM chunks JOIN files ON files.id=file_id WHERE path=?",
+            (str(path),),
+        ).fetchone()[0]
+        return max(0, MAX_CORPUS_EMBEDDED_CHUNKS - len(self.vectors) + old_count)
 
-    def semantic_scores(self, query, allowed: set[int]) -> list[tuple[int, float]]:
+    def semantic_scores(self, query, allowed) -> list[tuple[int, float]]:
         if not self.vectors or not allowed:
             return []
-        scores = self._score_matrix(query)
-        return [
-            (self._ids[int(i)], float(scores[int(i)]))
-            for i in np.argsort(-scores, kind="stable")
-            if self._ids[int(i)] in allowed
-        ]
+        if self._score_scope is None or self._score_scope[0] is not allowed:
+            rows = allowed if isinstance(allowed, dict) else self.search_rows()
+            ids = [i for i in self.vectors if i in allowed]
+            files = {}
+            groups = np.array([files.setdefault(rows[i]["file_id"], len(files)) for i in ids], dtype=np.int32)
+            self._score_scope = (allowed, np.array(ids, dtype=np.int64),
+                                 np.array([self._slots[i] for i in ids], dtype=np.int32), groups, len(files))
+        _, ids, slots, groups, count = self._score_scope
+        vector = np.asarray(query, dtype=np.float32)
+        vector = vector / max(float(np.linalg.norm(vector)), 1e-12)
+        # One BLAS call, one resident matrix; gather only scalar dot products.
+        scores = (self._matrix[:self._used_slots] @ vector)[slots]
+        best = np.full(count, -np.inf, dtype=np.float32)
+        np.maximum.at(best, groups, scores)
+        winners = np.full(count, np.iinfo(np.int64).max, dtype=np.int64)
+        np.minimum.at(winners, groups, np.where(scores == best[groups], ids, np.iinfo(np.int64).max))
+        order = np.lexsort((winners, -best))
+        return [(int(winners[i]), float(best[i])) for i in order]
 
     def semantic(self, query, allowed: set[int]) -> list[int]:
         return [i for i, _ in self.semantic_scores(query, allowed)]
 
     def semantic_background(self, rows: dict[int, dict]) -> dict[str, float]:
-        """Cross-file cosine backgrounds, capped by an equal-file shared pool.
+        """Combine incrementally maintained folder/file moments, never vectors.
 
-        Remove within-file pairs: a file's own overlapping chunks/frames are
-        not independent background evidence. Cache only the current scope.
+        Equal-file pooled and per-kind chunk backgrounds retain their formulas.
+        The folder pool includes hidden kinds when the display is filtered.
         """
         if self._background_cache is not None and self._background_cache[0] is rows:
             return self._background_cache[1]
-        self._ensure_matrix()
-        sums = {}
-        counts = {}
-        for i, vector in zip(self._ids, self._matrix if self._matrix is not None else []):
-            if i not in rows:
+        if self._view_scope is not None and self._view_scope[0] is rows:
+            _, folders, selected_kinds = self._view_scope
+        else:
+            folders = {r["folder_id"] for r in rows.values()}
+            selected_kinds = {r["kind"] for r in rows.values()}
+        stats = {kind: [None, 0, 0, 0.0] for kind in ("text", "image", "video")}
+        pooled_total, pooled_squares, pooled_count = None, 0.0, 0
+        # O(folders * dimensions), with no SQL or per-file/chunk work here.
+        for folder_id in sorted(folders):
+            pooled = self._folder_stats.get(folder_id)
+            if pooled is None:
                 continue
-            key = (rows[i]["kind"], rows[i]["file_id"])
-            counts[key] = counts.get(key, 0) + 1
-            if key not in sums:
-                sums[key] = np.zeros(self._matrix.shape[1], dtype=np.float64)
-            sums[key] += vector
-        # A shared embedding space supplies an independent pooled background
-        # for a narrow/coherent kind. Give each file one centroid so long files
-        # and repeated video frames cannot dominate the pool. Include every kind
-        # in the same folders even when the request filters the displayed kinds.
-        folders = sorted({r["folder_id"] for r in rows.values()})
-        pool_sums, pool_counts = {}, {}
-        if folders:
-            metadata = self.db.execute(
-                "SELECT chunks.id,file_id FROM chunks JOIN files ON files.id=file_id "
-                "WHERE folder_id IN (" + ",".join("?" for _ in folders) + ")",
-                folders,
-            )
-            matrix_positions = {i: n for n, i in enumerate(self._ids)}
-            for r in metadata:
-                if r["id"] not in matrix_positions:
+            if pooled_total is None:
+                pooled_total = np.zeros(len(pooled[0]), dtype=np.float64)
+            pooled_total += pooled[0]
+            pooled_squares += pooled[1]
+            pooled_count += pooled[2]
+            for kind, values in pooled[3].items():
+                if kind not in selected_kinds:
                     continue
-                file_id = r["file_id"]
-                vector = self._matrix[matrix_positions[r["id"]]]
-                if file_id not in pool_sums:
-                    pool_sums[file_id] = np.zeros(len(vector), dtype=np.float64)
-                pool_sums[file_id] += vector
-                pool_counts[file_id] = pool_counts.get(file_id, 0) + 1
+                state = stats[kind]
+                if state[0] is None:
+                    state[0] = np.zeros(len(values[0]), dtype=np.float64)
+                state[0] += values[0]
+                for n in (1, 2, 3):
+                    state[n] += values[n]
         pooled = 1.0
-        if len(pool_sums) > 1:
-            centroids = [v / pool_counts[i] for i, v in pool_sums.items()]
-            total = np.sum(centroids, axis=0)
-            pairs = len(centroids) * (len(centroids) - 1)
-            pooled = max(0.0, min(1.0, (float(total @ total)
-                         - sum(float(v @ v) for v in centroids)) / pairs))
+        if pooled_count > 1:
+            pooled = max(0.0, min(1.0, (float(pooled_total @ pooled_total) - pooled_squares)
+                                 / (pooled_count * (pooled_count - 1))))
         background = {}
-        for kind in ("text", "image", "video"):
-            keys = [key for key in sums if key[0] == kind]
-            count = sum(counts[key] for key in keys)
-            pairs = count * count - sum(counts[key] ** 2 for key in keys)
-            if pairs:
-                total = np.sum([sums[key] for key in keys], axis=0)
-                value = (float(total @ total) - sum(float(sums[key] @ sums[key]) for key in keys)) / pairs
-                background[kind] = max(0.0, min(pooled, value))
-            else:
-                # No independent background exists in a one-file scope.
-                background[kind] = 0.0
+        for kind, (total, count, squared_counts, squared_sums) in stats.items():
+            pairs = count * count - squared_counts
+            background[kind] = (max(0.0, min(pooled, (float(total @ total) - squared_sums) / pairs))
+                                if pairs else 0.0)
         self._background_cache = (rows, background)
         return background
 
@@ -503,7 +619,9 @@ class Store:
 
     def distinctive_terms(self, terms: list[str]) -> list[str]:
         """File frequency, independent of chunk count and embedding coverage."""
-        count = self.db.execute("SELECT count(DISTINCT file_id) FROM chunks").fetchone()[0]
+        if self._file_count is None:
+            self._file_count = self.db.execute("SELECT count(DISTINCT file_id) FROM chunks").fetchone()[0]
+        count = self._file_count
         threshold = max(DISTINCTIVE_MIN_FILES, int(count * DISTINCTIVE_FRACTION))
         distinctive = []
         for term in terms:
@@ -559,6 +677,12 @@ class Store:
 
         if not allowed:
             return []
+        if self._keyword_scope is not allowed:
+            self.db.execute("CREATE TEMP TABLE IF NOT EXISTS local_allowed(id INTEGER PRIMARY KEY)")
+            self.db.execute("DELETE FROM local_allowed")
+            self.db.executemany("INSERT INTO local_allowed VALUES (?)", ((i,) for i in allowed))
+            self.db.commit()  # End the temporary-table transaction before WAL reads.
+            self._keyword_scope = allowed
         precise = self.distinctive_terms(terms) if distinctive is None else distinctive
         precise = list(dict.fromkeys(precise + [term for term in terms
             if any(mark in term[1:-1] for mark in "-./_")]))
@@ -570,8 +694,8 @@ class Store:
         long_terms = [term for term in precise if len(term) >= 3]
         if long_terms:
             candidates = list(self.db.execute(
-                "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? "
-                "ORDER BY bm25(chunks_fts),rowid",
+                "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) "
+                "ORDER BY bm25(chunks_fts),rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT),
                 (self._match_expression(long_terms),),
             ))
         elif all(term.isascii() or term.lower() == term.upper() for term in precise):
@@ -581,19 +705,19 @@ class Store:
                         for term in precise]
             where = " AND ".join("(text LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\')" for _ in patterns)
             candidates = list(self.db.execute(
-                "SELECT rowid,text,filename FROM chunks_fts WHERE " + where + " ORDER BY rowid",
+                "SELECT rowid,text,filename FROM chunks_fts WHERE " + where + " AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) ORDER BY rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT),
                 [pattern for pattern in patterns for _ in range(2)],
             ))
         else:
-            candidates = list(self.db.execute("SELECT rowid,text,filename FROM chunks_fts ORDER BY rowid"))
+            candidates = list(self.db.execute("SELECT rowid,text,filename FROM chunks_fts WHERE rowid IN (SELECT id FROM local_allowed) ORDER BY rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT)))
         # Full basename evidence is independent of body-frequency admission.
         # This preserves filenames whose terms are common throughout the corpus.
         filename_terms = [term for term in terms if len(term) >= 3]
         if filename_terms:
             existing = {r[0] for r in candidates}
             candidates.extend(r for r in self.db.execute(
-                "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? "
-                "ORDER BY bm25(chunks_fts),rowid",
+                "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) "
+                "ORDER BY bm25(chunks_fts),rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT),
                 ("filename : (" + self._match_expression(filename_terms) + ")",),
             ) if r[0] not in existing)
         ranked, strengths = [], {}
@@ -631,6 +755,8 @@ class Store:
             ).fetchone()[0],
             "chunks": chunks,
             "embedded_chunks": embedded,
+            "semantic_index_full": embedded >= MAX_CORPUS_EMBEDDED_CHUNKS,
+            "semantic_chunk_budget": MAX_CORPUS_EMBEDDED_CHUNKS,
             "keyword_only_chunks": chunks - embedded,
             "index_bytes": sum(
                 p.stat().st_size
@@ -642,3 +768,59 @@ class Store:
                 if p.exists()
             ),
         }
+
+
+class StoreWorker:
+    """A single CPU worker owns SQLite, including construction and teardown.
+
+    Synchronous access is for small route helpers and inspection only; expensive
+    indexing and search methods are awaited through call().
+    """
+    def __init__(self, *args):
+        from concurrent.futures import ThreadPoolExecutor
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-search-db")
+        self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-search-writer")
+        self._store = self._executor.submit(Store, *args).result()
+        self.path = self._store.path
+
+    def __getattr__(self, name):
+        value = self._executor.submit(getattr, self._store, name).result()
+        if callable(value):
+            return lambda *args, **kwargs: self._executor.submit(value, *args, **kwargs).result()
+        return value
+
+    async def call(self, name, *args, **kwargs):
+        import asyncio
+        from functools import partial
+        loop = asyncio.get_running_loop()
+        async def replace():
+            room = await loop.run_in_executor(self._executor, self._store.embedding_room, args[1])
+            change = await loop.run_in_executor(self._writer, partial(self._write_file, args, kwargs, room))
+            await loop.run_in_executor(self._executor, self._store._publish_replace, change)
+        if name == "replace" and name not in self.__dict__:
+            task = asyncio.create_task(replace())
+        else:
+            task = asyncio.ensure_future(loop.run_in_executor(
+                self._executor, partial(self.__dict__.get(name, getattr(self._store, name)), *args, **kwargs)))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    def _write_file(self, args, kwargs, room):
+        # A WAL writer publishes atomically; searches use the separate owning
+        # reader connection and never queue behind a whole-file FTS transaction.
+        writer = Store.__new__(Store)
+        writer.db = sqlite3.connect(self.path)
+        writer.db.row_factory = sqlite3.Row
+        writer.db.execute("PRAGMA foreign_keys=ON")
+        try:
+            return writer._write_replace(*args, **kwargs, room=room)
+        finally:
+            writer.db.close()
+
+    def close(self):
+        self._writer.shutdown()
+        self._executor.submit(self._store.close).result()
+        self._executor.shutdown()

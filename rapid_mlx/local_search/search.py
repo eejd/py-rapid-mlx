@@ -12,6 +12,8 @@ KINDS = ("text", "image", "video")
 OUTLIER_FAMILY_ALPHA = 0.05
 # Match the API's maximum result window; internal work stays bounded.
 SEMANTIC_FILE_CAP = 100
+SEMANTIC_MIN_FILES = 4
+SEMANTIC_FALLBACK_FILES = 3
 # Give a short head from every admitted modality a chance before long tails.
 SEMANTIC_HEAD_FILES = 3
 # Compare standardized outliers in normal-tail mass, using the admission budget.
@@ -37,11 +39,14 @@ def semantic_ranking(
 
     Estimate the query null from best-per-file scores so repeated chunks/frames
     do not create extra observations. Bonferroni corrects for the files tested.
-    With fewer than two files or zero variance there is no outlier estimate.
+    With fewer than four files or zero variance, retain at most three best
+    positive-cosine neighbours because the outlier estimate is degenerate.
     """
     ids, mean, deviation = statistics if statistics is not None else query_statistics(scores, rows)
     values = dict(scores)
     samples = [values[i] for i in ids]
+    if len(samples) < SEMANTIC_MIN_FILES or deviation <= 1e-12:
+        return [i for i in ids if values[i] > 0][:SEMANTIC_FALLBACK_FILES]
     outlier = math.inf
     if len(samples) > 1:
         if deviation > 0 and max(samples) > min(samples):

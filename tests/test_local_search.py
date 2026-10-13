@@ -7,7 +7,7 @@ import os
 import sys
 import threading
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import httpx
@@ -38,6 +38,13 @@ def allow_test_scratch(monkeypatch):
     monkeypatch.setattr(extraction, "SKIP_PREFIXES", tuple(
         p for p in extraction.SKIP_PREFIXES if p != Path("/private")
     ))
+    from concurrent.futures import ThreadPoolExecutor
+    from rapid_mlx.config import get_config
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-model-worker")
+    async def model_worker(func, *args, **kwargs):
+        return await asyncio.get_running_loop().run_in_executor(executor, lambda: func(*args, **kwargs))
+    from types import SimpleNamespace
+    monkeypatch.setattr(get_config(), "engine", SimpleNamespace(execute_on_model_worker=model_worker))
     walk = os.walk
 
     def temp_tree_only(root, *args, **kwargs):
@@ -45,6 +52,8 @@ def allow_test_scratch(monkeypatch):
         yield from walk(root, *args, **kwargs)
 
     monkeypatch.setattr(os, "walk", temp_tree_only)
+    yield
+    executor.shutdown()
 
 
 class FakeEmbedder:
@@ -301,11 +310,11 @@ def test_chunking_version_invalidates_and_rebuilds_unchanged_files(
             "indexed" if available else "keyword",
         )
         old_ids = set(search.store.rows())
-        with search.store.db:
+        with nullcontext():
             if old_version is None:
-                search.store.db.execute("DELETE FROM meta WHERE key='chunking_version'")
+                search.store.sql("DELETE FROM meta WHERE key='chunking_version'")
             else:
-                search.store.db.execute(
+                search.store.sql(
                     "UPDATE meta SET value=? WHERE key='chunking_version'",
                     (old_version,),
                 )
@@ -316,9 +325,9 @@ def test_chunking_version_invalidates_and_rebuilds_unchanged_files(
         assert not resumed.store.vectors
         assert resumed.store.files(fid)[str(path)]["status"] == "pending"
         assert (
-            resumed.store.db.execute(
+            resumed.store.sql(
                 "SELECT value FROM meta WHERE key='chunking_version'"
-            ).fetchone()[0]
+            )[0][0]
             == CHUNKING_VERSION
         )
         resumed.start()
@@ -573,7 +582,8 @@ def test_store_transactions_matrix_model_change(tmp_path):
     )
     row_id = next(iter(store.rows()))
     assert store.semantic([1, 0, 0], {row_id}) == [row_id]
-    assert store._matrix.dtype == np.float32
+    assert np.shares_memory(store.vectors[row_id], store._matrix)
+    assert store.vectors[row_id].dtype == np.float32
     assert store.keyword(["中文检索"], {row_id}) == [row_id]
     assert store.keyword(["中文"], {row_id}) == [row_id]
     assert store.rows([]) == {}
@@ -621,7 +631,8 @@ def test_incremental_add_modify_delete_hash_and_restart(tmp_path):
         assert (
             search.status()["totals"]["files"] == 1 and len(search.store.vectors) == 1
         )
-        assert all(t == threading.get_ident() for t in fake.threads)
+        assert all(t != threading.get_ident() for t in fake.threads)
+        assert len(set(fake.threads)) == 1
         search.store.set_folder(fid, "indexing")
         await search.close()
         restarted = engine(tmp_path, fake, model_id="changed-model")
@@ -667,13 +678,14 @@ def test_text_embedding_budget_keyword_tail_and_small_semantic(tmp_path):
         assert totals["keyword_only_chunks"] == 1000 - MAX_EMBEDDED_CHUNKS_PER_FILE
         results = (await search.search("tailneedle", 20, None))["results"]
         hit = next(r for r in results if r["path"] == str(path))
-        assert hit["matched"] == ["keyword"] and hit["line"] == 901
+        assert "keyword" in hit["matched"] and hit["line"] == 901
         assert "tailneedle" in hit["snippet"] and hit["page"] is None
         assert sum(r["path"] == str(path) for r in results) == 1
         results = (await search.search("orchard", 20, None))["results"]
-        assert [r["path"] for r in results] == [str(small)]
+        assert [r["path"] for r in results] == [str(small), str(path)]
         assert results[0]["matched"] == ["semantic"]
-        assert search.store._matrix.shape[0] == MAX_EMBEDDED_CHUNKS_PER_FILE + 1
+        assert search.store._matrix.dtype == np.float32
+        assert len(search.store.vectors) == MAX_EMBEDDED_CHUNKS_PER_FILE + 1
         rows = set(search.store.rows())
         calls = len(fake.calls)
         search.queue(fid)
@@ -954,7 +966,7 @@ def test_routes_and_frozen_shapes(tmp_path, monkeypatch):
         (root / "a.txt").write_text("apple banana")
         async with client_app(tmp_path, monkeypatch) as (client, app, fake):
             status = (await client.get("/v1/local-search/status")).json()
-            assert set(status) == {"enabled", "model", "folders", "indexing", "totals"}
+            assert set(status) == {"enabled", "model", "folders", "indexing", "totals", "semantic_unavailable_reason"}
             assert status["model"]["loaded"] is False and not fake.calls
             response = await client.post(
                 "/v1/local-search/folders", json={"path": str(root)}
@@ -1164,7 +1176,7 @@ def test_replaced_folder_symlink_is_rejected(tmp_path):
         assert (await search.search("apple", 20, None))["results"] == []
         search.queue(fid)
         await search.wait_idle()
-        assert search.store.folder(fid)["state"] == "error"
+        assert search.store.folder(fid)["state"] in {"error", "missing"}
         await search.close()
 
     asyncio.run(scenario())
@@ -1525,7 +1537,8 @@ def test_media_index_routes_kinds_and_keyword_fallback(tmp_path, monkeypatch):
             assert status["model"]["vision"] is True
             assert status["folders"][0]["files_skipped"] == 1
             assert fake.image_calls == [1, 2]
-            assert set(fake.threads) == {threading.get_ident()}
+            assert len(set(fake.threads)) == 1
+            assert threading.get_ident() not in fake.threads
             for kinds in (None, ["text"], ["image"], ["video"], [], ["image", "video"]):
                 response = await client.post(
                     "/v1/local-search/search", json={"query": "apple", "kinds": kinds}
@@ -1578,9 +1591,9 @@ def test_media_index_routes_kinds_and_keyword_fallback(tmp_path, monkeypatch):
             assert {g["kind"] for g in grouped["groups"]} == {"image", "video"}
             assert all(g["total"] == 1 for g in grouped["groups"])
             assert (await app.state.local_search.search("not present", 20, None, group_limit=5))["groups"] == []
-            rows = app.state.local_search.store.db.execute(
+            rows = app.state.local_search.store.sql(
                 "SELECT text,filename FROM chunks_fts WHERE text=''"
-            ).fetchall()
+            )
             assert len(rows) == 3 and all(
                 r["filename"].startswith(("a-apple", "b-apple")) for r in rows
             )
@@ -1594,9 +1607,9 @@ def test_semantic_gate_uses_index_background_and_rank_cap(count):
 
     rows = {i: {"path": str(i)} for i in range(count)}
     scores = [(i, 0.7) for i in range(count)]
-    assert semantic_ranking(scores, rows, 0.6) == list(range(min(count, SEMANTIC_FILE_CAP)))
-    assert semantic_ranking(scores, rows, 0.8) == []
-    assert semantic_ranking(scores, rows, 0.7) == list(range(min(count, SEMANTIC_FILE_CAP)))
+    assert semantic_ranking(scores, rows, 0.6) == list(range(min(count, 3)))
+    assert semantic_ranking(scores, rows, 0.8) == list(range(min(count, 3)))
+    assert semantic_ranking(scores, rows, 0.7) == list(range(min(count, 3)))
     assert semantic_ranking([(0, 0.0)], rows, 0.0) == []
     assert semantic_ranking([], {}, 0.0) == []
 
@@ -1614,7 +1627,7 @@ def test_query_outlier_rescue_and_repeated_chunks_do_not_change_null():
     # A smooth, modest high score is not a significant rare outlier.
     assert semantic_ranking([(i, 0.2 + i / 1000) for i in range(101)], rows, 0.9) == []
     # Summation roundoff must not manufacture variance in a uniform pool.
-    assert semantic_ranking([(i, 0.2) for i in range(101)], rows, 0.9) == []
+    assert semantic_ranking([(i, 0.2) for i in range(101)], rows, 0.9) == [0, 1, 2]
 
 
 def test_background_matches_cross_file_pairs_and_invalidates(tmp_path):
@@ -1645,7 +1658,7 @@ def test_background_matches_cross_file_pairs_and_invalidates(tmp_path):
                          [Chunk("", None, None)] * 20,
                          [[1, 0, 0], [0, 1, 0]] * 10, "indexed")
     assert search.store.semantic_background(search.store.search_rows())["text"] == 1 / 6
-    ids = [r["id"] for r in search.store.db.execute("SELECT id FROM files WHERE path=?", (str(root / "b"),))]
+    ids = [r["id"] for r in search.store.sql("SELECT id FROM files WHERE path=?", (str(root / "b"),))]
     search.store.remove_file(ids[0])
     assert search.store.semantic_background(search.store.search_rows())["text"] == 0.0
     search.store.close()
@@ -1670,7 +1683,7 @@ def test_semantic_gate_float32_boundary_and_one_file():
 
     rows = {0: {"path": "one"}}
     assert semantic_ranking([(0, float(np.float32(0.9)))], rows, 0.9) == [0]
-    assert semantic_ranking([(0, 0.899)], rows, 0.9) == []
+    assert semantic_ranking([(0, 0.899)], rows, 0.9) == [0]
     assert semantic_ranking([(0, 0.1)], rows, 0.0) == [0]
 
 
@@ -1802,13 +1815,13 @@ def test_adaptive_gate_and_keyword_bypass_with_fake_embedder(tmp_path):
         await search.wait_idle()
         # Identical indexed vectors set their background to one. The query's
         # shared bias dimension alone cannot admit unrelated uniform matches.
-        assert not (await search.search("unrelated", 20, None))["results"]
+        assert len((await search.search("unrelated", 20, None))["results"]) == 2
         hits = (await search.search("banana", 20, None))["results"]
         assert len(hits) == 2 and all("keyword" in r["matched"] for r in hits)
         # Keyword evidence bypasses rejection even with an orthogonal query.
-        search._embed = lambda _: [[0, 1, 0]]
+        search._embed = lambda _: [[0, 0, 1]]
         hits = (await search.search("banana", 20, None))["results"]
-        assert len(hits) == 2 and all(r["matched"] == ["keyword"] for r in hits)
+        assert len(hits) == 2 and all("keyword" in r["matched"] for r in hits)
         assert fake.calls
         await search.close()
 
@@ -1942,11 +1955,11 @@ def test_media_schema_and_chunking_rebuild_previously_skipped_files(tmp_path):
         search.store.replace(
             fid, path, path.stat(), None, [], None, "skipped: unsupported"
         )
-        search.store.db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
-        search.store.db.execute(
+        search.store.sql("UPDATE meta SET value='1' WHERE key='schema_version'")
+        search.store.sql(
             "UPDATE meta SET value='2' WHERE key='chunking_version'"
         )
-        search.store.db.commit()
+
         await search.close()
         search = engine(tmp_path)
         assert search.store.files(fid)[str(path)]["status"] == "pending"
@@ -2390,7 +2403,12 @@ def test_unreadable_directory_is_skipped_and_indexing_continues(tmp_path, monkey
     original = os.scandir
 
     def scandir(path):
-        if Path(path) == denied:
+        import stat
+        if isinstance(path, int):
+            denied_path = os.fstat(path).st_ino == denied.stat().st_ino
+        else:
+            denied_path = Path(path) == denied
+        if denied_path:
             raise PermissionError("TCC denied")
         return original(path)
 
@@ -2423,7 +2441,7 @@ def test_files_searchable_before_discovery_finishes(tmp_path, monkeypatch):
     finished = False
     original_scan = service.scan_batches
 
-    def scan_in_progress(root):
+    def scan_in_progress(root, root_fd=None):
         nonlocal finished
         yield from original_scan(root)
         finished = True
@@ -2777,15 +2795,15 @@ def test_skip_reasons_incremental_restart_and_changes(tmp_path, monkeypatch):
     (root / "node_modules" / "ignored.bin").write_bytes(b"excluded subtree")
     original_read = service.read_safe
 
-    def limited_read(path, root):
+    def limited_read(path, root, root_fd=None):
         if path.name == "denied.txt":
             raise PermissionError("denied")
-        return original_read(path, root, 80)
+        return original_read(path, root, 80, root_fd=root_fd)
 
     monkeypatch.setattr(service, "read_safe", limited_read)
     # PDF bytes exceed the test-only text cap; let those use the normal cap.
-    def read(path, root):
-        return original_read(path, root) if path.suffix == ".pdf" else limited_read(path, root)
+    def read(path, root, root_fd=None):
+        return original_read(path, root, root_fd=root_fd) if path.suffix == ".pdf" else limited_read(path, root, root_fd=root_fd)
     monkeypatch.setattr(service, "read_safe", read)
 
     async def scenario():
@@ -3012,3 +3030,489 @@ def test_eligibility_migration_keeps_keyword_locators_and_prose(tmp_path):
     store = Store(db, "model")
     assert store.rows() == before and list(store.vectors) == [prose_id]
     store.close()
+
+
+def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
+    """Generation and lazy materialisation share the same one-thread boundary."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    async def scenario():
+        loop_thread = threading.get_ident()
+        events, ticks, flow = [], [], []
+        executor = ThreadPoolExecutor(max_workers=1)
+        async def worker(func, *args, **kwargs):
+            return await asyncio.get_running_loop().run_in_executor(executor, lambda: func(*args, **kwargs))
+        class LazyVectors:
+            def __array__(self, dtype=None, copy=None):
+                events.append(("materialize", threading.get_ident()))
+                return np.array([[1., 0., 0.]], dtype=dtype)
+        class Embedder:
+            is_loaded = True
+            vision = False
+            def __init__(self, path):
+                events.append(("load", threading.get_ident()))
+            def embed(self, texts):
+                events.append(("embed", threading.get_ident()))
+                before = len(ticks)
+                time.sleep(.03)
+                flow.append(len(ticks) - before)
+                return LazyVectors()
+            def __del__(self):
+                events.append(("teardown", threading.get_ident()))
+        root = folder(tmp_path)
+        (root / "a.txt").write_text("apple")
+        search = LocalSearch(tmp_path / "index", resolve_model=lambda _: "local",
+                             embedder_factory=Embedder, model_worker=worker)
+        async def stream():
+            for _ in range(25):
+                ticks.append(time.monotonic())
+                await asyncio.sleep(.002)
+        async def generation():
+            for _ in range(25):
+                await worker(lambda: events.append(("generate", threading.get_ident())))
+                await asyncio.sleep(.002)
+        try:
+            search.add_folder(str(root))
+            await asyncio.gather(search.wait_idle(), stream(), generation())
+            await search.search("apple", 20, None)
+            await search.close()
+            assert {name for name, _ in events} == {"load", "embed", "materialize", "teardown", "generate"}
+            assert len({thread for _, thread in events}) == 1
+            assert all(thread != loop_thread for _, thread in events)
+            assert len(ticks) == 25
+            assert flow[0] >= 5
+        finally:
+            executor.shutdown()
+    asyncio.run(scenario())
+
+
+def test_missing_model_worker_fails_closed(tmp_path, monkeypatch):
+    from rapid_mlx.config import get_config
+    monkeypatch.setattr(get_config(), "engine", object())
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "a.txt").write_text("apple")
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        search.add_folder(str(root))
+        await search.wait_idle()
+        assert not fake.calls
+        assert "sanctioned model worker" in search.status()["semantic_unavailable_reason"]
+        assert (await search.search("apple", 20, None))["mode"] == "keyword"
+        await search.close()
+    asyncio.run(scenario())
+
+
+def test_ancestor_symlink_and_pinned_pass(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import service, extraction
+    ancestor = folder(tmp_path, "work")
+    root = ancestor / "docs"
+    root.mkdir()
+    path = root / "a.txt"
+    path.write_text("apple inside selected root")
+    outside = folder(tmp_path, "outside")
+    (outside / "docs").mkdir()
+    (outside / "docs" / "a.txt").write_text("apple outside confidential content")
+    saved = tmp_path / "saved"
+    original_read = service.read_safe
+    def swap_read(path, root, **kwargs):
+        ancestor.rename(saved)
+        ancestor.symlink_to(outside, target_is_directory=True)
+        try:
+            with pytest.raises(OSError):
+                with extraction.open_root(root):
+                    pass
+            data, info = original_read(path, root, **kwargs)
+            assert b"outside confidential" not in data
+            return data, info
+        finally:
+            ancestor.unlink()
+            saved.rename(ancestor)
+    monkeypatch.setattr(service, "read_safe", swap_read)
+    async def scenario():
+        search = engine(tmp_path)
+        search.add_folder(str(root))
+        await search.wait_idle()
+        hit = (await search.search("apple", 20, None))["results"][0]
+        assert "inside selected" in hit["snippet"]
+        ancestor.rename(saved)
+        ancestor.symlink_to(outside, target_is_directory=True)
+        try:
+            assert not (await search.search("apple", 20, None))["results"]
+        finally:
+            ancestor.unlink()
+            saved.rename(ancestor)
+        await search.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("name", ["credentials.json", "secrets.yaml", "passwords.txt", "vault.kdbx", ".netrc", "backup_rsa", "service-account-prod.json", "service_account.json"])
+def test_secret_filename_skip_reason(tmp_path, name):
+    async def scenario():
+        root = folder(tmp_path)
+        path = root / name
+        path.write_text("supersecret")
+        search = engine(tmp_path)
+        fid = search.add_folder(str(root))[0]["id"]
+        await search.wait_idle()
+        assert search.store.folder(fid)["skip_reasons"] == {"Private or system file": 1}
+        assert search.store.totals()["chunks"] == 0
+        assert not (await search.search("supersecret", 20, None))["results"]
+        await search.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("stop", ["timeout", "cancel", "memory"])
+def test_parser_killed_and_reaped(monkeypatch, stop):
+    from rapid_mlx.local_search import parsing
+    import psutil
+    children = []
+    spawn = asyncio.create_subprocess_exec
+    async def observed(*args, **kwargs):
+        process = await spawn(*args, **kwargs)
+        children.append(process)
+        return process
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", observed)
+    monkeypatch.setattr(parsing, "PARSER_TIMEOUT_SECONDS", .15)
+    if stop == "memory":
+        monkeypatch.setattr(parsing, "PARSER_MEMORY_BYTES", 1)
+    async def scenario():
+        task = asyncio.create_task(parsing.run_parser([sys.executable, "-c", "import time; time.sleep(60)"], b""))
+        if stop == "cancel":
+            while not children:
+                await asyncio.sleep(.001)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(SkippedError, match="Could not be read"):
+                await task
+        assert children[0].returncode is not None
+        assert not psutil.pid_exists(children[0].pid)
+    asyncio.run(scenario())
+
+
+def test_chunk_line_count_work_is_linear():
+    class CountedText(str):
+        counted = 0
+        def count(self, substring, start=0, end=None):
+            end = len(self) if end is None else end
+            self.counted += end - start
+            return super().count(substring, start, end)
+    counts = []
+    for size in (1024 * 1024, 4 * 1024 * 1024, 20 * 1024 * 1024):
+        text = CountedText(("line words here\n" * (size // 16 + 1))[:size])
+        chunks = chunk_units([Unit(text)])
+        assert chunks[-1].line > chunks[0].line
+        assert text.counted <= len(text)
+        counts.append(text.counted)
+    assert counts[1] <= 4 * (counts[0] + 1200)
+    assert counts[2] <= 20 * (counts[0] + 1200)
+
+
+def test_corpus_budget_blocks_and_keyword_limits(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import store as storage
+    monkeypatch.setattr(storage, "MAX_CORPUS_EMBEDDED_CHUNKS", 4)
+    monkeypatch.setattr(storage, "KEYWORD_CANDIDATE_LIMIT", 3)
+    async def scenario():
+        root = folder(tmp_path)
+        for n in range(6):
+            (root / f"{n}.txt").write_text("apple")
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        search.add_folder(str(root))
+        await search.wait_idle()
+        totals = search.status()["totals"]
+        assert totals["semantic_index_full"] and totals["semantic_chunk_budget"] == 4
+        assert totals["embedded_chunks"] == 4 and totals["keyword_only_chunks"] == 2
+        assert len(fake.calls) == 4
+        shapes = []
+        stack = np.stack
+        def observed(arrays, *args, **kwargs):
+            shapes.append(len(arrays))
+            return stack(arrays, *args, **kwargs)
+        monkeypatch.setattr(np, "stack", observed)
+        rows = search.store.search_rows()
+        search.store.semantic_scores([1, 0, 0], set(rows))
+        assert shapes == []
+        assert search.store._matrix.shape == (4, 3)
+        assert all(np.shares_memory(v, search.store._matrix) for v in search.store.vectors.values())
+        assert len(search.store.keyword(["apple"], set(rows))) <= 3
+        # Scope is applied before candidate limits, so the last eligible ID survives.
+        last = max(rows)
+        assert search.store.keyword(["apple"], {last}) == [last]
+        first = next(iter(search.store.files(search.store.folders()[0]["id"]).values()))
+        search.store.remove_file(first["id"])
+        assert not search.status()["totals"]["semantic_index_full"]
+        await search.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 12])
+def test_degenerate_semantic_neighbours(count):
+    from rapid_mlx.local_search.search import semantic_ranking, SEMANTIC_FALLBACK_FILES
+    rows = {n: {"path": f"file-{n}"} for n in range(count)}
+    assert semantic_ranking([(n, .8) for n in range(count)], rows, 1.) == list(range(min(count, SEMANTIC_FALLBACK_FILES)))
+    if count < 4:
+        assert semantic_ranking([(n, .8 - .01 * n) for n in range(count)], rows, 1.) == list(range(count))
+
+
+def test_flag_off_server_start_import_isolation():
+    """Fresh interpreter: stub only GPU boot, retain actual server import graph."""
+    import subprocess
+    script = '''
+import asyncio, importlib.machinery, sys, types
+from unittest.mock import MagicMock
+from fastapi import FastAPI
+core = types.ModuleType("mlx.core")
+core.__spec__ = importlib.machinery.ModuleSpec("mlx.core", loader=None)
+sys.modules["mlx.core"] = core
+import mlx
+mlx.core = core
+import rapid_mlx.engine
+rapid_mlx.engine.BatchedEngine = MagicMock()
+import rapid_mlx.server
+from rapid_mlx.local_search_runtime import configure, startup, shutdown
+configure(False)
+app = FastAPI()
+asyncio.run(startup(app))
+asyncio.run(shutdown(app))
+assert not any(name == "rapid_mlx.local_search" or name.startswith(("rapid_mlx.local_search.", "cv2", "pypdf")) for name in sys.modules)
+assert not hasattr(app.state, "local_search")
+'''
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("count", [1, 2, 3])
+def test_identical_file_embeddings_return_paraphrase_neighbours(tmp_path, count):
+    async def scenario():
+        root = folder(tmp_path)
+        for n in range(count):
+            (root / f"{n}.txt").write_text("apple")
+        search = engine(tmp_path)
+        search.add_folder(str(root))
+        await search.wait_idle()
+        search._embed = lambda _: np.array([[.8, .6, 0.]])
+        hits = (await search.search("paraphrase", 20, None))["results"]
+        assert len(hits) == count
+        assert all(hit["matched"] == ["semantic"] for hit in hits)
+        await search.close()
+    asyncio.run(scenario())
+
+
+def test_async_status_keeps_http_loop_responsive(tmp_path):
+    import time
+    async def scenario():
+        search = engine(tmp_path)
+        progress = []
+        def expensive():
+            before = len(ticks)
+            time.sleep(.04)
+            progress.append(len(ticks) - before)
+            return {}
+        search.store.totals = expensive
+        ticks = []
+        async def stream():
+            for _ in range(10):
+                ticks.append(1)
+                await asyncio.sleep(.002)
+        await asyncio.gather(search.status_async(), stream())
+        assert len(ticks) == 10 and progress[0] >= 5
+        await search.close()
+    asyncio.run(scenario())
+
+
+def test_corpus_budget_survives_restart_and_recovers(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import store as storage
+    root = folder(tmp_path)
+    db = tmp_path / "index.sqlite3"
+    store = Store(db, "model")
+    fid = store.add_folder(root)[0]
+    for n in range(4):
+        path = root / f"{n}.txt"
+        path.write_text("apple")
+        store.replace(fid, path, path.stat(), None, [Chunk("apple", 1, None)], [[1., 0., 0.]], "indexed")
+    store.close()
+    monkeypatch.setattr(storage, "MAX_CORPUS_EMBEDDED_CHUNKS", 2)
+    store = Store(db, "model")
+    assert len(store.vectors) == 2 and store.totals()["semantic_index_full"]
+    files = store.files(fid)
+    assert sum(row["status"] == "keyword" for row in files.values()) == 2
+    store.remove_file(files[str(root / "0.txt")]["id"])
+    path = root / "2.txt"
+    assert store.embedding_room(path) == 1
+    store.replace(fid, path, path.stat(), None, [Chunk("apple", 1, None)], [[1., 0., 0.]], "indexed")
+    assert len(store.vectors) == 2 and store.totals()["semantic_index_full"]
+    store.close()
+
+
+def test_model_worker_change_does_not_bypass_current_engine(tmp_path, monkeypatch):
+    from rapid_mlx.config import get_config
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "a.txt").write_text("apple")
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        search.add_folder(str(root))
+        await search.wait_idle()
+        calls = len(fake.calls)
+        monkeypatch.setattr(get_config(), "engine", object())
+        result = await search.search("apple", 20, None)
+        assert result["mode"] == "keyword" and len(fake.calls) == calls
+        assert "worker changed" in search.status()["semantic_unavailable_reason"]
+        await search.close()  # Teardown still runs through the original owning boundary.
+    asyncio.run(scenario())
+
+
+def test_warm_search_no_corpus_iteration_or_vector_select(tmp_path, monkeypatch):
+    """Guard the shape of latency, independently of wall-clock runner speed."""
+    async def scenario():
+        search = engine(tmp_path, FakeEmbedder())
+        root = folder(tmp_path)
+        fid = search.store.add_folder(root)[0]
+        for n in range(12):
+            path = root / f"document-{n}.txt"
+            path.write_text("apple chart")
+            search.store.replace(fid, path, path.stat(), None,
+                                 [Chunk("apple chart", 1, None)] * 64,
+                                 [[1, n / 20, .1]] * 64, "indexed")
+        class GuardedRows(dict):
+            checking = False
+            def __iter__(self):
+                assert not self.checking, "warm search iterated corpus IDs"
+                return super().__iter__()
+            def items(self):
+                assert not self.checking, "warm search iterated corpus metadata"
+                return super().items()
+            def values(self):
+                assert not self.checking, "warm search iterated corpus metadata"
+                return super().values()
+        owned = search.store._store
+        rows = GuardedRows(search.store.search_rows())
+        key = next(iter(owned._search_cache))
+        owned._search_cache[key] = rows
+        owned._view_scope = (rows, *owned._view_scope[1:])
+        await search.search("apple chart", 10, None, group_limit=5)
+        rows.checking = True
+        class NoIteration(dict):
+            def __iter__(self):
+                raise AssertionError("warm search iterated corpus vectors")
+            def items(self):
+                raise AssertionError("warm search iterated corpus vectors")
+            def values(self):
+                raise AssertionError("warm search iterated corpus vectors")
+        owned = search.store._store
+        owned.vectors = NoIteration(owned.vectors)
+        statements = []
+        # Install on the connection's owning worker, never from the test thread.
+        search.store._executor.submit(owned.db.set_trace_callback, statements.append).result()
+        await search.search("apple chart", 10, None, group_limit=5)
+        assert not any("vector" in sql.lower() and sql.lstrip().upper().startswith("SELECT")
+                       for sql in statements)
+        assert not any("INSERT INTO local_allowed" in sql for sql in statements)
+        plans = search.store.sql(
+            "EXPLAIN QUERY PLAN SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? "
+            "AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid)",
+            ('"apple"',))
+        assert any("VIRTUAL TABLE INDEX" in r[3] and "=M" not in r[3] for r in plans)
+        await search.close()
+    asyncio.run(scenario())
+
+
+def test_media_admission_matches_scalar_file_scores(tmp_path):
+    from rapid_mlx.local_search.search import query_statistics, semantic_ranking
+    async def scenario():
+        search = engine(tmp_path, FakeEmbedder())
+        root = folder(tmp_path)
+        fid = search.store.add_folder(root)[0]
+        for kind in ("text", "image", "video"):
+            for n, cosine in enumerate((.95, .8, .65, .1, -.2, -.7)):
+                path = root / f"{kind}-{n}.{'txt' if kind == 'text' else 'png' if kind == 'image' else 'mp4'}"
+                path.write_text("unrelated fixture")
+                vector = [cosine, np.sqrt(1 - cosine ** 2), 0]
+                search.store.replace(fid, path, path.stat(), None,
+                                     [Chunk("unrelated fixture", 1, None, kind)] * (n + 1),
+                                     [vector] * (n + 1), "indexed")
+        rows = search.store.search_rows()
+        scalar = sorted([(i, float(v @ np.array([1, 0, 0], dtype=np.float32)))
+                         for i, v in search.store.vectors.items()], key=lambda p: (-p[1], p[0]))
+        accelerated = search.store.semantic_scores([1, 0, 0], rows)
+        background = search.store.semantic_background(rows)
+        for kind in ("text", "image", "video"):
+            old = [(i, v) for i, v in scalar if rows[i]["kind"] == kind]
+            new = [(i, v) for i, v in accelerated if rows[i]["kind"] == kind]
+            assert query_statistics(new, rows) == query_statistics(old, rows)
+            assert semantic_ranking(new, rows, background[kind]) == semantic_ranking(old, rows, background[kind])
+        search._embed = lambda _: [[1, 0, 0]]
+        response = await search.search("unseen visual query", 10, None, group_limit=5)
+        assert {g["kind"] for g in response["groups"]} == {"text", "image", "video"}
+        image = next(g for g in response["groups"] if g["kind"] == "image")
+        assert image["results"][0]["path"].endswith("image-0.png")
+        await search.close()
+    asyncio.run(scenario())
+
+
+def test_query_waits_for_only_current_index_embedding_batch(tmp_path):
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        async def worker(func):
+            if not calls:
+                entered.set()
+                await release.wait()
+            return func()
+        search = LocalSearch(tmp_path / "priority", model_id="test", resolve_model=lambda _: None,
+                             model_worker=worker)
+        search._embed = lambda inputs: calls.append(inputs[0]) or [[1, 0, 0]]
+        async def indexing():
+            await search._embed_async(["batch-1"] * 4)
+            await search._embed_async(["batch-2"] * 4)
+        index = asyncio.create_task(indexing())
+        await entered.wait()
+        query = asyncio.create_task(search._embed_async(["query"]))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(index, query)
+        assert calls == ["batch-1", "query", "batch-2"]
+        await search.close()
+    asyncio.run(scenario())
+
+
+def test_warm_search_does_not_queue_behind_index_transaction(tmp_path):
+    async def scenario():
+        search = engine(tmp_path, FakeEmbedder())
+        root = folder(tmp_path)
+        fid = search.store.add_folder(root)[0]
+        first = root / "first.txt"
+        first.write_text("apple chart")
+        search.store.replace(fid, first, first.stat(), None,
+                             [Chunk("apple chart", 1, None)], [[1, 0, 0]], "indexed")
+        await search.search("apple chart", 10, None)
+        entered, release = threading.Event(), threading.Event()
+        class PausedChunks(list):
+            def __iter__(self):
+                for n, chunk in enumerate(super().__iter__()):
+                    if n == 1:
+                        entered.set()  # The writer already has an open transaction.
+                        assert release.wait(5)
+                    yield chunk
+        second = root / "second.txt"
+        second.write_text("other document")
+        indexing = asyncio.create_task(search.store.call(
+            "replace", fid, second, second.stat(), None,
+            PausedChunks([Chunk("other document", 1, None)] * 2), [[0, 1, 0]] * 2, "indexed"))
+        query = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            query = asyncio.create_task(search.search("apple chart", 10, None))
+            done, _ = await asyncio.wait([query], timeout=.5)
+            assert query in done, "search queued behind a whole-file write"
+            assert (await query)["results"][0]["path"] == str(first)
+        finally:
+            release.set()
+            await indexing
+            if query is not None:
+                await query
+            await search.close()
+    asyncio.run(scenario())

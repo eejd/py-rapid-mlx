@@ -154,6 +154,10 @@ USERS_DIRECTORY = Path("/Users")
 
 SECRET_PATTERNS = (
     ".env*",
+    "credentials", "secrets", "secret", "passwords", "password",
+    "credentials.*", "secrets.*", "secret.*", "passwords.*", "password.*",
+    "*.kdbx", "*.kdb", ".netrc", "*_rsa", "*_rsa.*", "service-account*.json",
+    "service_account*.json", "*credentials*.json", "*.keystore",
     "*.pem",
     "*.key",
     "id_rsa*",
@@ -222,48 +226,96 @@ def validate_folder(value: str) -> Path:
     return path
 
 
-def scan_batches(root: Path):
-    """Yield bounded discovery batches; permission failures count as skips."""
-    skipped = 0
-    files: list[Path] = []
-    if excluded_location(root, root) or any(
-        excluded(parent, directory=True) for parent in (root, *root.parents)
-    ):
+@contextmanager
+def open_root(root: Path):
+    """Pin every absolute component; O_NOFOLLOW on the leaf alone is unsafe."""
+    if not root.is_absolute() or ".." in root.parts:
+        raise ValueError("root must be absolute without '..'")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open("/", flags)
+    try:
+        for part in root.parts[1:]:
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def scan_batches(root: Path, root_fd: int | None = None):
+    """Discovery and reads share one pinned root, including across renames."""
+    if excluded_location(root, root) or any(excluded(p, directory=True) for p in (root, *root.parents)):
         yield [], 1
         return
-
-    def onerror(exc: OSError) -> None:
+    if root_fd is None:
+        with open_root(root) as fd:
+            yield from scan_batches(root, fd)
+        return
+    skipped = 0
+    def onerror(exc):
         nonlocal skipped
         skipped += 1
-
-    for base, dirs, names in os.walk(root, followlinks=False, onerror=onerror):
-        for name in list(dirs):
-            path = Path(base) / name
+    def walk(fd, base):
+        try:
+            with os.scandir(fd) as entries:
+                dirs, names = [], []
+                for entry in entries:
+                    (dirs if entry.is_dir(follow_symlinks=False) else names).append(entry.name)
+        except OSError as exc:
+            onerror(exc)
+            yield base, [], [], fd
+            return
+        yield base, dirs, names, fd
+        for name in dirs:
             try:
-                skip = (
-                    path.is_symlink()
-                    or excluded_location(path, root)
-                    or excluded(path, directory=True)
-                    or (path / "pyvenv.cfg").exists()
-                )
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError as exc:
+                onerror(exc)
+                continue
+            try:
+                yield from walk(child, str(Path(base) / name))
+            finally:
+                os.close(child)
+    for base, dirs, names, fd in walk(root_fd, "."):
+
+        relative = Path(base)
+        files = []
+        for name in list(dirs):
+            path = root / relative / name
+            import stat
+            try:
+                info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                try:
+                    try:
+                        os.stat("pyvenv.cfg", dir_fd=child, follow_symlinks=False)
+                        venv = True
+                    except FileNotFoundError:
+                        venv = False
+                finally:
+                    os.close(child)
+                skip = stat.S_ISLNK(info.st_mode) or excluded(path, directory=True) or excluded_location(path, root) or venv
             except OSError:
                 skip = True
             if skip:
                 dirs.remove(name)
                 skipped += 1
-        # Prefer documents within each directory without pre-walking the root.
         for name in sorted(names, key=lambda n: (file_kind(Path(n)) != "text", n)):
-            path = Path(base) / name
-            if path.is_symlink():
+            import stat
+            try:
+                link = stat.S_ISLNK(os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode)
+            except OSError:
+                link = True
+            if link:
                 skipped += 1
             else:
-                files.append(path)
+                files.append(root / relative / name)
             if len(files) >= 64:
                 yield files, skipped
                 files, skipped = [], 0
         yield files, skipped
-        files, skipped = [], 0
-    yield files, skipped
+        skipped = 0
 
 
 def scan(root: Path) -> tuple[list[Path], int]:
@@ -278,11 +330,16 @@ def scan(root: Path) -> tuple[list[Path], int]:
 
 
 @contextmanager
-def open_safe(path: Path, root: Path, max_bytes: int):
+def open_safe(path: Path, root: Path, max_bytes: int, root_fd: int | None = None):
     """Pin the regular source inode without following any path component links."""
     relative = path.relative_to(root)
     flags = os.O_RDONLY | os.O_NOFOLLOW
-    fd = os.open(root, flags | os.O_DIRECTORY)
+    if root_fd is None:
+        with open_root(root) as pinned:
+            with open_safe(path, root, max_bytes, pinned) as source:
+                yield source
+        return
+    fd = os.dup(root_fd)
     try:
         for part in relative.parts[:-1]:
             child = os.open(part, flags | os.O_DIRECTORY, dir_fd=fd)
@@ -305,8 +362,8 @@ def open_safe(path: Path, root: Path, max_bytes: int):
         os.close(fd)
 
 
-def read_safe(path: Path, root: Path, max_bytes: int = MAX_BYTES):
-    with open_safe(path, root, max_bytes) as (stream, info):
+def read_safe(path: Path, root: Path, max_bytes: int = MAX_BYTES, root_fd=None):
+    with open_safe(path, root, max_bytes, root_fd) as (stream, info):
         data = stream.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise SkippedError("size cap")
@@ -333,10 +390,10 @@ def sample_timestamps(frame_count: int, fps: float) -> list[float]:
     return [i * VIDEO_INTERVAL_SECONDS for i in range(count)]
 
 
-def media_frames(path: Path, root: Path):
+def media_frames(path: Path, root: Path, root_fd=None):
     """Treat decoder-specific failures as per-file skips, never folder failures."""
     try:
-        yield from _decode_media_frames(path, root)
+        yield from _decode_media_frames(path, root, root_fd)
     except (SkippedError, OSError):
         raise
     except Exception as exc:
@@ -348,7 +405,7 @@ def media_frames(path: Path, root: Path):
         raise SkippedError(reason) from exc
 
 
-def _decode_media_frames(path: Path, root: Path):
+def _decode_media_frames(path: Path, root: Path, root_fd=None):
     """Yield bounded sampled frames; the caller consumes at most four at once.
 
     cv2 opens the pinned descriptor, not the replaceable registered pathname.
@@ -359,7 +416,7 @@ def _decode_media_frames(path: Path, root: Path):
 
     kind = file_kind(path)
     cap = VIDEO_MAX_BYTES if kind == "video" else IMAGE_MAX_BYTES
-    with open_safe(path, root, cap) as (stream, _):
+    with open_safe(path, root, cap, root_fd) as (stream, _):
         if kind == "image":
             try:
                 with Image.open(stream) as image:

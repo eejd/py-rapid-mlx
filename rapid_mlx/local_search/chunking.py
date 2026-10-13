@@ -38,6 +38,7 @@ def chunk_units(
     result = []
     for unit in units:
         start = 0
+        line_position, line_number = 0, 1
         text = unit.text
         while start < len(text):
             end = min(len(text), start + target)
@@ -46,11 +47,14 @@ def chunk_units(
                 end = _boundary(text, low, end) or _boundary(text, start, end) or end
             raw = text[start:end]
             leading = len(raw) - len(raw.lstrip())
+            position = start + leading
+            line_number += text.count("\n", line_position, position)
+            line_position = position
             if raw.strip():
                 result.append(
                     Chunk(
                         raw.strip(),
-                        None if unit.page else text.count("\n", 0, start + leading) + 1,
+                        None if unit.page else line_number,
                         unit.page,
                     )
                 )

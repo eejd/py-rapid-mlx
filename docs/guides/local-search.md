@@ -67,10 +67,17 @@ lazily imported PDF parser is unavailable, PDFs are counted as unsupported skips
 The per-file caps are 20 MiB for text, 50 MiB for images, and 4 GiB for videos.
 Only the first 64 text chunks per file (roughly 75 KB, including PDF, DOCX, PPTX, and XLSX
 text) are embedded; all remaining chunks stay keyword-searchable with their
-line or page locators, while media embedding is unchanged. This bounds the
+line or page locators. The entire index retains at most 262,144 embedded chunks
+(`MAX_CORPUS_EMBEDDED_CHUNKS`), across all folders and modalities. Later files
+remain keyword-only; removing indexed files frees capacity for reindexing.
+Images need one free slot; videos conservatively need 120 free slots before
+embedding, so a nearly full corpus may keep a video keyword-only. This bounds the
 cost of large generated logs and data files and reduces repetitive semantic
 candidates. Existing indexes keep their chunks and first 64 text vectors;
 excess vectors are removed on opening without re-embedding.
+Conventional credentials, secrets, passwords, password vaults (`*.kdbx`),
+`.netrc`, RSA keys, and service-account JSON filenames share the central private
+exclusion policy and the “Private or system file” skip reason.
 Hidden and secret-looking entries, Git,
 node_modules, virtual environments, build/cache directories, application bundles
 and other macOS packages (including photo libraries, frameworks, Xcode projects,
@@ -268,7 +275,9 @@ mean cosine between chunks from different files capped by a pooled background,
 or exceeds that query's mean
 file score by the normal-tail cutoff for a Bonferroni-corrected 5% false-alarm
 budget, keeping at most 100 files per kind.
-Keyword admission remains independent.
+For fewer than four files of a kind, or zero query-score variance, return up to
+three best positive-cosine semantic neighbours instead of applying an
+unreliable outlier estimate. Keyword admission remains independent.
 
 The background is computed from normalized vector sums, without a quadratic
 pair matrix, and cached for the current folder/kind scope. Within-file pairs are
@@ -320,11 +329,34 @@ rather than treating them as UTF-16 byte/code-unit offsets.
 
 Media embedding batches contain at most four images/frames. Text batches contain
 at most four chunks, sorted by length within each file. Both yield between
-batches. Cross-file length sorting is deferred to
+batches. FIFO admission before the model-worker boundary limits a waiting query's
+indexing-induced model wait to the remaining duration of one batch of at most
+four inputs. This is a bound on batch count, not a fixed number of milliseconds;
+model loading, inference, and other engine clients have their own latency.
+Whole-file SQLite/FTS writes run on a separate WAL writer, so searches continue
+on the reader connection during an uncommitted indexing transaction. After commit,
+the reader publishes at most one file's vector changes (64 text chunks or 120
+video frames); keyword-only tails are not visited during that publication.
+Cross-file length sorting is deferred to
 preserve the current per-file commit and cancellation/resume behavior.
-MLX construction/loading/embedding and Python-list materialisation stay on the
-server event-loop thread, as in the existing embeddings route;
-only file reading/extraction use disk worker threads. CPU-only tests use a
+MLX construction/loading, inference, result materialisation, and teardown use
+`BatchedEngine.execute_on_model_worker`, sharing generation’s owning worker.
+Engines without that boundary fail closed to keyword search and expose
+`semantic_unavailable_reason` in status. If the selected model worker changes,
+semantic work fails closed until Local Search is restarted; cached model objects
+are never forwarded to a different worker. Cancellation drains an in-flight model
+call before releasing its engine on that same worker. The existing
+`/v1/embeddings` route retains its synchronous execution path.
+File reads, extraction, chunking, and eligibility run off the HTTP event loop;
+a separate single CPU worker owns SQLite and search computation. Every root
+component opens relative to a pinned directory descriptor with `O_NOFOLLOW`;
+the root descriptor stays open throughout discovery and extraction. Search
+checks source paths through that same component-wise no-follow discipline.
+PDF and Office parsing use killable subprocesses with a ten-second wall deadline
+and a 512 MiB memory budget; timeout/failure becomes “Could not be read”.
+Cancellation kills and reaps the child. Allocation limits apply on Linux; on
+macOS, resident memory is sampled every 20 ms and an over-budget child is killed
+(the peak can exceed the budget between samples). There is no parser thread. CPU-only tests use a
 deterministic fake embedder; real model retrieval and chat latency under load
 remain the pilot's hardware qualification work.
 
@@ -343,3 +375,28 @@ retrieval, mixed-aspect batching, and chat responsiveness during four-frame
 batches remain reviewer hardware qualification. The separate resident vision
 engine increases memory use compared with the prior text-only local-search
 engine. Codec support and HEIC availability depend on the installed environment.
+
+
+Memory and work budgets: 262,144 × 768 × 4 bytes = 768 MiB of retained float32
+vectors with 768 dimensions (in general, 4 × chunk count × dimensions bytes). Float16 SQLite storage is 384 MiB of vector
+payload. One float32 arena reserves capacity up to the budget, touching rows
+as embeddings arrive; chunk-vector lookups are views into that same arena.
+Freed slots are reused without growing or copying the arena. Exact scoring uses
+one matrix-vector operation and NumPy reductions to select each file's best
+chunk, retaining only scalar score/index arrays as scratch. File membership and folder-level moments update after committed file changes;
+per-file sums use temporary scratch rather than retaining a second corpus of
+centroids, so background
+statistics require neither vector-table reads nor per-file/chunk query loops.
+Scope/index arrays and the lexical allowed-ID table are reused for a warm view.
+Lexical scope uses a correlated membership check after the FTS match; combining
+FTS MATCH with a rowid IN list can make SQLite repeat the match for every corpus
+chunk. The vector budget is enforced again when
+opening an older index and at every replacement transaction. Status totals add
+`semantic_index_full` and `semantic_chunk_budget`; keyword indexing continues
+when full. Lexical queries apply scope and a 4,096-candidate SQL limit per body
+or filename leg before returning bodies to Python (at most 8,192 bodies, about
+9.4 MiB of ASCII chunk text). Metadata, Python object overhead, SQLite caches,
+source buffers, the current file’s chunks, and model weights are additional;
+this is a vector/work budget, not a total-process RSS limit. Keyword-only corpus
+metadata and disk usage still grow with selected content. Local Search performs
+CPU search work off-loop so indexing and searching do not occupy the HTTP thread.
