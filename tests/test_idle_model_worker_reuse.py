@@ -495,8 +495,6 @@ async def test_text_reload_uses_existing_stream_worker(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_text_load_retries_after_broken_worker(monkeypatch):
-    pytest.importorskip("mlx.core")
-    from rapid_mlx import engine_core
     from rapid_mlx.engine import batched as batched_mod
     from rapid_mlx.utils import tokenizer as tokenizer_mod
 
@@ -513,7 +511,14 @@ async def test_text_load_retries_after_broken_worker(monkeypatch):
     def stop_loader(*args, **kwargs):
         raise StopAfterDispatchError
 
-    monkeypatch.setattr(engine_core, "_init_mlx_step_thread", initialize_worker)
+    engine_core = types.ModuleType("rapid_mlx.engine_core")
+    engine_core.AsyncEngineCore = Mock()
+    engine_core.EngineConfig = Mock()
+    engine_core._init_mlx_step_thread = initialize_worker
+    monkeypatch.setitem(sys.modules, "rapid_mlx.engine_core", engine_core)
+    scheduler = types.ModuleType("rapid_mlx.scheduler")
+    scheduler.SchedulerConfig = Mock()
+    monkeypatch.setitem(sys.modules, "rapid_mlx.scheduler", scheduler)
     monkeypatch.setattr(tokenizer_mod, "load_model_with_fallback", stop_loader)
     engine = batched_mod.BatchedEngine.__new__(batched_mod.BatchedEngine)
     engine._model_name = "fake/model"
