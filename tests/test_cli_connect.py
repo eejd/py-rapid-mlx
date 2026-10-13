@@ -503,8 +503,22 @@ def test_serve_next_uses_bound_endpoint_served_name_and_auth():
     assert "http://[::1]:9123/v1/chat/completions" in out
     assert "my served model" in out
     assert "Authorization: Bearer " in out
-    assert "rapid-mlx agents <opencode|claude-code|codex> --setup" in out
+    assert "rapid-mlx agents opencode --setup" in out
+    assert "RAPID_MLX_API_KEY='key with '\"'\"' quote'" in out
+    assert "More agents: claude-code, codex; full list: rapid-mlx agents" in out
     assert "--base-url 'http://[::1]:9123/v1'" in out
+    setup = out.splitlines()[2].split("Connect a coding agent: ", 1)[1]
+    assert shlex.split(setup) == [
+        "RAPID_MLX_API_KEY=key with ' quote",
+        "rapid-mlx",
+        "agents",
+        "opencode",
+        "--setup",
+        "--base-url",
+        "http://[::1]:9123/v1",
+        "--model",
+        "my served model",
+    ]
     assert out.endswith("OpenAI SDK base_url: http://[::1]:9123/v1\n")
 
 

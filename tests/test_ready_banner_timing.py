@@ -162,6 +162,21 @@ def test_desktop_ready_banner_preserves_existing_shape(monkeypatch, capsys):
     assert "Next:" not in out
 
 
+def test_audio_ready_banner_has_no_chat_next(monkeypatch, capsys):
+    cfg = get_config()
+    cfg.bind_host = "localhost"
+    cfg.bind_port = 8766
+    cfg.model_alias = "kokoro"
+    monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: False
+    )
+    server.print_ready_banner()
+    out = capsys.readouterr().out
+    assert "Ready: http://localhost:8766" in out
+    assert "Next:" not in out
+
+
 async def test_ready_banner_suppressed_when_no_bind_info():
     """Embedded usage (uvicorn owned elsewhere) leaves bind_* unset — silent."""
     cfg = get_config()

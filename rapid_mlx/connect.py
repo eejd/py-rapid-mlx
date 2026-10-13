@@ -229,14 +229,19 @@ def render_serve_next(ep: ServerEndpoints, *, api_key: str | None = None) -> str
     agents = [
         name for name in ("opencode", "claude-code", "codex") if get_profile(name)
     ]
-    choices = "|".join(agents)
+    agent = agents[0] if agents else None
+    key_env = f"RAPID_MLX_API_KEY={shlex.quote(api_key)} " if api_key else ""
     return (
         "\n".join(
             [
                 "  Next:",
                 f"    {curl}",
-                f"    Connect a coding agent: rapid-mlx agents <{choices}> --setup --base-url {shlex.quote(ep.openai_url)} --model {shlex.quote(ep.model)}",
-                "    List agents: rapid-mlx agents",
+                f"    Connect a coding agent: {key_env}rapid-mlx agents {agent} --setup --base-url {shlex.quote(ep.openai_url)} --model {shlex.quote(ep.model)}"
+                if agent
+                else "    Connect a coding agent: rapid-mlx agents",
+                f"    More agents: {', '.join(agents[1:])}; full list: rapid-mlx agents"
+                if agent
+                else "    List agents: rapid-mlx agents",
                 f"    OpenAI SDK base_url: {ep.openai_url}",
             ]
         )

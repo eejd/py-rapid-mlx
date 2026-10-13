@@ -1168,12 +1168,15 @@ def print_ready_banner() -> None:
     if _ep.listen_fd is not None or (_cfg.bind_host and _cfg.bind_port):
         import logging
 
+        from rapid_mlx.audio.registry import is_audio_name
         from rapid_mlx.runtime.optional_runtime import _running_in_desktop_sidecar
 
         interactive = (
             sys.stdout.isatty()
             and logging.getLogger().getEffectiveLevel() <= logging.INFO
             and not _running_in_desktop_sidecar()
+            and not _cfg.embeddings_only
+            and not is_audio_name(_cfg.model_alias or _cfg.model_name)
         )
         if interactive and _ep.listen_fd is None and _ep.model:
             note = _text_lane_image_note(_cfg)
