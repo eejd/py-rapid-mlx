@@ -8,7 +8,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import numpy as np
 
@@ -151,8 +151,21 @@ class Store:
             ):
                 self.db.execute("UPDATE chunks SET vector=NULL")
                 self.db.execute(
-                    "UPDATE files SET status='pending' WHERE status IN ('indexed','keyword') OR status LIKE 'skipped:%'"
+                    "UPDATE files SET status='pending' WHERE status IN ('indexed','keyword')"
                 )
+                # The media schema added support for formerly unsupported files;
+                # size/password/private skips do not depend on chunking.
+                for row in self.db.execute(
+                    "SELECT id,path,status FROM files WHERE status LIKE 'skipped:%'"
+                ).fetchall():
+                    if (
+                        file_kind(Path(row["path"])) != "text"
+                        and skip_reason(row["status"].split(":", 1)[1].strip())
+                        == SKIP_REASONS["unsupported"]
+                    ):
+                        self.db.execute(
+                            "UPDATE files SET status='pending' WHERE id=?", (row["id"],)
+                        )
             elif previous and previous[0] != model_id:
                 # Keyword-only files/chunks have no model-dependent state.
                 # Ordinary keyword-to-vector upgrades still run when available.
@@ -302,6 +315,17 @@ class Store:
             del self._folder_stats[folder_id]
 
     def _invalidate_search(self):
+        # Keep query work within twice the live corpus after deletions. Moving
+        # rows in slot order is safe in place: every destination is <= source.
+        if self._used_slots > 2 * len(self._slots):
+            for slot, (chunk_id, old_slot) in enumerate(
+                sorted(self._slots.items(), key=lambda item: item[1])
+            ):
+                self._matrix[slot] = self._matrix[old_slot]
+                self._slots[chunk_id] = slot
+                self.vectors[chunk_id] = self._matrix[slot]
+            self._used_slots = len(self._slots)
+            self._free_slots.clear()
         self._search_cache.clear()
         self._frequency_cache.clear()
         self._background_cache = None
@@ -412,13 +436,13 @@ class Store:
         self.db.close()
 
     def _forget(self, chunk_ids: list[int]):
-        self._invalidate_search()
         live = {r[0] for r in self.db.execute("SELECT id FROM files")}
         for file_id in list(self._file_stats):
             if file_id not in live:
                 self._remove_file_stats(file_id)
         for chunk_id in chunk_ids:
             self._drop_vector(chunk_id)
+        self._invalidate_search()
 
     def add_folder(self, path: Path) -> tuple[str, bool]:
         nested = []
@@ -1062,7 +1086,16 @@ class StoreWorker:
             ).result()
         return value
 
-    async def call(self, name, *args, **kwargs):
+    @overload
+    async def call(self, name: Literal["folder"], folder_id: str) -> dict | None: ...
+
+    @overload
+    async def call(self, name: Literal["folders"]) -> list[dict]: ...
+
+    @overload
+    async def call(self, name: str, *args: Any, **kwargs: Any) -> Any: ...
+
+    async def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         import asyncio
         from functools import partial
 

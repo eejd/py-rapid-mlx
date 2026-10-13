@@ -715,6 +715,11 @@ def test_absorbing_queued_or_active_folder_resumes_under_new_root(
             await sleep(seconds)
 
         monkeypatch.setattr(service.asyncio, "sleep", pause)
+        start_worker = search._start_worker
+        if not active:
+            # Keep this case queued until absorption finishes; add_folder's
+            # awaits otherwise let it drift into arbitrary active-file work.
+            monkeypatch.setattr(search, "_start_worker", lambda: None)
         try:
             old, _ = await search.add_folder(str(child))
             if active:
@@ -724,6 +729,9 @@ def test_absorbing_queued_or_active_folder_resumes_under_new_root(
             assert created and new["id"] != old["id"]
             assert not search.store.folder(old["id"])
             assert old["id"] not in search.pending
+            if not active:
+                monkeypatch.setattr(search, "_start_worker", start_worker)
+                start_worker()
             release.set()
             await search.wait_idle()
             assert len(fake.calls) == 2
@@ -6161,3 +6169,266 @@ def test_indexed_unicode_filename_candidates_are_casefolded(tmp_path, name, quer
         assert store.keyword(["missing"], allowed, query="missing") == []
     finally:
         store.close()
+
+
+def test_absorption_waits_for_dequeued_root_claim(tmp_path, monkeypatch, caplog):
+    async def scenario():
+        parent = folder(tmp_path)
+        child = folder(parent, "docs")
+        (child / "a.txt").write_text("apple")
+        (child / "b.txt").write_text("banana")
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        claimed, release, waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        call = search.store.call
+
+        class ObservedLock(asyncio.Lock):
+            async def acquire(self):
+                if asyncio.current_task().get_name() == "absorb":
+                    waiting.set()
+                return await super().acquire()
+
+        search._coordination = ObservedLock()
+
+        async def paused_call(name, *args, **kwargs):
+            value = await call(name, *args, **kwargs)
+            if (
+                name == "folder"
+                and asyncio.current_task() is search.task
+                and not claimed.is_set()
+            ):
+                claimed.set()
+                await release.wait()
+            return value
+
+        monkeypatch.setattr(search.store, "call", paused_call)
+        absorbing = None
+        try:
+            old, _ = await call("add_folder", child)
+            search.pending.append(old)
+            search._start_worker()
+            await asyncio.wait_for(claimed.wait(), 5)
+            assert old not in search.pending
+            assert search.progress["folder_id"] is None
+            assert search._coordination.locked()
+            absorbing = asyncio.create_task(
+                search.add_folder(str(parent)), name="absorb"
+            )
+            await asyncio.wait_for(waiting.wait(), 5)
+            assert not absorbing.done()
+            release.set()
+            new, created = await absorbing
+            assert created
+            await search.wait_idle()
+            assert len(fake.calls) == 2
+            assert not search.store.folder(old)
+            assert all(
+                row["folder_id"] == new["id"] for row in search.store.rows().values()
+            )
+            assert search.store.folder(new["id"])["state"] == "idle"
+            assert "Local-search indexing failed" not in caplog.text
+        finally:
+            release.set()
+            if absorbing is not None:
+                await absorbing
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_search_validates_candidates_in_one_off_loop_batch(
+    tmp_path, monkeypatch, grouped
+):
+    from rapid_mlx.local_search import service
+
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "apple.txt").write_text("apple")
+        (root / "apple.bin").write_bytes(b"unsupported")
+        search = engine(tmp_path)
+        entered, release = threading.Event(), threading.Event()
+        loop_thread = threading.get_ident()
+        checks, hops = [], []
+        query = None
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+            to_thread = asyncio.to_thread
+
+            async def tracked_hop(func, *args, **kwargs):
+                if func.__name__ == "<lambda>":
+                    hops.append(func)
+                return await to_thread(func, *args, **kwargs)
+
+            def validate(original, name):
+                def checked(*args, **kwargs):
+                    assert threading.get_ident() != loop_thread
+                    checks.append((name, threading.get_ident()))
+                    entered.set()
+                    assert release.wait(5)
+                    return original(*args, **kwargs)
+
+                return checked
+
+            monkeypatch.setattr(
+                service, "open_safe", validate(service.open_safe, "open")
+            )
+            monkeypatch.setattr(
+                service, "stat_safe", validate(service.stat_safe, "stat")
+            )
+            monkeypatch.setattr(service.asyncio, "to_thread", tracked_hop)
+            query = asyncio.create_task(
+                search.search("apple", 20, None, group_limit=5 if grouped else None)
+            )
+            assert await to_thread(entered.wait, 5)
+            # The loop can run this coroutine while filesystem validation waits.
+            assert not query.done()
+            release.set()
+            response = await query
+            assert {hit["path"] for hit in response["results"]} == {
+                str(root / "apple.txt"),
+                str(root / "apple.bin"),
+            }
+            assert {name for name, _ in checks} == {"open", "stat"}
+            assert len({thread for _, thread in checks}) == 1
+            assert len(hops) == 1
+            if grouped:
+                assert response["groups"]
+        finally:
+            release.set()
+            if query is not None:
+                await query
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("remaining", [0, 3, 32])
+def test_semantic_scoring_compacts_after_large_delete(tmp_path, monkeypatch, remaining):
+    from rapid_mlx.local_search import store as storage
+
+    monkeypatch.setattr(storage, "MAX_CORPUS_EMBEDDED_CHUNKS", 64)
+    root = folder(tmp_path)
+    path = root / "large.txt"
+    path.write_text("apple")
+    store = Store(tmp_path / "compact.sqlite3", "model")
+    try:
+        fid, _ = store.add_folder(root)
+        # Keep survivors at the end so resetting only trailing slots cannot pass.
+        store.replace(
+            fid,
+            path,
+            path.stat(),
+            "hash",
+            [Chunk("apple", i, None) for i in range(64 - remaining)],
+            [[1, 0, 0]] * (64 - remaining),
+            "indexed",
+        )
+        for i in range(remaining):
+            other = root / f"keep-{i}.txt"
+            other.write_text("apple")
+            store.replace(
+                fid,
+                other,
+                other.stat(),
+                "hash",
+                [Chunk("apple", 1, None)],
+                [[1, i % 2, 0]],
+                "indexed",
+            )
+        before = store.semantic_scores([1, 0, 0], store.search_rows())
+        file_id = store.files(fid)[str(path)]["id"]
+        deleted = {i for i, row in store.rows().items() if row["file_id"] == file_id}
+        vectors = {i: v.copy() for i, v in store.vectors.items() if i not in deleted}
+        store.remove_file(file_id)
+        assert store._used_slots <= 2 * remaining
+        assert all(np.array_equal(store.vectors[i], v) for i, v in vectors.items())
+        assert all(np.shares_memory(v, store._matrix) for v in store.vectors.values())
+        shapes = []
+        asarray = storage.np.asarray
+
+        class MeasuredMatrix(np.ndarray):
+            def __matmul__(self, other):
+                shapes.append(self.shape)
+                return super().__matmul__(other)
+
+        def measured(value, *args, **kwargs):
+            result = asarray(value, *args, **kwargs)
+            return result.view(MeasuredMatrix) if value is store._matrix else result
+
+        monkeypatch.setattr(storage.np, "asarray", measured)
+        assert store.semantic_scores([1, 0, 0], store.search_rows()) == [
+            hit for hit in before if hit[0] not in deleted
+        ]
+        assert shapes == ([] if remaining == 0 else [(store._used_slots, 3)])
+        # Reuse the compacted arena and verify live scores remain stable.
+        store.replace(
+            fid,
+            path,
+            path.stat(),
+            "hash",
+            [Chunk("apple", 1, None)],
+            [[1, 0, 0]],
+            "indexed",
+        )
+        assert (
+            len(store.semantic_scores([1, 0, 0], store.search_rows())) == remaining + 1
+        )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("migration", ["schema_version", "chunking_version"])
+def test_schema_chunking_migration_preserves_unchanged_skips(tmp_path, migration):
+    from rapid_mlx.local_search.extraction import SKIP_REASONS
+
+    root = folder(tmp_path)
+    db = tmp_path / "skips.sqlite3"
+    store = Store(db, "model")
+    fid, _ = store.add_folder(root)
+    statuses = {}
+    for name, reason in (
+        ("unsupported.bin", "unsupported"),
+        ("oversized.txt", "size"),
+        ("encrypted.pdf", "password"),
+    ):
+        path = root / name
+        path.write_bytes(b"unchanged")
+        status = "skipped: " + SKIP_REASONS[reason]
+        statuses[str(path)] = status
+        store.replace(fid, path, path.stat(), None, [], None, status)
+    store.sql("UPDATE meta SET value='1' WHERE key=?", (migration,))
+    store.close()
+    store = Store(db, "model")
+    try:
+        assert {
+            path: row["status"] for path, row in store.files(fid).items()
+        } == statuses
+        assert store.totals()["name_only_files"] == 3
+    finally:
+        store.close()
+
+
+def test_worker_queue_removed_while_waiting_for_coordination(tmp_path):
+    async def scenario():
+        search = engine(tmp_path)
+        task = None
+        try:
+            search.pending.append("removed-root")
+            await search._coordination.acquire()
+            task = asyncio.create_task(search._run())
+            await asyncio.sleep(0)
+            assert not task.done()
+            search.pending.clear()
+            search._coordination.release()
+            await task
+            assert search.progress == search._idle()
+        finally:
+            if search._coordination.locked():
+                search._coordination.release()
+            if task is not None:
+                await task
+            await search.close()
+
+    asyncio.run(scenario())

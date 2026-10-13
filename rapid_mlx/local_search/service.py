@@ -464,12 +464,21 @@ class LocalSearch:
     async def _run(self):
         try:
             while self.pending:
-                folder_id = self.pending.pop(0)
-                folder = await self.store.call("folder", folder_id)
-                if folder is None:
-                    continue
-                self.progress = {**self._idle(), "active": True, "folder_id": folder_id}
-                await self.store.call("set_folder", folder_id, "indexing")
+                # Claim the root atomically with registration/absorption. A DB
+                # await must not hide a dequeued worker from add_folder().
+                async with self._coordination:
+                    if not self.pending:
+                        break
+                    folder_id = self.pending.pop(0)
+                    folder = await self.store.call("folder", folder_id)
+                    if folder is None:
+                        continue
+                    self.progress = {
+                        **self._idle(),
+                        "active": True,
+                        "folder_id": folder_id,
+                    }
+                    await self.store.call("set_folder", folder_id, "indexing")
                 try:
                     await self._index(folder)
                 except asyncio.CancelledError:
@@ -941,9 +950,10 @@ class LocalSearch:
                 },
                 keyword_evidence=evidence,
             )
-            response["groups"] = []
+            result_groups: list[dict[str, object]] = []
+            response["groups"] = result_groups
             for kind, group in groups:
-                response["groups"].append(
+                result_groups.append(
                     {
                         "kind": kind,
                         "results": [await result(hit) for hit in group[:group_limit]],
