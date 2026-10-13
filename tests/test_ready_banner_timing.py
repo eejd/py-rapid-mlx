@@ -180,8 +180,38 @@ def test_interactive_ready_banner_uses_configured_key(monkeypatch, capsys):
     )
     server.print_ready_banner()
     out = capsys.readouterr().out
-    assert "export RAPID_MLX_API_KEY=test-key" in out
-    assert "Authorization: Bearer test-key" in out
+    assert "Set RAPID_MLX_API_KEY to the server key first." in out
+    assert '-H "Authorization: Bearer $RAPID_MLX_API_KEY"' in out
+    assert "test-key" not in out
+
+
+def test_interactive_ready_banner_resolves_agents_before_ready(monkeypatch, capsys):
+    import rapid_mlx.agents as agents
+
+    cfg = get_config()
+    cfg.bind_host = "localhost"
+    cfg.bind_port = 8766
+    cfg.model_alias = "lfm2.5-1b-4bit"
+    monkeypatch.setattr(logging.getLogger(), "getEffectiveLevel", lambda: logging.INFO)
+    monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: False
+    )
+    original_get_profile = agents.get_profile
+    first_call = True
+
+    def get_profile(name):
+        nonlocal first_call
+        if first_call:
+            print("INFO:rapid_mlx.agents:Loaded 17 agent profiles")
+            first_call = False
+        return original_get_profile(name)
+
+    monkeypatch.setattr(agents, "get_profile", get_profile)
+    server.print_ready_banner()
+    out = capsys.readouterr().out
+    assert out.index("Loaded 17 agent profiles") < out.index("Ready:")
+    assert out.index("Ready:") < out.index("Next:")
 
 
 def test_warning_log_level_does_not_add_next(monkeypatch, capsys):

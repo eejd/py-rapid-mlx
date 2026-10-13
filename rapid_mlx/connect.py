@@ -219,7 +219,7 @@ def render_serve_next(ep: ServerEndpoints, *, api_key: str | None = None) -> str
         },
         separators=(",", ":"),
     )
-    auth = f" -H {shlex.quote('Authorization: Bearer ' + api_key)}" if api_key else ""
+    auth = ' -H "Authorization: Bearer $RAPID_MLX_API_KEY"' if api_key else ""
     curl = (
         f"curl -i -sS {shlex.quote(ep.openai_url + '/chat/completions')}"
         f" -H 'Content-Type: application/json'{auth} -d {shlex.quote(body)}"
@@ -232,7 +232,7 @@ def render_serve_next(ep: ServerEndpoints, *, api_key: str | None = None) -> str
     agent = agents[0] if agents else None
     lines = ["  Next:"]
     if api_key:
-        lines.append(f"    export RAPID_MLX_API_KEY={shlex.quote(api_key)}")
+        lines.append("    Set RAPID_MLX_API_KEY to the server key first.")
     lines.extend(
         [
             f"    {curl}",

@@ -1180,10 +1180,11 @@ def print_ready_banner() -> None:
         )
         if interactive and _ep.listen_fd is None and _ep.model:
             note = _text_lane_image_note(_cfg)
+            next_step = render_serve_next(_ep, api_key=_cfg.api_key)
             print(f"  Ready: {_ep.base_url}")
             if note:
                 print(f"  Images: off. {note}")
-            print(render_serve_next(_ep, api_key=_cfg.api_key), end="", flush=True)
+            print(next_step, end="", flush=True)
         else:
             print(render_banner(_ep, image_note=_text_lane_image_note(_cfg)), end="")
 

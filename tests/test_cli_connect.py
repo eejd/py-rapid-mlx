@@ -503,13 +503,10 @@ def test_serve_next_uses_bound_endpoint_served_name_and_auth():
     assert "curl -i -sS " in out
     assert "http://[::1]:9123/v1/chat/completions" in out
     assert "my served model" in out
-    assert "Authorization: Bearer " in out
+    assert '-H "Authorization: Bearer $RAPID_MLX_API_KEY"' in out
     assert "rapid-mlx agents opencode --setup" in out
-    assert "export RAPID_MLX_API_KEY='key with '\"'\"' quote'" in out
-    assert shlex.split(out.splitlines()[1]) == [
-        "export",
-        "RAPID_MLX_API_KEY=key with ' quote",
-    ]
+    assert "Set RAPID_MLX_API_KEY to the server key first." in out
+    assert "key with ' quote" not in out
     assert "More agents: claude-code, codex; full list: rapid-mlx agents" in out
     assert "--base-url 'http://[::1]:9123/v1'" in out
     setup = out.splitlines()[3].split("Connect a coding agent: ", 1)[1]
