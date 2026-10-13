@@ -38,6 +38,26 @@ import Testing
 /// divergent respawn path fails CI before it ships.
 @Suite("ServerManager spawn-argument shape (issue #271)")
 struct SpawnArgumentsTests {
+    @Test("Local search argv requires both flags in runtime help")
+    func localSearchCapabilityContract() {
+        for help in ["", "--enable-local-search", "--local-search-dir"] {
+            let args = ServerManager.serveArguments(alias: "qwen3.5-9b-4bit", host: "127.0.0.1", port: 8000,
+                capabilities: .parse(serveHelp: help), localSearchEnabled: true, localSearchDirectory: "/tmp/Search Index")
+            #expect(!args.contains("--enable-local-search"))
+            #expect(!args.contains("--local-search-dir"))
+        }
+        let args = ServerManager.serveArguments(alias: "qwen3.5-9b-4bit", host: "127.0.0.1", port: 8000,
+            capabilities: .parse(serveHelp: "--enable-local-search --local-search-dir"), localSearchEnabled: true, localSearchDirectory: "/tmp/Search Index")
+        #expect(args.suffix(3) == ["--enable-local-search", "--local-search-dir", "/tmp/Search Index"])
+        let defaultArgs = ServerManager.serveArguments(alias: "qwen3.5-9b-4bit", host: "127.0.0.1", port: 8000,
+            capabilities: .parse(serveHelp: "--enable-local-search --local-search-dir"))
+        #expect(!defaultArgs.contains("--enable-local-search"))
+        #expect(!defaultArgs.contains("--local-search-dir"))
+        #expect(ApplicationSupportLocator.localSearchDirectory(environment: ["HOME": "/tmp/test-home"]).path ==
+            "/tmp/test-home/Library/Application Support/Rapid/LocalSearch")
+        #expect(SidebarSection.harnessRequested(environment: ["RAPID_GUI_GOLDEN_MODE": "1", "RAPID_GUI_INITIAL_SECTION": "search"]) == .search)
+    }
+
 
     @Test("Shutdown is latched before a child exists")
     @MainActor
