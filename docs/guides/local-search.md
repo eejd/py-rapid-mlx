@@ -186,7 +186,9 @@ on reindex. A file that becomes readable transitions to normal content indexing.
 
 For example, `skip_reasons: {"Scanned PDF without text": 3, "Unsupported file type": 2}`.
 Each file's reason and fingerprint are persisted. Counts survive restarts and
-incremental reindexing; unchanged skipped files are not read or extracted again.
+incremental reindexing. Unchanged `Could not be read` entries are retried on
+reindex because permissions can change without changing size or modification
+time. Other unchanged skipped files are not read or extracted again.
 Changed files are retried and deleted files disappear from the counts after a
 completed walk. Files skipped purely by directory pruning (system directories,
 packages, hidden directories, dependencies) are **not counted individually** in
@@ -466,3 +468,9 @@ source buffers, the current file’s chunks, and model weights are additional;
 this is a vector/work budget, not a total-process RSS limit. Keyword-only corpus
 metadata and disk usage still grow with selected content. Local Search performs
 CPU search work off-loop so indexing and searching do not occupy the HTTP thread.
+
+Local availability requires complete weights plus `tokenizer_config.json` and
+`tokenizer.json`. A checkpoint with a vision configuration additionally requires
+`processor_config.json`; without it the snapshot is reported as not downloaded,
+so indexing remains keyword-only until the required assets are present. Optional
+repository files do not affect availability.

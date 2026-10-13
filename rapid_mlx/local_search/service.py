@@ -88,17 +88,38 @@ def local_model_path(model_id: str) -> str | None:
             model_id
         ) or resolve_offline_cached_snapshot(model_id)
         if resolved is not None:
-            return str(resolved)
+            return _runnable_search_snapshot(resolved)
         config = _cached_file(model_id, "config.json")
         if config is not None:
             from huggingface_hub.constants import HF_HUB_CACHE
 
             repo = Path(HF_HUB_CACHE) / ("models--" + model_id.replace("/", "--"))
             resolved = _complete_cached_checkpoint(repo, config.parent, model_id)
-            return str(resolved) if resolved is not None else None
-        return str(snapshot_download(model_id, local_files_only=True))
+            return _runnable_search_snapshot(resolved) if resolved is not None else None
+        return _runnable_search_snapshot(
+            Path(snapshot_download(model_id, local_files_only=True))
+        )
     except (OSError, ValueError):
         return None
+
+
+def _runnable_search_snapshot(path: Path) -> str | None:
+    """Check loader assets without importing a tokenizer or loading the model.
+
+    Vision checkpoints are all-or-nothing: the factory enables vision, so a
+    text-capable snapshot missing its image processor is still incomplete.
+    Optional repository files do not affect local availability.
+    """
+    config = json.loads((path / "config.json").read_text())
+    required = ["tokenizer_config.json", "tokenizer.json"]
+    if config.get("vision_config"):
+        required.append("processor_config.json")
+    if any(
+        not (path / name).is_file() or (path / name).stat().st_size == 0
+        for name in required
+    ):
+        return None
+    return str(path)
 
 
 def make_embedder(path: str) -> Embedder:
@@ -536,7 +557,8 @@ class LocalSearch:
                         previous
                         and previous["size"] == info.st_size
                         and previous["mtime_ns"] == info.st_mtime_ns
-                        and previous["status"] != "pending"
+                        and previous["status"]
+                        not in {"pending", "skipped: " + SKIP_REASONS["read"]}
                         and not (
                             available
                             and previous["status"] in {"keyword", "budget"}

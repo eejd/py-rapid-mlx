@@ -1182,7 +1182,15 @@ def test_skipped_missing_and_bad_documents(tmp_path):
     asyncio.run(scenario())
 
 
-def test_local_availability_never_downloads(monkeypatch):
+def runnable_text_snapshot(path):
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "config.json").write_text('{"model_type":"embedding_gemma2"}')
+    (path / "tokenizer_config.json").write_text("{}")
+    (path / "tokenizer.json").write_text("{}")
+    return path
+
+
+def test_local_availability_never_downloads(tmp_path, monkeypatch):
     import huggingface_hub
 
     from rapid_mlx import cli
@@ -1196,13 +1204,14 @@ def test_local_availability_never_downloads(monkeypatch):
     assert local_model_path("missing") is None
     monkeypatch.setattr(cli, "_cache_runnability", lambda _: True)
     calls = []
+    model_path = runnable_text_snapshot(tmp_path / "model")
 
     def snapshot(model, **kwargs):
         calls.append(kwargs)
-        return "/local/model"
+        return str(model_path)
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot)
-    assert local_model_path("cached") == "/local/model"
+    assert local_model_path("cached") == str(model_path)
     assert calls == [{"local_files_only": True}]
 
 
@@ -1522,23 +1531,24 @@ def test_keyword_limits_do_not_starve_other_files(tmp_path):
     asyncio.run(scenario())
 
 
-def test_unreferenced_available_snapshot_uses_existing_resolver(monkeypatch):
+def test_unreferenced_available_snapshot_uses_existing_resolver(tmp_path, monkeypatch):
     import huggingface_hub
 
     from rapid_mlx import cli, model_metadata
 
+    model_path = runnable_text_snapshot(tmp_path / "model")
     monkeypatch.setattr(cli, "_cache_runnability", lambda _: True)
     monkeypatch.setattr(
         model_metadata,
         "resolve_unreferenced_cached_snapshot",
-        lambda _: Path("/local/unreferenced"),
+        lambda _: model_path,
     )
     monkeypatch.setattr(
         huggingface_hub,
         "snapshot_download",
         lambda *a, **kw: pytest.fail("already resolved locally"),
     )
-    assert local_model_path("test/model") == "/local/unreferenced"
+    assert local_model_path("test/model") == str(model_path)
 
 
 @pytest.mark.parametrize("identifier", [False, True])
@@ -4853,9 +4863,13 @@ def test_name_only_size_rejection_without_read(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "missing",
+    [None, "tokenizer.json", "tokenizer_config.json", "processor_config.json"],
+)
 @pytest.mark.parametrize("weights", [False, True])
 def test_cached_model_main_ref_ignores_missing_tree_readme(
-    tmp_path, monkeypatch, weights
+    tmp_path, monkeypatch, weights, missing
 ):
     import json
 
@@ -4868,7 +4882,12 @@ def test_cached_model_main_ref_ignores_missing_tree_readme(
     repo = cache / "models--test--embedding"
     snapshot = repo / "snapshots" / ("a" * 40)
     snapshot.mkdir(parents=True)
-    (snapshot / "config.json").write_text('{"model_type":"embedding_gemma2"}')
+    (snapshot / "config.json").write_text(
+        '{"model_type":"embedding_gemma2","vision_config":{"hidden_size":8}}'
+    )
+    for name in ["tokenizer.json", "tokenizer_config.json", "processor_config.json"]:
+        if name != missing:
+            (snapshot / name).write_text('{"image_processor":{}}')
     if weights:
         (snapshot / "model.safetensors").write_bytes(b"w" * 4096)
     (repo / "refs").mkdir()
@@ -4892,7 +4911,9 @@ def test_cached_model_main_ref_ignores_missing_tree_readme(
     )
     assert model_metadata.resolve_unreferenced_cached_snapshot("test/embedding") is None
     assert model_metadata.resolve_offline_cached_snapshot("test/embedding") is None
-    assert local_model_path("test/embedding") == (str(snapshot) if weights else None)
+    assert local_model_path("test/embedding") == (
+        str(snapshot) if weights and missing is None else None
+    )
 
 
 def test_name_only_metadata_validation_no_reads_and_stale_paths(tmp_path, monkeypatch):
@@ -5362,6 +5383,8 @@ def test_actual_local_search_flag_and_lifespan_wiring(
 @pytest.mark.parametrize("cached", [False, True])
 def test_local_checkpoint_resolution_from_cached_config(tmp_path, monkeypatch, cached):
     from rapid_mlx import cli, model_metadata
+
+    runnable_text_snapshot(tmp_path)
 
     monkeypatch.setattr(cli, "_cache_runnability", lambda _: True)
     monkeypatch.setattr(
@@ -5970,3 +5993,132 @@ def test_cancelled_cpu_read_drains_pinned_work_before_returning():
             release.set()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["FROM chunks JOIN files", "row_number()"])
+def test_search_metadata_uses_one_snapshot_during_index_commit(tmp_path, boundary):
+    root = folder(tmp_path)
+    path = root / "new.txt"
+    path.write_text("new searchable content")
+    reader = Store(tmp_path / "index.sqlite3", "test")
+    fid = reader.add_folder(root)[0]
+    writer = Store(reader.path, "test")
+    committed = []
+
+    def commit_between_reads(sql):
+        if boundary in sql and not committed:
+            committed.append(True)
+            writer.replace(
+                fid,
+                path,
+                path.stat(),
+                None,
+                [Chunk("new searchable content", "text", {})],
+                None,
+                "keyword",
+            )
+            writer.replace(
+                fid,
+                root / "skip.xyz",
+                path.stat(),
+                None,
+                [],
+                None,
+                "skipped: Unsupported file type",
+            )
+
+    reader.db.set_trace_callback(commit_between_reads)
+    try:
+        assert reader.search_rows() == {}
+        assert committed == [True]
+        assert not reader.db.in_transaction
+        reader._invalidate_search()
+        assert len(reader.search_rows()) == 2
+    finally:
+        reader.close()
+        writer.close()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["Could not be read", "Password-protected", "Unsupported file type", "Too large"],
+)
+def test_reindex_retries_only_transient_read_skips(tmp_path, monkeypatch, reason):
+    from rapid_mlx.local_search import service as module
+
+    root = folder(tmp_path)
+    path = root / "restored.txt"
+    path.write_text("restoredreadability")
+    original = path.stat()
+    old = Store(tmp_path / "index" / "index.sqlite3", "test")
+    fid = old.add_folder(root)[0]
+    old.replace(fid, path, original, None, [], None, "skipped: " + reason)
+    old.close()
+    path.chmod(0o600)
+    assert (path.stat().st_size, path.stat().st_mtime_ns) == (
+        original.st_size,
+        original.st_mtime_ns,
+    )
+    reads = []
+    read = module.read_safe
+
+    def recording_read(path, *args, **kwargs):
+        reads.append(path)
+        return read(path, *args, **kwargs)
+
+    monkeypatch.setattr(module, "read_safe", recording_read)
+
+    async def scenario():
+        search = LocalSearch(
+            tmp_path / "index",
+            model_id="test",
+            resolve_model=lambda _: None,
+            yield_seconds=0,
+        )
+        try:
+            await search.queue(fid)
+            await search.wait_idle()
+            assert reads == ([path] if reason == "Could not be read" else [])
+            hits = (await search.search("restoredreadability", 20, None))["results"]
+            assert bool(hits) == (reason == "Could not be read")
+            await search.queue(fid)
+            await search.wait_idle()
+            assert len(reads) == (1 if reason == "Could not be read" else 0)
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "name,query",
+    [
+        ("Straße.pdf", "strasse"),
+        ("STRASSE.pdf", "straße"),
+        ("Straße_100%.pdf", "strasse_100%"),
+    ],
+)
+def test_indexed_unicode_filename_candidates_are_casefolded(tmp_path, name, query):
+    root = folder(tmp_path)
+    path = root / name
+    path.write_text("unrelated content")
+    store = Store(tmp_path / "index.sqlite3", "test")
+    try:
+        fid = store.add_folder(root)[0]
+        store.replace(
+            fid,
+            path,
+            path.stat(),
+            None,
+            [Chunk("unrelated content", "text", {})],
+            None,
+            "keyword",
+        )
+        rows = store.search_rows()
+        allowed = set(rows)
+        from rapid_mlx.local_search.search import query_terms
+
+        assert store.keyword(query_terms(query), allowed, query=query) == list(rows)
+        assert store.keyword(["missing"], allowed, query="missing") == []
+    finally:
+        store.close()

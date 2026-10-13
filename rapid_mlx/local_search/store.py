@@ -321,56 +321,60 @@ class Store:
             None if kinds is None else tuple(sorted(kinds)),
         )
         if key not in self._search_cache:
-            # File strings are shared by all of a file's chunks. Fetching them
-            # once avoids allocating thousands of repeated paths/metadata rows.
-            file_sql = "SELECT id,path,folder_id,title,size,mtime,content_hash FROM files WHERE status NOT LIKE 'skipped:%'"
-            file_params = []
-            if folder_ids is not None:
-                file_sql += (
-                    " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
-                )
-                file_params = folder_ids
-            files = {r["id"]: dict(r) for r in self.db.execute(file_sql, file_params)}
-            sql = """SELECT chunks.id, chunks.file_id, chunks.kind, chunks.locator
-                FROM chunks JOIN files ON file_id=files.id"""
-            clauses, params = [], []
-            for column, values in (("folder_id", folder_ids), ("kind", kinds)):
-                if values is not None:
-                    clauses.append(
-                        column + " IN (" + ",".join("?" for _ in values) + ")"
+            with self.db:
+                self.db.execute("BEGIN")  # Pin metadata to one WAL snapshot.
+                # File strings are shared by all of a file's chunks. Fetching them
+                # once avoids allocating thousands of repeated paths/metadata rows.
+                file_sql = "SELECT id,path,folder_id,title,size,mtime,content_hash FROM files WHERE status NOT LIKE 'skipped:%'"
+                file_params = []
+                if folder_ids is not None:
+                    file_sql += (
+                        " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
                     )
-                    params.extend(values)
-            if clauses:
-                sql += " WHERE " + " AND ".join(clauses)
-            self._search_cache.clear()
-            self._search_cache[key] = {
-                r["id"]: {
-                    **files[r["file_id"]],
-                    **dict(r),
-                    "content_indexed": True,
-                    "skip_reason": None,
+                    file_params = folder_ids
+                files = {
+                    r["id"]: dict(r) for r in self.db.execute(file_sql, file_params)
                 }
-                for r in self.db.execute(sql, params)
-            }
-            for row in self.name_only_rows(folder_ids):
-                kind = file_kind(Path(row["path"]))
-                if (folder_ids is None or row["folder_id"] in folder_ids) and (
-                    kinds is None or kind in kinds
-                ):
-                    self._search_cache[key][-row["id"]] = {
-                        **row,
-                        "id": -row["id"],
-                        "file_id": row["id"],
-                        "kind": kind,
-                        "locator": "{}",
-                        "content_indexed": False,
-                        "skip_reason": row["status"].split(":", 1)[1].strip(),
+                sql = """SELECT chunks.id, chunks.file_id, chunks.kind, chunks.locator
+                    FROM chunks JOIN files ON file_id=files.id"""
+                clauses, params = [], []
+                for column, values in (("folder_id", folder_ids), ("kind", kinds)):
+                    if values is not None:
+                        clauses.append(
+                            column + " IN (" + ",".join("?" for _ in values) + ")"
+                        )
+                        params.extend(values)
+                if clauses:
+                    sql += " WHERE " + " AND ".join(clauses)
+                self._search_cache.clear()
+                self._search_cache[key] = {
+                    r["id"]: {
+                        **files[r["file_id"]],
+                        **dict(r),
+                        "content_indexed": True,
+                        "skip_reason": None,
                     }
-            self._view_scope = (
-                self._search_cache[key],
-                {r["folder_id"] for r in self._search_cache[key].values()},
-                {r["kind"] for r in self._search_cache[key].values()},
-            )
+                    for r in self.db.execute(sql, params)
+                }
+                for row in self.name_only_rows(folder_ids):
+                    kind = file_kind(Path(row["path"]))
+                    if (folder_ids is None or row["folder_id"] in folder_ids) and (
+                        kinds is None or kind in kinds
+                    ):
+                        self._search_cache[key][-row["id"]] = {
+                            **row,
+                            "id": -row["id"],
+                            "file_id": row["id"],
+                            "kind": kind,
+                            "locator": "{}",
+                            "content_indexed": False,
+                            "skip_reason": row["status"].split(":", 1)[1].strip(),
+                        }
+                self._view_scope = (
+                    self._search_cache[key],
+                    {r["folder_id"] for r in self._search_cache[key].values()},
+                    {r["kind"] for r in self._search_cache[key].values()},
+                )
         return self._search_cache[key]
 
     def name_only_rows(self, folder_ids=None):
@@ -942,6 +946,20 @@ class Store:
             ]
             where = " AND ".join(
                 "local_basename(path) LIKE ? ESCAPE '\\'" for _ in patterns
+            )
+            existing = {r[0] for r in candidates}
+            candidates.extend(
+                (row["id"], row["text"], Path(row["path"]).name)
+                for row in self.db.execute(
+                    "SELECT chunks.id,chunks.text,files.path FROM local_allowed "
+                    "JOIN chunks ON chunks.id=local_allowed.id "
+                    "JOIN files ON files.id=chunks.file_id WHERE "
+                    + where
+                    + " ORDER BY chunks.id LIMIT "
+                    + str(KEYWORD_CANDIDATE_LIMIT),
+                    patterns,
+                )
+                if row["id"] not in existing
             )
             candidates.extend(
                 (-row["id"], "", Path(row["path"]).name)
