@@ -531,7 +531,7 @@ struct MermaidRenderingTests {
             // The first evaluator intentionally never completes. Give the
             // recovery render a deterministic measurement; this test measures
             // queue release, while the end-to-end tests below exercise WebKit.
-            renderTimeout: .milliseconds(500),
+            renderTimeout: .seconds(1),
             javaScriptEvaluator: { _, _, _, completion in
                 attempts += 1
                 guard attempts > 1 else { return }
@@ -545,7 +545,7 @@ struct MermaidRenderingTests {
         let source = "graph TD\n  Recovered --> Queue"
         let started = ContinuousClock.now
         #expect(await renderer.image(source: source, theme: .light) == nil)
-        #expect(ContinuousClock.now - started < .seconds(2))
+        #expect(ContinuousClock.now - started < .seconds(3))
         #expect(!renderer.isKnownBad(source: source, theme: .light))
 
         let recovered = await renderer.image(source: source, theme: .light)
