@@ -1,0 +1,345 @@
+# Local folder search (MVP pilot)
+
+Local search indexes user-selected folders and searches their text, images, and
+sampled video frames with EmbeddingGemma 2 plus keyword retrieval. It is opt-in
+and independent
+of the model locked by `--embedding-model` for `/v1/embeddings`.
+
+```sh
+rapid-mlx serve <chat-model> --enable-local-search
+# Optional: put the index in a chosen persistent directory.
+rapid-mlx serve <chat-model> --enable-local-search --local-search-dir /absolute/index-dir
+```
+
+Without `--enable-local-search`, all local-search routes return 404 and are
+absent from the API schema. The default index is
+`~/.rapid-mlx/local-search/index.sqlite3`; `RAPID_MLX_STATE_DIR` changes the
+state directory. The index stores extracted text and vectors locally in a
+single SQLite database with WAL companion files. Delete a folder registration
+to remove its searchable files and chunks. SQLite may retain deleted content
+in free pages or WAL until it reuses/checkpoints them; deletion is not secure
+erasure.
+
+Provision `mlx-community/embeddinggemma-2-4bit` explicitly with `rapid-mlx pull`
+before expecting semantic results. These routes never download a model. While
+it is absent, files are indexed for keywords, folders report
+`waiting_for_model`, and searches return `mode: "keyword"`. Polling status after
+provisioning queues waiting folders for embedding. The separate embedding
+engine loads on the first indexing/search call that needs it. It remains
+resident until server shutdown; existing idle residency management does not
+cover this embedding engine.
+
+Supported document types:
+
+| Type | Extracted content | Locator |
+| --- | --- | --- |
+| UTF-8 text, Markdown, source code, JSON, YAML, CSV, HTML | Text; HTML tags/scripts/styles removed | One-based starting line |
+| PDF | Pages with extractable text; mixed PDFs retain their text pages | One-based `page` |
+| DOCX | Body paragraphs and tables, headers/footers, footnotes/endnotes, comments | One-based starting line in extracted text |
+| PPTX | Slide text and speaker notes, in presentation order | One-based slide number in `page` |
+| XLSX | Shared/inline strings and stored cell values, in workbook sheet order | One-based sheet index in `page` |
+| DOC, XLS, PPT, RTF, Pages | Unsupported; convert to a supported format first | — |
+
+Office extraction uses ZIP/XML without additional dependencies. Spreadsheet
+extraction reads at most 10,000 cells per sheet; formulas contribute their stored
+values if present and are not evaluated. The 20 MiB cap also bounds total
+uncompressed Office archive bytes and extracted output; oversized archives are
+rejected before inflation. External Office relationships are not followed.
+PDFs with pages but fewer than three alphanumeric characters across their
+extracted text are classified as scanned/image-only. Encrypted PDFs are skipped,
+even when an empty password could unlock them. There is no OCR: scanned PDFs
+need prior OCR, and image indexing does not add keyword-searchable text.
+
+Images: PNG, JPG/JPEG, WebP, BMP, GIF (first frame), and TIF/TIFF. HEIC works
+only if the installed Pillow can already decode it; otherwise it is skipped as
+`Unsupported file type`. No additional HEIC dependency is installed. Videos: MP4, MOV,
+M4V, MKV, and WebM, subject to the installed OpenCV decoder's codec support.
+Video sampling seeks to one frame every five seconds. Videos longer than the
+120-frame budget instead sample 120 evenly spaced positions from the first to
+last frame. Timestamps are seconds at the selected frame (rounded to the
+nearest frame). Consecutive samples with mean absolute RGB difference below
+2 on a 0–255 scale after downscaling to 32×32 are omitted. At most four decoded
+frames are retained per extraction batch; the full video is never buffered or
+decoded. Corrupt/undecodable media is skipped without aborting the folder.
+Audio is unsupported and its checkpoint weights are always dropped. If the
+lazily imported PDF parser is unavailable, PDFs are counted as unsupported skips.
+
+The per-file caps are 20 MiB for text, 50 MiB for images, and 4 GiB for videos.
+Only the first 64 text chunks per file (roughly 75 KB, including PDF, DOCX, PPTX, and XLSX
+text) are embedded; all remaining chunks stay keyword-searchable with their
+line or page locators, while media embedding is unchanged. This bounds the
+cost of large generated logs and data files and reduces repetitive semantic
+candidates. Existing indexes keep their chunks and first 64 text vectors;
+excess vectors are removed on opening without re-embedding.
+Hidden and secret-looking entries, Git,
+node_modules, virtual environments, build/cache directories, application bundles
+and other macOS packages (including photo libraries, frameworks, Xcode projects,
+and localization bundles), binary files, and symlinks are skipped. System locations `/System`, `/Library`, `/usr`, `/bin`, `/sbin`, `/private`,
+`/dev`, `/cores`, `/opt`, `/Network`, and `/Volumes`, plus every user's
+`/Users/*/Library` and the current user's `~/Library`, are excluded by resolved
+absolute path while walking a broader root such as Whole Mac or home. An
+explicitly selected root inside an excluded location is accepted and indexed,
+including iCloud Drive under `~/Library/Mobile Documents`, scratch folders under
+`/private/tmp`, and external volumes. Unreadable
+folders (including permission/TCC denials) count as skipped and do not abort
+indexing. `files_skipped` counts excluded
+directory entries once, without traversing/counting their descendants, plus
+skipped files. Chunks target 1200 characters with 180 characters of overlap.
+
+Folder paths must identify existing absolute directories without `..`;
+hidden/secret-looking directories and package bundles remain rejected as roots. `/` is accepted as
+Whole Mac. The desktop Add Folder menu offers Desktop, Documents, Downloads,
+Whole Mac, and a multi-select Choose Folder picker. Whole Mac skips system files
+and app internals; its first indexing can take a long time. The home directory itself
+and folders outside home are supported. Paths resolve before registration; adding
+the same resolved path or a folder inside an existing root returns the covering
+folder (HTTP 200), and the desktop refreshes silently. Shortcuts already covered
+by an existing root show a checkmark and are disabled. Adding a containing folder
+creates a new root (HTTP 201) and absorbs nested registrations in one transaction,
+preserving their indexed files, chunks, and vectors without re-embedding unchanged
+files. Active indexing of an absorbed root is cancelled and queued under the new
+root. Removing that root removes all its files, including the absorbed files.
+Indexing commits each file
+atomically, reuses unchanged content, removes deleted files, and resumes on
+server restart. Reindex explicitly after changing files; there is no filesystem
+watcher in this pilot. Only one folder indexes at a time. Removing an active
+folder cancels its indexing; server shutdown also cancels work between batches.
+Changing the stored model id, schema version, or chunking version invalidates
+all vectors while preserving keyword text until rebuilding finishes. Schema 2
+and chunking 3 rebuild earlier text-only indexes, including previously skipped
+media. Discovery and indexing proceed in bounded batches, with documents preferred
+within each directory. Each file becomes searchable when committed while the
+walk continues; there is no full-root pre-walk. During discovery, `files_total`
+is 0 (unknown), `files_done` counts processed files, and the desktop displays
+indeterminate progress with that count. Deleted files are removed after the walk
+completes; cancellation does not purge undiscovered files.
+
+All routes use the same API-key and rate-limit dependencies as embeddings.
+Errors have the standard `{"error": {"message", "type", "code", "param"}}`
+envelope. All field names are snake_case.
+
+| Method | Route | Request / response |
+| --- | --- | --- |
+| GET | `/v1/local-search/status` | Enabled/model availability, folders, indexing progress, totals |
+| POST | `/v1/local-search/folders` | `{"path": "/absolute/folder"}` → Folder (201 new, 200 existing); queues indexing |
+| DELETE | `/v1/local-search/folders/{id}` | Drops that folder's files/chunks; 204 |
+| POST | `/v1/local-search/reindex` | `{"folder_id": null}` for all folders, or a folder id; status body, 202 |
+| POST | `/v1/local-search/search` | `{"query": "search text", "limit": 20, "folder_ids": null, "kinds": null}` → results, took_ms, mode |
+
+Status is shaped as:
+
+```json
+{
+  "enabled": true,
+  "model": {"id": "mlx-community/embeddinggemma-2-4bit", "downloaded": false, "loaded": false, "vision": false},
+  "folders": [],
+  "indexing": {"active": false, "folder_id": null, "current_path": null, "files_done": 0, "files_total": 0},
+  "totals": {"files": 0, "chunks": 0, "index_bytes": 0, "files_by_kind": {"text": 0, "image": 0, "video": 0}}
+}
+```
+
+Folder fields: `id`, `path`, `state`, `files_indexed`, `files_skipped`, `chunks`,
+`last_indexed_at` (Unix seconds or null), `error` (string or null), and additive
+optional `skip_reasons` (reason-to-file-count object, empty when no files were
+skipped). Reasons use this fixed English vocabulary:
+
+| Reason | Meaning |
+| --- | --- |
+| Unsupported file type | Unsupported format, binary text, unavailable PDF parser or HEIC support, or XML entities |
+| Too large | Source, archive expansion, or extracted output exceeds its size cap |
+| No readable text | Supported document yielded no non-whitespace text |
+| Scanned PDF without text | PDF has pages but no usable text layer; OCR is needed |
+| Password-protected | Encrypted PDF |
+| Could not be read | Read, parse, or media-decoding failure |
+| Private or system file | Hidden or secret-looking individual file |
+| Audio is not supported yet | Recognized audio format |
+
+For example, `skip_reasons: {"Scanned PDF without text": 3, "Unsupported file type": 2}`.
+Each file's reason and fingerprint are persisted. Counts survive restarts and
+incremental reindexing; unchanged skipped files are not read or extracted again.
+Changed files are retried and deleted files disappear from the counts after a
+completed walk. Files skipped purely by directory pruning (system directories,
+packages, hidden directories, dependencies) are **not counted individually** in
+`skip_reasons`; unreadable directories and symlinks also contribute only to the
+existing aggregate `files_skipped`, so the reason counts need not sum to it.
+
+Existing indexes gain reason counts without a full rebuild: stored legacy skip
+codes are translated on opening. The next incremental run refreshes Office
+files, previously skipped PDFs, and documents previously indexed without any
+text chunks; previously excluded individual private files gain metadata-only
+reasons during discovery. Unrelated chunks and vectors are retained.
+
+States are
+`idle`, `queued`, `indexing`, `waiting_for_model`, `missing`, and `error`.
+Index size includes WAL/shared-memory files. `files_by_kind` counts indexed,
+keyword-only, and pending files by kind; skipped files are excluded. `vision`
+is true when the loaded engine or locally available checkpoint supports images,
+even before model loading. Polling status does not construct a model.
+
+Search `limit` is 1–100 (default 20). `folder_ids: null` searches all folders;
+an empty list searches none. Unknown folder ids return 404. Optional `kinds` is
+an array of `"text"`, `"image"`, and/or `"video"`; null searches all kinds and an
+empty array searches none. Unsupported kinds return 400.
+
+Optional `group_limit` is 1–50. When supplied for a scope requesting multiple
+kinds (including `kinds: null`), the response also includes `groups`, an ordered
+array of `{kind, results, total}`. Empty groups are omitted. Each group ranks its
+own files with lexical tiers first, then semantic ranking, returns at most
+`group_limit` results, and counts all admitted files of that kind in `total`.
+Groups with lexical evidence at their head precede other groups; otherwise
+their heads' standardized semantic strengths determine section order, with a
+stable kind order for ties. The flat `results` and its current standardized
+ordering remain unchanged. Single-kind requests omit `groups`.
+
+The desktop's All tab requests groups and displays up to five document rows and
+eight image or video thumbnails per section, in response order. Section headers
+show the admitted count; Show all opens the corresponding full kind tab.
+Up/Down traverses document rows and crosses sections; Left/Right traverses a
+media row. Return opens the selection, Space previews, Cmd-Return reveals in
+Finder, and Cmd-C copies its path. Section headers are accessible to VoiceOver.
+Older engines without `groups` retain the flat results view.
+
+Results contain
+`path`, `folder_id`, `title`, `snippet`, `highlights`, `score`, `matched`, `page`,
+`line`, `modified_at` (Unix seconds), `size` (bytes), `kind`, and `timestamp`.
+`timestamp` is seconds for video and null otherwise. Media has empty `snippet`,
+empty `highlights`, null `page`/`line`, and matches on visual semantics and/or
+filename keywords. Video results collapse to the best qualifying frame per file;
+its timestamp survives filename keyword fusion. Scores are bounded
+0–1 ranking scores; `matched` contains `semantic`, `keyword`, or both. Hybrid
+search preserves explicit lexical evidence before fusing weaker matches. A term
+is distinctive when it occurs in at most `max(1, floor(0.10 × indexed files))`
+files with chunks, across the whole index. Repeated chunks, keyword-only tails,
+and embedding coverage do not change that file frequency. A keyword chunk must
+contain every distinctive term in its text or filename. Literal compound
+identifiers remain mandatory. When none are distinctive, the entire literal
+query substring is required in the body; a basename containing all query terms
+can also match independently. FTS5 trigram candidates retain BM25 ordering with
+equal body/filename column weights. Short terms use literal substring matching;
+short-only queries scan inside SQLite where possible. Frequency checks stop once
+a term is known to be common, and their bounded cache is invalidated on index
+changes.
+
+Ranking distinguishes four ordered evidence classes: complete basename,
+ordered full phrase in the body or basename, all terms in a basename, and
+partial keyword/semantic evidence. Body whitespace folds so PDF line wrapping
+can match; punctuation remains literal for identifiers. Filename word separators
+fold for ordered matching. A full phrase outranks semantic-only and partial
+keyword hits, even when a weaker result has both legs. Within the complete-name
+and phrase classes, lexical ordering is preserved. A phrase occurring in several
+documents cannot identify which copy, summary, or manuscript the user intended.
+These classes express lookup behavior; their boundaries are not fitted to an
+evaluation query set. Scores map the four classes to disjoint intervals in 0–1
+and remain ranking scores, not probabilities.
+
+Semantic eligibility is defined once in `rapid_mlx/local_search/eligibility.py`.
+JSON, JSONL/NDJSON, CSV/TSV, logs, XML, lock files, YAML, TOML, INI, CFG/CONF,
+PLIST and source maps are keyword-only: their names, keys and literal values
+remain searchable, with the same line/page locators, without embedding cost.
+CSV is treated as a raw data export. XLSX remains semantic because its extracted
+sheet names, headings and descriptive cells can form a readable report; numeric
+or encoded noise is still subject to the chunk guard. Prose/document formats
+(MD, TXT, RST, TEX, HTML, PDF, DOCX, PPTX) and ordinary source code remain
+semantic candidates.
+
+A cheap, deterministic chunk guard rejects dominant ASCII encoding runs of at
+least 128 characters (including wrapped base64/hex), compact JSON-shaped data
+of at least 256 characters, and punctuation-free runs of at least 32 ASCII words
+where at least 80% are at most three letters, at least 50% at most two, and at
+least 80% are distinct. The JSON check requires at least 90% data syntax and
+less than 2% whitespace. No dictionary, tokenizer or language model is used;
+non-ASCII letters cannot trigger the tiny-word/encoding rules, and normal code
+syntax does not trigger the tiny-word/data rules. This conservative shape check
+leaves short or ambiguous content eligible and cannot identify every nonsense
+passage. Guarded chunks keep their text and locators for keyword retrieval.
+
+On first open after this policy update, a versioned streaming pass through the
+stored text drops only newly ineligible vectors. It preserves chunk/file IDs,
+FTS entries, fingerprints, locators and eligible vectors, without reading source
+files or re-embedding. Intentionally keyword-only files are complete (`indexed`
+in the internal file status); they are not repeatedly upgraded when the model
+becomes available. Ordinary files indexed while the model was absent remain
+eligible for the existing upgrade. Subsequent opens skip the policy pass.
+SQLite can reuse the freed vector space; the database file need not shrink,
+and the first migration can temporarily grow its WAL.
+
+For each kind, admit a file's best positive-cosine chunk when it meets the index's
+mean cosine between chunks from different files capped by a pooled background,
+or exceeds that query's mean
+file score by the normal-tail cutoff for a Bonferroni-corrected 5% false-alarm
+budget, keeping at most 100 files per kind.
+Keyword admission remains independent.
+
+The background is computed from normalized vector sums, without a quadratic
+pair matrix, and cached for the current folder/kind scope. Within-file pairs are
+excluded so overlapping chunks and repeated frames do not supply their own
+background evidence. The additional pool takes one unnormalized mean of normalized
+chunk vectors per eligible file, across all kinds in the selected folders, and
+averages cross-file centroid dot products. This equals the expected cosine when
+sampling two different files uniformly, then one chunk from each. Each kind's
+background is capped by that shared-space estimate, so a coherent kind cannot
+set a stricter ordinary-similarity gate than the folder's overall background.
+The pool includes every kind even for a single-kind request, keeping tab and
+All-tab admission consistent. It is computed with sums, without pair matrices;
+one-file scopes retain the existing positive-cosine behavior. The outlier comparison uses one best score per file and
+the population standard deviation; 5% is a conventional statistical budget,
+not a fitted model/corpus cosine. Its normal-tail assumption is a heuristic:
+correlated, non-normal embedding scores mean it does not guarantee a measured
+5% false-positive rate or establish relevance. No independent background exists
+in a one-file scope, so only the positive-cosine check applies there; a uniform
+multi-file score distribution has no outlier rescue. Boundary comparisons allow
+`1e-6` relative error for float32 accumulation, rather than a relevance margin.
+The 100-file cap follows the API's maximum result window; replayed datasets
+become development evidence, not fresh held-out validation. No fixed text or
+media cosine floors remain.
+
+Semantic-only hits compare each kind's per-query standardized cosine (using the mean and population standard deviation of every file's best chunk), interleaving kinds whose normal-CDF strengths differ by at most the existing 5% statistical budget while preserving cosine order within each kind; singleton or uniform backgrounds receive zero standardized strength.
+Lexical hits retain their positions, and these normal-tail strengths are ordering heuristics rather than relevance probabilities.
+Weaker evidence uses reciprocal rank fusion with k=60 and the existing rank-one
+5% and rank-two/three 2% bonuses. Text uses its strongest lexical chunk for a
+keyword hit; video keeps its best qualifying semantic frame and timestamp.
+Exact byte-content copies are adjacent with the strongest group score, while
+all paths remain discoverable. Similar but nonidentical content remains separate
+to preserve potentially meaningful differences. Highlights cover distinctive
+terms, or the literal query when none are distinctive.
+
+Search caches scoped metadata rather than chunk bodies and reads bodies only
+for keyword candidates and returned snippets. Replacement, removal, folder
+absorption, and metadata updates invalidate that cache. The frequency cache
+retains at most 1,024 terms to bound memory, independently of corpus size; eviction
+only repeats a computation and never changes a result. Existing indexes require
+no rebuild or re-embedding: these are search-time changes, with no schema or
+HTTP-field changes. CPU replay timings exclude query embedding and model loading;
+real embedding latency and responsiveness under chat load still need hardware
+measurement.
+
+Highlights are `[start, end]` pairs, end-exclusive Unicode character offsets
+within the plain snippet, never HTML or Markdown markup. Native clients must
+convert these character offsets to their own string index representation,
+rather than treating them as UTF-16 byte/code-unit offsets.
+
+Media embedding batches contain at most four images/frames. Text batches contain
+at most four chunks, sorted by length within each file. Both yield between
+batches. Cross-file length sorting is deferred to
+preserve the current per-file commit and cancellation/resume behavior.
+MLX construction/loading/embedding and Python-list materialisation stay on the
+server event-loop thread, as in the existing embeddings route;
+only file reading/extraction use disk worker threads. CPU-only tests use a
+deterministic fake embedder; real model retrieval and chat latency under load
+remain the pilot's hardware qualification work.
+
+The native loader and `EmbeddingEngine` use `vision=False` by default. Only the
+separate local-search engine enables the vision tower/projector. The text-only
+engine constructs no vision tower and filters all media weights; the existing
+text embedding forward, token guards, `/v1/embeddings` schema, and media rejection
+are unchanged. Vision-enabled engines expose `embed_images` for PIL images or
+local image paths, using the checkpoint's image processor settings. They still
+reject media tokens through their text embedding methods. No audio tower is
+constructed in either mode.
+
+CPU regression coverage uses fake embeddings, generated Pillow images, and a
+small OpenCV-written video. Real checkpoint strict loading, prompted text-to-image
+retrieval, mixed-aspect batching, and chat responsiveness during four-frame
+batches remain reviewer hardware qualification. The separate resident vision
+engine increases memory use compared with the prior text-only local-search
+engine. Codec support and HEIC availability depend on the installed environment.
