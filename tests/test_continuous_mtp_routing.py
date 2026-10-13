@@ -286,6 +286,28 @@ def test_install_plan_threads_attested_dynamic_membership():
     assert admitted.router.runtime.capabilities.dynamic_membership is True
 
 
+def test_requested_draft_depth_reaches_the_cohort_policy_and_planned_lanes():
+    """``num_speculative_tokens`` used to stop at the singleton verifier.
+
+    ``plan_router_install`` built ``BatchedMTPConfig`` without
+    ``max_draft_tokens``, so every cohort started from the dataclass default
+    of 2 whatever the serve config said.
+    """
+    router = _router(max_draft_tokens=1)
+    assert router.config.max_draft_tokens == 1
+
+    decision = router.plan([_request("a", 1), _request("b", 2)], free_bytes=1)
+
+    assert decision.route is ContinuousMTPIntegrationRoute.CONTINUOUS_PLANNED
+    assert decision.admission is not None
+    assert decision.admission.draft_tokens == 1
+    assert [lane.spec.num_draft for lane in decision.cohort] == [1, 1]
+
+    # Omitting the argument keeps today's default so existing callers are
+    # unaffected.
+    assert _router().config.max_draft_tokens == 2
+
+
 def test_supported_requests_build_an_immutable_fixed_cohort_plan():
     router = _router()
 
@@ -522,6 +544,58 @@ def test_live_installer_fails_closed_before_mutating_unsupported_generators(
 
 
 @pytest.mark.requires_mlx
+@pytest.mark.parametrize(
+    ("requested", "expected", "clamped"),
+    [(1, 1, False), (2, 2, False), (3, 2, True)],
+)
+def test_live_installer_threads_mtp_max_k_into_the_cohort_policy(
+    monkeypatch, caplog, requested, expected, clamped
+):
+    import logging
+
+    from rapid_mlx.scheduler import SchedulerConfig, _install_continuous_mtp_router
+    from rapid_mlx.spec_decode.mtp import continuous_runtime
+    from rapid_mlx.spec_decode.mtp.continuous_engine import (
+        ContinuousSelfMTPCapabilities,
+    )
+
+    runtime = SimpleNamespace(
+        capabilities=ContinuousSelfMTPCapabilities(
+            target_return_hidden=True,
+            mtp_return_hidden=True,
+            confirmed_target_forward=True,
+            ragged_rollback=True,
+            atomic_cache_commit=True,
+            dynamic_membership=True,
+        )
+    )
+    monkeypatch.setattr(
+        continuous_runtime,
+        "assemble_continuous_self_mtp_runtime",
+        lambda *_args, **_kwargs: runtime,
+    )
+    config = SchedulerConfig(
+        spec_decode="mtp",
+        mtp_continuous_batching=True,
+        # ``serve`` resolves ``num_speculative_tokens`` into ``mtp_max_k``.
+        mtp_max_k=requested,
+        max_num_seqs=4,
+        completion_batch_size=4,
+    )
+    batch_gen = _SchedulerBatchGenerator()
+    with caplog.at_level(logging.WARNING, logger="rapid_mlx.scheduler"):
+        assert _install_continuous_mtp_router(batch_gen, _Model(), config)
+
+    assert batch_gen._continuous_mtp_router.config.max_draft_tokens == expected
+    clamp_lines = [
+        record.message
+        for record in caplog.records
+        if "exceeds the continuous backend ceiling" in record.message
+    ]
+    assert bool(clamp_lines) is clamped
+
+
+@pytest.mark.requires_mlx
 def test_live_installer_drives_join_detach_remove_and_compat_response(monkeypatch):
     from rapid_mlx.scheduler import SchedulerConfig, _install_continuous_mtp_router
     from rapid_mlx.spec_decode.mtp import continuous_runtime
@@ -548,6 +622,9 @@ def test_live_installer_drives_join_detach_remove_and_compat_response(monkeypatc
     class _Driver:
         dynamic_membership = True
         lane_uids = (1, 2)
+        # The live cohort runs shallower than the policy maximum (admission
+        # may lower the depth under memory pressure); joins must follow it.
+        draft_depth = 1
         pending_join_uids = ()
         last_attached_uids = ()
         has_work = True
@@ -575,7 +652,14 @@ def test_live_installer_drives_join_detach_remove_and_compat_response(monkeypatc
             return ()
 
         def queue_lanes(self, specs, *, stop_tokens):
-            self.calls.append(("join", tuple(spec.uid for spec in specs), stop_tokens))
+            self.calls.append(
+                (
+                    "join",
+                    tuple(spec.uid for spec in specs),
+                    stop_tokens,
+                    tuple(spec.num_draft for spec in specs),
+                )
+            )
             if self.fail_join:
                 raise RuntimeError("join preparation rejected")
             return tuple(spec.uid for spec in specs)
@@ -690,6 +774,7 @@ def test_live_installer_drives_join_detach_remove_and_compat_response(monkeypatc
         call for call in driver.calls if isinstance(call, tuple) and call[0] == "join"
     )
     assert join[1] == (4, 5)
+    assert join[3] == (1, 1)  # follows the live cohort, not the policy default
 
     driver.lane_uids = (1, 2, 4, 5)
     batch_gen.next()

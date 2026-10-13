@@ -281,8 +281,14 @@ def plan_router_install(
     min_batch_lanes: int = 2,
     hard_reserve_bytes: int = 8 * 1024**3,
     allow_dynamic_membership: bool = False,
+    max_draft_tokens: int = 2,
 ) -> ContinuousMTPRouterInstallDecision:
-    """Feature-detect a model and return an install plan without mutation."""
+    """Feature-detect a model and return an install plan without mutation.
+
+    ``max_draft_tokens`` is the operator's requested cohort depth
+    (``num_speculative_tokens``); ``plan_admission`` may still lower it per
+    cycle under memory pressure, never raise it.
+    """
     candidate = getattr(model, "language_model", model)
     descriptor = getattr(candidate, "batched_mtp_capability", None)
     descriptor_map = descriptor if isinstance(descriptor, Mapping) else {}
@@ -360,6 +366,7 @@ def plan_router_install(
             min_batch_lanes=min_batch_lanes,
             hard_reserve_bytes=hard_reserve_bytes,
             allow_dynamic_membership=allow_dynamic_membership,
+            max_draft_tokens=max_draft_tokens,
         ),
         runtime=runtime,
     )

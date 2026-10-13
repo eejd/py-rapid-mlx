@@ -1002,6 +1002,7 @@ def _install_continuous_mtp_router(
     from .spec_decode.mtp.continuous_runtime import (
         assemble_continuous_self_mtp_runtime,
     )
+    from .spec_decode.mtp.mlx_backend import RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS
 
     # The next-level diversion depends on mlx-lm 0.31's explicit prompt queue.
     # Older generators retain the vendored/plain path without partial mutation.
@@ -1029,12 +1030,29 @@ def _install_continuous_mtp_router(
             "vendored MTP/plain decode"
         )
         return False
+    # ``num_speculative_tokens`` reaches the singleton verifier as
+    # ``mtp_max_k``; the cohort planner used to ignore it and always start from
+    # the policy default of 2.  Honour it here, clamped to what the injected
+    # batched forward can draft, so K=1 is reachable on hosts where the
+    # verify forward is cheap per position but the per-cycle overhead is not.
+    requested_depth = max(1, int(getattr(config, "mtp_max_k", 2)))
+    cohort_depth = min(requested_depth, RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS)
+    if cohort_depth != requested_depth:
+        logger.warning(
+            "[MTP-continuous] num_speculative_tokens=%d exceeds the continuous "
+            "backend ceiling; the cohort drafts %d per lane (the singleton "
+            "verifier keeps max_k=%d)",
+            requested_depth,
+            cohort_depth,
+            requested_depth,
+        )
     decision = plan_router_install(
         model,
         enabled=getattr(config, "mtp_continuous_batching", False),
         cache_quantized=cache_quantized,
         cache_windowed=bool(getattr(config, "use_paged_cache", False)),
         max_lanes=max_lanes,
+        max_draft_tokens=cohort_depth,
         # Preserve the mature singleton verifier for one-user traffic.  The
         # continuous coordinator pays for ragged bookkeeping even at B=1 and
         # is admitted only when there is real batching work to amortize it.
@@ -1262,6 +1280,15 @@ def _install_continuous_mtp_router(
         joining_specs: list[SelfMTPLaneSpec] = []
         joining_stops: dict[int, frozenset[int]] = {}
         joining_sequences: dict[int, Any] = {}
+        # The engine refuses mixed depths inside one cohort, so a join must be
+        # built at the depth the live lanes already run (admission may have
+        # lowered it below the policy maximum under memory pressure).
+        live_depth = getattr(driver, "draft_depth", None)
+        join_depth = (
+            int(router.config.max_draft_tokens)
+            if live_depth is None
+            else int(live_depth)
+        )
         for sequence, metadata in _queued_candidates():
             if len(joining_specs) >= room:
                 break
@@ -1284,7 +1311,7 @@ def _install_continuous_mtp_router(
                 uid=metadata.uid,
                 prompt=metadata.prompt_tokens,
                 max_tokens=metadata.max_tokens,
-                num_draft=2,
+                num_draft=join_depth,
                 sampling=SelfMTPSampling(temperature=metadata.temperature),
                 accept_counter=(
                     _ensure_request_mtp_counter(requests[metadata.lane_id])
