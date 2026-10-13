@@ -152,6 +152,7 @@ TEXT_SUFFIXES = set(
 )
 TEXT_SUFFIXES.update(KEYWORD_ONLY_SUFFIXES)
 
+# Lower-case: matched case-insensitively, like the default macOS volume.
 SKIP_DIRS = {
     "node_modules",
     "venv",
@@ -161,10 +162,10 @@ SKIP_DIRS = {
     "dist",
     "target",
     "vendor",
-    "DerivedData",
-    "CMakeFiles",
+    "deriveddata",
+    "cmakefiles",
     "cache",
-    "Caches",
+    "caches",
 }
 PACKAGE_SUFFIXES = (
     ".app",
@@ -268,7 +269,8 @@ def excluded(path: Path, *, directory: bool = False) -> bool:
         name.startswith(".")
         or any(fnmatch.fnmatch(name.lower(), p) for p in SECRET_PATTERNS)
         or (
-            directory and (name in SKIP_DIRS or name.lower().endswith(PACKAGE_SUFFIXES))
+            directory
+            and (name.lower() in SKIP_DIRS or name.lower().endswith(PACKAGE_SUFFIXES))
         )
     )
 

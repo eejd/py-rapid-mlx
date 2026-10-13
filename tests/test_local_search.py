@@ -476,12 +476,15 @@ def test_scan_and_safe_read(tmp_path):
         "build",
         "tool.app",
         "venv",
+        "Dist",
+        "DerivedData",
+        "CACHES",
     ):
         (root / name).mkdir()
         (root / name / "bad.txt").write_text("secret")
     (root / "outside.txt").symlink_to(tmp_path / "external.txt")
     files, skipped = scan(root)
-    assert files == [root / "good.md"] and skipped == 15
+    assert files == [root / "good.md"] and skipped == 18
     with pytest.raises(SkippedError, match="size cap"):
         read_safe(root / "good.md", root, 3)
     with pytest.raises(OSError):
