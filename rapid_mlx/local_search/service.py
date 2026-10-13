@@ -260,9 +260,11 @@ class LocalSearch:
             # race a commit against a root being removed on the DB worker.
             active_id = self.progress["folder_id"]
             if active_id:
-                await self._cancel_worker()
+                # Re-queue before draining: the worker cannot claim another
+                # root while this coordination lock is held.
                 if active_id not in self.pending:
                     self.pending.append(active_id)
+                await self._cancel_worker()
             folder_id, created = await self.store.call("add_folder", path)
             live = {f["id"] for f in await self.store.call("folders")}
             self.pending = [i for i in self.pending if i in live]
