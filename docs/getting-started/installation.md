@@ -81,8 +81,8 @@ when stdin is a TTY, then restart the original serve command after success.
 Press Enter at `Install now? [Y/n]` to accept, or use `--yes` (or `-y`) in a
 non-interactive session. The prompt times out after 30 seconds without making
 changes. Homebrew, broken runtimes, and incompatible Python versions show
-manual guidance. A broken pip-based runtime is shown a forced reinstall
-command, while an absent runtime uses an ordinary pinned install.
+manual guidance. A broken pip-based runtime uses a forced reinstall; an absent
+opt-in runtime uses an ordinary pinned install.
 
 The Homebrew formula ships the text runtime only: it omits the vision, image
 and video runtimes and does not provide Python extras.
