@@ -359,9 +359,7 @@ def test_empty_state_star_requires_unique_pair(ax_baseline, missing):
     star = ax_baseline.Node(
         {"role": "AXButton", "identifier": "GitHub.Star.EmptyState"}
     )
-    readiness = ax_baseline.Node(
-        {"role": "AXButton", "identifier": "Readiness.Action"}
-    )
+    readiness = ax_baseline.Node({"role": "AXButton", "identifier": "Readiness.Action"})
     children = [star, readiness]
     if missing == "star":
         children = [readiness]
@@ -378,9 +376,7 @@ def test_duplicate_empty_state_stars_are_not_normalized(ax_baseline):
     second_star = ax_baseline.Node(
         {"role": "AXButton", "identifier": "GitHub.Star.EmptyState"}
     )
-    readiness = ax_baseline.Node(
-        {"role": "AXButton", "identifier": "Readiness.Action"}
-    )
+    readiness = ax_baseline.Node({"role": "AXButton", "identifier": "Readiness.Action"})
     children = [first_star, readiness, second_star]
 
     assert ax_baseline.normalize_empty_state_star_children(children) == children
