@@ -80,6 +80,167 @@ class FakeEmbedder:
         return [[0.2, 1.0, 0.0] for _ in images]
 
 
+async def wait_chat_pause(search):
+    async def waiting():
+        while search.progress.get("paused_reason") != "chat":
+            await asyncio.sleep(0.001)
+    await asyncio.wait_for(waiting(), 2)
+
+
+@pytest.mark.parametrize("activity", ["admitted_requests", "running_requests", "queued_requests"])
+@pytest.mark.parametrize("media", [False, True])
+def test_indexing_yields_to_generation_and_search_stays_interactive(tmp_path, monkeypatch, activity, media):
+    from rapid_mlx.config import get_config
+    signal = {"admitted_requests": 0, "running_requests": 0, "queued_requests": 0}
+    signal[activity] = 1
+    monkeypatch.setattr(get_config().engine, "lifecycle_status",
+                        lambda: {**signal, "active_requests": sum(signal.values())}, raising=False)
+
+    async def scenario():
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        root = folder(tmp_path)
+        if media:
+            from PIL import Image
+            Image.new("RGB", (16, 16)).save(root / "apple.png")
+        else:
+            (root / "apple.txt").write_text("An apple orchard produces delicious fruit.")
+        try:
+            search.add_folder(str(root))
+            await wait_chat_pause(search)
+            await asyncio.sleep(0.12)
+            assert not fake.calls and not fake.image_calls
+            assert (await search.status_async())["indexing"]["paused_reason"] == "chat"
+            result = await asyncio.wait_for(search.search("apple", 10, None), 1)
+            assert result["mode"] == "hybrid"
+            assert len(fake.calls) == 1 and "query: apple" in fake.calls[0][0]
+            assert search.progress["paused_reason"] == "chat"
+            signal[activity] = 0
+            await asyncio.wait_for(search.wait_idle(), 1)
+            if media:
+                assert fake.image_calls == [1]
+            else:
+                assert len(fake.calls) == 2
+            assert "paused_reason" not in (await search.status_async())["indexing"]
+            assert search.status()["folders"][0]["state"] == "idle"
+        finally:
+            await search.close()
+    asyncio.run(scenario())
+
+
+def test_cancel_indexing_while_waiting_for_chat(tmp_path, monkeypatch):
+    from rapid_mlx.config import get_config
+    monkeypatch.setattr(get_config().engine, "lifecycle_status",
+                        lambda: {"active_requests": 1}, raising=False)
+
+    async def scenario():
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        root = folder(tmp_path)
+        (root / "apple.txt").write_text("An apple orchard produces delicious fruit.")
+        try:
+            registered, _ = search.add_folder(str(root))
+            await wait_chat_pause(search)
+            await asyncio.wait_for(search.delete_folder(registered["id"]), 0.5)
+            assert not fake.calls
+            assert search.task is None
+            assert "paused_reason" not in search.status()["indexing"]
+            assert not search.status()["folders"]
+        finally:
+            await search.close()
+    asyncio.run(scenario())
+
+
+def test_chat_wait_backoff_is_bounded_and_clears_pause_on_resume(tmp_path, monkeypatch):
+    from rapid_mlx.config import get_config
+    signal = {"active_requests": 1}
+    monkeypatch.setattr(get_config().engine, "lifecycle_status", lambda: signal, raising=False)
+
+    async def scenario():
+        search = engine(tmp_path)
+        delays = []
+        async def sleep(delay):
+            assert search.status()["indexing"]["paused_reason"] == "chat"
+            delays.append(delay)
+            if len(delays) == 6:
+                signal["active_requests"] = 0
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(asyncio, "sleep", sleep)
+                await search._wait_for_generation()
+            assert delays == [0.01, 0.02, 0.04, 0.08, 0.1, 0.1]
+            assert "paused_reason" not in search.status()["indexing"]
+            assert search.engine is None
+        finally:
+            await search.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("images", [False, True])
+def test_chat_arriving_between_batches_defers_next_batch(tmp_path, monkeypatch, images):
+    from rapid_mlx.config import get_config
+    signal = {"active_requests": 0}
+    monkeypatch.setattr(get_config().engine, "lifecycle_status", lambda: signal, raising=False)
+
+    async def scenario():
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        inputs = [object()] * 4 if images else ["apple"] * 4
+        try:
+            await search._embed_async(inputs, images=images, background=True)
+            signal["active_requests"] = 1
+            batch = asyncio.create_task(search._embed_async(inputs, images=images, background=True))
+            try:
+                await wait_chat_pause(search)
+                calls = fake.image_calls if images else fake.calls
+                assert len(calls) == 1
+                signal["active_requests"] = 0
+                await asyncio.wait_for(batch, 0.5)
+                assert len(calls) == 2
+                assert "paused_reason" not in search.progress
+            finally:
+                if not batch.done():
+                    batch.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await batch
+        finally:
+            await search.close()
+    asyncio.run(scenario())
+
+
+def test_background_rechecks_chat_after_query_lock(tmp_path, monkeypatch):
+    from rapid_mlx.config import get_config
+    signal = {"active_requests": 0}
+    checked = asyncio.Event()
+    def status():
+        checked.set()
+        return signal
+    monkeypatch.setattr(get_config().engine, "lifecycle_status", status, raising=False)
+
+    async def scenario():
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        try:
+            async with search._model_gate:
+                batch = asyncio.create_task(search._embed_async(["apple"], background=True))
+                await asyncio.wait_for(checked.wait(), 1)
+                signal["active_requests"] = 1
+            try:
+                await wait_chat_pause(search)
+                assert not fake.calls
+                signal["active_requests"] = 0
+                await asyncio.wait_for(batch, 0.5)
+                assert len(fake.calls) == 1
+            finally:
+                if not batch.done():
+                    batch.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await batch
+        finally:
+            await search.close()
+    asyncio.run(scenario())
+
+
 def engine(tmp_path, fake=None, **kwargs):
     fake = fake or FakeEmbedder()
     return LocalSearch(

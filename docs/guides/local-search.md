@@ -329,10 +329,33 @@ rather than treating them as UTF-16 byte/code-unit offsets.
 
 Media embedding batches contain at most four images/frames. Text batches contain
 at most four chunks, sorted by length within each file. Both yield between
-batches. FIFO admission before the model-worker boundary limits a waiting query's
+batches. Before every indexing embedding batch, Local Search checks the engine's
+read-only generation activity (including admitted, running, and queued requests).
+While chat is pending, background embeddings wait with cancellable exponential
+polling from 10 ms up to 100 ms; no model-worker work is submitted by that wait.
+Status includes the optional `indexing.paused_reason: "chat"` while waiting and
+omits it after resuming or cancellation. Sustained chat can pause indexing
+indefinitely, visibly in status. Indexing detects idle within 100 ms, plus event
+loop scheduling and any interactive query already using the embedding worker.
+Search-query embeddings remain interactive and bypass this wait; waiting for
+chat does not hold their admission lock. Generation is checked again after
+acquiring that lock, before submitting a background batch.
+
+An embedding batch already submitted cannot be preempted. A chat token arriving
+then can still incur the remaining wall time of one batch of up to four images
+(or four text chunks), including first-use embedding model loading and result
+materialisation. There is no fixed millisecond bound; measure the slowest
+four-image batch on the target hardware. FIFO admission before the model-worker
+boundary limits a waiting query's
 indexing-induced model wait to the remaining duration of one batch of at most
 four inputs. This is a bound on batch count, not a fixed number of milliseconds;
 model loading, inference, and other engine clients have their own latency.
+For hardware qualification, repeat the same 120-token streaming request on the
+M3 Ultra with the qwen3.5-4b chat model, both idle and during a fresh 950-file
+index. Record total completion time, first-token latency, p95/max inter-token
+gaps, pause status, time from last generation ending to the next embedding
+submission, and four-image batch wall time (cold and warm). Also check sustained
+chat, queued requests, search during a pause, and cancellation during a pause.
 Whole-file SQLite/FTS writes run on a separate WAL writer, so searches continue
 on the reader connection during an uncommitted indexing transaction. After commit,
 the reader publishes at most one file's vector changes (64 text chunks or 120

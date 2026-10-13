@@ -267,8 +267,43 @@ class LocalSearch:
     def _release_embedder(self):
         self.engine = None
 
-    async def _embed_async(self, inputs, **kwargs):
-        return await self._model_call(self._embed, inputs, **kwargs)
+    def _generation_busy(self):
+        worker = self._worker()
+        owner = getattr(worker, "__self__", None)
+        if self.model_worker is None:
+            from ..config import get_config
+            owner = get_config().engine
+        status = getattr(owner, "lifecycle_status", None)
+        if callable(status):
+            # Includes route admission, before requests reach the scheduler.
+            return status()["active_requests"] > 0
+        stats = getattr(owner, "get_stats", None)
+        if callable(stats):
+            snapshot = stats()
+            return bool(snapshot.get("num_running", 0) or snapshot.get("num_waiting", 0))
+        return False
+
+    async def _wait_for_generation(self):
+        delay = 0.01
+        try:
+            while self._generation_busy():
+                self.progress["paused_reason"] = "chat"
+                await asyncio.sleep(delay)
+                delay = min(0.1, delay * 2)
+        finally:
+            self.progress.pop("paused_reason", None)
+
+    async def _embed_async(self, inputs, *, background=False, **kwargs):
+        if not background:
+            return await self._model_call(self._embed, inputs, **kwargs)
+        while True:
+            # Do not hold the query's admission lock while waiting for chat.
+            await self._wait_for_generation()
+            async with self._model_gate:
+                # Chat may have arrived while an interactive query held the lock.
+                if self._generation_busy():
+                    continue
+                return await self._model_call_owned(self._embed, inputs, **kwargs)
 
     async def wait_idle(self):
         if self.task:
@@ -320,7 +355,7 @@ class LocalSearch:
                 if available:
                     try:
                         embedded = await self._embed_async(
-                            [frame.image for frame in batch], images=True
+                            [frame.image for frame in batch], images=True, background=True
                         )
                         if embedded is None:
                             available = False
@@ -492,7 +527,8 @@ class LocalSearch:
                                     [
                                         f"title: {path.stem} | text: {chunks[i].text}"
                                         for i in batch
-                                    ]
+                                    ],
+                                    background=True,
                                 )
                                 if embedded is None:
                                     available = False
