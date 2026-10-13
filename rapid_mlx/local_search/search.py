@@ -21,19 +21,26 @@ SEMANTIC_HEAD_FILES = 3
 SEMANTIC_NEAR_TIE = OUTLIER_FAMILY_ALPHA
 
 
-def query_statistics(scores: list[tuple[int, float]], rows: dict) -> tuple[list[int], float, float]:
+def query_statistics(
+    scores: list[tuple[int, float]], rows: dict
+) -> tuple[list[int], float, float]:
     """Use every file's best chunk, including files rejected by admission."""
     ids = top_files([i for i, _ in scores], rows, len(scores)) if scores else []
     values = dict(scores)
     samples = [values[i] for i in ids]
     mean = math.fsum(samples) / len(samples) if samples else 0.0
-    variance = math.fsum((s - mean) ** 2 for s in samples) / len(samples) if samples else 0.0
+    variance = (
+        math.fsum((s - mean) ** 2 for s in samples) / len(samples) if samples else 0.0
+    )
     return ids, mean, math.sqrt(variance)
 
 
 def semantic_ranking(
-    scores: list[tuple[int, float]], rows: dict, background: float,
-    *, statistics: tuple[list[int], float, float] | None = None,
+    scores: list[tuple[int, float]],
+    rows: dict,
+    background: float,
+    *,
+    statistics: tuple[list[int], float, float] | None = None,
 ) -> list[int]:
     """Admit above ordinary index similarity or a query-specific rare outlier.
 
@@ -42,7 +49,9 @@ def semantic_ranking(
     With fewer than four files or zero variance, retain at most three best
     positive-cosine neighbours because the outlier estimate is degenerate.
     """
-    ids, mean, deviation = statistics if statistics is not None else query_statistics(scores, rows)
+    ids, mean, deviation = (
+        statistics if statistics is not None else query_statistics(scores, rows)
+    )
     values = dict(scores)
     samples = [values[i] for i in ids]
     if len(samples) < SEMANTIC_MIN_FILES or deviation <= 1e-12:
@@ -55,9 +64,12 @@ def semantic_ranking(
     threshold = max(0.0, min(background, outlier))
     # The query dot products are float32; the cached background sums are float64.
     # Allow float32 accumulation error at the boundary, not a relevance margin.
-    return [i for i in ids if values[i] > 0 and (
-        values[i] >= threshold or math.isclose(values[i], threshold, rel_tol=1e-6)
-    )][:SEMANTIC_FILE_CAP]
+    return [
+        i
+        for i in ids
+        if values[i] > 0
+        and (values[i] >= threshold or math.isclose(values[i], threshold, rel_tol=1e-6))
+    ][:SEMANTIC_FILE_CAP]
 
 
 def query_terms(query: str) -> list[str]:
@@ -72,10 +84,16 @@ def name_tokens(value: str) -> list[str]:
         start = 0
         for i in range(1, len(word)):
             previous, current = word[i - 1], word[i]
-            if (previous.isdigit() != current.isdigit()
-                    or (previous.islower() and current.isupper())
-                    or (previous.isupper() and current.isupper()
-                        and i + 1 < len(word) and word[i + 1].islower())):
+            if (
+                previous.isdigit() != current.isdigit()
+                or (previous.islower() and current.isupper())
+                or (
+                    previous.isupper()
+                    and current.isupper()
+                    and i + 1 < len(word)
+                    and word[i + 1].islower()
+                )
+            ):
                 tokens.append(word[start:i].casefold())
                 start = i
         tokens.append(word[start:].casefold())
@@ -88,10 +106,14 @@ def filename_match(query: str, terms: list[str], filename: str) -> tuple[bool, f
     wanted = {token for term in terms for token in name_tokens(term)}
 
     def matches(term, token):
-        return term == token or (re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", term)
-                                 is not None and term in token)
+        return term == token or (
+            re.search(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]", term) is not None
+            and term in token
+        )
 
-    if not wanted or not all(any(matches(term, token) for token in tokens) for term in wanted):
+    if not wanted or not all(
+        any(matches(term, token) for token in tokens) for term in wanted
+    ):
         return False, 0.0
     covered = sum(any(matches(term, token) for term in wanted) for token in tokens)
     return name_tokens(query) == name_tokens(Path(filename).stem), covered / len(tokens)
@@ -127,21 +149,29 @@ def fuse(
     limit: int | None = None,
 ) -> list[tuple[int, float, list[str]]]:
     legs = semantic_legs if semantic_legs is not None else [semantic]
-    head_paths = {rows[i]["path"] for leg in legs for i in leg[:SEMANTIC_HEAD_FILES]} if rows else set()
+    head_paths = (
+        {rows[i]["path"] for leg in legs for i in leg[:SEMANTIC_HEAD_FILES]}
+        if rows
+        else set()
+    )
     if semantic_scores is not None:
-        legs = [sorted({i for leg in legs for i in leg},
-                       key=lambda i: (-semantic_scores[i], i))]
+        legs = [
+            sorted(
+                {i for leg in legs for i in leg},
+                key=lambda i: (-(semantic_scores or {})[i], i),
+            )
+        ]
     evidence = dict(keyword_evidence or {})
     if rows is not None:
-        path_evidence = {}
+        path_evidence: dict[str, int] = {}
         for i in keyword:
             path = rows[i]["path"]
             path_evidence[path] = max(path_evidence.get(path, 0), evidence.get(i, 0))
-        representatives = {}
+        representatives: dict[str, int] = {}
         for leg in legs:
             for i in leg:
                 representatives.setdefault(rows[i]["path"], i)
-        keyword_representatives = {}
+        keyword_representatives: dict[str, int] = {}
         for i in keyword:
             # The first keyword chunk is the strongest, not the last chunk.
             keyword_representatives.setdefault(rows[i]["path"], i)
@@ -152,7 +182,9 @@ def fuse(
                 representatives.setdefault(path, i)
         legs = [[representatives[rows[i]["path"]] for i in leg] for leg in legs]
         keyword = [representatives[rows[i]["path"]] for i in keyword]
-        evidence = {i: path_evidence.get(rows[i]["path"], 0) for i in representatives.values()}
+        evidence = {
+            i: path_evidence.get(rows[i]["path"], 0) for i in representatives.values()
+        }
     # Collapse every leg before scoring; repeated chunks cannot cast extra votes.
     legs = [list(dict.fromkeys(leg)) for leg in legs]
     keyword = list(dict.fromkeys(keyword))
@@ -173,10 +205,16 @@ def fuse(
         # cannot defeat a literal phrase; RRF orders the weaker classes.
         keyword_rank = {i: rank for rank, i in enumerate(keyword, 1)}
         normalized = {
-            i: (evidence.get(i, 0) + (
-                (k + 1) / (k + keyword_rank[i])
-                if evidence.get(i, 0) >= 2 else score
-            )) / 4 for i, score in normalized.items()
+            i: (
+                evidence.get(i, 0)
+                + (
+                    (k + 1) / (k + keyword_rank[i])
+                    if evidence.get(i, 0) >= 2
+                    else score
+                )
+            )
+            / 4
+            for i, score in normalized.items()
         }
         # Within literal classes preserve lexical ordering. Semantic support
         # cannot turn a weaker phrase hit into the best exact lookup.
@@ -184,19 +222,22 @@ def fuse(
     if rows is not None and semantic_standardized is not None:
         # Replace only semantic-only slots: every lexical hit retains its position.
         slots = [n for n, i in enumerate(ranking) if matched[i] == ["semantic"]]
-        queues = {kind: [] for kind in KINDS}
+        queues: dict[str, list[int]] = {kind: [] for kind in KINDS}
         for n in slots:
             i = ranking[n]
             queues[rows[i]["kind"]].append(i)
         for queue in queues.values():
-            queue.sort(key=lambda i: (-semantic_scores[i], i))
+            queue.sort(key=lambda i: (-(semantic_scores or {})[i], i))
         used = dict.fromkeys(KINDS, 0)
         ordered = []
         strength = {i: NormalDist().cdf(z) for i, z in semantic_standardized.items()}
         while any(queues.values()):
             best = max(strength[q[0]] for q in queues.values() if q)
-            eligible = [kind for kind, q in queues.items() if q and
-                        strength[q[0]] >= best - SEMANTIC_NEAR_TIE]
+            eligible = [
+                kind
+                for kind, q in queues.items()
+                if q and strength[q[0]] >= best - SEMANTIC_NEAR_TIE
+            ]
             kind = min(eligible, key=lambda kind: (used[kind], KINDS.index(kind)))
             ordered.append(queues[kind].pop(0))
             used[kind] += 1
@@ -208,7 +249,7 @@ def fuse(
         # Exact byte-content copies remain discoverable at every path, adjacent
         # to their strongest hit. No approximate deduplication: similar reports
         # can differ in the one fact a professional is looking for.
-        groups = {}
+        groups: dict[tuple[str, str], list[int]] = {}
         for i in ranking:
             row = rows[i]
             identity = (row.get("kind", "text"), row.get("content_hash") or row["path"])
@@ -231,7 +272,9 @@ def fuse(
                 if len(selected) >= limit:
                     break
                 selected.add(i)
-            ranking = [i for i in ranking if i in selected] + [i for i in ranking if i not in selected]
+            ranking = [i for i in ranking if i in selected] + [
+                i for i in ranking if i not in selected
+            ]
     return [(i, normalized[i], matched[i]) for i in ranking]
 
 
@@ -249,35 +292,48 @@ def top_files(ranking: list[int], rows: dict, count: int) -> list[int]:
 
 
 def grouped_rankings(
-    keyword: list[int], *, rows: dict, semantic_legs: list[list[int]],
-    semantic_scores: dict[int, float] | None, semantic_standardized: dict[int, float],
+    keyword: list[int],
+    *,
+    rows: dict,
+    semantic_legs: list[list[int]],
+    semantic_scores: dict[int, float] | None,
+    semantic_standardized: dict[int, float],
     keyword_evidence: dict[int, int],
 ) -> list[tuple[str, list[tuple[int, float, list[str]]]]]:
     """Rank independent kind previews without changing the flat fusion policy."""
     groups = []
     for kind in KINDS:
         ranking = fuse(
-            [], [i for i in keyword if rows[i]["kind"] == kind], rows=rows,
-            semantic_legs=[[i for leg in semantic_legs for i in leg if rows[i]["kind"] == kind]],
-            semantic_scores=semantic_scores, keyword_evidence=keyword_evidence,
+            [],
+            [i for i in keyword if rows[i]["kind"] == kind],
+            rows=rows,
+            semantic_legs=[
+                [i for leg in semantic_legs for i in leg if rows[i]["kind"] == kind]
+            ],
+            semantic_scores=semantic_scores,
+            keyword_evidence=keyword_evidence,
         )
         if ranking:
             groups.append((kind, ranking))
     # A lexical representative may differ from the best semantic chunk. Compare
     # the best-per-file statistic, rather than assigning that representative zero.
-    strength = {}
+    strength: dict[str, float] = {}
     for i, z in semantic_standardized.items():
         path = rows[i]["path"]
         strength[path] = max(strength.get(path, -math.inf), z)
-    path_evidence = {}
+    path_evidence: dict[str, int] = {}
     for i in keyword:
         path = rows[i]["path"]
-        path_evidence[path] = max(path_evidence.get(path, 0), keyword_evidence.get(i, 0))
-    groups.sort(key=lambda group: (
-        -int(path_evidence.get(rows[group[1][0][0]]["path"], 0) > 0),
-        -strength.get(rows[group[1][0][0]]["path"], 0.0),
-        KINDS.index(group[0]),
-    ))
+        path_evidence[path] = max(
+            path_evidence.get(path, 0), keyword_evidence.get(i, 0)
+        )
+    groups.sort(
+        key=lambda group: (
+            -int(path_evidence.get(rows[group[1][0][0]]["path"], 0) > 0),
+            -strength.get(rows[group[1][0][0]]["path"], 0.0),
+            KINDS.index(group[0]),
+        )
+    )
     return groups
 
 

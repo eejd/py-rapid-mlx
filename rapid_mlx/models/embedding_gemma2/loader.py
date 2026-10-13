@@ -53,11 +53,13 @@ def load(model_name: str, *, vision: bool = False):
         files = sorted(path.glob("*.safetensors"))
     if not files:
         raise FileNotFoundError(f"No safetensors found in {path}")
-    weights = {}
+    weights: dict[str, mx.array] = {}
     for file in files:
         if not file.is_file():
             raise FileNotFoundError(file)
-        weights.update(mx.load(str(file)))
+        shard = mx.load(str(file))
+        assert isinstance(shard, dict)
+        weights.update(shard)
     weights = model.sanitize(weights)
     if any(weight.dtype == mx.float16 for weight in weights.values()):
         raise ValueError("EmbeddingGemma 2 requires BF16 or FP32, never FP16")

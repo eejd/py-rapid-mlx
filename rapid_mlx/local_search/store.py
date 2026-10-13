@@ -8,14 +8,21 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from .chunking import CHUNKING_VERSION, Chunk
 from .eligibility import ELIGIBILITY_VERSION, semantic_chunk
 from .extraction import (
-    AUDIO_SUFFIXES, EXTRACTION_VERSION, MAX_EMBEDDED_CHUNKS_PER_FILE,
-    SKIP_REASONS, skip_reason, excluded, excluded_location, file_kind,
+    AUDIO_SUFFIXES,
+    EXTRACTION_VERSION,
+    MAX_EMBEDDED_CHUNKS_PER_FILE,
+    SKIP_REASONS,
+    excluded,
+    excluded_location,
+    file_kind,
+    skip_reason,
 )
 
 MAX_CORPUS_EMBEDDED_CHUNKS = 262_144
@@ -36,7 +43,12 @@ class Store:
         self.path = path
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
-        self.db.create_function("local_basename", 1, lambda path: path.rsplit("/", 1)[-1].casefold(), deterministic=True)
+        self.db.create_function(
+            "local_basename",
+            1,
+            lambda path: path.rsplit("/", 1)[-1].casefold(),
+            deterministic=True,
+        )
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
             PRAGMA foreign_keys=ON;
@@ -87,14 +99,20 @@ class Store:
                     OR (status IN ('indexed','keyword') AND NOT EXISTS (
                         SELECT 1 FROM chunks WHERE file_id=files.id))
                     OR (lower(path) LIKE '%.pdf' AND status LIKE 'skipped:%')""")
-                for row in self.db.execute("SELECT id,path,status FROM files WHERE status LIKE 'skipped:%'").fetchall():
+                for row in self.db.execute(
+                    "SELECT id,path,status FROM files WHERE status LIKE 'skipped:%'"
+                ).fetchall():
                     reason = skip_reason(row["status"].split(":", 1)[1].strip())
                     if Path(row["path"]).suffix.lower() in AUDIO_SUFFIXES:
                         reason = SKIP_REASONS["audio"]
-                    self.db.execute("UPDATE files SET status=? WHERE id=?",
-                                    ("skipped: " + reason, row["id"]))
-                self.db.execute("INSERT OR REPLACE INTO meta VALUES ('extraction_version',?)",
-                                (EXTRACTION_VERSION,))
+                    self.db.execute(
+                        "UPDATE files SET status=? WHERE id=?",
+                        ("skipped: " + reason, row["id"]),
+                    )
+                self.db.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('extraction_version',?)",
+                    (EXTRACTION_VERSION,),
+                )
             eligibility = self.db.execute(
                 "SELECT value FROM meta WHERE key='eligibility_version'"
             ).fetchone()
@@ -106,16 +124,30 @@ class Store:
                     WHERE kind='text' AND vector IS NOT NULL""")
                 for row in cursor:
                     if not semantic_chunk(Path(row["path"]), row["text"]):
-                        self.db.execute("UPDATE chunks SET vector=NULL WHERE id=?", (row["id"],))
-                for file in self.db.execute("SELECT id,path FROM files WHERE status='keyword'").fetchall():
-                    texts = self.db.execute("SELECT text,kind FROM chunks WHERE file_id=?", (file["id"],)).fetchall()
-                    if texts and all(r["kind"] == "text" and not semantic_chunk(Path(file["path"]), r["text"]) for r in texts):
-                        self.db.execute("UPDATE files SET status='indexed' WHERE id=?", (file["id"],))
-                self.db.execute("INSERT OR REPLACE INTO meta VALUES ('eligibility_version',?)",
-                                (ELIGIBILITY_VERSION,))
-            if (
-                (version and version[0] != SCHEMA_VERSION)
-                or (chunking is None or chunking[0] != CHUNKING_VERSION)
+                        self.db.execute(
+                            "UPDATE chunks SET vector=NULL WHERE id=?", (row["id"],)
+                        )
+                for file in self.db.execute(
+                    "SELECT id,path FROM files WHERE status='keyword'"
+                ).fetchall():
+                    texts = self.db.execute(
+                        "SELECT text,kind FROM chunks WHERE file_id=?", (file["id"],)
+                    ).fetchall()
+                    if texts and all(
+                        r["kind"] == "text"
+                        and not semantic_chunk(Path(file["path"]), r["text"])
+                        for r in texts
+                    ):
+                        self.db.execute(
+                            "UPDATE files SET status='indexed' WHERE id=?",
+                            (file["id"],),
+                        )
+                self.db.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('eligibility_version',?)",
+                    (ELIGIBILITY_VERSION,),
+                )
+            if (version and version[0] != SCHEMA_VERSION) or (
+                chunking is None or chunking[0] != CHUNKING_VERSION
             ):
                 self.db.execute("UPDATE chunks SET vector=NULL")
                 self.db.execute(
@@ -129,7 +161,9 @@ class Store:
                         SELECT file_id FROM chunks WHERE vector IS NOT NULL
                     )"""
                 )
-                self.db.execute("UPDATE chunks SET vector=NULL WHERE vector IS NOT NULL")
+                self.db.execute(
+                    "UPDATE chunks SET vector=NULL WHERE vector IS NOT NULL"
+                )
             self.db.executemany(
                 "INSERT OR REPLACE INTO meta VALUES (?,?)",
                 [
@@ -153,36 +187,46 @@ class Store:
                 (MAX_EMBEDDED_CHUNKS_PER_FILE,),
             )
         with self.db:
-            self.db.execute("UPDATE files SET status='keyword' WHERE id IN ("
-                            "SELECT file_id FROM chunks WHERE vector IS NOT NULL ORDER BY id LIMIT -1 OFFSET ?)",
-                            (MAX_CORPUS_EMBEDDED_CHUNKS,))
-            self.db.execute("UPDATE chunks SET vector=NULL WHERE id IN ("
-                            "SELECT id FROM chunks WHERE vector IS NOT NULL ORDER BY id LIMIT -1 OFFSET ?)",
-                            (MAX_CORPUS_EMBEDDED_CHUNKS,))
+            self.db.execute(
+                "UPDATE files SET status='keyword' WHERE id IN ("
+                "SELECT file_id FROM chunks WHERE vector IS NOT NULL ORDER BY id LIMIT -1 OFFSET ?)",
+                (MAX_CORPUS_EMBEDDED_CHUNKS,),
+            )
+            self.db.execute(
+                "UPDATE chunks SET vector=NULL WHERE id IN ("
+                "SELECT id FROM chunks WHERE vector IS NOT NULL ORDER BY id LIMIT -1 OFFSET ?)",
+                (MAX_CORPUS_EMBEDDED_CHUNKS,),
+            )
         # Reserve virtual address space once; only inserted rows become resident.
         # vectors contains views into this arena, never a second corpus copy.
-        self._matrix = None
-        self._slots = {}
-        self._free_slots = []
+        self._matrix: np.ndarray | None = None
+        self._slots: dict[int, int] = {}
+        self._free_slots: list[int] = []
         self._used_slots = 0
-        self.vectors = {}
-        self._file_stats = {}
-        self._folder_stats = {}
-        self._view_scope = None
-        self._search_cache = {}
-        self._frequency_cache = {}
-        self._background_cache = None
-        self._score_scope = None
-        self._keyword_scope = None
-        self._file_count = None
-        for r in self.db.execute("SELECT id,vector FROM chunks WHERE vector IS NOT NULL ORDER BY id"):
+        self.vectors: dict[int, np.ndarray] = {}
+        self._file_stats: dict[int, Any] = {}
+        self._folder_stats: dict[str, Any] = {}
+        self._view_scope: tuple[Any, set[str], set[str]] | None = None
+        self._search_cache: dict[Any, dict[int, dict]] = {}
+        self._frequency_cache: dict[str, int] = {}
+        self._background_cache: tuple[dict[int, dict], dict[str, float]] | None = None
+        self._score_scope: (
+            tuple[Any, np.ndarray, np.ndarray, np.ndarray, int] | None
+        ) = None
+        self._keyword_scope: set[int] | None = None
+        self._file_count: int | None = None
+        for r in self.db.execute(
+            "SELECT id,vector FROM chunks WHERE vector IS NOT NULL ORDER BY id"
+        ):
             self._put_vector(r["id"], np.frombuffer(r["vector"], dtype="<f2"))
         for file in self.db.execute("SELECT id,folder_id FROM files"):
             self._refresh_file_stats(file["id"], file["folder_id"])
 
     def _put_vector(self, chunk_id, value):
         if self._matrix is None:
-            self._matrix = np.empty((MAX_CORPUS_EMBEDDED_CHUNKS, len(value)), dtype=np.float32)
+            self._matrix = np.empty(
+                (MAX_CORPUS_EMBEDDED_CHUNKS, len(value)), dtype=np.float32
+            )
         if len(value) != self._matrix.shape[1]:
             raise ValueError("inconsistent embedding dimensions")
         if self._free_slots:
@@ -216,7 +260,9 @@ class Store:
     def _refresh_file_stats(self, file_id, folder_id):
         self._remove_file_stats(file_id)
         members = {}
-        for row in self.db.execute("SELECT id,kind FROM chunks WHERE file_id=?", (file_id,)):
+        for row in self.db.execute(
+            "SELECT id,kind FROM chunks WHERE file_id=?", (file_id,)
+        ):
             if row["id"] in self.vectors:
                 members.setdefault(row["kind"], []).append(row["id"])
         if members:
@@ -234,16 +280,23 @@ class Store:
         count = sum(value[1] for value in states.values())
         centroid = total / count
         if folder_id not in self._folder_stats:
-            self._folder_stats[folder_id] = [np.zeros(len(total), dtype=np.float64), 0.0, 0, {}]
+            self._folder_stats[folder_id] = [
+                np.zeros(len(total), dtype=np.float64),
+                0.0,
+                0,
+                {},
+            ]
         pooled = self._folder_stats[folder_id]
         pooled[0] += sign * centroid
         pooled[1] += sign * float(centroid @ centroid)
         pooled[2] += sign
         for kind, (total, count) in states.items():
-            state = pooled[3].setdefault(kind, [np.zeros(len(total), dtype=np.float64), 0, 0, 0.0])
+            state = pooled[3].setdefault(
+                kind, [np.zeros(len(total), dtype=np.float64), 0, 0, 0.0]
+            )
             state[0] += sign * total
             state[1] += sign * count
-            state[2] += sign * count ** 2
+            state[2] += sign * count**2
             state[3] += sign * float(total @ total)
         if not pooled[2]:
             del self._folder_stats[folder_id]
@@ -263,15 +316,19 @@ class Store:
         Invalidation follows committed index mutations. Scope caches are bounded
         to one view so arbitrarily many folder filters cannot retain the index.
         """
-        key = (None if folder_ids is None else tuple(sorted(folder_ids)),
-               None if kinds is None else tuple(sorted(kinds)))
+        key = (
+            None if folder_ids is None else tuple(sorted(folder_ids)),
+            None if kinds is None else tuple(sorted(kinds)),
+        )
         if key not in self._search_cache:
             # File strings are shared by all of a file's chunks. Fetching them
             # once avoids allocating thousands of repeated paths/metadata rows.
             file_sql = "SELECT id,path,folder_id,title,size,mtime,content_hash FROM files WHERE status NOT LIKE 'skipped:%'"
             file_params = []
             if folder_ids is not None:
-                file_sql += " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
+                file_sql += (
+                    " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
+                )
                 file_params = folder_ids
             files = {r["id"]: dict(r) for r in self.db.execute(file_sql, file_params)}
             sql = """SELECT chunks.id, chunks.file_id, chunks.kind, chunks.locator
@@ -279,39 +336,72 @@ class Store:
             clauses, params = [], []
             for column, values in (("folder_id", folder_ids), ("kind", kinds)):
                 if values is not None:
-                    clauses.append(column + " IN (" + ",".join("?" for _ in values) + ")")
+                    clauses.append(
+                        column + " IN (" + ",".join("?" for _ in values) + ")"
+                    )
                     params.extend(values)
             if clauses:
                 sql += " WHERE " + " AND ".join(clauses)
             self._search_cache.clear()
             self._search_cache[key] = {
-                r["id"]: {**files[r["file_id"]], **dict(r), "content_indexed": True, "skip_reason": None}
+                r["id"]: {
+                    **files[r["file_id"]],
+                    **dict(r),
+                    "content_indexed": True,
+                    "skip_reason": None,
+                }
                 for r in self.db.execute(sql, params)
             }
             for row in self.name_only_rows(folder_ids):
                 kind = file_kind(Path(row["path"]))
-                if (folder_ids is None or row["folder_id"] in folder_ids) and (kinds is None or kind in kinds):
+                if (folder_ids is None or row["folder_id"] in folder_ids) and (
+                    kinds is None or kind in kinds
+                ):
                     self._search_cache[key][-row["id"]] = {
-                        **row, "id": -row["id"], "file_id": row["id"], "kind": kind,
-                        "locator": "{}", "content_indexed": False,
+                        **row,
+                        "id": -row["id"],
+                        "file_id": row["id"],
+                        "kind": kind,
+                        "locator": "{}",
+                        "content_indexed": False,
                         "skip_reason": row["status"].split(":", 1)[1].strip(),
                     }
-            self._view_scope = (self._search_cache[key],
-                                {r["folder_id"] for r in self._search_cache[key].values()},
-                                {r["kind"] for r in self._search_cache[key].values()})
+            self._view_scope = (
+                self._search_cache[key],
+                {r["folder_id"] for r in self._search_cache[key].values()},
+                {r["kind"] for r in self._search_cache[key].values()},
+            )
         return self._search_cache[key]
 
     def name_only_rows(self, folder_ids=None):
-        scope = "" if folder_ids is None else " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
-        params = ["skipped: " + SKIP_REASONS["private"], *(folder_ids or []), MAX_NAME_ONLY_FILES_PER_FOLDER]
-        return [dict(row) for row in self.db.execute("""
+        scope = (
+            ""
+            if folder_ids is None
+            else " AND folder_id IN (" + ",".join("?" for _ in folder_ids) + ")"
+        )
+        params = [
+            "skipped: " + SKIP_REASONS["private"],
+            *(folder_ids or []),
+            MAX_NAME_ONLY_FILES_PER_FOLDER,
+        ]
+        return [
+            dict(row)
+            for row in self.db.execute(
+                """
             SELECT * FROM (
                 SELECT files.*, row_number() OVER (PARTITION BY folder_id ORDER BY id) AS ordinal
                 FROM files WHERE status LIKE 'skipped:%' AND status != ?
-            """ + scope + ") WHERE ordinal <= ?", params)]
+            """
+                + scope
+                + ") WHERE ordinal <= ?",
+                params,
+            )
+        ]
 
     def chunk_text(self, chunk_id: int) -> str:
-        row = self.db.execute("SELECT text FROM chunks WHERE id=?", (chunk_id,)).fetchone()
+        row = self.db.execute(
+            "SELECT text FROM chunks WHERE id=?", (chunk_id,)
+        ).fetchone()
         return row[0] if row else ""
 
     def close(self):
@@ -360,12 +450,15 @@ class Store:
         return next((f for f in self.folders() if f["id"] == folder_id), None)
 
     def folders(self) -> list[dict]:
-        folders = [dict(r) for r in self.db.execute("""
+        folders = [
+            dict(r)
+            for r in self.db.execute("""
             SELECT folders.*, (SELECT count(*) FROM files WHERE folder_id=folders.id AND status IN ('indexed','keyword','pending','budget')) AS files_indexed,
             (SELECT count(*) FROM chunks JOIN files ON file_id=files.id WHERE folder_id=folders.id) AS chunks
             FROM folders ORDER BY path
-        """)]
-        reasons = {folder["id"]: {} for folder in folders}
+        """)
+        ]
+        reasons: dict[str, dict[str, int]] = {folder["id"]: {} for folder in folders}
         for row in self.db.execute("""SELECT folder_id,status,count(*) AS count
             FROM files WHERE status LIKE 'skipped:%' GROUP BY folder_id,status"""):
             reason = skip_reason(row["status"].split(":", 1)[1].strip())
@@ -422,7 +515,8 @@ class Store:
         return {
             r["path"]: dict(r)
             for r in self.db.execute(
-                "SELECT files.*, (SELECT count(vector) FROM chunks WHERE file_id=files.id) AS embedded FROM files WHERE folder_id=?", (folder_id,)
+                "SELECT files.*, (SELECT count(vector) FROM chunks WHERE file_id=files.id) AS embedded FROM files WHERE folder_id=?",
+                (folder_id,),
             )
         }
 
@@ -446,10 +540,14 @@ class Store:
         status: str,
     ):
         room = self.embedding_room(path)
-        change = self._write_replace(folder_id, path, info, digest, chunks, vectors, status, room)
+        change = self._write_replace(
+            folder_id, path, info, digest, chunks, vectors, status, room
+        )
         self._publish_replace(change)
 
-    def _write_replace(self, folder_id, path, info, digest, chunks, vectors, status, room):
+    def _write_replace(
+        self, folder_id, path, info, digest, chunks, vectors, status, room
+    ):
         old = self.db.execute(
             "SELECT id FROM files WHERE folder_id=? AND path=?", (folder_id, str(path))
         ).fetchone()
@@ -460,7 +558,8 @@ class Store:
             [
                 r[0]
                 for r in self.db.execute(
-                    "SELECT id FROM chunks WHERE file_id=? AND vector IS NOT NULL", (old[0],)
+                    "SELECT id FROM chunks WHERE file_id=? AND vector IS NOT NULL",
+                    (old[0],),
                 )
             ]
             if old
@@ -525,7 +624,9 @@ class Store:
             self._remove_file_stats(old_file)
         for chunk_id in old_ids:
             self._drop_vector(chunk_id)
-        owner = self.db.execute("SELECT folder_id FROM files WHERE id=?", (file_id,)).fetchone()
+        owner = self.db.execute(
+            "SELECT folder_id FROM files WHERE id=?", (file_id,)
+        ).fetchone()
         if owner is None:
             self._invalidate_search()
             return
@@ -573,19 +674,31 @@ class Store:
         if self._score_scope is None or self._score_scope[0] is not allowed:
             rows = allowed if isinstance(allowed, dict) else self.search_rows()
             ids = [i for i in self.vectors if i in allowed]
-            files = {}
-            groups = np.array([files.setdefault(rows[i]["file_id"], len(files)) for i in ids], dtype=np.int32)
-            self._score_scope = (allowed, np.array(ids, dtype=np.int64),
-                                 np.array([self._slots[i] for i in ids], dtype=np.int32), groups, len(files))
-        _, ids, slots, groups, count = self._score_scope
+            files: dict[int, int] = {}
+            groups = np.array(
+                [files.setdefault(rows[i]["file_id"], len(files)) for i in ids],
+                dtype=np.int32,
+            )
+            self._score_scope = (
+                allowed,
+                np.array(ids, dtype=np.int64),
+                np.array([self._slots[i] for i in ids], dtype=np.int32),
+                groups,
+                len(files),
+            )
+        _, scope_ids, slots, groups, count = self._score_scope
         vector = np.asarray(query, dtype=np.float32)
         vector = vector / max(float(np.linalg.norm(vector)), 1e-12)
         # One BLAS call, one resident matrix; gather only scalar dot products.
-        scores = (self._matrix[:self._used_slots] @ vector)[slots]
+        scores = (np.asarray(self._matrix)[: self._used_slots] @ vector)[slots]
         best = np.full(count, -np.inf, dtype=np.float32)
         np.maximum.at(best, groups, scores)
         winners = np.full(count, np.iinfo(np.int64).max, dtype=np.int64)
-        np.minimum.at(winners, groups, np.where(scores == best[groups], ids, np.iinfo(np.int64).max))
+        np.minimum.at(
+            winners,
+            groups,
+            np.where(scores == best[groups], scope_ids, np.iinfo(np.int64).max),
+        )
         order = np.lexsort((winners, -best))
         return [(int(winners[i]), float(best[i])) for i in order]
 
@@ -605,7 +718,9 @@ class Store:
         else:
             folders = {r["folder_id"] for r in rows.values()}
             selected_kinds = {r["kind"] for r in rows.values()}
-        stats = {kind: [None, 0, 0, 0.0] for kind in ("text", "image", "video")}
+        stats: dict[str, list[Any]] = {
+            kind: [None, 0, 0, 0.0] for kind in ("text", "image", "video")
+        }
         pooled_total, pooled_squares, pooled_count = None, 0.0, 0
         # O(folders * dimensions), with no SQL or per-file/chunk work here.
         for folder_id in sorted(folders):
@@ -626,15 +741,32 @@ class Store:
                 state[0] += values[0]
                 for n in (1, 2, 3):
                     state[n] += values[n]
-        pooled = 1.0
+        pooled_similarity = 1.0
         if pooled_count > 1:
-            pooled = max(0.0, min(1.0, (float(pooled_total @ pooled_total) - pooled_squares)
-                                 / (pooled_count * (pooled_count - 1))))
+            pooled_similarity = max(
+                0.0,
+                min(
+                    1.0,
+                    (
+                        float(np.asarray(pooled_total) @ np.asarray(pooled_total))
+                        - pooled_squares
+                    )
+                    / (pooled_count * (pooled_count - 1)),
+                ),
+            )
         background = {}
         for kind, (total, count, squared_counts, squared_sums) in stats.items():
             pairs = count * count - squared_counts
-            background[kind] = (max(0.0, min(pooled, (float(total @ total) - squared_sums) / pairs))
-                                if pairs else 0.0)
+            background[kind] = (
+                max(
+                    0.0,
+                    min(
+                        pooled_similarity, (float(total @ total) - squared_sums) / pairs
+                    ),
+                )
+                if pairs
+                else 0.0
+            )
         self._background_cache = (rows, background)
         return background
 
@@ -645,7 +777,9 @@ class Store:
     def distinctive_terms(self, terms: list[str]) -> list[str]:
         """File frequency, independent of chunk count and embedding coverage."""
         if self._file_count is None:
-            self._file_count = self.db.execute("SELECT count(DISTINCT file_id) FROM chunks").fetchone()[0]
+            self._file_count = self.db.execute(
+                "SELECT count(DISTINCT file_id) FROM chunks"
+            ).fetchone()[0]
         count = self._file_count
         threshold = max(DISTINCTIVE_MIN_FILES, int(count * DISTINCTIVE_FRACTION))
         distinctive = []
@@ -653,30 +787,41 @@ class Store:
             folded = term.casefold()
             if folded not in self._frequency_cache:
                 if len(term) >= 3:
-                    frequency = self.db.execute(
+                    frequency_rows = self.db.execute(
                         "SELECT DISTINCT file_id FROM chunks_fts "
                         "JOIN chunks ON chunks.id=chunks_fts.rowid WHERE chunks_fts MATCH ? LIMIT ?",
                         (self._match_expression([term]), threshold + 1),
                     ).fetchall()
-                    frequency = len(frequency)
+                    frequency = len(frequency_rows)
                 else:
                     # Trigrams cannot index short terms. Stop once enough files
                     # prove a term common, rather than scanning every chunk.
                     if term.isascii() or term.lower() == term.upper():
-                        literal = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-                        frequency = len(self.db.execute(
-                            "SELECT DISTINCT file_id FROM chunks_fts "
-                            "JOIN chunks ON chunks.id=chunks_fts.rowid "
-                            "WHERE chunks_fts.text LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\' LIMIT ?",
-                            (literal, literal, threshold + 1),
-                        ).fetchall())
+                        literal = (
+                            "%"
+                            + term.replace("\\", "\\\\")
+                            .replace("%", "\\%")
+                            .replace("_", "\\_")
+                            + "%"
+                        )
+                        frequency = len(
+                            self.db.execute(
+                                "SELECT DISTINCT file_id FROM chunks_fts "
+                                "JOIN chunks ON chunks.id=chunks_fts.rowid "
+                                "WHERE chunks_fts.text LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\' LIMIT ?",
+                                (literal, literal, threshold + 1),
+                            ).fetchall()
+                        )
                     else:
                         # Preserve Unicode casefold expansion for cased scripts.
                         files = set()
                         for r in self.db.execute(
                             "SELECT file_id,text,path FROM chunks JOIN files ON file_id=files.id"
                         ):
-                            if folded in r["text"].casefold() or folded in Path(r["path"]).name.casefold():
+                            if (
+                                folded in r["text"].casefold()
+                                or folded in Path(r["path"]).name.casefold()
+                            ):
                                 files.add(r["file_id"])
                                 if len(files) > threshold:
                                     break
@@ -707,14 +852,22 @@ class Store:
         if not allowed:
             return []
         if self._keyword_scope is not allowed:
-            self.db.execute("CREATE TEMP TABLE IF NOT EXISTS local_allowed(id INTEGER PRIMARY KEY)")
+            self.db.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS local_allowed(id INTEGER PRIMARY KEY)"
+            )
             self.db.execute("DELETE FROM local_allowed")
-            self.db.executemany("INSERT INTO local_allowed VALUES (?)", ((i,) for i in allowed))
+            self.db.executemany(
+                "INSERT INTO local_allowed VALUES (?)", ((i,) for i in allowed)
+            )
             self.db.commit()  # End the temporary-table transaction before WAL reads.
             self._keyword_scope = allowed
         precise = self.distinctive_terms(terms) if distinctive is None else distinctive
-        precise = list(dict.fromkeys(precise + [term for term in terms
-            if any(mark in term[1:-1] for mark in "-./_")]))
+        precise = list(
+            dict.fromkeys(
+                precise
+                + [term for term in terms if any(mark in term[1:-1] for mark in "-./_")]
+            )
+        )
         phrase = (query if query is not None else " ".join(terms)).strip()
         if not precise:
             if not phrase:
@@ -722,53 +875,100 @@ class Store:
             precise = [phrase]
         long_terms = [term for term in precise if len(term) >= 3]
         if long_terms:
-            candidates = list(self.db.execute(
-                "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) "
-                "ORDER BY bm25(chunks_fts),rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT),
-                (self._match_expression(long_terms),),
-            ))
+            candidates = list(
+                self.db.execute(
+                    "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) "
+                    "ORDER BY bm25(chunks_fts),rowid LIMIT "
+                    + str(KEYWORD_CANDIDATE_LIMIT),
+                    (self._match_expression(long_terms),),
+                )
+            )
         elif all(term.isascii() or term.lower() == term.upper() for term in precise):
             # LIKE has no short trigram postings, but does the unavoidable scan
             # inside SQLite and materializes only matching bodies in Python.
-            patterns = ["%" + term.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-                        for term in precise]
-            where = " AND ".join("(text LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\')" for _ in patterns)
-            candidates = list(self.db.execute(
-                "SELECT rowid,text,filename FROM chunks_fts WHERE " + where + " AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) ORDER BY rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT),
-                [pattern for pattern in patterns for _ in range(2)],
-            ))
+            patterns = [
+                "%"
+                + term.casefold()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+                + "%"
+                for term in precise
+            ]
+            where = " AND ".join(
+                "(text LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\')"
+                for _ in patterns
+            )
+            candidates = list(
+                self.db.execute(
+                    "SELECT rowid,text,filename FROM chunks_fts WHERE "
+                    + where
+                    + " AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) ORDER BY rowid LIMIT "
+                    + str(KEYWORD_CANDIDATE_LIMIT),
+                    [pattern for pattern in patterns for _ in range(2)],
+                )
+            )
         else:
-            candidates = list(self.db.execute("SELECT rowid,text,filename FROM chunks_fts WHERE rowid IN (SELECT id FROM local_allowed) ORDER BY rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT)))
+            candidates = list(
+                self.db.execute(
+                    "SELECT rowid,text,filename FROM chunks_fts WHERE rowid IN (SELECT id FROM local_allowed) ORDER BY rowid LIMIT "
+                    + str(KEYWORD_CANDIDATE_LIMIT)
+                )
+            )
         # Full basename evidence is independent of body-frequency admission.
         # This preserves filenames whose terms are common throughout the corpus.
         filename_terms = [term for term in terms if len(term) >= 3]
         if filename_terms:
             existing = {r[0] for r in candidates}
-            candidates.extend(r for r in self.db.execute(
-                "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) "
-                "ORDER BY bm25(chunks_fts),rowid LIMIT " + str(KEYWORD_CANDIDATE_LIMIT),
-                ("filename : (" + self._match_expression(filename_terms) + ")",),
-            ) if r[0] not in existing)
+            candidates.extend(
+                r
+                for r in self.db.execute(
+                    "SELECT rowid,text,filename FROM chunks_fts WHERE chunks_fts MATCH ? AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid) "
+                    "ORDER BY bm25(chunks_fts),rowid LIMIT "
+                    + str(KEYWORD_CANDIDATE_LIMIT),
+                    ("filename : (" + self._match_expression(filename_terms) + ")",),
+                )
+                if r[0] not in existing
+            )
         if terms:
-            patterns = ["%" + term.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for term in terms]
-            where = " AND ".join("local_basename(path) LIKE ? ESCAPE '\\'" for _ in patterns)
-            candidates.extend((-row["id"], "", Path(row["path"]).name) for row in self.db.execute(
-                "SELECT files.id,path FROM local_allowed JOIN files ON files.id=-local_allowed.id WHERE local_allowed.id<0 AND " + where +
-                " ORDER BY local_allowed.id DESC LIMIT " + str(KEYWORD_CANDIDATE_LIMIT), patterns))
+            patterns = [
+                "%"
+                + term.casefold()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+                + "%"
+                for term in terms
+            ]
+            where = " AND ".join(
+                "local_basename(path) LIKE ? ESCAPE '\\'" for _ in patterns
+            )
+            candidates.extend(
+                (-row["id"], "", Path(row["path"]).name)
+                for row in self.db.execute(
+                    "SELECT files.id,path FROM local_allowed JOIN files ON files.id=-local_allowed.id WHERE local_allowed.id<0 AND "
+                    + where
+                    + " ORDER BY local_allowed.id DESC LIMIT "
+                    + str(KEYWORD_CANDIDATE_LIMIT),
+                    patterns,
+                )
+            )
         ranked, strengths, name_matches = [], {}, {}
         for chunk_id, text, filename in candidates:
-            if chunk_id not in allowed:
-                continue
             body, name = text.casefold(), filename.casefold()
-            if not (all(t.casefold() in body or t.casefold() in name for t in precise)
-                    or (terms and all(t.casefold() in name for t in terms))):
+            if not (
+                all(t.casefold() in body or t.casefold() in name for t in precise)
+                or (terms and all(t.casefold() in name for t in terms))
+            ):
                 continue
             strengths[chunk_id] = lexical_tier(phrase, terms, text, filename)
             name_matches[chunk_id] = filename_match(phrase, terms, filename)
             ranked.append(chunk_id)
         # Filename hits share the top tier, with exact stems then token coverage.
         # Stable BM25 ties and content-only ordering remain unchanged.
-        ranked.sort(key=lambda i: (-strengths[i], -name_matches[i][0], -name_matches[i][1]))
+        ranked.sort(
+            key=lambda i: (-strengths[i], -name_matches[i][0], -name_matches[i][1])
+        )
         if evidence is not None:
             evidence.update(strengths)
         return ranked
@@ -786,11 +986,14 @@ class Store:
             counts[file_kind(Path(row["path"]))] += 1
         return {
             "files_by_kind": counts,
-            "name_only_files": self.db.execute("""
+            "name_only_files": self.db.execute(
+                """
                 SELECT coalesce(sum(min(n,?)),0) FROM (
                     SELECT count(*) AS n FROM files WHERE status LIKE 'skipped:%'
                     AND status != ? GROUP BY folder_id)
-            """, (MAX_NAME_ONLY_FILES_PER_FOLDER, "skipped: " + SKIP_REASONS["private"])).fetchone()[0],
+            """,
+                (MAX_NAME_ONLY_FILES_PER_FOLDER, "skipped: " + SKIP_REASONS["private"]),
+            ).fetchone()[0],
             "files": self.db.execute(
                 "SELECT count(*) FROM files WHERE status IN ('indexed','keyword','pending','budget')"
             ).fetchone()[0],
@@ -816,10 +1019,16 @@ class StoreWorker:
 
     Synchronous access is for offline inspection only; loop callers await call().
     """
+
     def __init__(self, *args):
         from concurrent.futures import ThreadPoolExecutor
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-search-db")
-        self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-search-writer")
+
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="local-search-db"
+        )
+        self._writer = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="local-search-writer"
+        )
         self._ready = self._executor.submit(Store, *args)
         self.path = args[0]
 
@@ -830,23 +1039,42 @@ class StoreWorker:
     def __getattr__(self, name):
         value = self._executor.submit(getattr, self._store, name).result()
         if callable(value):
-            return lambda *args, **kwargs: self._executor.submit(value, *args, **kwargs).result()
+            return lambda *args, **kwargs: self._executor.submit(
+                value, *args, **kwargs
+            ).result()
         return value
 
     async def call(self, name, *args, **kwargs):
         import asyncio
         from functools import partial
+
         loop = asyncio.get_running_loop()
         await asyncio.wrap_future(self._ready)
+
         async def replace():
-            room = await loop.run_in_executor(self._executor, self._store.embedding_room, args[1])
-            change = await loop.run_in_executor(self._writer, partial(self._write_file, args, kwargs, room))
-            await loop.run_in_executor(self._executor, self._store._publish_replace, change)
+            room = await loop.run_in_executor(
+                self._executor, self._store.embedding_room, args[1]
+            )
+            change = await loop.run_in_executor(
+                self._writer, partial(self._write_file, args, kwargs, room)
+            )
+            await loop.run_in_executor(
+                self._executor, self._store._publish_replace, change
+            )
+
         if name == "replace" and name not in self.__dict__:
             task = asyncio.create_task(replace())
         else:
-            task = asyncio.ensure_future(loop.run_in_executor(
-                self._executor, partial(self.__dict__.get(name, getattr(self._store, name)), *args, **kwargs)))
+            task = asyncio.ensure_future(
+                loop.run_in_executor(
+                    self._executor,
+                    partial(
+                        self.__dict__.get(name, getattr(self._store, name)),
+                        *args,
+                        **kwargs,
+                    ),
+                )
+            )
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -877,15 +1105,25 @@ def bounded_terms(terms, distinctive=None):
     if len(unique) <= MAX_KEYWORD_TERMS:
         return unique
     rare = set(distinctive or ())
-    return sorted(unique, key=lambda term: (term not in rare, -len(term), term))[:MAX_KEYWORD_TERMS]
+    return sorted(unique, key=lambda term: (term not in rare, -len(term), term))[
+        :MAX_KEYWORD_TERMS
+    ]
 
 
 def walk_reaches(root, descendant):
     """A selected root overrides location pruning only within its own subtree."""
-    for relative in [Path(), *descendant.relative_to(root).parents, descendant.relative_to(root)]:
+    for relative in [
+        Path(),
+        *descendant.relative_to(root).parents,
+        descendant.relative_to(root),
+    ]:
         path = root / relative
         if path == root:
             continue
-        if excluded(path, directory=True) or excluded_location(path, root) or (path / "pyvenv.cfg").exists():
+        if (
+            excluded(path, directory=True)
+            or excluded_location(path, root)
+            or (path / "pyvenv.cfg").exists()
+        ):
             return False
     return True

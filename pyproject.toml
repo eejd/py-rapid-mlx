@@ -431,6 +431,8 @@ ci-linux = [
     "jinja2",
     "aiohttp>=3.9.0",
     "pillow>=10.0.0",
+    # CPU video-decoding contracts run in the Linux coverage lane.
+    "opencv-python>=4.8.0",
 ]
 # `ci-apple` = the pytest + coverage set the `test-apple-silicon` lane installs
 # on top of `[vision]`. Same test-infra floors as `[ci-linux]`; the lane's MLX

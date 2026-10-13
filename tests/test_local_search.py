@@ -8,8 +8,8 @@ import sys
 import threading
 import zipfile
 from contextlib import asynccontextmanager, nullcontext
-from unittest.mock import AsyncMock
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import numpy as np
@@ -36,16 +36,28 @@ from rapid_mlx.middleware.exception_handlers import install_exception_handlers
 def allow_test_scratch(monkeypatch):
     # macOS temp trees resolve under /private; never traverse the actual root.
     from rapid_mlx.local_search import extraction
-    monkeypatch.setattr(extraction, "SKIP_PREFIXES", tuple(
-        p for p in extraction.SKIP_PREFIXES if p != Path("/private")
-    ))
+
+    monkeypatch.setattr(
+        extraction,
+        "SKIP_PREFIXES",
+        tuple(p for p in extraction.SKIP_PREFIXES if p != Path("/private")),
+    )
     from concurrent.futures import ThreadPoolExecutor
+
     from rapid_mlx.config import get_config
+
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-model-worker")
+
     async def model_worker(func, *args, **kwargs):
-        return await asyncio.get_running_loop().run_in_executor(executor, lambda: func(*args, **kwargs))
+        return await asyncio.get_running_loop().run_in_executor(
+            executor, lambda: func(*args, **kwargs)
+        )
+
     from types import SimpleNamespace
-    monkeypatch.setattr(get_config(), "engine", SimpleNamespace(execute_on_model_worker=model_worker))
+
+    monkeypatch.setattr(
+        get_config(), "engine", SimpleNamespace(execute_on_model_worker=model_worker)
+    )
     walk = os.walk
 
     def temp_tree_only(root, *args, **kwargs):
@@ -85,17 +97,27 @@ async def wait_chat_pause(search):
     async def waiting():
         while search.progress.get("paused_reason") != "chat":
             await asyncio.sleep(0.001)
+
     await asyncio.wait_for(waiting(), 2)
 
 
-@pytest.mark.parametrize("activity", ["admitted_requests", "running_requests", "queued_requests"])
+@pytest.mark.parametrize(
+    "activity", ["admitted_requests", "running_requests", "queued_requests"]
+)
 @pytest.mark.parametrize("media", [False, True])
-def test_indexing_yields_to_generation_and_search_stays_interactive(tmp_path, monkeypatch, activity, media):
+def test_indexing_yields_to_generation_and_search_stays_interactive(
+    tmp_path, monkeypatch, activity, media
+):
     from rapid_mlx.config import get_config
+
     signal = {"admitted_requests": 0, "running_requests": 0, "queued_requests": 0}
     signal[activity] = 1
-    monkeypatch.setattr(get_config().engine, "lifecycle_status",
-                        lambda: {**signal, "active_requests": sum(signal.values())}, raising=False)
+    monkeypatch.setattr(
+        get_config().engine,
+        "lifecycle_status",
+        lambda: {**signal, "active_requests": sum(signal.values())},
+        raising=False,
+    )
 
     async def scenario():
         fake = FakeEmbedder()
@@ -103,9 +125,12 @@ def test_indexing_yields_to_generation_and_search_stays_interactive(tmp_path, mo
         root = folder(tmp_path)
         if media:
             from PIL import Image
+
             Image.new("RGB", (16, 16)).save(root / "apple.png")
         else:
-            (root / "apple.txt").write_text("An apple orchard produces delicious fruit.")
+            (root / "apple.txt").write_text(
+                "An apple orchard produces delicious fruit."
+            )
         try:
             (await search.add_folder(str(root)))
             await wait_chat_pause(search)
@@ -126,13 +151,19 @@ def test_indexing_yields_to_generation_and_search_stays_interactive(tmp_path, mo
             assert search.status()["folders"][0]["state"] == "idle"
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_cancel_indexing_while_waiting_for_chat(tmp_path, monkeypatch):
     from rapid_mlx.config import get_config
-    monkeypatch.setattr(get_config().engine, "lifecycle_status",
-                        lambda: {"active_requests": 1}, raising=False)
+
+    monkeypatch.setattr(
+        get_config().engine,
+        "lifecycle_status",
+        lambda: {"active_requests": 1},
+        raising=False,
+    )
 
     async def scenario():
         fake = FakeEmbedder()
@@ -140,7 +171,7 @@ def test_cancel_indexing_while_waiting_for_chat(tmp_path, monkeypatch):
         root = folder(tmp_path)
         (root / "apple.txt").write_text("An apple orchard produces delicious fruit.")
         try:
-            registered, _ = (await search.add_folder(str(root)))
+            registered, _ = await search.add_folder(str(root))
             await wait_chat_pause(search)
             await asyncio.wait_for(search.delete_folder(registered["id"]), 0.5)
             assert not fake.calls
@@ -149,22 +180,28 @@ def test_cancel_indexing_while_waiting_for_chat(tmp_path, monkeypatch):
             assert not search.status()["folders"]
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_chat_wait_backoff_is_bounded_and_clears_pause_on_resume(tmp_path, monkeypatch):
     from rapid_mlx.config import get_config
+
     signal = {"active_requests": 1}
-    monkeypatch.setattr(get_config().engine, "lifecycle_status", lambda: signal, raising=False)
+    monkeypatch.setattr(
+        get_config().engine, "lifecycle_status", lambda: signal, raising=False
+    )
 
     async def scenario():
         search = engine(tmp_path)
         delays = []
+
         async def sleep(delay):
             assert search.status()["indexing"]["paused_reason"] == "chat"
             delays.append(delay)
             if len(delays) == 6:
                 signal["active_requests"] = 0
+
         try:
             with monkeypatch.context() as patch:
                 patch.setattr(asyncio, "sleep", sleep)
@@ -174,14 +211,18 @@ def test_chat_wait_backoff_is_bounded_and_clears_pause_on_resume(tmp_path, monke
             assert search.engine is None
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("images", [False, True])
 def test_chat_arriving_between_batches_defers_next_batch(tmp_path, monkeypatch, images):
     from rapid_mlx.config import get_config
+
     signal = {"active_requests": 0}
-    monkeypatch.setattr(get_config().engine, "lifecycle_status", lambda: signal, raising=False)
+    monkeypatch.setattr(
+        get_config().engine, "lifecycle_status", lambda: signal, raising=False
+    )
 
     async def scenario():
         fake = FakeEmbedder()
@@ -190,7 +231,9 @@ def test_chat_arriving_between_batches_defers_next_batch(tmp_path, monkeypatch, 
         try:
             await search._embed_async(inputs, images=images, background=True)
             signal["active_requests"] = 1
-            batch = asyncio.create_task(search._embed_async(inputs, images=images, background=True))
+            batch = asyncio.create_task(
+                search._embed_async(inputs, images=images, background=True)
+            )
             try:
                 await wait_chat_pause(search)
                 calls = fake.image_calls if images else fake.calls
@@ -206,16 +249,20 @@ def test_chat_arriving_between_batches_defers_next_batch(tmp_path, monkeypatch, 
                         await batch
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_background_rechecks_chat_after_query_lock(tmp_path, monkeypatch):
     from rapid_mlx.config import get_config
+
     signal = {"active_requests": 0}
     checked = asyncio.Event()
+
     def status():
         checked.set()
         return signal
+
     monkeypatch.setattr(get_config().engine, "lifecycle_status", status, raising=False)
 
     async def scenario():
@@ -223,7 +270,9 @@ def test_background_rechecks_chat_after_query_lock(tmp_path, monkeypatch):
         search = engine(tmp_path, fake)
         try:
             async with search._model_gate:
-                batch = asyncio.create_task(search._embed_async(["apple"], background=True))
+                batch = asyncio.create_task(
+                    search._embed_async(["apple"], background=True)
+                )
                 await asyncio.wait_for(checked.wait(), 1)
                 signal["active_requests"] = 1
             try:
@@ -239,6 +288,7 @@ def test_background_rechecks_chat_after_query_lock(tmp_path, monkeypatch):
                         await batch
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
@@ -487,9 +537,9 @@ def test_chunking_version_invalidates_and_rebuilds_unchanged_files(
         assert not resumed.store.vectors
         assert resumed.store.files(fid)[str(path)]["status"] == "pending"
         assert (
-            resumed.store.sql(
-                "SELECT value FROM meta WHERE key='chunking_version'"
-            )[0][0]
+            resumed.store.sql("SELECT value FROM meta WHERE key='chunking_version'")[0][
+                0
+            ]
             == CHUNKING_VERSION
         )
         resumed.start()
@@ -515,7 +565,9 @@ def test_invalid_folder(value):
         validate_folder(value)
 
 
-@pytest.mark.parametrize("name", [".hidden", ".ssh", ".aws", ".gnupg", "id_rsa", "keys.pem"])
+@pytest.mark.parametrize(
+    "name", [".hidden", ".ssh", ".aws", ".gnupg", "id_rsa", "keys.pem"]
+)
 @pytest.mark.parametrize("nested", [False, True])
 def test_sensitive_folder_roots_rejected_at_add_time(tmp_path, name, nested):
     sensitive = folder(tmp_path, name)
@@ -544,7 +596,9 @@ def test_home_and_package_exclusions_for_any_root(tmp_path, monkeypatch, root_ki
 
     home = folder(tmp_path, "home")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
-    root = {"home": home, "ancestor": tmp_path, "outside": folder(tmp_path, "outside")}[root_kind]
+    root = {"home": home, "ancestor": tmp_path, "outside": folder(tmp_path, "outside")}[
+        root_kind
+    ]
     library = home / "Library"
     (library / "Application Support").mkdir(parents=True)
     (library / "Application Support" / "private.txt").write_text("secret")
@@ -562,7 +616,10 @@ def test_home_and_package_exclusions_for_any_root(tmp_path, monkeypatch, root_ki
         assert scan(package) == ([], 1)
     for selected_root in (library, library / "Application Support"):
         assert validate_folder(str(selected_root)) == selected_root.resolve()
-        assert scan(selected_root) == ([library / "Application Support" / "private.txt"], 0)
+        assert scan(selected_root) == (
+            [library / "Application Support" / "private.txt"],
+            0,
+        )
     assert validate_folder(str(root)) == root.resolve()
     files, skipped = scan(root)
     assert set(files) == {root / "good.txt", ordinary_library / "good.txt"}
@@ -575,7 +632,9 @@ def test_home_and_package_exclusions_for_any_root(tmp_path, monkeypatch, root_ki
         await search.wait_idle()
         assert search.status()["totals"]["files"] == 2
         assert len(fake.calls) == 2
-        assert {row["path"] for row in search.store.rows().values()} == {str(p) for p in files}
+        assert {row["path"] for row in search.store.rows().values()} == {
+            str(p) for p in files
+        }
         await search.close()
 
     asyncio.run(scenario())
@@ -593,7 +652,7 @@ def test_overlapping_folders_reuse_index_without_reembedding(tmp_path, parent_fi
         search = engine(tmp_path, fake)
         try:
             first, second = (parent, child) if parent_first else (child, parent)
-            registered, created = (await search.add_folder(str(first)))
+            registered, created = await search.add_folder(str(first))
             assert created
             if not parent_first:
                 (await search.add_folder(str(sibling)))
@@ -601,18 +660,20 @@ def test_overlapping_folders_reuse_index_without_reembedding(tmp_path, parent_fi
             before = search.store.rows()
             vectors = dict(search.store.vectors)
             assert len(fake.calls) == 2
-            covering, created = (await search.add_folder(str(second)))
+            covering, created = await search.add_folder(str(second))
             assert created == (not parent_first)
             assert (covering["id"] == registered["id"]) == parent_first
             assert len(search.store.folders()) == 1
             assert set(search.store.rows()) == set(before)
-            assert all(r["folder_id"] == covering["id"] for r in search.store.rows().values())
+            assert all(
+                r["folder_id"] == covering["id"] for r in search.store.rows().values()
+            )
             await search.wait_idle()
             assert len(fake.calls) == 2  # Absorption preserves both fingerprints.
             assert set(search.store.vectors) == set(vectors)
             alias = tmp_path / "alias"
             alias.symlink_to(child, target_is_directory=True)
-            repeated, created = (await search.add_folder(str(alias)))
+            repeated, created = await search.add_folder(str(alias))
             assert repeated["id"] == covering["id"] and not created
             await search.wait_idle()
             assert len(fake.calls) == 2
@@ -630,7 +691,9 @@ def test_overlapping_folders_reuse_index_without_reembedding(tmp_path, parent_fi
 
 
 @pytest.mark.parametrize("active", [False, True])
-def test_absorbing_queued_or_active_folder_resumes_under_new_root(tmp_path, monkeypatch, active):
+def test_absorbing_queued_or_active_folder_resumes_under_new_root(
+    tmp_path, monkeypatch, active
+):
     from rapid_mlx.local_search import service
 
     async def scenario():
@@ -653,11 +716,11 @@ def test_absorbing_queued_or_active_folder_resumes_under_new_root(tmp_path, monk
 
         monkeypatch.setattr(service.asyncio, "sleep", pause)
         try:
-            old, _ = (await search.add_folder(str(child)))
+            old, _ = await search.add_folder(str(child))
             if active:
                 await asyncio.wait_for(paused.wait(), 5)
                 assert len(fake.calls) == 1
-            new, created = (await search.add_folder(str(parent)))
+            new, created = await search.add_folder(str(parent))
             assert created and new["id"] != old["id"]
             assert not search.store.folder(old["id"])
             assert old["id"] not in search.pending
@@ -666,7 +729,9 @@ def test_absorbing_queued_or_active_folder_resumes_under_new_root(tmp_path, monk
             assert len(fake.calls) == 2
             assert search.store.folder(new["id"])["state"] == "idle"
             assert search.status()["totals"]["files"] == 2
-            assert all(row["folder_id"] == new["id"] for row in search.store.rows().values())
+            assert all(
+                row["folder_id"] == new["id"] for row in search.store.rows().values()
+            )
         finally:
             release.set()
             await search.close()
@@ -680,22 +745,34 @@ def test_pdf_index_and_search_preserve_page_locator(tmp_path, monkeypatch):
         path = root / "pages.pdf"
         path.write_bytes(small_pdf())
         async with client_app(tmp_path, monkeypatch) as (client, app, fake):
-            response = await client.post("/v1/local-search/folders", json={"path": str(root)})
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(root)}
+            )
             assert response.status_code == 201
             await app.state.local_search.wait_idle()
-            assert fake.calls == [["title: pages | text: First", "title: pages | text: Second"]]
+            assert fake.calls == [
+                ["title: pages | text: First", "title: pages | text: Second"]
+            ]
             for query, page in (("First", 1), ("Second", 2)):
-                response = await client.post("/v1/local-search/search", json={"query": query})
+                response = await client.post(
+                    "/v1/local-search/search", json={"query": query}
+                )
                 assert response.status_code == 200
                 hit = response.json()["results"][0]
                 assert "keyword" in hit["matched"]
-                assert hit["path"] == str(path) and hit["page"] == page and hit["line"] is None
+                assert (
+                    hit["path"] == str(path)
+                    and hit["page"] == page
+                    and hit["line"] is None
+                )
 
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("parent_first", [False, True])
-def test_folder_routes_accept_home_and_absorb_overlap(tmp_path, monkeypatch, parent_first):
+def test_folder_routes_accept_home_and_absorb_overlap(
+    tmp_path, monkeypatch, parent_first
+):
     home = folder(tmp_path, "home")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     docs = folder(home, "Documents")
@@ -704,11 +781,15 @@ def test_folder_routes_accept_home_and_absorb_overlap(tmp_path, monkeypatch, par
     async def scenario():
         async with client_app(tmp_path, monkeypatch) as (client, app, fake):
             first, second = (home, docs) if parent_first else (docs, home)
-            response = await client.post("/v1/local-search/folders", json={"path": str(first)})
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(first)}
+            )
             assert response.status_code == 201
             first_id = response.json()["id"]
             await app.state.local_search.wait_idle()
-            response = await client.post("/v1/local-search/folders", json={"path": str(second)})
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(second)}
+            )
             assert response.status_code == (200 if parent_first else 201)
             assert (response.json()["id"] == first_id) == parent_first
             assert response.json()["path"] == str(home)
@@ -818,22 +899,29 @@ def test_text_embedding_budget_keyword_tail_and_small_semantic(tmp_path):
         path.write_text("\n".join(lines))
         small = root / "small.txt"
         small.write_text("apple")
+
         class OrchardEmbedder(FakeEmbedder):
             def embed(self, texts):
                 vectors = super().embed(texts)
                 # Make orchard semantically closer to apple than to a generic
                 # shared bias, rather than relying on a fitted cosine floor.
-                return [[0.5, 1, 0] if "query: orchard" in text else vector
-                        for text, vector in zip(texts, vectors)]
+                return [
+                    [0.5, 1, 0] if "query: orchard" in text else vector
+                    for text, vector in zip(texts, vectors)
+                ]
 
         fake = OrchardEmbedder()
         search = engine(tmp_path, fake)
         fid = (await search.add_folder(str(root)))[0]["id"]
         await search.wait_idle()
-        large_batches = [batch for batch in fake.calls if batch[0].startswith("title: run |")]
+        large_batches = [
+            batch for batch in fake.calls if batch[0].startswith("title: run |")
+        ]
         assert len(large_batches) == (MAX_EMBEDDED_CHUNKS_PER_FILE + 3) // 4
         assert sum(map(len, large_batches)) == MAX_EMBEDDED_CHUNKS_PER_FILE
-        assert not any("tailneedle" in text for batch in large_batches for text in batch)
+        assert not any(
+            "tailneedle" in text for batch in large_batches for text in batch
+        )
         totals = search.status()["totals"]
         assert totals["chunks"] == 1001
         assert totals["embedded_chunks"] == MAX_EMBEDDED_CHUNKS_PER_FILE + 1
@@ -862,7 +950,9 @@ def test_text_embedding_budget_keyword_tail_and_small_semantic(tmp_path):
         assert resumed.store.keyword(["tailneedle"], set(resumed.store.rows()))
         resumed.start()
         await resumed.wait_idle()
-        assert sum(len(b) for b in fake.calls[calls:]) == MAX_EMBEDDED_CHUNKS_PER_FILE + 1
+        assert (
+            sum(len(b) for b in fake.calls[calls:]) == MAX_EMBEDDED_CHUNKS_PER_FILE + 1
+        )
         assert resumed.store.folder(parent_id)["chunks"] == 1001
         await resumed.close()
 
@@ -878,17 +968,27 @@ def test_existing_index_trims_text_vectors_without_reembedding(tmp_path):
     fid = store.add_folder(root)[0]
     count = MAX_EMBEDDED_CHUNKS_PER_FILE + 5
     store.replace(
-        fid, path, path.stat(), "hash",
-        [Chunk(f"page {i} tailneedle" if i == count else f"page {i}", None, i)
-         for i in range(1, count + 1)],
-        [[1.0, 0.0]] * count, "indexed",
+        fid,
+        path,
+        path.stat(),
+        "hash",
+        [
+            Chunk(f"page {i} tailneedle" if i == count else f"page {i}", None, i)
+            for i in range(1, count + 1)
+        ],
+        [[1.0, 0.0]] * count,
+        "indexed",
     )
     media = root / "video.mp4"
     media.touch()
     store.replace(
-        fid, media, media.stat(), None,
+        fid,
+        media,
+        media.stat(),
+        None,
         [Chunk("", None, None, "video", float(i)) for i in range(count)],
-        [[0.0, 1.0]] * count, "indexed",
+        [[0.0, 1.0]] * count,
+        "indexed",
     )
     ids = set(store.rows())
     store.close()
@@ -902,8 +1002,13 @@ def test_existing_index_trims_text_vectors_without_reembedding(tmp_path):
     keyword = root / "keyword.txt"
     keyword.touch()
     store.replace(
-        fid, keyword, keyword.stat(), "hash",
-        [Chunk("keywordonly", 1, None)], None, "keyword",
+        fid,
+        keyword,
+        keyword.stat(),
+        "hash",
+        [Chunk("keywordonly", 1, None)],
+        None,
+        "keyword",
     )
     keyword_ids = set(store.keyword(["keywordonly"], set(store.rows())))
     store.close()
@@ -1128,7 +1233,14 @@ def test_routes_and_frozen_shapes(tmp_path, monkeypatch):
         (root / "a.txt").write_text("apple banana")
         async with client_app(tmp_path, monkeypatch) as (client, app, fake):
             status = (await client.get("/v1/local-search/status")).json()
-            assert set(status) == {"enabled", "model", "folders", "indexing", "totals", "semantic_unavailable_reason"}
+            assert set(status) == {
+                "enabled",
+                "model",
+                "folders",
+                "indexing",
+                "totals",
+                "semantic_unavailable_reason",
+            }
             assert status["model"]["loaded"] is False and not fake.calls
             response = await client.post(
                 "/v1/local-search/folders", json={"path": str(root)}
@@ -1539,7 +1651,7 @@ def test_fusion_combines_different_chunks_of_same_file():
 
 
 def write_video(path, colors=(0, 0, 255), fps=2, seconds=12):
-    import cv2
+    cv2 = pytest.importorskip("cv2")
 
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (32, 32))
     assert writer.isOpened(), "test codec must be available"
@@ -1596,7 +1708,7 @@ def test_video_sampling_timestamp_dedupe_and_cap(tmp_path):
 
 
 def test_video_six_second_scenes_survive_five_second_sampling(tmp_path):
-    import cv2
+    cv2 = pytest.importorskip("cv2")
     from rapid_mlx.local_search.extraction import media_frames
 
     root = folder(tmp_path)
@@ -1617,7 +1729,7 @@ def test_video_six_second_scenes_survive_five_second_sampling(tmp_path):
 
 
 def test_video_long_decode_is_bounded(tmp_path, monkeypatch):
-    import cv2
+    cv2 = pytest.importorskip("cv2")
 
     from rapid_mlx.local_search.extraction import media_frames
 
@@ -1719,22 +1831,39 @@ def test_media_index_routes_kinds_and_keyword_fallback(tmp_path, monkeypatch):
                         # High-cosine vectors pass the available background gate.
                         assert hit["matched"] == ["semantic", "keyword"]
                     assert (hit["timestamp"] is not None) == (hit["kind"] == "video")
-                grouped = (await client.post("/v1/local-search/search", json={
-                    "query": "apple", "kinds": kinds, "group_limit": 1,
-                })).json()
+                grouped = (
+                    await client.post(
+                        "/v1/local-search/search",
+                        json={
+                            "query": "apple",
+                            "kinds": kinds,
+                            "group_limit": 1,
+                        },
+                    )
+                ).json()
                 assert grouped["results"] == hits
                 if kinds is None or len(set(kinds)) > 1:
-                    assert {g["kind"] for g in grouped["groups"]} == {hit["kind"] for hit in hits}
-                    assert all(g["total"] == len(g["results"]) == 1 for g in grouped["groups"])
+                    assert {g["kind"] for g in grouped["groups"]} == {
+                        hit["kind"] for hit in hits
+                    }
+                    assert all(
+                        g["total"] == len(g["results"]) == 1 for g in grouped["groups"]
+                    )
                     for group in grouped["groups"]:
                         if group["kind"] == "video":
                             assert group["results"][0]["timestamp"] is not None
                 else:
                     assert "groups" not in grouped
             for invalid in (0, 51, -1, "invalid"):
-                assert (await client.post("/v1/local-search/search", json={
-                    "query": "apple", "group_limit": invalid,
-                })).status_code == 400
+                assert (
+                    await client.post(
+                        "/v1/local-search/search",
+                        json={
+                            "query": "apple",
+                            "group_limit": invalid,
+                        },
+                    )
+                ).status_code == 400
             response = await client.post(
                 "/v1/local-search/search", json={"query": "apple", "kinds": ["audio"]}
             )
@@ -1750,11 +1879,17 @@ def test_media_index_routes_kinds_and_keyword_fallback(tmp_path, monkeypatch):
             )
             assert result["mode"] == "keyword"
             assert all(r["matched"] == ["keyword"] for r in result["results"])
-            grouped = await app.state.local_search.search("apple", 20, None, ["image", "video"], 1)
+            grouped = await app.state.local_search.search(
+                "apple", 20, None, ["image", "video"], 1
+            )
             assert grouped["results"] == result["results"]
             assert {g["kind"] for g in grouped["groups"]} == {"image", "video"}
             assert all(g["total"] == 1 for g in grouped["groups"])
-            assert (await app.state.local_search.search("not present", 20, None, group_limit=5))["groups"] == []
+            assert (
+                await app.state.local_search.search(
+                    "not present", 20, None, group_limit=5
+                )
+            )["groups"] == []
             rows = app.state.local_search.store.sql(
                 "SELECT text,filename FROM chunks_fts WHERE text=''"
             )
@@ -1767,7 +1902,7 @@ def test_media_index_routes_kinds_and_keyword_fallback(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("count", [1, 19, 20, 29, 30, 120])
 def test_semantic_gate_uses_index_background_and_rank_cap(count):
-    from rapid_mlx.local_search.search import semantic_ranking, SEMANTIC_FILE_CAP
+    from rapid_mlx.local_search.search import semantic_ranking
 
     rows = {i: {"path": str(i)} for i in range(count)}
     scores = [(i, 0.7) for i in range(count)]
@@ -1805,8 +1940,15 @@ def test_background_matches_cross_file_pairs_and_invalidates(tmp_path):
     ]:
         path = root / name
         path.write_text("fixture")
-        search.store.replace(fid, path, path.stat(), None,
-                             [Chunk("", None, None, kind)] * len(vectors), vectors, "indexed")
+        search.store.replace(
+            fid,
+            path,
+            path.stat(),
+            None,
+            [Chunk("", None, None, kind)] * len(vectors),
+            vectors,
+            "indexed",
+        )
     rows = search.store.search_rows()
     # No query scoring is needed to initialise the background. The two
     # cross-file text pairs are 1 and 0; all within-file pairs are excluded.
@@ -1815,29 +1957,51 @@ def test_background_matches_cross_file_pairs_and_invalidates(tmp_path):
     assert search.store.semantic_background(rows) is bars
     # Equal-file pooled pairs are 0.5, 0, 0: mean 1/6, capping the
     # narrower text-only estimate. Kind filtering retains the same pool.
-    assert search.store.semantic_background(search.store.search_rows(kinds=["text"]))["text"] == 1 / 6
+    assert (
+        search.store.semantic_background(search.store.search_rows(kinds=["text"]))[
+            "text"
+        ]
+        == 1 / 6
+    )
     # Repeating the same frames/chunks leaves the file centroid unchanged.
     path = root / "a"
-    search.store.replace(fid, path, path.stat(), None,
-                         [Chunk("", None, None)] * 20,
-                         [[1, 0, 0], [0, 1, 0]] * 10, "indexed")
+    search.store.replace(
+        fid,
+        path,
+        path.stat(),
+        None,
+        [Chunk("", None, None)] * 20,
+        [[1, 0, 0], [0, 1, 0]] * 10,
+        "indexed",
+    )
     assert search.store.semantic_background(search.store.search_rows())["text"] == 1 / 6
-    ids = [r["id"] for r in search.store.sql("SELECT id FROM files WHERE path=?", (str(root / "b"),))]
+    ids = [
+        r["id"]
+        for r in search.store.sql(
+            "SELECT id FROM files WHERE path=?", (str(root / "b"),)
+        )
+    ]
     search.store.remove_file(ids[0])
     assert search.store.semantic_background(search.store.search_rows())["text"] == 0.0
     search.store.close()
 
 
 def test_semantic_window_reserves_heads_without_reordering_stronger_hits():
-    rows = {i: {"path": str(i), "kind": "text" if i < 15 else "image"} for i in range(17)}
+    rows = {
+        i: {"path": str(i), "kind": "text" if i < 15 else "image"} for i in range(17)
+    }
     scores = {i: 0.95 - i / 100 for i in range(15)}
     scores.update({15: 0.7, 16: 0.69})
-    kwargs = dict(rows=rows, semantic_legs=[list(range(15)), [15, 16], []], semantic_scores=scores)
+    kwargs = dict(
+        rows=rows, semantic_legs=[list(range(15)), [15, 16], []], semantic_scores=scores
+    )
     original = fuse([], [], **kwargs)
     assert [i for i, _, _ in original[:10]] == list(range(10))
     reserved = fuse([], [], limit=10, **kwargs)
     assert [i for i, _, _ in reserved[:10]] == list(range(8)) + [15, 16]
-    assert [score for _, score, _ in reserved[:10]] == sorted([score for _, score, _ in reserved[:10]], reverse=True)
+    assert [score for _, score, _ in reserved[:10]] == sorted(
+        [score for _, score, _ in reserved[:10]], reverse=True
+    )
     literal = fuse([], [14], keyword_evidence={14: 2}, limit=10, **kwargs)
     assert literal[0][0] == 14 and {15, 16} <= {i for i, _, _ in literal[:10]}
 
@@ -1852,7 +2016,9 @@ def test_semantic_gate_float32_boundary_and_one_file():
 
 
 @pytest.mark.parametrize("strong_kind", ["image", "text"])
-def test_standardized_semantic_order_with_fake_embedder(tmp_path, monkeypatch, strong_kind):
+def test_standardized_semantic_order_with_fake_embedder(
+    tmp_path, monkeypatch, strong_kind
+):
     class QueryEmbedder(FakeEmbedder):
         def embed(self, texts):
             super().embed(texts)
@@ -1867,20 +2033,36 @@ def test_standardized_semantic_order_with_fake_embedder(tmp_path, monkeypatch, s
         for kind in ("text", "image"):
             # Higher raw text cosine is ordinary when image is the outlier;
             # reverse the evidence without granting media an unconditional boost.
-            values = ([.65] + [.2 + n / 1000 for n in range(20)] if kind == "image"
-                      else [.8, .79] + [.65 + n / 128 for n in range(20)])
+            values = (
+                [0.65] + [0.2 + n / 1000 for n in range(20)]
+                if kind == "image"
+                else [0.8, 0.79] + [0.65 + n / 128 for n in range(20)]
+            )
             if strong_kind == "text":
-                values = ([.65] + [.55 + n / 250 for n in range(20)] if kind == "image"
-                          else [.85] + [.2 + n / 1000 for n in range(20)])
+                values = (
+                    [0.65] + [0.55 + n / 250 for n in range(20)]
+                    if kind == "image"
+                    else [0.85] + [0.2 + n / 1000 for n in range(20)]
+                )
             for n, value in enumerate(values):
                 path = root / f"{kind}_{n}.txt"
                 path.write_text("fixture")
                 cosines[str(path)] = value
-                search.store.replace(fid, path, path.stat(), None,
-                                     [Chunk("fixture", None, None, kind)],
-                                     [[value, np.sqrt(1 - value ** 2), 0]], "indexed")
+                search.store.replace(
+                    fid,
+                    path,
+                    path.stat(),
+                    None,
+                    [Chunk("fixture", None, None, kind)],
+                    [[value, np.sqrt(1 - value**2), 0]],
+                    "indexed",
+                )
         # Isolate ordering from admission; all candidates have positive cosine.
-        monkeypatch.setattr(search.store, "semantic_background", lambda _: dict.fromkeys(("text", "image", "video"), 0.0))
+        monkeypatch.setattr(
+            search.store,
+            "semantic_background",
+            lambda _: dict.fromkeys(("text", "image", "video"), 0.0),
+        )
         hits = (await search.search("meaning", 10, None))["results"]
         assert hits[0]["path"] == str(root / f"{strong_kind}_0.txt")
         assert hits[0]["matched"] == ["semantic"]
@@ -1890,7 +2072,10 @@ def test_standardized_semantic_order_with_fake_embedder(tmp_path, monkeypatch, s
         grouped = await search.search("meaning", 10, None, group_limit=5)
         assert grouped["results"] == hits
         assert grouped["groups"][0]["kind"] == strong_kind
-        assert {g["kind"]: g["total"] for g in grouped["groups"]} == {"text": 21 if strong_kind == "text" else 22, "image": 21}
+        assert {g["kind"]: g["total"] for g in grouped["groups"]} == {
+            "text": 21 if strong_kind == "text" else 22,
+            "image": 21,
+        }
         for group in grouped["groups"]:
             assert len(group["results"]) == 5
             values = [cosines[hit["path"]] for hit in group["results"]]
@@ -1910,11 +2095,16 @@ def test_standardized_semantic_order_with_fake_embedder(tmp_path, monkeypatch, s
 
 def test_standardized_near_ties_interleave_without_moving_lexical_hits():
     rows = {i: {"path": str(i), "kind": "text" if i < 6 else "image"} for i in range(9)}
-    kwargs = dict(rows=rows, semantic_legs=[[0, 1, 2, 3, 4, 5], [6, 7, 8]],
-                  semantic_scores={i: .9 - i / 100 for i in rows},
-                  keyword_evidence={0: 3, 1: 2, 2: 1})
+    kwargs = dict(
+        rows=rows,
+        semantic_legs=[[0, 1, 2, 3, 4, 5], [6, 7, 8]],
+        semantic_scores={i: 0.9 - i / 100 for i in rows},
+        keyword_evidence={0: 3, 1: 2, 2: 1},
+    )
     baseline = fuse([], [0, 1, 2], **kwargs)
-    ranked = fuse([], [0, 1, 2], semantic_standardized=dict.fromkeys(rows, 4.0), **kwargs)
+    ranked = fuse(
+        [], [0, 1, 2], semantic_standardized=dict.fromkeys(rows, 4.0), **kwargs
+    )
     assert ranked[:3] == baseline[:3]
     assert [i for i, _, _ in ranked[3:]] == [3, 6, 4, 7, 5, 8]
 
@@ -1926,9 +2116,11 @@ def test_grouped_rankings_lexical_tiers_and_best_file_head_statistics():
     # The document's lexical chunk differs from its best semantic chunk.
     rows[6] = {"path": "0", "kind": "text"}
     groups = grouped_rankings(
-        [0, 1, 2], rows=rows, semantic_legs=[[6, 3, 2, 1], [4, 5]],
-        semantic_scores={6: .9, 3: .8, 2: .7, 1: .6, 4: .95, 5: .9},
-        semantic_standardized={6: 1, 3: .5, 2: .2, 1: 0, 4: 8, 5: 6},
+        [0, 1, 2],
+        rows=rows,
+        semantic_legs=[[6, 3, 2, 1], [4, 5]],
+        semantic_scores={6: 0.9, 3: 0.8, 2: 0.7, 1: 0.6, 4: 0.95, 5: 0.9},
+        semantic_standardized={6: 1, 3: 0.5, 2: 0.2, 1: 0, 4: 8, 5: 6},
         keyword_evidence={0: 3, 1: 2, 2: 1},
     )
     assert [kind for kind, _ in groups] == ["text", "image"]
@@ -1937,8 +2129,11 @@ def test_grouped_rankings_lexical_tiers_and_best_file_head_statistics():
     # deterministic kind order, without near-tie interleaving between sections.
     for strength, order in [(8, ["image", "text"]), (1, ["text", "image"])]:
         groups = grouped_rankings(
-            [], rows=rows, semantic_legs=[[6], [4]],
-            semantic_scores={6: .9, 4: .7}, semantic_standardized={6: 1, 4: strength},
+            [],
+            rows=rows,
+            semantic_legs=[[6], [4]],
+            semantic_scores={6: 0.9, 4: 0.7},
+            semantic_standardized={6: 1, 4: strength},
             keyword_evidence={},
         )
         assert [kind for kind, _ in groups] == order
@@ -1953,16 +2148,29 @@ def test_group_totals_exclude_missing_files_and_respect_scope(tmp_path):
             for n in range(3):
                 path = root / f"{kind}-{n}.txt"
                 path.write_text("fixture")
-                search.store.replace(fid, path, path.stat(), None,
-                    [Chunk("fixture" if kind == "text" else "", None, None, kind)], [[1, 0, 0]], "indexed")
+                search.store.replace(
+                    fid,
+                    path,
+                    path.stat(),
+                    None,
+                    [Chunk("fixture" if kind == "text" else "", None, None, kind)],
+                    [[1, 0, 0]],
+                    "indexed",
+                )
         (root / "text-1.txt").unlink()
         search._embed = lambda _: [[1, 0, 0]]
         response = await search.search("meaning", 1, None, group_limit=1)
-        assert {g["kind"]: g["total"] for g in response["groups"]} == {"text": 2, "image": 3, "video": 3}
+        assert {g["kind"]: g["total"] for g in response["groups"]} == {
+            "text": 2,
+            "image": 3,
+            "video": 3,
+        }
         assert len(response["results"]) == 1
         assert all(len(g["results"]) == 1 for g in response["groups"])
         assert (await search.search("meaning", 1, [], group_limit=50))["groups"] == []
-        assert "groups" not in await search.search("meaning", 1, None, ["text", "text"], 50)
+        assert "groups" not in await search.search(
+            "meaning", 1, None, ["text", "text"], 50
+        )
         await search.close()
 
     asyncio.run(scenario())
@@ -2002,7 +2210,7 @@ def test_query_outlier_rescue_with_fake_embedder(tmp_path):
                     vectors.append([0, 0, 1] if "absent" in text else [1, 0, 0])
                 else:
                     cosine = 0.6 if "needle" in text else 0.2
-                    vectors.append([cosine, np.sqrt(1 - cosine ** 2), 0])
+                    vectors.append([cosine, np.sqrt(1 - cosine**2), 0])
             return vectors
 
     async def scenario():
@@ -2015,7 +2223,9 @@ def test_query_outlier_rescue_with_fake_embedder(tmp_path):
         hits = (await search.search("meaning", 10, None))["results"]
         assert len(hits) == 1 and hits[0]["path"] == str(root / "file_0.txt")
         assert hits[0]["matched"] == ["semantic"]
-        assert search.store.semantic_background(search.store.search_rows())["text"] > 0.6
+        assert (
+            search.store.semantic_background(search.store.search_rows())["text"] > 0.6
+        )
         assert not (await search.search("absent", 10, None))["results"]
         await search.close()
 
@@ -2071,15 +2281,20 @@ def test_adaptive_background_independent_of_other_kinds_and_scoped_folders(tmp_p
         fid = search.store.add_folder(root)[0]
         # Each kind has its own background; dense stills cannot suppress a video.
         for n, (kind, values) in enumerate(
-            [("image", [0.63])] + [("image", [0.7])] * 28
+            [("image", [0.63])]
+            + [("image", [0.7])] * 28
             + [("video", [0.76, 0.69]), ("text", [0.0])]
         ):
             path = root / f"entry_{n}.{kind}"
             path.write_bytes(b"fixture")
-            chunks = [Chunk("", None, None, kind, float(j * 5) if kind == "video" else None)
-                      for j in range(len(values))]
+            chunks = [
+                Chunk("", None, None, kind, float(j * 5) if kind == "video" else None)
+                for j in range(len(values))
+            ]
             vectors = [[v, np.sqrt(1 - v * v), 0] for v in values]
-            search.store.replace(fid, path, path.stat(), None, chunks, vectors, "indexed")
+            search.store.replace(
+                fid, path, path.stat(), None, chunks, vectors, "indexed"
+            )
         search._embed = lambda _: np.array([[1.0, 0.0, 0.0]])
         for kinds in (None, ["video"], ["image", "video"]):
             results = (await search.search("unrelated", 100, None, kinds))["results"]
@@ -2097,9 +2312,15 @@ def test_adaptive_background_independent_of_other_kinds_and_scoped_folders(tmp_p
         other_fid = search.store.add_folder(other)[0]
         path = other / "other.image"
         path.write_bytes(b"fixture")
-        search.store.replace(other_fid, path, path.stat(), None,
-                             [Chunk("", None, None, "image")] * 40,
-                             [[1, 0, 0]] * 40, "indexed")
+        search.store.replace(
+            other_fid,
+            path,
+            path.stat(),
+            None,
+            [Chunk("", None, None, "image")] * 40,
+            [[1, 0, 0]] * 40,
+            "indexed",
+        )
         results = (await search.search("unrelated", 100, [fid], ["video"]))["results"]
         assert len(results) == 1 and results[0]["timestamp"] == 0.0
         await search.close()
@@ -2120,9 +2341,7 @@ def test_media_schema_and_chunking_rebuild_previously_skipped_files(tmp_path):
             fid, path, path.stat(), None, [], None, "skipped: unsupported"
         )
         search.store.sql("UPDATE meta SET value='1' WHERE key='schema_version'")
-        search.store.sql(
-            "UPDATE meta SET value='2' WHERE key='chunking_version'"
-        )
+        search.store.sql("UPDATE meta SET value='2' WHERE key='chunking_version'")
 
         await search.close()
         search = engine(tmp_path)
@@ -2403,7 +2622,9 @@ def test_unexpected_decoder_failure_does_not_abort_folder(tmp_path, monkeypatch)
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("identifier", ["DEC-0054", "src/lib/i18n.ts", "RAPID_MLX_HOME", "foo.bar"])
+@pytest.mark.parametrize(
+    "identifier", ["DEC-0054", "src/lib/i18n.ts", "RAPID_MLX_HOME", "foo.bar"]
+)
 @pytest.mark.parametrize("in_filename", [False, True])
 def test_keyword_compounds_are_literal(tmp_path, identifier, in_filename):
     from rapid_mlx.local_search.search import query_terms
@@ -2416,24 +2637,41 @@ def test_keyword_compounds_are_literal(tmp_path, identifier, in_filename):
     # Paths containing slashes must be tested in content, since only basenames
     # participate in filename keyword lookup.
     name = identifier if in_filename and "/" not in identifier else "exact"
-    entries = [(name + ".txt", "needle " + ("" if name == identifier else identifier)),
-               ("split.txt", "needle " + split),
-               ("separator.txt", "needle " + identifier.replace(".", " ").replace("-", " ").replace("_", " ").replace("/", " "))]
+    entries = [
+        (name + ".txt", "needle " + ("" if name == identifier else identifier)),
+        ("split.txt", "needle " + split),
+        (
+            "separator.txt",
+            "needle "
+            + identifier.replace(".", " ")
+            .replace("-", " ")
+            .replace("_", " ")
+            .replace("/", " "),
+        ),
+    ]
     for name, text in entries:
         path = root / name
         path.write_text(text)
-        store.replace(fid, path, path.stat(), None, [Chunk(text, 1, None)], None, "keyword")
+        store.replace(
+            fid, path, path.stat(), None, [Chunk(text, 1, None)], None, "keyword"
+        )
     rows = store.rows()
     expected = [i for i, row in rows.items() if Path(row["path"]).name == entries[0][0]]
-    assert store.keyword(query_terms(identifier), set(rows), query=identifier) == expected
+    assert (
+        store.keyword(query_terms(identifier), set(rows), query=identifier) == expected
+    )
     # A common identifier must not be discarded for another distinctive term.
-    assert store.keyword(query_terms("needle " + identifier), set(rows),
-                         distinctive=["needle"]) == expected
+    assert (
+        store.keyword(
+            query_terms("needle " + identifier), set(rows), distinctive=["needle"]
+        )
+        == expected
+    )
     store.close()
 
 
 def test_video_dedupe_accumulates_slow_drift(tmp_path, monkeypatch):
-    import cv2
+    cv2 = pytest.importorskip("cv2")
     from rapid_mlx.local_search.extraction import media_frames
 
     root = folder(tmp_path)
@@ -2444,7 +2682,7 @@ def test_video_dedupe_accumulates_slow_drift(tmp_path, monkeypatch):
         value = -1
         released = False
 
-        def isOpened(self):
+        def isOpened(self):  # noqa: N802 - decoder interface
             return True
 
         def get(self, key):
@@ -2470,7 +2708,11 @@ def test_video_dedupe_accumulates_slow_drift(tmp_path, monkeypatch):
 def test_whole_mac_validation_and_overlap_without_walking(tmp_path):
     assert validate_folder("/") == Path("/")
     for first, second in ((Path("/"), tmp_path), (tmp_path, Path("/"))):
-        store = Store(tmp_path / ("root-first.sqlite" if first == Path("/") else "root-last.sqlite"), "fake")
+        store = Store(
+            tmp_path
+            / ("root-first.sqlite" if first == Path("/") else "root-last.sqlite"),
+            "fake",
+        )
         try:
             fid, _ = store.add_folder(first)
             assert store.add_folder(first) == (fid, False)
@@ -2483,13 +2725,36 @@ def test_whole_mac_validation_and_overlap_without_walking(tmp_path):
             store.close()
 
 
-@pytest.mark.parametrize("chosen", [
-    "whole", "home", "documents", "volume", "library", "icloud", "other-library",
-    "system", "scratch",
-])
+@pytest.mark.parametrize(
+    "chosen",
+    [
+        "whole",
+        "home",
+        "documents",
+        "volume",
+        "library",
+        "icloud",
+        "other-library",
+        "system",
+        "scratch",
+    ],
+)
 def test_absolute_os_and_all_user_library_skips(tmp_path, monkeypatch, chosen):
     from rapid_mlx.local_search import extraction
-    os_names = ("System", "Library", "usr", "bin", "sbin", "private", "dev", "cores", "opt", "Network", "Volumes")
+
+    os_names = (
+        "System",
+        "Library",
+        "usr",
+        "bin",
+        "sbin",
+        "private",
+        "dev",
+        "cores",
+        "opt",
+        "Network",
+        "Volumes",
+    )
     prefixes = tuple(tmp_path / n for n in os_names)
     monkeypatch.setattr(extraction, "SKIP_PREFIXES", prefixes)
     monkeypatch.setattr(extraction, "USERS_DIRECTORY", tmp_path / "Users")
@@ -2516,24 +2781,36 @@ def test_absolute_os_and_all_user_library_skips(tmp_path, monkeypatch, chosen):
     (scratch / "good.txt").write_text("banana")
     # The temp tree stands in for "/"; never walk the real filesystem root.
     root = {
-        "whole": tmp_path, "home": home, "documents": documents, "volume": volume,
-        "library": home / "Library", "icloud": icloud,
+        "whole": tmp_path,
+        "home": home,
+        "documents": documents,
+        "volume": volume,
+        "library": home / "Library",
+        "icloud": icloud,
         "other-library": tmp_path / "Users" / "bob" / "Library",
-        "system": tmp_path / "System", "scratch": scratch,
+        "system": tmp_path / "System",
+        "scratch": scratch,
     }[chosen]
     expected = {
-        "whole": [documents / "good.txt"], "home": [documents / "good.txt"],
-        "documents": [documents / "good.txt"], "volume": [volume / "good.txt"],
+        "whole": [documents / "good.txt"],
+        "home": [documents / "good.txt"],
+        "documents": [documents / "good.txt"],
+        "volume": [volume / "good.txt"],
         "library": [home / "Library" / "nested" / "excluded.txt", icloud / "good.txt"],
         "icloud": [icloud / "good.txt"],
         "other-library": [root / "nested" / "excluded.txt"],
-        "system": [root / "excluded.txt"], "scratch": [scratch / "good.txt"],
+        "system": [root / "excluded.txt"],
+        "scratch": [scratch / "good.txt"],
     }[chosen]
     assert validate_folder(str(root)) == root
     files, skipped = scan(root)
     assert set(files) == set(expected)
     assert skipped == {"whole": len(prefixes) + 2, "home": 1}.get(chosen, 0)
-    for selected in (*prefixes, home / "Library", tmp_path / "Users" / "bob" / "Library"):
+    for selected in (
+        *prefixes,
+        home / "Library",
+        tmp_path / "Users" / "bob" / "Library",
+    ):
         assert validate_folder(str(selected)) == selected
         selected_files, selected_skipped = scan(selected)
         assert selected_files
@@ -2550,7 +2827,9 @@ def test_absolute_os_and_all_user_library_skips(tmp_path, monkeypatch, chosen):
         try:
             (await search.add_folder(str(root)))
             await search.wait_idle()
-            assert {row["path"] for row in search.store.rows().values()} == {str(path) for path in files}
+            assert {row["path"] for row in search.store.rows().values()} == {
+                str(path) for path in files
+            }
             assert len(fake.calls) == len(expected)
             assert search.status()["folders"][0]["files_skipped"] == skipped
         finally:
@@ -2567,7 +2846,6 @@ def test_unreadable_directory_is_skipped_and_indexing_continues(tmp_path, monkey
     original = os.scandir
 
     def scandir(path):
-        import stat
         if isinstance(path, int):
             denied_path = os.fstat(path).st_ino == denied.stat().st_ino
         else:
@@ -2595,6 +2873,7 @@ def test_unreadable_directory_is_skipped_and_indexing_continues(tmp_path, monkey
 
 def test_files_searchable_before_discovery_finishes(tmp_path, monkeypatch):
     from rapid_mlx.local_search import service
+
     root = folder(tmp_path)
     first = root / "first.txt"
     first.write_text("apple")
@@ -2622,7 +2901,10 @@ def test_files_searchable_before_discovery_finishes(tmp_path, monkeypatch):
             assert search.progress["files_total"] == 0
             assert not finished
             assert search.progress["files_done"] == 1
-            assert any(r["path"] == str(first) for r in (await search.search("apple", 20, None))["results"])
+            assert any(
+                r["path"] == str(first)
+                for r in (await search.search("apple", 20, None))["results"]
+            )
             continued.set()
             await release.wait()
 
@@ -2676,12 +2958,26 @@ def test_full_phrase_beats_two_weak_votes_and_keeps_best_chunk():
         4: {"path": "frame.mp4", "kind": "video"},
     }
     query = "orbital resonance certificate"
-    assert lexical_tier(query, query.split(), "orbital\nresonance certificate", "target.md") == 2
-    assert lexical_tier(query, query.split(), "orbital certificate resonance", "near.md") == 0
+    assert (
+        lexical_tier(
+            query, query.split(), "orbital\nresonance certificate", "target.md"
+        )
+        == 2
+    )
+    assert (
+        lexical_tier(query, query.split(), "orbital certificate resonance", "near.md")
+        == 0
+    )
     # A keyword-only literal chunk defeats a semantic+partial keyword neighbour,
     # and repeated weak chunks from that same file cannot replace its snippet.
-    ranked = fuse([], [2, 1, 3], rows=rows, semantic_legs=[[1], [], [4]],
-                  semantic_scores={1: .9, 4: .8}, keyword_evidence={2: 2, 1: 0, 3: 0})
+    ranked = fuse(
+        [],
+        [2, 1, 3],
+        rows=rows,
+        semantic_legs=[[1], [], [4]],
+        semantic_scores={1: 0.9, 4: 0.8},
+        keyword_evidence={2: 2, 1: 0, 3: 0},
+    )
     assert ranked[0][0] == 2
     assert ranked[0][2] == ["keyword"]
     assert len(ranked) == 3
@@ -2716,60 +3012,99 @@ def test_distinctive_frequency_is_invariant_to_keyword_only_tails(tmp_path):
     root = folder(tmp_path)
     store = Store(tmp_path / "index.sqlite3", "model")
     fid = store.add_folder(root)[0]
-    for name, text in [("a.txt", "needle common"), ("b.txt", "common"), ("data.txt", "data")]:
+    for name, text in [
+        ("a.txt", "needle common"),
+        ("b.txt", "common"),
+        ("data.txt", "data"),
+    ]:
         path = root / name
         path.write_text(text)
-        store.replace(fid, path, path.stat(), None, [Chunk(text, 1, None)], None, "keyword")
+        store.replace(
+            fid, path, path.stat(), None, [Chunk(text, 1, None)], None, "keyword"
+        )
     before = store.distinctive_terms(["needle", "common"])
     data = root / "data.txt"
     # A generated file may dwarf the rest of the corpus, without making words
     # occurring in several other files 'distinctive'.
-    store.replace(fid, data, data.stat(), None, [Chunk("data", n, None) for n in range(200)], None, "keyword")
+    store.replace(
+        fid,
+        data,
+        data.stat(),
+        None,
+        [Chunk("data", n, None) for n in range(200)],
+        None,
+        "keyword",
+    )
     assert store.distinctive_terms(["needle", "common"]) == before == ["needle"]
     # Replacing a file must invalidate frequency results, including removals.
     target = root / "b.txt"
-    store.replace(fid, target, target.stat(), None, [Chunk("needle common", 1, None)], None, "keyword")
+    store.replace(
+        fid,
+        target,
+        target.stat(),
+        None,
+        [Chunk("needle common", 1, None)],
+        None,
+        "keyword",
+    )
     assert store.distinctive_terms(["needle"]) == []
     store.close()
 
 
-@pytest.mark.parametrize("query,name,expected", [
-    ("memo", "memo.pdf", (True, 1 / 2)),
-    ("memo", "plain_memo.pdf", (False, 1 / 3)),
-    ("memo", "a_very_long_memo_name_v2.pdf", (False, 1 / 8)),
-    ("memo", "memory_notes.md", (False, 0)),
-    ("memo notes", "memoNotes.md", (True, 2 / 3)),
-    ("memo", "XMLMemo2Notes.PDF", (False, 1 / 5)),
-    ("memo 2", "memo2.pdf", (True, 2 / 3)),
-    ("strasse", "Straße.pdf", (True, 1 / 2)),
-    ("école", "ÉcoleMémo.pdf", (False, 1 / 3)),
-    ("中文", "年度中文记录.pdf", (False, 1 / 2)),
-    ("東京", "東京の記録.pdf", (False, 1 / 2)),
-    ("보고", "연간보고서.pdf", (False, 1 / 2)),
-    ("memo pdf", "plain_memo.pdf", (False, 2 / 3)),
-    ("scanned_deposition", "scanned_deposition.pdf", (True, 2 / 3)),
-    ("notes memo", "memo_notes.md", (False, 2 / 3)),
-    ("memo missing", "plain_memo.pdf", (False, 0)),
-    ("", "memo.pdf", (False, 0)),
-])
+@pytest.mark.parametrize(
+    "query,name,expected",
+    [
+        ("memo", "memo.pdf", (True, 1 / 2)),
+        ("memo", "plain_memo.pdf", (False, 1 / 3)),
+        ("memo", "a_very_long_memo_name_v2.pdf", (False, 1 / 8)),
+        ("memo", "memory_notes.md", (False, 0)),
+        ("memo notes", "memoNotes.md", (True, 2 / 3)),
+        ("memo", "XMLMemo2Notes.PDF", (False, 1 / 5)),
+        ("memo 2", "memo2.pdf", (True, 2 / 3)),
+        ("strasse", "Straße.pdf", (True, 1 / 2)),
+        ("école", "ÉcoleMémo.pdf", (False, 1 / 3)),
+        ("中文", "年度中文记录.pdf", (False, 1 / 2)),
+        ("東京", "東京の記録.pdf", (False, 1 / 2)),
+        ("보고", "연간보고서.pdf", (False, 1 / 2)),
+        ("memo pdf", "plain_memo.pdf", (False, 2 / 3)),
+        ("scanned_deposition", "scanned_deposition.pdf", (True, 2 / 3)),
+        ("notes memo", "memo_notes.md", (False, 2 / 3)),
+        ("memo missing", "plain_memo.pdf", (False, 0)),
+        ("", "memo.pdf", (False, 0)),
+    ],
+)
 def test_filename_token_evidence(query, name, expected):
     from rapid_mlx.local_search.search import filename_match, lexical_tier, query_terms
 
     terms = query_terms(query)
     assert filename_match(query, terms, name) == expected
-    assert lexical_tier(query, terms, "", name) == (3 if expected[1] else
-        1 if terms and all(term.casefold() in name.casefold() for term in terms) else 0)
+    assert lexical_tier(query, terms, "", name) == (
+        3
+        if expected[1]
+        else 1
+        if terms and all(term.casefold() in name.casefold() for term in terms)
+        else 0
+    )
     if query:
         assert lexical_tier(query, terms, query + " unrelated body", "other.txt") == 2
 
 
-@pytest.mark.parametrize("query,normal,named,distractor", [
-    ("memo", "plain_memo.pdf", "locked_memo.pdf", "memory buffers"),
-    ("deposition", "plain_deposition.pdf", "scanned_deposition.pdf", "deposition record"),
-    ("中文记录", "年度中文记录.pdf", "锁定中文记录.pdf", "中文记录内容"),
-])
-def test_filename_words_outrank_corpus_content_and_name_only(tmp_path, monkeypatch,
-                                                          query, normal, named, distractor):
+@pytest.mark.parametrize(
+    "query,normal,named,distractor",
+    [
+        ("memo", "plain_memo.pdf", "locked_memo.pdf", "memory buffers"),
+        (
+            "deposition",
+            "plain_deposition.pdf",
+            "scanned_deposition.pdf",
+            "deposition record",
+        ),
+        ("中文记录", "年度中文记录.pdf", "锁定中文记录.pdf", "中文记录内容"),
+    ],
+)
+def test_filename_words_outrank_corpus_content_and_name_only(
+    tmp_path, monkeypatch, query, normal, named, distractor
+):
     from rapid_mlx.local_search import store as storage
     from rapid_mlx.local_search.search import query_terms
 
@@ -2793,38 +3128,58 @@ def test_filename_words_outrank_corpus_content_and_name_only(tmp_path, monkeypat
             await search.wait_idle()
             rows = search.store.search_rows(None, None)
             evidence = {}
-            keyword = search.store.keyword(query_terms(query), rows, query=query, evidence=evidence)
+            keyword = search.store.keyword(
+                query_terms(query), rows, query=query, evidence=evidence
+            )
             content_order = [rows[i]["path"] for i in keyword if evidence[i] < 3]
             assert len(content_order) > 4
             response = await search.search(query, 100, None, group_limit=50)
             hits = response["results"]
-            expected = [str(root / name) for name in [f"{query}.pdf", normal, named, long_name]]
+            expected = [
+                str(root / name) for name in [f"{query}.pdf", normal, named, long_name]
+            ]
             # Equal coverage retains the existing candidate order: indexed then name-only.
             assert [hit["path"] for hit in hits[:4]] == expected
             assert [hit["path"] for hit in hits[4:]] == content_order
             assert hits[1]["content_indexed"] is True
             assert hits[2]["content_indexed"] is False
             assert all(hit["matched"] == ["keyword"] for hit in hits)
-            assert response["groups"] == [{"kind": "text", "results": hits, "total": len(hits)}]
+            assert response["groups"] == [
+                {"kind": "text", "results": hits, "total": len(hits)}
+            ]
             if query == "memo":
-                assert all(evidence[i] < 3 for i in keyword if Path(rows[i]["path"]).name == "memory_notes.md")
+                assert all(
+                    evidence[i] < 3
+                    for i in keyword
+                    if Path(rows[i]["path"]).name == "memory_notes.md"
+                )
             # Existing multi-term/full-stem lookups still use this same tier.
             for phrase in [normal.removesuffix(".pdf"), query + " pdf"]:
-                assert (await search.search(phrase, 100, None))["results"][0]["content_indexed"] is True
+                assert (await search.search(phrase, 100, None))["results"][0][
+                    "content_indexed"
+                ] is True
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_filename_group_head_has_lexical_evidence():
     from rapid_mlx.local_search.search import grouped_rankings, lexical_tier
 
-    rows = {0: {"path": "scanned_deposition.png", "kind": "image"},
-            1: {"path": "record.txt", "kind": "text"}}
+    rows = {
+        0: {"path": "scanned_deposition.png", "kind": "image"},
+        1: {"path": "record.txt", "kind": "text"},
+    }
     groups = grouped_rankings(
-        [0], rows=rows, semantic_legs=[[1]], semantic_scores={1: .99},
+        [0],
+        rows=rows,
+        semantic_legs=[[1]],
+        semantic_scores={1: 0.99},
         semantic_standardized={1: 10},
-        keyword_evidence={0: lexical_tier("deposition", ["deposition"], "", rows[0]["path"])},
+        keyword_evidence={
+            0: lexical_tier("deposition", ["deposition"], "", rows[0]["path"])
+        },
     )
     assert [kind for kind, _ in groups] == ["image", "text"]
     assert groups[0][1][0][0] == 0
@@ -2835,17 +3190,23 @@ def test_common_filename_terms_still_match_and_exact_basename_wins(tmp_path):
         root = folder(tmp_path)
         search = LocalSearch(tmp_path / "index", resolve_model=lambda _: None)
         fid = search.store.add_folder(root)[0]
-        for name, text in [("orbit-map.txt", "unrelated"),
-                           ("b.txt", "orbit and map"), ("c.txt", "orbit map")]:
+        for name, text in [
+            ("orbit-map.txt", "unrelated"),
+            ("b.txt", "orbit and map"),
+            ("c.txt", "orbit map"),
+        ]:
             path = root / name
             path.write_text(text)
-            search.store.replace(fid, path, path.stat(), None, [Chunk(text, 1, None)], None, "keyword")
+            search.store.replace(
+                fid, path, path.stat(), None, [Chunk(text, 1, None)], None, "keyword"
+            )
         assert search.store.distinctive_terms(["orbit", "map"]) == []
         hits = (await search.search("orbit map", 10, None))["results"]
         assert Path(hits[0]["path"]).name == "orbit-map.txt"
         assert hits[0]["matched"] == ["keyword"]
         assert all(0 <= hit["score"] <= 1 for hit in hits)
         await search.close()
+
     asyncio.run(scenario())
 
 
@@ -2855,7 +3216,9 @@ def test_metadata_search_cache_tracks_replacements_deletion_scope_and_touch(tmp_
     fid = store.add_folder(root)[0]
     path = root / "a.txt"
     path.write_text("first")
-    store.replace(fid, path, path.stat(), "old", [Chunk("first", 1, None)], None, "keyword")
+    store.replace(
+        fid, path, path.stat(), "old", [Chunk("first", 1, None)], None, "keyword"
+    )
     rows = store.search_rows()
     first_id = next(iter(rows))
     assert "text" not in rows[first_id]
@@ -2864,7 +3227,9 @@ def test_metadata_search_cache_tracks_replacements_deletion_scope_and_touch(tmp_
     assert store.search_rows(None, ["image"]) == {}
     assert store.search_rows(None, ["text"])[first_id]["content_hash"] == "old"
     path.write_text("replacement")
-    store.replace(fid, path, path.stat(), "new", [Chunk("replacement", 1, None)], None, "keyword")
+    store.replace(
+        fid, path, path.stat(), "new", [Chunk("replacement", 1, None)], None, "keyword"
+    )
     rows = store.search_rows()
     replacement_id = next(iter(rows))
     assert first_id not in rows
@@ -2879,19 +3244,29 @@ def test_metadata_search_cache_tracks_replacements_deletion_scope_and_touch(tmp_
 
 
 def test_video_keyword_evidence_survives_best_frame_selection():
-    rows = {1: {"path": "unique.mp4", "kind": "video"},
-            2: {"path": "unique.mp4", "kind": "video"},
-            3: {"path": "other.md", "kind": "text"}}
-    ranked = fuse([], [1], rows=rows, semantic_legs=[[3], [], [2]],
-                  semantic_scores={2: .7, 3: .9}, keyword_evidence={1: 3})
+    rows = {
+        1: {"path": "unique.mp4", "kind": "video"},
+        2: {"path": "unique.mp4", "kind": "video"},
+        3: {"path": "other.md", "kind": "text"},
+    }
+    ranked = fuse(
+        [],
+        [1],
+        rows=rows,
+        semantic_legs=[[3], [], [2]],
+        semantic_scores={2: 0.7, 3: 0.9},
+        keyword_evidence={1: 3},
+    )
     assert ranked[0][0] == 2
     assert ranked[0][2] == ["semantic", "keyword"]
 
 
 def test_semantic_collapse_keeps_first_chunk_and_counts_one_vote():
-    rows = {1: {"path": "frames.mp4", "kind": "video"},
-            2: {"path": "other.png", "kind": "image"},
-            3: {"path": "frames.mp4", "kind": "video"}}
+    rows = {
+        1: {"path": "frames.mp4", "kind": "video"},
+        2: {"path": "other.png", "kind": "image"},
+        3: {"path": "frames.mp4", "kind": "video"},
+    }
     ranked = fuse([1, 2, 3], [], rows=rows)
     assert [i for i, _, _ in ranked] == [1, 2]
     assert ranked[0][1] == fuse([1], [], rows=rows)[0][1]
@@ -2913,18 +3288,26 @@ def office_fixture(suffix):
     sheet = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
     def relationships(entries):
-        return f'<Relationships xmlns="{package}">' + "".join(
-            f'<Relationship Id="{rid}" Type="{rel}/{kind}" Target="{target}"/>'
-            for rid, kind, target in entries
-        ) + '</Relationships>'
+        return (
+            f'<Relationships xmlns="{package}">'
+            + "".join(
+                f'<Relationship Id="{rid}" Type="{rel}/{kind}" Target="{target}"/>'
+                for rid, kind, target in entries
+            )
+            + "</Relationships>"
+        )
 
     def paragraph(ns, label):
         return f'<a:p xmlns:a="{ns}"><a:r><a:t>{label}</a:t></a:r></a:p>'
 
     if suffix == ".docx":
-        parts = {"word/document.xml": f'<w:document xmlns:w="{word}"><w:body>' +
-                 paragraph(word, "apple body") + '<w:tbl><w:tr><w:tc>' +
-                 paragraph(word, "banana table") + '</w:tc></w:tr></w:tbl></w:body></w:document>'}
+        parts = {
+            "word/document.xml": f'<w:document xmlns:w="{word}"><w:body>'
+            + paragraph(word, "apple body")
+            + "<w:tbl><w:tr><w:tc>"
+            + paragraph(word, "banana table")
+            + "</w:tc></w:tr></w:tbl></w:body></w:document>"
+        }
         for name in ("header1", "footer1", "footnotes", "endnotes", "comments"):
             parts[f"word/{name}.xml"] = paragraph(word, name + " legal clause")
         return office_zip(parts), [None]
@@ -2933,19 +3316,30 @@ def office_fixture(suffix):
         # Relationship order, not filenames, determines the user-visible slide.
         parts = {
             "ppt/presentation.xml": f'<p:presentation xmlns:p="{presentation}" xmlns:r="{rel}"><p:sldIdLst><p:sldId r:id="s2"/><p:sldId r:id="s1"/></p:sldIdLst></p:presentation>',
-            "ppt/_rels/presentation.xml.rels": relationships([
-                ("s1", "slide", "slides/slide1.xml"), ("s2", "slide", "slides/slide2.xml")]),
+            "ppt/_rels/presentation.xml.rels": relationships(
+                [
+                    ("s1", "slide", "slides/slide1.xml"),
+                    ("s2", "slide", "slides/slide2.xml"),
+                ]
+            ),
             "ppt/slides/slide1.xml": paragraph(drawing, "banana second slide"),
             "ppt/slides/slide2.xml": paragraph(drawing, "apple first slide"),
-            "ppt/slides/_rels/slide2.xml.rels": relationships([
-                ("note", "notesSlide", "../notesSlides/notesSlide7.xml")]),
-            "ppt/notesSlides/notesSlide7.xml": paragraph(drawing, "speaker patent notes"),
+            "ppt/slides/_rels/slide2.xml.rels": relationships(
+                [("note", "notesSlide", "../notesSlides/notesSlide7.xml")]
+            ),
+            "ppt/notesSlides/notesSlide7.xml": paragraph(
+                drawing, "speaker patent notes"
+            ),
         }
         return office_zip(parts), [1, 2]
     parts = {
         "xl/workbook.xml": f'<workbook xmlns="{sheet}" xmlns:r="{rel}"><sheets><sheet name="First" r:id="s2"/><sheet name="Second" r:id="s1"/></sheets></workbook>',
-        "xl/_rels/workbook.xml.rels": relationships([
-            ("s1", "worksheet", "worksheets/sheet1.xml"), ("s2", "worksheet", "worksheets/sheet2.xml")]),
+        "xl/_rels/workbook.xml.rels": relationships(
+            [
+                ("s1", "worksheet", "worksheets/sheet1.xml"),
+                ("s2", "worksheet", "worksheets/sheet2.xml"),
+            ]
+        ),
         "xl/sharedStrings.xml": f'<sst xmlns="{sheet}"><si><r><t>apple </t></r><r><t>shared string</t></r></si></sst>',
         "xl/worksheets/sheet2.xml": f'<worksheet xmlns="{sheet}"><sheetData><row><c t="s"><v>0</v></c><c t="inlineStr"><is><t>banana inline string</t></is></c><c><v>42</v></c></row></sheetData></worksheet>',
         "xl/worksheets/sheet1.xml": f'<worksheet xmlns="{sheet}"><sheetData><row><c t="inlineStr"><is><t>second sheet</t></is></c></row></sheetData></worksheet>',
@@ -2959,10 +3353,23 @@ def test_office_text_and_persisted_locators(tmp_path, suffix):
     units = extract(Path("file" + suffix), data)
     assert [u.page for u in units] == pages
     if suffix == ".docx":
-        assert all(label in units[0].text for label in (
-            "apple body", "banana table", "header1", "footer1", "footnotes", "endnotes", "comments"))
+        assert all(
+            label in units[0].text
+            for label in (
+                "apple body",
+                "banana table",
+                "header1",
+                "footer1",
+                "footnotes",
+                "endnotes",
+                "comments",
+            )
+        )
     elif suffix == ".pptx":
-        assert "apple first slide" in units[0].text and "speaker patent notes" in units[0].text
+        assert (
+            "apple first slide" in units[0].text
+            and "speaker patent notes" in units[0].text
+        )
         assert "banana second slide" in units[1].text
     else:
         assert units[0].text == "apple shared string\nbanana inline string\n42"
@@ -2970,6 +3377,7 @@ def test_office_text_and_persisted_locators(tmp_path, suffix):
 
     async def scenario():
         import json
+
         root = folder(tmp_path)
         (root / ("file" + suffix)).write_bytes(data)
         search = engine(tmp_path)
@@ -2983,12 +3391,14 @@ def test_office_text_and_persisted_locators(tmp_path, suffix):
             assert result["page"] == pages[0]
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def pdf_fixture(*, encrypted=False, mixed=False, near_empty=False):
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import DecodedStreamObject, NameObject
+
     writer = PdfWriter()
     page = writer.add_blank_page(300, 300)
     if near_empty:
@@ -3006,11 +3416,14 @@ def pdf_fixture(*, encrypted=False, mixed=False, near_empty=False):
     return output.getvalue()
 
 
-@pytest.mark.parametrize("kwargs,reason", [
-    ({}, "Scanned PDF without text"),
-    ({"near_empty": True}, "Scanned PDF without text"),
-    ({"encrypted": True}, "Password-protected"),
-])
+@pytest.mark.parametrize(
+    "kwargs,reason",
+    [
+        ({}, "Scanned PDF without text"),
+        ({"near_empty": True}, "Scanned PDF without text"),
+        ({"encrypted": True}, "Password-protected"),
+    ],
+)
 def test_pdf_skip_classification(kwargs, reason):
     with pytest.raises(SkippedError, match=reason):
         extract(Path("file.pdf"), pdf_fixture(**kwargs))
@@ -3031,15 +3444,23 @@ def test_mixed_pdf_indexes_text_page(tmp_path):
             assert search.status()["folders"][0]["skip_reasons"] == {}
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_skip_reasons_incremental_restart_and_changes(tmp_path, monkeypatch):
     from rapid_mlx.local_search import service
-    expected = {"Unsupported file type": 6, "Too large": 1, "No readable text": 1,
-                "Scanned PDF without text": 1, "Password-protected": 1,
-                "Could not be read": 2, "Private or system file": 1,
-                "Audio is not supported yet": 1}
+
+    expected = {
+        "Unsupported file type": 6,
+        "Too large": 1,
+        "No readable text": 1,
+        "Scanned PDF without text": 1,
+        "Password-protected": 1,
+        "Could not be read": 2,
+        "Private or system file": 1,
+        "Audio is not supported yet": 1,
+    }
     root = folder(tmp_path)
     for suffix in (".doc", ".xls", ".ppt", ".rtf", ".pages", ".unknown"):
         (root / ("old" + suffix)).write_bytes(b"legacy")
@@ -3055,6 +3476,7 @@ def test_skip_reasons_incremental_restart_and_changes(tmp_path, monkeypatch):
     (root / "node_modules").mkdir()
     (root / "node_modules" / "ignored.bin").write_bytes(b"excluded subtree")
     original_read = service.read_safe
+    original_parse = service.parse_document
 
     def limited_read(path, root, root_fd=None):
         if path.name == "denied.txt":
@@ -3062,9 +3484,15 @@ def test_skip_reasons_incremental_restart_and_changes(tmp_path, monkeypatch):
         return original_read(path, root, 80, root_fd=root_fd)
 
     monkeypatch.setattr(service, "read_safe", limited_read)
+
     # PDF bytes exceed the test-only text cap; let those use the normal cap.
     def read(path, root, root_fd=None):
-        return original_read(path, root, root_fd=root_fd) if path.suffix == ".pdf" else limited_read(path, root, root_fd=root_fd)
+        return (
+            original_read(path, root, root_fd=root_fd)
+            if path.suffix == ".pdf"
+            else limited_read(path, root, root_fd=root_fd)
+        )
+
     monkeypatch.setattr(service, "read_safe", read)
 
     async def scenario():
@@ -3078,16 +3506,20 @@ def test_skip_reasons_incremental_restart_and_changes(tmp_path, monkeypatch):
         search = engine(tmp_path, fake)
         try:
             assert search.status()["folders"][0]["skip_reasons"] == expected
+
             def no_read(*args):
                 pytest.fail("unchanged skipped files must not be read or extracted")
+
             monkeypatch.setattr(service, "read_safe", no_read)
-            monkeypatch.setattr(service, "extract", no_read)
+            monkeypatch.setattr(
+                service, "parse_document", AsyncMock(side_effect=no_read)
+            )
             await search.queue(fid)
             await search.wait_idle()
             assert search.status()["folders"][0]["skip_reasons"] == expected
             assert len(fake.calls) == 1
             monkeypatch.setattr(service, "read_safe", read)
-            monkeypatch.setattr(service, "extract", extract)
+            monkeypatch.setattr(service, "parse_document", original_parse)
             (root / "empty.txt").write_text("banana now readable")
             (root / "scanned.pdf").unlink()
             await search.queue(fid)
@@ -3097,6 +3529,7 @@ def test_skip_reasons_incremental_restart_and_changes(tmp_path, monkeypatch):
             assert search.status()["folders"][0]["skip_reasons"] == changed
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
@@ -3106,9 +3539,11 @@ def test_office_zip_bomb_bound(suffix, monkeypatch):
     data = office_zip({f"part{i}.xml": "x" * 800 for i in range(4)})
     reads = []
     original = zipfile.ZipFile.open
+
     def opened(self, *args, **kwargs):
         reads.append(args[0])
         return original(self, *args, **kwargs)
+
     monkeypatch.setattr(zipfile.ZipFile, "open", opened)
     with pytest.raises(SkippedError, match="size cap"):
         extract(Path("bomb" + suffix), data, max_bytes=2000)
@@ -3117,14 +3552,22 @@ def test_office_zip_bomb_bound(suffix, monkeypatch):
 
 def test_xlsx_cell_cap_and_shared_string_expansion(monkeypatch):
     from rapid_mlx.local_search import extraction
+
     sheet = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
     data, _ = office_fixture(".xlsx")
     monkeypatch.setattr(extraction, "XLSX_MAX_CELLS_PER_SHEET", 2)
-    assert extract(Path("a.xlsx"), data)[0].text == "apple shared string\nbanana inline string"
+    assert (
+        extract(Path("a.xlsx"), data)[0].text
+        == "apple shared string\nbanana inline string"
+    )
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         parts = {name: archive.read(name) for name in archive.namelist()}
-    parts["xl/sharedStrings.xml"] = f'<sst xmlns="{sheet}"><si><t>{"a" * 1000}</t></si></sst>'
-    parts["xl/worksheets/sheet2.xml"] = f'<worksheet xmlns="{sheet}">' + '<c t="s"><v>0</v></c>' * 20 + '</worksheet>'
+    parts["xl/sharedStrings.xml"] = (
+        f'<sst xmlns="{sheet}"><si><t>{"a" * 1000}</t></si></sst>'
+    )
+    parts["xl/worksheets/sheet2.xml"] = (
+        f'<worksheet xmlns="{sheet}">' + '<c t="s"><v>0</v></c>' * 20 + "</worksheet>"
+    )
     monkeypatch.setattr(extraction, "XLSX_MAX_CELLS_PER_SHEET", 100)
     with pytest.raises(SkippedError, match="size cap"):
         extract(Path("a.xlsx"), office_zip(parts), max_bytes=6000)
@@ -3132,25 +3575,42 @@ def test_xlsx_cell_cap_and_shared_string_expansion(monkeypatch):
 
 def test_existing_index_upgrade_without_full_rebuild(tmp_path):
     from rapid_mlx.local_search import MODEL_ID
+
     root = folder(tmp_path)
     store = Store(tmp_path / "index" / "index.sqlite3", MODEL_ID)
     fid = store.add_folder(root)[0]
     good = root / "good.txt"
     good.write_text("apple unchanged")
-    store.replace(fid, good, good.stat(), None, [Chunk("apple unchanged", 1, None)],
-                  [[1., 0., 0.]], "indexed")
+    store.replace(
+        fid,
+        good,
+        good.stat(),
+        None,
+        [Chunk("apple unchanged", 1, None)],
+        [[1.0, 0.0, 0.0]],
+        "indexed",
+    )
     good_id = next(iter(store.vectors))
     for suffix in (".docx", ".pptx", ".xlsx"):
         path = root / ("office" + suffix)
         path.write_bytes(office_fixture(suffix)[0])
-        store.replace(fid, path, path.stat(), None, [], None,
-                      "indexed" if suffix == ".docx" else "skipped: unsupported")
+        store.replace(
+            fid,
+            path,
+            path.stat(),
+            None,
+            [],
+            None,
+            "indexed" if suffix == ".docx" else "skipped: unsupported",
+        )
     blank = root / "scan.pdf"
     blank.write_bytes(pdf_fixture())
     store.replace(fid, blank, blank.stat(), None, [], None, "indexed")
     unsupported = root / "legacy.doc"
     unsupported.write_bytes(b"old")
-    store.replace(fid, unsupported, unsupported.stat(), None, [], None, "skipped: unsupported")
+    store.replace(
+        fid, unsupported, unsupported.stat(), None, [], None, "skipped: unsupported"
+    )
     # Simulate a database written before the additive extraction upgrade.
     with store.db:
         store.db.execute("DELETE FROM meta WHERE key='extraction_version'")
@@ -3159,18 +3619,25 @@ def test_existing_index_upgrade_without_full_rebuild(tmp_path):
     async def scenario():
         search = engine(tmp_path)
         try:
-            assert search.store.folder(fid)["skip_reasons"] == {"Unsupported file type": 1}
+            assert search.store.folder(fid)["skip_reasons"] == {
+                "Unsupported file type": 1
+            }
             assert good_id in search.store.vectors
             search.start()
             await search.wait_idle()
             assert search.store.folder(fid)["skip_reasons"] == {
-                "Unsupported file type": 1, "Scanned PDF without text": 1}
+                "Unsupported file type": 1,
+                "Scanned PDF without text": 1,
+            }
             assert search.store.folder(fid)["files_indexed"] == 4
             assert good_id in search.store.vectors
             assert search.store.chunk_text(good_id) == "apple unchanged"
-            assert not any("unchanged" in text for batch in search.engine.calls for text in batch)
+            assert not any(
+                "unchanged" in text for batch in search.engine.calls for text in batch
+            )
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
@@ -3179,8 +3646,12 @@ def test_xlsx_reuses_per_file_embedding_budget(tmp_path):
     data, _ = office_fixture(".xlsx")
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         parts = {name: archive.read(name) for name in archive.namelist()}
-    parts["xl/worksheets/sheet2.xml"] = f'<worksheet xmlns="{sheet}">' + (
-        '<c t="inlineStr"><is><t>apple ' + 'legal clause ' * 20 + '</t></is></c>') * 400 + '</worksheet>'
+    parts["xl/worksheets/sheet2.xml"] = (
+        f'<worksheet xmlns="{sheet}">'
+        + ('<c t="inlineStr"><is><t>apple ' + "legal clause " * 20 + "</t></is></c>")
+        * 400
+        + "</worksheet>"
+    )
 
     async def scenario():
         root = folder(tmp_path)
@@ -3193,42 +3664,71 @@ def test_xlsx_reuses_per_file_embedding_budget(tmp_path):
             assert len(search.store.vectors) == MAX_EMBEDDED_CHUNKS_PER_FILE
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("text", [
-    "a4" * 150,
-    ("QWxhZGRpbjpvcGVuIHNlc2FtZQ" * 3 + "\n") * 5,
-    "QWxhZGRpbjpvcGVuIHNlc2FtZQ" * 15,
-    '{"payload":[' + ','.join('"value"' for _ in range(60)) + ']}' ,
-    " ".join(chr(97+i//26)+chr(97+i%26) for i in range(50)),
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a4" * 150,
+        ("QWxhZGRpbjpvcGVuIHNlc2FtZQ" * 3 + "\n") * 5,
+        "QWxhZGRpbjpvcGVuIHNlc2FtZQ" * 15,
+        '{"payload":[' + ",".join('"value"' for _ in range(60)) + "]}",
+        " ".join(chr(97 + i // 26) + chr(97 + i % 26) for i in range(50)),
+    ],
+)
 def test_low_information_shapes(text):
     from rapid_mlx.local_search.eligibility import low_information
+
     assert low_information(text)
 
 
-@pytest.mark.parametrize("text", [
-    "A short note",
-    "apple\n" * 50,
-    "This report explains how to benchmark throughput and compare the results. " * 10,
-    "如何运行基准测试并比较每秒处理的令牌数量。" * 30,
-    "ベンチマークの結果を比較してグラフを表示します。" * 30,
-    "벤치마크 결과와 초당 토큰 처리량을 비교합니다. " * 30,
-    "def decode(tokens):\n    return [token.value for token in tokens]\n" * 10,
-    "const chart=results.map(row=>({label:row.name,value:row.tokens/row.seconds}));" * 10,
-    "The values are " + "0123456789abcdef" * 5 + "; keep these notes for the run. " * 20,
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A short note",
+        "apple\n" * 50,
+        "This report explains how to benchmark throughput and compare the results. "
+        * 10,
+        "如何运行基准测试并比较每秒处理的令牌数量。" * 30,
+        "ベンチマークの結果を比較してグラフを表示します。" * 30,
+        "벤치마크 결과와 초당 토큰 처리량을 비교합니다. " * 30,
+        "def decode(tokens):\n    return [token.value for token in tokens]\n" * 10,
+        "const chart=results.map(row=>({label:row.name,value:row.tokens/row.seconds}));"
+        * 10,
+        "The values are "
+        + "0123456789abcdef" * 5
+        + "; keep these notes for the run. " * 20,
+    ],
+)
 def test_language_and_source_remain_semantic(text):
     from rapid_mlx.local_search.eligibility import low_information
+
     assert not low_information(text)
 
 
 def test_semantic_format_policy():
-    from rapid_mlx.local_search.eligibility import KEYWORD_ONLY_SUFFIXES, semantic_format
+    from rapid_mlx.local_search.eligibility import (
+        KEYWORD_ONLY_SUFFIXES,
+        semantic_format,
+    )
+
     for suffix in KEYWORD_ONLY_SUFFIXES:
         assert not semantic_format(Path("data" + suffix.upper()))
-    for suffix in (".md", ".txt", ".rst", ".tex", ".html", ".pdf", ".docx", ".pptx", ".xlsx", ".py", ".swift"):
+    for suffix in (
+        ".md",
+        ".txt",
+        ".rst",
+        ".tex",
+        ".html",
+        ".pdf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".py",
+        ".swift",
+    ):
         assert semantic_format(Path("document" + suffix))
 
 
@@ -3236,8 +3736,9 @@ def test_machine_formats_and_noise_index_without_embedding(tmp_path):
     async def scenario():
         root = folder(tmp_path)
         from rapid_mlx.local_search.eligibility import KEYWORD_ONLY_SUFFIXES
+
         for suffix in KEYWORD_ONLY_SUFFIXES:
-            (root / ("data" + suffix)).write_text('first line\nunique_literal_needle')
+            (root / ("data" + suffix)).write_text("first line\nunique_literal_needle")
         (root / "noise.txt").write_text("ab" * 200)
         (root / "notes.md").write_text("apple benchmark throughput")
         fake = FakeEmbedder()
@@ -3255,6 +3756,7 @@ def test_machine_formats_and_noise_index_without_embedding(tmp_path):
         await search.wait_idle()
         assert len(fake.calls) == calls
         await search.close()
+
     asyncio.run(scenario())
 
 
@@ -3264,17 +3766,19 @@ def test_eligibility_migration_keeps_keyword_locators_and_prose(tmp_path):
     store = Store(db, "model")
     fid = store.add_folder(root)[0]
     for name, text, status, vectors in [
-        ("data.jsonl", "needle", "indexed", [[1., 0.]]),
-        ("noise.txt", "ab" * 200, "indexed", [[1., 0.]]),
-        ("note.md", "readable prose needle", "indexed", [[0., 1.]]),
+        ("data.jsonl", "needle", "indexed", [[1.0, 0.0]]),
+        ("noise.txt", "ab" * 200, "indexed", [[1.0, 0.0]]),
+        ("note.md", "readable prose needle", "indexed", [[0.0, 1.0]]),
         ("offline.txt", "readable but no model yet", "keyword", None),
         ("offline.log", "literal data", "keyword", None),
     ]:
         path = root / name
         path.write_text(text)
-        store.replace(fid, path, path.stat(), name, [Chunk(text, 42, None)], vectors, status)
+        store.replace(
+            fid, path, path.stat(), name, [Chunk(text, 42, None)], vectors, status
+        )
     before = store.rows()
-    prose_id = next(i for i, r in before.items() if r['path'].endswith('note.md'))
+    prose_id = next(i for i, r in before.items() if r["path"].endswith("note.md"))
     prose_vector = store.vectors[prose_id].copy()
     with store.db:
         store.db.execute("DELETE FROM meta WHERE key='eligibility_version'")
@@ -3284,8 +3788,8 @@ def test_eligibility_migration_keeps_keyword_locators_and_prose(tmp_path):
     assert list(store.vectors) == [prose_id]
     np.testing.assert_array_equal(store.vectors[prose_id], prose_vector)
     assert len(store.keyword(["needle"], set(before))) == 2
-    assert store.files(fid)[str(root / 'offline.txt')]['status'] == 'keyword'
-    assert store.files(fid)[str(root / 'offline.log')]['status'] == 'indexed'
+    assert store.files(fid)[str(root / "offline.txt")]["status"] == "keyword"
+    assert store.files(fid)[str(root / "offline.log")]["status"] == "indexed"
     store.close()
     # Opening twice has no further migration or model-dependent changes.
     store = Store(db, "model")
@@ -3297,59 +3801,85 @@ def test_model_worker_lifecycle_and_streaming_progress(tmp_path):
     """Generation and lazy materialisation share the same one-thread boundary."""
     import time
     from concurrent.futures import ThreadPoolExecutor
+
     async def scenario():
         loop_thread = threading.get_ident()
         events, ticks, flow = [], [], []
         executor = ThreadPoolExecutor(max_workers=1)
+
         async def worker(func, *args, **kwargs):
-            return await asyncio.get_running_loop().run_in_executor(executor, lambda: func(*args, **kwargs))
+            return await asyncio.get_running_loop().run_in_executor(
+                executor, lambda: func(*args, **kwargs)
+            )
+
         class LazyVectors:
             def __array__(self, dtype=None, copy=None):
                 events.append(("materialize", threading.get_ident()))
-                return np.array([[1., 0., 0.]], dtype=dtype)
+                return np.array([[1.0, 0.0, 0.0]], dtype=dtype)
+
         class Embedder:
             is_loaded = True
             vision = False
+
             def __init__(self, path):
                 events.append(("load", threading.get_ident()))
+
             def embed(self, texts):
                 events.append(("embed", threading.get_ident()))
                 before = len(ticks)
-                time.sleep(.03)
+                time.sleep(0.03)
                 flow.append(len(ticks) - before)
                 return LazyVectors()
+
             def __del__(self):
                 events.append(("teardown", threading.get_ident()))
+
         root = folder(tmp_path)
         (root / "a.txt").write_text("apple")
-        search = LocalSearch(tmp_path / "index", resolve_model=lambda _: "local",
-                             embedder_factory=Embedder, model_worker=worker)
+        search = LocalSearch(
+            tmp_path / "index",
+            resolve_model=lambda _: "local",
+            embedder_factory=Embedder,
+            model_worker=worker,
+        )
+
         async def stream():
             for _ in range(25):
                 ticks.append(time.monotonic())
-                await asyncio.sleep(.002)
+                await asyncio.sleep(0.002)
+
         async def generation():
             for _ in range(25):
                 await worker(lambda: events.append(("generate", threading.get_ident())))
-                await asyncio.sleep(.002)
+                await asyncio.sleep(0.002)
+
         try:
             (await search.add_folder(str(root)))
             await asyncio.gather(search.wait_idle(), stream(), generation())
             await search.search("apple", 20, None)
             await search.close()
-            assert {name for name, _ in events} == {"load", "embed", "materialize", "teardown", "generate"}
+            assert {name for name, _ in events} == {
+                "load",
+                "embed",
+                "materialize",
+                "teardown",
+                "generate",
+            }
             assert len({thread for _, thread in events}) == 1
             assert all(thread != loop_thread for _, thread in events)
             assert len(ticks) == 25
             assert flow[0] >= 5
         finally:
             executor.shutdown()
+
     asyncio.run(scenario())
 
 
 def test_missing_model_worker_fails_closed(tmp_path, monkeypatch):
     from rapid_mlx.config import get_config
+
     monkeypatch.setattr(get_config(), "engine", object())
+
     async def scenario():
         root = folder(tmp_path)
         (root / "a.txt").write_text("apple")
@@ -3358,14 +3888,18 @@ def test_missing_model_worker_fails_closed(tmp_path, monkeypatch):
         (await search.add_folder(str(root)))
         await search.wait_idle()
         assert not fake.calls
-        assert "sanctioned model worker" in search.status()["semantic_unavailable_reason"]
+        assert (
+            "sanctioned model worker" in search.status()["semantic_unavailable_reason"]
+        )
         assert (await search.search("apple", 20, None))["mode"] == "keyword"
         await search.close()
+
     asyncio.run(scenario())
 
 
 def test_ancestor_symlink_and_pinned_pass(tmp_path, monkeypatch):
-    from rapid_mlx.local_search import service, extraction
+    from rapid_mlx.local_search import extraction, service
+
     ancestor = folder(tmp_path, "work")
     root = ancestor / "docs"
     root.mkdir()
@@ -3376,20 +3910,22 @@ def test_ancestor_symlink_and_pinned_pass(tmp_path, monkeypatch):
     (outside / "docs" / "a.txt").write_text("apple outside confidential content")
     saved = tmp_path / "saved"
     original_read = service.read_safe
+
     def swap_read(path, root, **kwargs):
         ancestor.rename(saved)
         ancestor.symlink_to(outside, target_is_directory=True)
         try:
-            with pytest.raises(OSError):
-                with extraction.open_root(root):
-                    pass
+            with pytest.raises(OSError), extraction.open_root(root):
+                pass
             data, info = original_read(path, root, **kwargs)
             assert b"outside confidential" not in data
             return data, info
         finally:
             ancestor.unlink()
             saved.rename(ancestor)
+
     monkeypatch.setattr(service, "read_safe", swap_read)
+
     async def scenario():
         search = engine(tmp_path)
         (await search.add_folder(str(root)))
@@ -3404,10 +3940,23 @@ def test_ancestor_symlink_and_pinned_pass(tmp_path, monkeypatch):
             ancestor.unlink()
             saved.rename(ancestor)
         await search.close()
+
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("name", ["credentials.json", "secrets.yaml", "passwords.txt", "vault.kdbx", ".netrc", "backup_rsa", "service-account-prod.json", "service_account.json"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "credentials.json",
+        "secrets.yaml",
+        "passwords.txt",
+        "vault.kdbx",
+        ".netrc",
+        "backup_rsa",
+        "service-account-prod.json",
+        "service_account.json",
+    ],
+)
 def test_secret_filename_skip_reason(tmp_path, name):
     async def scenario():
         root = folder(tmp_path)
@@ -3420,28 +3969,38 @@ def test_secret_filename_skip_reason(tmp_path, name):
         assert search.store.totals()["chunks"] == 0
         assert not (await search.search("supersecret", 20, None))["results"]
         await search.close()
+
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("stop", ["timeout", "cancel", "memory"])
 def test_parser_killed_and_reaped(monkeypatch, stop):
-    from rapid_mlx.local_search import parsing
     import psutil
+
+    from rapid_mlx.local_search import parsing
+
     children = []
     spawn = asyncio.create_subprocess_exec
+
     async def observed(*args, **kwargs):
         process = await spawn(*args, **kwargs)
         children.append(process)
         return process
+
     monkeypatch.setattr(asyncio, "create_subprocess_exec", observed)
-    monkeypatch.setattr(parsing, "PARSER_TIMEOUT_SECONDS", .15)
+    monkeypatch.setattr(parsing, "PARSER_TIMEOUT_SECONDS", 0.15)
     if stop == "memory":
         monkeypatch.setattr(parsing, "PARSER_MEMORY_BYTES", 1)
+
     async def scenario():
-        task = asyncio.create_task(parsing.run_parser([sys.executable, "-c", "import time; time.sleep(60)"], b""))
+        task = asyncio.create_task(
+            parsing.run_parser(
+                [sys.executable, "-c", "import time; time.sleep(60)"], b""
+            )
+        )
         if stop == "cancel":
             while not children:
-                await asyncio.sleep(.001)
+                await asyncio.sleep(0.001)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -3450,16 +4009,19 @@ def test_parser_killed_and_reaped(monkeypatch, stop):
                 await task
         assert children[0].returncode is not None
         assert not psutil.pid_exists(children[0].pid)
+
     asyncio.run(scenario())
 
 
 def test_chunk_line_count_work_is_linear():
     class CountedText(str):
         counted = 0
+
         def count(self, substring, start=0, end=None):
             end = len(self) if end is None else end
             self.counted += end - start
             return super().count(substring, start, end)
+
     counts = []
     for size in (1024 * 1024, 4 * 1024 * 1024, 20 * 1024 * 1024):
         text = CountedText(("line words here\n" * (size // 16 + 1))[:size])
@@ -3473,8 +4035,10 @@ def test_chunk_line_count_work_is_linear():
 
 def test_corpus_budget_blocks_and_keyword_limits(tmp_path, monkeypatch):
     from rapid_mlx.local_search import store as storage
+
     monkeypatch.setattr(storage, "MAX_CORPUS_EMBEDDED_CHUNKS", 4)
     monkeypatch.setattr(storage, "KEYWORD_CANDIDATE_LIMIT", 3)
+
     async def scenario():
         root = folder(tmp_path)
         for n in range(6):
@@ -3489,15 +4053,20 @@ def test_corpus_budget_blocks_and_keyword_limits(tmp_path, monkeypatch):
         assert len(fake.calls) == 4
         shapes = []
         stack = np.stack
+
         def observed(arrays, *args, **kwargs):
             shapes.append(len(arrays))
             return stack(arrays, *args, **kwargs)
+
         monkeypatch.setattr(np, "stack", observed)
         rows = search.store.search_rows()
         search.store.semantic_scores([1, 0, 0], set(rows))
         assert shapes == []
         assert search.store._matrix.shape == (4, 3)
-        assert all(np.shares_memory(v, search.store._matrix) for v in search.store.vectors.values())
+        assert all(
+            np.shares_memory(v, search.store._matrix)
+            for v in search.store.vectors.values()
+        )
         assert len(search.store.keyword(["apple"], set(rows))) <= 3
         # Scope is applied before candidate limits, so the last eligible ID survives.
         last = max(rows)
@@ -3506,22 +4075,29 @@ def test_corpus_budget_blocks_and_keyword_limits(tmp_path, monkeypatch):
         search.store.remove_file(first["id"])
         assert not search.status()["totals"]["semantic_index_full"]
         await search.close()
+
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("count", [1, 2, 3, 12])
 def test_degenerate_semantic_neighbours(count):
-    from rapid_mlx.local_search.search import semantic_ranking, SEMANTIC_FALLBACK_FILES
+    from rapid_mlx.local_search.search import SEMANTIC_FALLBACK_FILES, semantic_ranking
+
     rows = {n: {"path": f"file-{n}"} for n in range(count)}
-    assert semantic_ranking([(n, .8) for n in range(count)], rows, 1.) == list(range(min(count, SEMANTIC_FALLBACK_FILES)))
+    assert semantic_ranking([(n, 0.8) for n in range(count)], rows, 1.0) == list(
+        range(min(count, SEMANTIC_FALLBACK_FILES))
+    )
     if count < 4:
-        assert semantic_ranking([(n, .8 - .01 * n) for n in range(count)], rows, 1.) == list(range(count))
+        assert semantic_ranking(
+            [(n, 0.8 - 0.01 * n) for n in range(count)], rows, 1.0
+        ) == list(range(count))
 
 
 def test_flag_off_server_start_import_isolation():
     """Fresh interpreter: stub only GPU boot, retain actual server import graph."""
     import subprocess
-    script = '''
+
+    script = """
 import asyncio, importlib.machinery, sys, types
 from unittest.mock import MagicMock
 from fastapi import FastAPI
@@ -3540,8 +4116,10 @@ asyncio.run(startup(app))
 asyncio.run(shutdown(app))
 assert not any(name == "rapid_mlx.local_search" or name.startswith(("rapid_mlx.local_search.", "cv2", "pypdf")) for name in sys.modules)
 assert not hasattr(app.state, "local_search")
-'''
-    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
     assert result.returncode == 0, result.stderr
 
 
@@ -3554,38 +4132,46 @@ def test_identical_file_embeddings_return_paraphrase_neighbours(tmp_path, count)
         search = engine(tmp_path)
         (await search.add_folder(str(root)))
         await search.wait_idle()
-        search._embed = lambda _: np.array([[.8, .6, 0.]])
+        search._embed = lambda _: np.array([[0.8, 0.6, 0.0]])
         hits = (await search.search("paraphrase", 20, None))["results"]
         assert len(hits) == count
         assert all(hit["matched"] == ["semantic"] for hit in hits)
         await search.close()
+
     asyncio.run(scenario())
 
 
 def test_async_status_keeps_http_loop_responsive(tmp_path):
     import time
+
     async def scenario():
         search = engine(tmp_path)
         progress = []
+
         def expensive():
             before = len(ticks)
-            time.sleep(.04)
+            time.sleep(0.04)
             progress.append(len(ticks) - before)
             return {}
+
         search.store.totals = expensive
         ticks = []
+
         async def stream():
             for _ in range(10):
                 ticks.append(1)
-                await asyncio.sleep(.002)
+                await asyncio.sleep(0.002)
+
         await asyncio.gather(search.status_async(), stream())
         assert len(ticks) == 10 and progress[0] >= 5
         await search.close()
+
     asyncio.run(scenario())
 
 
 def test_corpus_budget_survives_restart_and_recovers(tmp_path, monkeypatch):
     from rapid_mlx.local_search import store as storage
+
     root = folder(tmp_path)
     db = tmp_path / "index.sqlite3"
     store = Store(db, "model")
@@ -3593,7 +4179,15 @@ def test_corpus_budget_survives_restart_and_recovers(tmp_path, monkeypatch):
     for n in range(4):
         path = root / f"{n}.txt"
         path.write_text("apple")
-        store.replace(fid, path, path.stat(), None, [Chunk("apple", 1, None)], [[1., 0., 0.]], "indexed")
+        store.replace(
+            fid,
+            path,
+            path.stat(),
+            None,
+            [Chunk("apple", 1, None)],
+            [[1.0, 0.0, 0.0]],
+            "indexed",
+        )
     store.close()
     monkeypatch.setattr(storage, "MAX_CORPUS_EMBEDDED_CHUNKS", 2)
     store = Store(db, "model")
@@ -3603,13 +4197,22 @@ def test_corpus_budget_survives_restart_and_recovers(tmp_path, monkeypatch):
     store.remove_file(files[str(root / "0.txt")]["id"])
     path = root / "2.txt"
     assert store.embedding_room(path) == 1
-    store.replace(fid, path, path.stat(), None, [Chunk("apple", 1, None)], [[1., 0., 0.]], "indexed")
+    store.replace(
+        fid,
+        path,
+        path.stat(),
+        None,
+        [Chunk("apple", 1, None)],
+        [[1.0, 0.0, 0.0]],
+        "indexed",
+    )
     assert len(store.vectors) == 2 and store.totals()["semantic_index_full"]
     store.close()
 
 
 def test_model_worker_change_does_not_bypass_current_engine(tmp_path, monkeypatch):
     from rapid_mlx.config import get_config
+
     async def scenario():
         root = folder(tmp_path)
         (root / "a.txt").write_text("apple")
@@ -3622,12 +4225,16 @@ def test_model_worker_change_does_not_bypass_current_engine(tmp_path, monkeypatc
         result = await search.search("apple", 20, None)
         assert result["mode"] == "keyword" and len(fake.calls) == calls
         assert "worker changed" in search.status()["semantic_unavailable_reason"]
-        await search.close()  # Teardown still runs through the original owning boundary.
+        await (
+            search.close()
+        )  # Teardown still runs through the original owning boundary.
+
     asyncio.run(scenario())
 
 
 def test_warm_search_no_corpus_iteration_or_vector_select(tmp_path, monkeypatch):
     """Guard the shape of latency, independently of wall-clock runner speed."""
+
     async def scenario():
         search = engine(tmp_path, FakeEmbedder())
         root = folder(tmp_path)
@@ -3635,20 +4242,31 @@ def test_warm_search_no_corpus_iteration_or_vector_select(tmp_path, monkeypatch)
         for n in range(12):
             path = root / f"document-{n}.txt"
             path.write_text("apple chart")
-            search.store.replace(fid, path, path.stat(), None,
-                                 [Chunk("apple chart", 1, None)] * 64,
-                                 [[1, n / 20, .1]] * 64, "indexed")
+            search.store.replace(
+                fid,
+                path,
+                path.stat(),
+                None,
+                [Chunk("apple chart", 1, None)] * 64,
+                [[1, n / 20, 0.1]] * 64,
+                "indexed",
+            )
+
         class GuardedRows(dict):
             checking = False
+
             def __iter__(self):
                 assert not self.checking, "warm search iterated corpus IDs"
                 return super().__iter__()
+
             def items(self):
                 assert not self.checking, "warm search iterated corpus metadata"
                 return super().items()
+
             def values(self):
                 assert not self.checking, "warm search iterated corpus metadata"
                 return super().values()
+
         owned = search.store._store
         rows = GuardedRows(search.store.search_rows())
         key = next(iter(owned._search_cache))
@@ -3656,61 +4274,89 @@ def test_warm_search_no_corpus_iteration_or_vector_select(tmp_path, monkeypatch)
         owned._view_scope = (rows, *owned._view_scope[1:])
         await search.search("apple chart", 10, None, group_limit=5)
         rows.checking = True
+
         class NoIteration(dict):
             def __iter__(self):
                 raise AssertionError("warm search iterated corpus vectors")
+
             def items(self):
                 raise AssertionError("warm search iterated corpus vectors")
+
             def values(self):
                 raise AssertionError("warm search iterated corpus vectors")
+
         owned = search.store._store
         owned.vectors = NoIteration(owned.vectors)
         statements = []
         # Install on the connection's owning worker, never from the test thread.
-        search.store._executor.submit(owned.db.set_trace_callback, statements.append).result()
+        search.store._executor.submit(
+            owned.db.set_trace_callback, statements.append
+        ).result()
         await search.search("apple chart", 10, None, group_limit=5)
-        assert not any("vector" in sql.lower() and sql.lstrip().upper().startswith("SELECT")
-                       for sql in statements)
+        assert not any(
+            "vector" in sql.lower() and sql.lstrip().upper().startswith("SELECT")
+            for sql in statements
+        )
         assert not any("INSERT INTO local_allowed" in sql for sql in statements)
         plans = search.store.sql(
             "EXPLAIN QUERY PLAN SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? "
             "AND EXISTS (SELECT 1 FROM local_allowed WHERE id=chunks_fts.rowid)",
-            ('"apple"',))
+            ('"apple"',),
+        )
         assert any("VIRTUAL TABLE INDEX" in r[3] and "=M" not in r[3] for r in plans)
         await search.close()
+
     asyncio.run(scenario())
 
 
 def test_media_admission_matches_scalar_file_scores(tmp_path):
     from rapid_mlx.local_search.search import query_statistics, semantic_ranking
+
     async def scenario():
         search = engine(tmp_path, FakeEmbedder())
         root = folder(tmp_path)
         fid = search.store.add_folder(root)[0]
         for kind in ("text", "image", "video"):
-            for n, cosine in enumerate((.95, .8, .65, .1, -.2, -.7)):
-                path = root / f"{kind}-{n}.{'txt' if kind == 'text' else 'png' if kind == 'image' else 'mp4'}"
+            for n, cosine in enumerate((0.95, 0.8, 0.65, 0.1, -0.2, -0.7)):
+                path = (
+                    root
+                    / f"{kind}-{n}.{'txt' if kind == 'text' else 'png' if kind == 'image' else 'mp4'}"
+                )
                 path.write_text("unrelated fixture")
-                vector = [cosine, np.sqrt(1 - cosine ** 2), 0]
-                search.store.replace(fid, path, path.stat(), None,
-                                     [Chunk("unrelated fixture", 1, None, kind)] * (n + 1),
-                                     [vector] * (n + 1), "indexed")
+                vector = [cosine, np.sqrt(1 - cosine**2), 0]
+                search.store.replace(
+                    fid,
+                    path,
+                    path.stat(),
+                    None,
+                    [Chunk("unrelated fixture", 1, None, kind)] * (n + 1),
+                    [vector] * (n + 1),
+                    "indexed",
+                )
         rows = search.store.search_rows()
-        scalar = sorted([(i, float(v @ np.array([1, 0, 0], dtype=np.float32)))
-                         for i, v in search.store.vectors.items()], key=lambda p: (-p[1], p[0]))
+        scalar = sorted(
+            [
+                (i, float(v @ np.array([1, 0, 0], dtype=np.float32)))
+                for i, v in search.store.vectors.items()
+            ],
+            key=lambda p: (-p[1], p[0]),
+        )
         accelerated = search.store.semantic_scores([1, 0, 0], rows)
         background = search.store.semantic_background(rows)
         for kind in ("text", "image", "video"):
             old = [(i, v) for i, v in scalar if rows[i]["kind"] == kind]
             new = [(i, v) for i, v in accelerated if rows[i]["kind"] == kind]
             assert query_statistics(new, rows) == query_statistics(old, rows)
-            assert semantic_ranking(new, rows, background[kind]) == semantic_ranking(old, rows, background[kind])
+            assert semantic_ranking(new, rows, background[kind]) == semantic_ranking(
+                old, rows, background[kind]
+            )
         search._embed = lambda _: [[1, 0, 0]]
         response = await search.search("unseen visual query", 10, None, group_limit=5)
         assert {g["kind"] for g in response["groups"]} == {"text", "image", "video"}
         image = next(g for g in response["groups"] if g["kind"] == "image")
         assert image["results"][0]["path"].endswith("image-0.png")
         await search.close()
+
     asyncio.run(scenario())
 
 
@@ -3718,17 +4364,25 @@ def test_query_waits_for_only_current_index_embedding_batch(tmp_path):
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
         calls = []
+
         async def worker(func):
             if not calls:
                 entered.set()
                 await release.wait()
             return func()
-        search = LocalSearch(tmp_path / "priority", model_id="test", resolve_model=lambda _: None,
-                             model_worker=worker)
+
+        search = LocalSearch(
+            tmp_path / "priority",
+            model_id="test",
+            resolve_model=lambda _: None,
+            model_worker=worker,
+        )
         search._embed = lambda inputs: calls.append(inputs[0]) or [[1, 0, 0]]
+
         async def indexing():
             await search._embed_async(["batch-1"] * 4)
             await search._embed_async(["batch-2"] * 4)
+
         index = asyncio.create_task(indexing())
         await entered.wait()
         query = asyncio.create_task(search._embed_async(["query"]))
@@ -3737,6 +4391,7 @@ def test_query_waits_for_only_current_index_embedding_batch(tmp_path):
         await asyncio.gather(index, query)
         assert calls == ["batch-1", "query", "batch-2"]
         await search.close()
+
     asyncio.run(scenario())
 
 
@@ -3747,10 +4402,18 @@ def test_warm_search_does_not_queue_behind_index_transaction(tmp_path):
         fid = search.store.add_folder(root)[0]
         first = root / "first.txt"
         first.write_text("apple chart")
-        search.store.replace(fid, first, first.stat(), None,
-                             [Chunk("apple chart", 1, None)], [[1, 0, 0]], "indexed")
+        search.store.replace(
+            fid,
+            first,
+            first.stat(),
+            None,
+            [Chunk("apple chart", 1, None)],
+            [[1, 0, 0]],
+            "indexed",
+        )
         await search.search("apple chart", 10, None)
         entered, release = threading.Event(), threading.Event()
+
         class PausedChunks(list):
             def __iter__(self):
                 for n, chunk in enumerate(super().__iter__()):
@@ -3758,16 +4421,26 @@ def test_warm_search_does_not_queue_behind_index_transaction(tmp_path):
                         entered.set()  # The writer already has an open transaction.
                         assert release.wait(5)
                     yield chunk
+
         second = root / "second.txt"
         second.write_text("other document")
-        indexing = asyncio.create_task(search.store.call(
-            "replace", fid, second, second.stat(), None,
-            PausedChunks([Chunk("other document", 1, None)] * 2), [[0, 1, 0]] * 2, "indexed"))
+        indexing = asyncio.create_task(
+            search.store.call(
+                "replace",
+                fid,
+                second,
+                second.stat(),
+                None,
+                PausedChunks([Chunk("other document", 1, None)] * 2),
+                [[0, 1, 0]] * 2,
+                "indexed",
+            )
+        )
         query = None
         try:
             assert await asyncio.to_thread(entered.wait, 2)
             query = asyncio.create_task(search.search("apple chart", 10, None))
-            done, _ = await asyncio.wait([query], timeout=.5)
+            done, _ = await asyncio.wait([query], timeout=0.5)
             assert query in done, "search queued behind a whole-file write"
             assert (await query)["results"][0]["path"] == str(first)
         finally:
@@ -3776,53 +4449,75 @@ def test_warm_search_does_not_queue_behind_index_transaction(tmp_path):
             if query is not None:
                 await query
             await search.close()
+
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("operation", ["add", "delete", "reindex", "reindex_all", "search", "status", "resume"])
+@pytest.mark.parametrize(
+    "operation",
+    ["add", "delete", "reindex", "reindex_all", "search", "status", "resume"],
+)
 def test_routes_keep_heartbeat_during_busy_db(tmp_path, monkeypatch, operation):
     import time
+
     from rapid_mlx.local_search import service as module
+
     main_thread = threading.get_ident()
     validate = module.validate_folder
+
     def off_loop_validate(value):
         assert threading.get_ident() != main_thread
         return validate(value)
+
     monkeypatch.setattr(module, "validate_folder", off_loop_validate)
 
     async def scenario():
         root = folder(tmp_path)
         (root / "apple.txt").write_text("apple evidence")
         async with client_app(tmp_path, monkeypatch) as (client, app, _):
-            registered = (await client.post("/v1/local-search/folders", json={"path": str(root)})).json()
+            registered = (
+                await client.post("/v1/local-search/folders", json={"path": str(root)})
+            ).json()
             await app.state.local_search.wait_idle()
             search = app.state.local_search
             entered, release = threading.Event(), threading.Event()
+
             def occupied():
                 entered.set()
                 release.wait(1)
+
             busy = search.store._executor.submit(occupied)
             await asyncio.to_thread(entered.wait)
-            timer = threading.Timer(.2, release.set)
+            timer = threading.Timer(0.2, release.set)
             timer.start()
             ticks = []
+
             async def heartbeat():
                 while not release.is_set():
                     ticks.append(time.monotonic())
-                    await asyncio.sleep(.005)
+                    await asyncio.sleep(0.005)
                 ticks.append(time.monotonic())
+
             pulse = asyncio.create_task(heartbeat())
             await asyncio.sleep(0)
             try:
                 fid = registered["id"]
                 if operation == "add":
-                    response = await client.post("/v1/local-search/folders", json={"path": str(root)})
+                    response = await client.post(
+                        "/v1/local-search/folders", json={"path": str(root)}
+                    )
                 elif operation == "delete":
                     response = await client.delete(f"/v1/local-search/folders/{fid}")
                 elif operation in {"reindex", "reindex_all"}:
-                    response = await client.post("/v1/local-search/reindex", json={"folder_id": fid if operation == "reindex" else None})
+                    response = await client.post(
+                        "/v1/local-search/reindex",
+                        json={"folder_id": fid if operation == "reindex" else None},
+                    )
                 elif operation == "search":
-                    response = await client.post("/v1/local-search/search", json={"query": "apple", "folder_ids": [fid]})
+                    response = await client.post(
+                        "/v1/local-search/search",
+                        json={"query": "apple", "folder_ids": [fid]},
+                    )
                 elif operation == "status":
                     response = await client.get("/v1/local-search/status")
                 else:
@@ -3832,20 +4527,24 @@ def test_routes_keep_heartbeat_during_busy_db(tmp_path, monkeypatch, operation):
                 assert response.status_code in {200, 202, 204}
                 await pulse
                 assert len(ticks) >= 15
-                assert max(b - a for a, b in zip(ticks, ticks[1:])) < .1
+                assert max(b - a for a, b in zip(ticks, ticks[1:])) < 0.1
                 await search.wait_idle()
             finally:
                 release.set()
                 timer.join()
                 busy.result()
                 await pulse
+
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("parent_first", [False, True])
 @pytest.mark.parametrize("boundary", ["Library", "private", "external"])
-def test_explicit_pruned_roots_remain_registered(tmp_path, monkeypatch, parent_first, boundary):
+def test_explicit_pruned_roots_remain_registered(
+    tmp_path, monkeypatch, parent_first, boundary
+):
     from rapid_mlx.local_search import extraction
+
     parent = folder(tmp_path)
     pruned = folder(parent, boundary)
     child = folder(pruned, "Documents")
@@ -3853,7 +4552,10 @@ def test_explicit_pruned_roots_remain_registered(tmp_path, monkeypatch, parent_f
     if boundary == "Library":
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: parent))
     else:
-        monkeypatch.setattr(extraction, "SKIP_PREFIXES", (*extraction.SKIP_PREFIXES, pruned))
+        monkeypatch.setattr(
+            extraction, "SKIP_PREFIXES", (*extraction.SKIP_PREFIXES, pruned)
+        )
+
     async def scenario():
         search = engine(tmp_path)
         try:
@@ -3868,6 +4570,7 @@ def test_explicit_pruned_roots_remain_registered(tmp_path, monkeypatch, parent_f
             assert [r["path"] for r in results] == [str(child / "deposition.txt")]
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
@@ -3880,14 +4583,24 @@ def test_publication_uses_committed_owner_after_absorption(tmp_path, deleted):
     store = Store(tmp_path / "index.sqlite3", "test")
     try:
         fid = store.add_folder(child)[0]
-        change = store._write_replace(fid, path, path.stat(), None,
-                                      [Chunk("apple", 1, None)], [[1, 0, 0]], "indexed", 1)
+        change = store._write_replace(
+            fid,
+            path,
+            path.stat(),
+            None,
+            [Chunk("apple", 1, None)],
+            [[1, 0, 0]],
+            "indexed",
+            1,
+        )
         parent_id = store.add_folder(parent)[0]
         if deleted:
             store.remove_file(change[1])
         store._publish_replace(change)
         if deleted:
-            assert not store.vectors and not store._file_stats and not store._folder_stats
+            assert (
+                not store.vectors and not store._file_stats and not store._folder_stats
+            )
         else:
             assert store._file_stats[change[1]][0] == parent_id
             assert set(store._folder_stats) == {parent_id}
@@ -3901,10 +4614,21 @@ def test_publication_uses_committed_owner_after_absorption(tmp_path, deleted):
 
 
 def test_budget_truncated_file_upgrades_only_when_capacity_freed(tmp_path, monkeypatch):
-    from rapid_mlx.local_search import store as storage, service as module
+    from rapid_mlx.local_search import service as module
+    from rapid_mlx.local_search import store as storage
+
     monkeypatch.setattr(storage, "MAX_CORPUS_EMBEDDED_CHUNKS", 2)
     real_chunks = module.chunk_units
-    monkeypatch.setattr(module, "chunk_units", lambda units: [Chunk("apple paragraph", 1, None), Chunk("banana paragraph", 2, None)] if units[0].text.startswith("two") else real_chunks(units))
+    monkeypatch.setattr(
+        module,
+        "chunk_units",
+        lambda units: (
+            [Chunk("apple paragraph", 1, None), Chunk("banana paragraph", 2, None)]
+            if units[0].text.startswith("two")
+            else real_chunks(units)
+        ),
+    )
+
     async def scenario():
         root = folder(tmp_path)
         (root / "a.txt").write_text("one apple paragraph")
@@ -3933,16 +4657,24 @@ def test_budget_truncated_file_upgrades_only_when_capacity_freed(tmp_path, monke
             assert len(fake.calls) == calls + 1
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_large_query_and_sql_error_envelope(tmp_path, monkeypatch):
     import sqlite3
-    from rapid_mlx.local_search.store import bounded_terms, MAX_KEYWORD_TERMS
-    query = " ".join(chr(0x4e00 + i) for i in range(1100))
+
+    from rapid_mlx.local_search.store import MAX_KEYWORD_TERMS, bounded_terms
+
+    query = " ".join(chr(0x4E00 + i) for i in range(1100))
     assert len(query) == 2199
     assert len(bounded_terms(query.split())) == MAX_KEYWORD_TERMS
-    assert bounded_terms(["aa", "bbbb", "ccc", *query.split()], ["aa"])[0:3] == ["aa", "bbbb", "ccc"]
+    assert bounded_terms(["aa", "bbbb", "ccc", *query.split()], ["aa"])[0:3] == [
+        "aa",
+        "bbbb",
+        "ccc",
+    ]
+
     async def scenario():
         root = folder(tmp_path)
         (root / "document.txt").write_text("apple evidence")
@@ -3950,28 +4682,43 @@ def test_large_query_and_sql_error_envelope(tmp_path, monkeypatch):
             await client.post("/v1/local-search/folders", json={"path": str(root)})
             await app.state.local_search.wait_idle()
             for text in [query, '" OR * ( ) : NEAR / - % _', "x" * 8192]:
-                response = await client.post("/v1/local-search/search", json={"query": text})
+                response = await client.post(
+                    "/v1/local-search/search", json={"query": text}
+                )
                 assert response.status_code == 200
+
             async def failed(*args):
                 raise sqlite3.OperationalError("invalid expression")
+
             monkeypatch.setattr(app.state.local_search, "search", failed)
-            response = await client.post("/v1/local-search/search", json={"query": query})
+            response = await client.post(
+                "/v1/local-search/search", json={"query": query}
+            )
             assert response.status_code == 400
             assert response.json()["error"]["code"] == "invalid_query"
             assert response.json()["error"]["param"] == "query"
+
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("name,data,reason,kind", [
-    ("scanned_deposition.pdf", pdf_fixture(), "Scanned PDF without text", "text"),
-    ("encrypted_deposition.pdf", pdf_fixture(encrypted=True), "Password-protected", "text"),
-    ("unsupported_deposition.xyz", b"contentword", "Unsupported file type", "text"),
-    ("empty_deposition.txt", b"", "No readable text", "text"),
-    ("broken_deposition.pdf", b"contentword", "Could not be read", "text"),
-    ("audio_deposition.mp3", b"contentword", "Audio is not supported yet", "text"),
-    ("image_deposition.png", b"contentword", "Could not be read", "image"),
-    ("video_deposition.mp4", b"contentword", "Could not be read", "video"),
-])
+@pytest.mark.parametrize(
+    "name,data,reason,kind",
+    [
+        ("scanned_deposition.pdf", pdf_fixture(), "Scanned PDF without text", "text"),
+        (
+            "encrypted_deposition.pdf",
+            pdf_fixture(encrypted=True),
+            "Password-protected",
+            "text",
+        ),
+        ("unsupported_deposition.xyz", b"contentword", "Unsupported file type", "text"),
+        ("empty_deposition.txt", b"", "No readable text", "text"),
+        ("broken_deposition.pdf", b"contentword", "Could not be read", "text"),
+        ("audio_deposition.mp3", b"contentword", "Audio is not supported yet", "text"),
+        ("image_deposition.png", b"contentword", "Could not be read", "image"),
+        ("video_deposition.mp4", b"contentword", "Could not be read", "video"),
+    ],
+)
 def test_name_only_result_contract_and_groups(tmp_path, name, data, reason, kind):
     async def scenario():
         root = folder(tmp_path)
@@ -3986,7 +4733,9 @@ def test_name_only_result_contract_and_groups(tmp_path, name, data, reason, kind
             assert len(body["results"]) == 1
             result = body["results"][0]
             assert result["path"] == str(path)
-            assert result["content_indexed"] is False and result["skip_reason"] == reason
+            assert (
+                result["content_indexed"] is False and result["skip_reason"] == reason
+            )
             assert result["snippet"] == "" and result["highlights"] == []
             assert result["page"] is None and result["line"] is None
             assert result["matched"] == ["keyword"] and result["kind"] == kind
@@ -4004,11 +4753,14 @@ def test_name_only_result_contract_and_groups(tmp_path, name, data, reason, kind
             assert metadata["skip_reasons"] == {reason: 1, "Private or system file": 1}
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_name_only_lifecycle_cap_and_legacy_entries(tmp_path, monkeypatch):
-    from rapid_mlx.local_search import store as storage, service as module
+    from rapid_mlx.local_search import service as module
+    from rapid_mlx.local_search import store as storage
+
     monkeypatch.setattr(storage, "MAX_NAME_ONLY_FILES_PER_FOLDER", 2)
     root = folder(tmp_path)
     pdf = root / "deposition.pdf"
@@ -4018,13 +4770,18 @@ def test_name_only_lifecycle_cap_and_legacy_entries(tmp_path, monkeypatch):
     # Persist precisely the old skipped-row shape, without a parallel table.
     old = Store(tmp_path / "index" / "index.sqlite3", "test")
     fid = old.add_folder(root)[0]
-    old.replace(fid, pdf, pdf.stat(), None, [], None, "skipped: Scanned PDF without text")
+    old.replace(
+        fid, pdf, pdf.stat(), None, [], None, "skipped: Scanned PDF without text"
+    )
     old.close()
     read = module.read_safe
+
     def no_unsupported_read(path, *args, **kwargs):
         assert path.suffix != ".xyz"
         return read(path, *args, **kwargs)
+
     monkeypatch.setattr(module, "read_safe", no_unsupported_read)
+
     async def scenario():
         search = engine(tmp_path)
         try:
@@ -4041,12 +4798,18 @@ def test_name_only_lifecycle_cap_and_legacy_entries(tmp_path, monkeypatch):
             (root / "second.xyz").unlink()
             await search.queue(fid)
             await search.wait_idle()
-            assert (await search.search("renamed", 20, None))["results"][0]["content_indexed"] is False
+            assert (await search.search("renamed", 20, None))["results"][0][
+                "content_indexed"
+            ] is False
             (root / "renamed.pdf").write_bytes(small_pdf())
             await search.queue(fid)
             await search.wait_idle()
             hit = (await search.search("renamed", 20, None))["results"][0]
-            assert hit["content_indexed"] is True and hit["skip_reason"] is None and hit["snippet"]
+            assert (
+                hit["content_indexed"] is True
+                and hit["skip_reason"] is None
+                and hit["snippet"]
+            )
             assert search.store.totals()["name_only_files"] == 1
             parent_id = (await search.add_folder(str(tmp_path)))[0]["id"]
             await search.wait_idle()
@@ -4058,13 +4821,20 @@ def test_name_only_lifecycle_cap_and_legacy_entries(tmp_path, monkeypatch):
             assert not (await search.search("third", 20, None))["results"]
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_name_only_size_rejection_without_read(tmp_path, monkeypatch):
     from rapid_mlx.local_search import service as module
+
     monkeypatch.setattr(module, "MAX_BYTES", 4)
-    monkeypatch.setattr(module, "read_safe", lambda *args, **kwargs: pytest.fail("oversized file must not be read"))
+    monkeypatch.setattr(
+        module,
+        "read_safe",
+        lambda *args, **kwargs: pytest.fail("oversized file must not be read"),
+    )
+
     async def scenario():
         root = folder(tmp_path)
         (root / "large-deposition.txt").write_text("unreadbody")
@@ -4073,18 +4843,27 @@ def test_name_only_size_rejection_without_read(tmp_path, monkeypatch):
             await search.add_folder(str(root))
             await search.wait_idle()
             result = (await search.search("deposition", 20, None))["results"][0]
-            assert result["skip_reason"] == "Too large" and result["content_indexed"] is False
+            assert (
+                result["skip_reason"] == "Too large"
+                and result["content_indexed"] is False
+            )
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("weights", [False, True])
-def test_cached_model_main_ref_ignores_missing_tree_readme(tmp_path, monkeypatch, weights):
+def test_cached_model_main_ref_ignores_missing_tree_readme(
+    tmp_path, monkeypatch, weights
+):
     import json
+
     import huggingface_hub
     from huggingface_hub import constants
+
     from rapid_mlx import model_metadata
+
     cache = tmp_path / "cache"
     repo = cache / "models--test--embedding"
     snapshot = repo / "snapshots" / ("a" * 40)
@@ -4095,31 +4874,56 @@ def test_cached_model_main_ref_ignores_missing_tree_readme(tmp_path, monkeypatch
     (repo / "refs").mkdir()
     (repo / "refs" / "main").write_text(snapshot.name)
     (repo / "trees").mkdir()
-    (repo / "trees" / (snapshot.name + ".json")).write_text(json.dumps([
-        {"type": "file", "path": name, "size": 4096} for name in ["config.json", "model.safetensors", "README.md"]]))
+    (repo / "trees" / (snapshot.name + ".json")).write_text(
+        json.dumps(
+            [
+                {"type": "file", "path": name, "size": 4096}
+                for name in ["config.json", "model.safetensors", "README.md"]
+            ]
+        )
+    )
     monkeypatch.setattr(constants, "HF_HUB_CACHE", str(cache))
-    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda *a, **k: pytest.fail("must resolve the runnable snapshot without a download call"))
+    monkeypatch.setattr(
+        huggingface_hub,
+        "snapshot_download",
+        lambda *a, **k: pytest.fail(
+            "must resolve the runnable snapshot without a download call"
+        ),
+    )
     assert model_metadata.resolve_unreferenced_cached_snapshot("test/embedding") is None
     assert model_metadata.resolve_offline_cached_snapshot("test/embedding") is None
     assert local_model_path("test/embedding") == (str(snapshot) if weights else None)
 
 
 def test_name_only_metadata_validation_no_reads_and_stale_paths(tmp_path, monkeypatch):
-    from rapid_mlx.local_search import service as module, extraction
+    from rapid_mlx.local_search import extraction
+    from rapid_mlx.local_search import service as module
+
     root = folder(tmp_path)
     child = folder(root, "nested")
     path = child / "Über_deposition.xyz"
     path.write_text("not readable content")
+
     async def scenario():
         search = engine(tmp_path)
         try:
             await search.add_folder(str(root))
             await search.wait_idle()
-            monkeypatch.setattr(module, "open_safe", lambda *a, **k: pytest.fail("name-only validation must not open content"))
+            monkeypatch.setattr(
+                module,
+                "open_safe",
+                lambda *a, **k: pytest.fail(
+                    "name-only validation must not open content"
+                ),
+            )
             leaf = extraction.os.open
+
             def directories_only(name, flags, *args, **kwargs):
-                assert flags & os.O_DIRECTORY, "name-only validation must open only directories"
+                assert flags & os.O_DIRECTORY, (
+                    "name-only validation must open only directories"
+                )
                 return leaf(name, flags, *args, **kwargs)
+
             monkeypatch.setattr(extraction.os, "open", directories_only)
             result = await search.search("über", 20, None)
             assert [r["path"] for r in result["results"]] == [str(path)]
@@ -4134,25 +4938,32 @@ def test_name_only_metadata_validation_no_reads_and_stale_paths(tmp_path, monkey
             assert not (await search.search("über", 20, None))["results"]
         finally:
             await search.close()
+
     asyncio.run(scenario())
 
 
 def test_cancel_during_root_open_drains_and_closes(tmp_path, monkeypatch):
     from rapid_mlx.local_search import service as module
+
     root = folder(tmp_path)
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     opening = module.open_root
+
     class DelayedRoot:
         def __init__(self, value):
             self.context = opening(value)
+
         def __enter__(self):
             entered.set()
             release.wait(2)
             return self.context.__enter__()
+
         def __exit__(self, *args):
             self.context.__exit__(*args)
             finished.set()
+
     monkeypatch.setattr(module, "open_root", DelayedRoot)
+
     async def scenario():
         search = engine(tmp_path)
         try:
@@ -4167,4 +4978,995 @@ def test_cancel_during_root_open_drains_and_closes(tmp_path, monkeypatch):
         finally:
             release.set()
             await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_safe_source_rejects_invalid_roots_and_nonregular_files(tmp_path):
+    from rapid_mlx.local_search.extraction import open_root, open_safe, stat_safe
+
+    root = folder(tmp_path)
+    file = root / "plain.txt"
+    file.touch()
+    with pytest.raises(ValueError, match="directory"):
+        validate_folder(str(file))
+    with pytest.raises(ValueError, match="absolute"), open_root(Path("relative")):
+        pass
+    nested = root / "nested"
+    nested.mkdir()
+    with pytest.raises(SkippedError, match="unsupported"):
+        stat_safe(nested, root)
+    fifo = root / "pipe.txt"
+    os.mkfifo(fifo)
+    with pytest.raises(SkippedError, match="unsupported"), open_safe(fifo, root, 100):
+        pass
+    with pytest.raises(OSError, match="changed"), open_safe(file, root, 100):
+        file.write_text("changed while pinned")
+
+
+@pytest.mark.parametrize("failure", ["scandir", "child", "directory_stat", "file_stat"])
+def test_discovery_filesystem_races_are_counted(tmp_path, monkeypatch, failure):
+    from rapid_mlx.local_search import extraction
+
+    root = folder(tmp_path)
+    nested = root / "nested"
+    nested.mkdir()
+    file = root / "plain.txt"
+    file.touch()
+    original_stat, original_open = os.stat, os.open
+    if failure == "scandir":
+        monkeypatch.setattr(
+            os, "scandir", lambda fd: (_ for _ in ()).throw(PermissionError())
+        )
+    elif failure == "child":
+        calls = 0
+
+        def opening(path, *args, **kwargs):
+            nonlocal calls
+            if path == "nested":
+                calls += 1
+                if calls == 2:
+                    raise PermissionError()
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", opening)
+    else:
+
+        def statting(path, *args, **kwargs):
+            if kwargs.get("dir_fd") is not None and path == (
+                "nested" if failure == "directory_stat" else "plain.txt"
+            ):
+                raise FileNotFoundError()
+            return original_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "stat", statting)
+    batches = list(extraction.scan_batches(root))
+    if failure != "child":
+        assert sum(count for _, count in batches) == 1
+    discovered = [p for files, _ in batches for p in files]
+    assert discovered == ([] if failure in {"scandir", "file_stat"} else [file])
+
+
+def test_read_safe_detects_growth_before_read(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import extraction
+
+    root = folder(tmp_path)
+    path = root / "growing.txt"
+    path.write_text("small")
+    original = extraction.open_safe
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def growing(*args, **kwargs):
+        with original(*args, **kwargs) as source:
+            path.write_text("too much data")
+            yield source
+
+    monkeypatch.setattr(extraction, "open_safe", growing)
+    with pytest.raises(SkippedError, match="size cap"):
+        read_safe(path, root, 5)
+
+
+@pytest.mark.parametrize("mode", ["seek", "read", "decoder"])
+def test_video_decoder_failures_release_capture(tmp_path, monkeypatch, mode):
+    import cv2
+
+    from rapid_mlx.local_search.extraction import media_frames
+
+    root = folder(tmp_path)
+    path = root / "bad.mp4"
+    path.write_bytes(b"container")
+
+    class Capture:
+        released = False
+
+        def isOpened(self):  # noqa: N802
+            return True
+
+        def get(self, key):
+            return 1 if key == cv2.CAP_PROP_FPS else 10
+
+        def set(self, key, value):
+            return mode != "seek"
+
+        def read(self):
+            if mode == "decoder":
+                raise cv2.error("decoder failure")
+            return False, None
+
+        def release(self):
+            self.released = True
+
+    capture = Capture()
+    monkeypatch.setattr(cv2, "VideoCapture", lambda _: capture)
+    with pytest.raises(SkippedError, match="undecodable video"):
+        list(media_frames(path, root))
+    assert capture.released
+
+
+def test_document_expansion_and_entity_bounds(monkeypatch):
+    from types import SimpleNamespace
+
+    import pypdf
+
+    from rapid_mlx.local_search.extraction import _OfficeXML
+
+    monkeypatch.setattr(
+        pypdf,
+        "PdfReader",
+        lambda _: SimpleNamespace(
+            is_encrypted=False,
+            pages=[SimpleNamespace(extract_text=lambda: "long text")],
+        ),
+    )
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extract(Path("large.pdf"), b"", max_bytes=3)
+    with pytest.raises(SkippedError, match="Audio is not supported yet"):
+        extract(Path("sound.wav"), b"")
+
+    class Archive:
+        def infolist(self):
+            return []
+
+        def open(self, name):
+            return io.BytesIO(
+                b"<!DOCTYPE document><document/>"
+                if name == "entities"
+                else b"<document/>"
+            )
+
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        _OfficeXML(Archive(), 3).read("ordinary")
+    with pytest.raises(SkippedError, match="XML entities"):
+        _OfficeXML(Archive(), 100).read("entities")
+
+
+@pytest.mark.parametrize(
+    "platform,suffix,data",
+    [
+        ("linux", ".txt", b"hello"),
+        ("darwin", ".wav", b""),
+        ("linux", ".txt", b"oversize"),
+        ("darwin", ".docx", b"bad"),
+    ],
+)
+def test_parser_child_entrypoint_in_process(monkeypatch, platform, suffix, data):
+    import json
+    import resource
+    from types import SimpleNamespace
+
+    from rapid_mlx.local_search import parsing
+
+    limits = []
+    monkeypatch.setattr(resource, "setrlimit", lambda *args: limits.append(args))
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(sys, "argv", ["parser", suffix])
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(data)))
+    output = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(parsing, "MAX_BYTES", 5)
+    if data == b"hello":
+        import runpy
+
+        monkeypatch.delitem(sys.modules, "rapid_mlx.local_search.parsing")
+        runpy.run_module("rapid_mlx.local_search.parsing", run_name="__main__")
+    else:
+        parsing.main()
+    message = json.loads(output.getvalue())
+    if data == b"hello":
+        assert message == {"units": [{"text": "hello", "page": None}]}
+    else:
+        assert message == {
+            "error": "Too large"
+            if data == b"oversize"
+            else "Audio is not supported yet"
+            if suffix == ".wav"
+            else "Could not be read"
+        }
+    assert len(limits) == (3 if platform == "linux" else 1)
+
+
+def test_store_schema_upgrade_rejects_unknown_and_normalizes_audio(tmp_path):
+    from rapid_mlx.local_search.extraction import SKIP_REASONS
+
+    root = folder(tmp_path)
+    path = root / "sound.wav"
+    path.touch()
+    db = tmp_path / "index.sqlite3"
+    store = Store(db, "model")
+    fid = store.add_folder(root)[0]
+    store.replace(fid, path, path.stat(), "hash", [], None, "skipped: unsupported")
+    store.db.execute("DELETE FROM meta WHERE key='extraction_version'")
+    store.db.commit()
+    store.close()
+    store = Store(db, "model")
+    assert store.files(fid)[str(path)]["status"] == "skipped: " + SKIP_REASONS["audio"]
+    store.db.execute("UPDATE meta SET value='future' WHERE key='schema_version'")
+    store.db.commit()
+    store.close()
+    with pytest.raises(ValueError, match="schema version"):
+        Store(db, "model")
+
+
+def test_store_dimension_budget_scope_and_unicode_keywords(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import store as storage
+
+    monkeypatch.setattr(storage, "MAX_CORPUS_EMBEDDED_CHUNKS", 1)
+    root = folder(tmp_path)
+    store = Store(tmp_path / "index.sqlite3", "model")
+    try:
+        fid = store.add_folder(root)[0]
+        for n in range(2):
+            path = root / f"{n}.txt"
+            path.write_text("ß")
+            store.replace(
+                fid,
+                path,
+                path.stat(),
+                str(n),
+                [Chunk("ß", 1, None)],
+                [[1, 0]],
+                "indexed",
+            )
+        rows = store.rows([fid])
+        assert len(rows) == 2 and len(store.vectors) == 1
+        with pytest.raises(ValueError, match="dimensions"):
+            store._put_vector(999, np.array([1, 0, 0]))
+        assert store.semantic_background(dict(rows)) == store.semantic_background(
+            dict(rows)
+        )
+        assert store.distinctive_terms(["ß"]) == []
+        assert store.keyword(["ß"], set(rows), distinctive=["ß"]) == list(rows)
+        assert store.keyword([], set(rows), query="", distinctive=[]) == []
+    finally:
+        store.close()
+
+
+def test_fusion_limit_fills_remaining_unreserved_results():
+    rows = {i: {"path": f"/{i}.txt", "kind": "text"} for i in range(4)}
+    result = fuse([], list(rows), rows=rows, limit=2, keyword_evidence={0: 2, 1: 2})
+    assert [r[0] for r in result] == list(rows)
+
+
+def test_folder_route_unreadable_path_returns_validation_error(tmp_path, monkeypatch):
+    async def scenario():
+        async with client_app(tmp_path, monkeypatch) as (client, app, _):
+
+            async def denied(path):
+                raise PermissionError()
+
+            monkeypatch.setattr(app.state.local_search, "add_folder", denied)
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(tmp_path)}
+            )
+            assert response.status_code == 400
+            assert response.json()["error"]["code"] == "invalid_folder_path"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("entrypoint", ["cli", "server"])
+def test_actual_local_search_flag_and_lifespan_wiring(
+    tmp_path, monkeypatch, enabled, entrypoint
+):
+    """Execute production wiring in isolation from the inference runtime."""
+    import ast
+    from types import SimpleNamespace
+
+    from rapid_mlx import local_search_runtime as runtime
+
+    monkeypatch.setattr(runtime, "_enabled", False)
+    monkeypatch.setattr(runtime, "_directory", None)
+    source_dir = Path(__file__).resolve().parents[1] / "rapid_mlx"
+    path = source_dir / f"{entrypoint}.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    function_name = "serve_command" if entrypoint == "cli" else "main"
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function_name
+    )
+    wiring = []
+    for index, node in enumerate(function.body):
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.asname == "configure_local_search" for alias in node.names
+        ):
+            wiring = function.body[index : index + 2]
+            break
+    assert wiring
+    namespace = {
+        "__package__": "rapid_mlx",
+        "args": SimpleNamespace(
+            enable_local_search=enabled, local_search_dir=str(tmp_path / "index")
+        ),
+    }
+    exec(
+        compile(ast.Module(body=wiring, type_ignores=[]), str(path), "exec"), namespace
+    )
+    assert runtime._enabled is enabled
+    assert runtime._directory == str(tmp_path / "index")
+
+    server_path = source_dir / "server.py"
+    server_tree = ast.parse(server_path.read_text(), filename=str(server_path))
+    lifespan = next(
+        node
+        for node in server_tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "lifespan"
+    )
+    calls = []
+    for index, node in enumerate(lifespan.body):
+        if isinstance(node, ast.ImportFrom) and node.module == "local_search_runtime":
+            calls.extend(lifespan.body[index : index + 2])
+    assert len(calls) == 4
+    # Retain the actual source locations so coverage records the production lines.
+    function = ast.AsyncFunctionDef(
+        name="local_lifecycle",
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[ast.arg(arg="app")],
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
+        ),
+        body=calls[:2] + [ast.Expr(value=ast.Yield(value=None))] + calls[2:],
+        decorator_list=[],
+    )
+    rendered = ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[]))
+    namespace = {"__package__": "rapid_mlx"}
+    exec(compile(rendered, str(server_path), "exec"), namespace)
+
+    async def scenario():
+        app = FastAPI()
+        lifecycle = namespace["local_lifecycle"](app)
+        await anext(lifecycle)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/v1/local-search/status")
+            assert response.status_code == (200 if enabled else 404)
+        assert hasattr(app.state, "local_search") is enabled
+        if enabled:
+            assert (
+                app.state.local_search.store.path
+                == tmp_path / "index" / "index.sqlite3"
+            )
+        with pytest.raises(StopAsyncIteration):
+            await anext(lifecycle)
+        assert not hasattr(app.state, "local_search")
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_local_checkpoint_resolution_from_cached_config(tmp_path, monkeypatch, cached):
+    from rapid_mlx import cli, model_metadata
+
+    monkeypatch.setattr(cli, "_cache_runnability", lambda _: True)
+    monkeypatch.setattr(
+        model_metadata, "resolve_unreferenced_cached_snapshot", lambda _: None
+    )
+    monkeypatch.setattr(
+        model_metadata, "resolve_offline_cached_snapshot", lambda _: None
+    )
+    monkeypatch.setattr(
+        model_metadata, "_cached_file", lambda *args: tmp_path / "config.json"
+    )
+    monkeypatch.setattr(
+        model_metadata,
+        "_complete_cached_checkpoint",
+        lambda *args: tmp_path if cached else None,
+    )
+    assert local_model_path("test/model") == (str(tmp_path) if cached else None)
+
+
+@pytest.mark.parametrize("error", [OSError, ValueError])
+def test_local_checkpoint_probe_failures_are_unavailable(monkeypatch, error):
+    from rapid_mlx import cli
+
+    def fail(_):
+        raise error("cache unavailable")
+
+    monkeypatch.setattr(cli, "_cache_runnability", fail)
+    assert local_model_path("test/model") is None
+
+
+def test_embedder_factory_enables_vision_without_loading(monkeypatch):
+    import types
+
+    from rapid_mlx.local_search import service as module
+
+    calls = []
+    fake = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "rapid_mlx.embedding",
+        types.SimpleNamespace(
+            EmbeddingEngine=lambda *args, **kwargs: calls.append((args, kwargs)) or fake
+        ),
+    )
+    assert module.make_embedder("checkpoint") is fake
+    assert calls == [
+        (
+            ("checkpoint",),
+            {"max_length": "auto", "overflow_policy": "error", "vision": True},
+        )
+    ]
+
+
+def test_resume_queues_registered_folders_and_ignores_stale_ids(tmp_path):
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        (root / "apple.txt").write_text("An apple orchard grows delicious fruit.")
+        registered, _ = await search.store.call("add_folder", root)
+        try:
+            search.pending.append("deleted-id")
+            search.start()
+            await search.wait_idle()
+            assert search.store.folder(registered)["state"] == "idle"
+            assert search.store.totals()["files"] == 1
+            await search.queue("deleted-id")
+            assert not search.pending
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_status_requeues_waiting_folder_when_model_returns(tmp_path, monkeypatch):
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        fid, _ = await search.store.call("add_folder", root)
+        await search.store.call("set_folder", fid, "waiting_for_model")
+        try:
+            await search.status_async()
+            await search.wait_idle()
+            assert search.store.folder(fid)["state"] == "idle"
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_generation_busy_falls_back_to_scheduler_statistics(tmp_path, monkeypatch):
+    from rapid_mlx.config import get_config
+
+    monkeypatch.setattr(
+        get_config().engine, "get_stats", lambda: {"num_waiting": 1}, raising=False
+    )
+    search = engine(tmp_path)
+    assert search._generation_busy()
+    asyncio.run(search.close())
+
+
+@pytest.mark.parametrize(
+    "media,outcome",
+    [
+        (False, "none"),
+        (False, "error"),
+        (True, "none"),
+        (True, "error"),
+        (True, "changed"),
+    ],
+)
+def test_index_handles_embedding_disappearance_and_media_changes(
+    tmp_path, monkeypatch, media, outcome
+):
+
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        source = root / ("apple.png" if media else "apple.txt")
+        if media:
+            from PIL import Image
+
+            Image.new("RGB", (4, 4)).save(source)
+        else:
+            source.write_text("An apple orchard grows delicious fruit.")
+
+        async def embed(*args, **kwargs):
+            if outcome == "error":
+                search._owner_worker = search._worker()
+                search.engine = FakeEmbedder()
+                raise RuntimeError("device unavailable")
+            return None
+
+        monkeypatch.setattr(search, "_embed_async", embed)
+        if outcome == "changed":
+            original = search._index_media
+
+            async def changed(*args):
+                result = await original(*args)
+                source.write_bytes(b"changed")
+                return result
+
+            monkeypatch.setattr(search, "_index_media", changed)
+        try:
+            registered, _ = await search.add_folder(str(root))
+            await search.wait_idle()
+            row = search.store.files(registered["id"])[str(source)]
+            if outcome == "changed":
+                assert row["status"].startswith("skipped")
+            else:
+                assert row["status"] == "keyword"
+                assert search.engine is None
+                state = search.store.folder(registered["id"])
+                assert state["state"] == (
+                    "idle" if media and outcome == "none" else "waiting_for_model"
+                )
+                if outcome == "error":
+                    assert state["error"] == "device unavailable"
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_document_parser_crash_marks_file_skipped(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import service as module
+
+    async def fail(*args):
+        raise RuntimeError("parser failed")
+
+    monkeypatch.setattr(module, "parse_document", fail)
+
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        source = root / "apple.txt"
+        source.write_text("An apple orchard grows delicious fruit.")
+        try:
+            registered, _ = await search.add_folder(str(root))
+            await search.wait_idle()
+            assert (
+                search.store.files(registered["id"])[str(source)]["status"]
+                == "skipped: " + module.SKIP_REASONS["read"]
+            )
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["missing", "skipped", "unreadable"])
+def test_disappearing_previously_indexed_file_is_removed(
+    tmp_path, monkeypatch, failure
+):
+    from rapid_mlx.local_search import service as module
+
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        source = root / "apple.txt"
+        source.write_text("An apple orchard grows delicious fruit.")
+        try:
+            registered, _ = await search.add_folder(str(root))
+            await search.wait_idle()
+            source.write_text("An apple orchard grows delicious fruit again.")
+            if failure == "skipped":
+
+                async def parse(*args):
+                    source.unlink()
+                    raise SkippedError("extraction failed")
+
+                monkeypatch.setattr(module, "parse_document", parse)
+            else:
+
+                def read(*args, **kwargs):
+                    source.unlink()
+                    raise (
+                        FileNotFoundError("gone")
+                        if failure == "missing"
+                        else OSError("unreadable")
+                    )
+
+                monkeypatch.setattr(module, "read_safe", read)
+            await search.queue(registered["id"])
+            await search.wait_idle()
+            assert not search.store.files(registered["id"])
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("absorbed", [False, True])
+def test_worker_cancellation_marks_queued_or_continues_absorbed_root(
+    tmp_path, monkeypatch, absorbed
+):
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        fid, _ = await search.store.call("add_folder", root)
+
+        async def cancelled(registered):
+            if absorbed:
+                await search.store.call("delete_folder", fid)
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(search, "_index", cancelled)
+        search.pending = [fid]
+        try:
+            if absorbed:
+                await search._run()
+                assert search.store.folder(fid) is None
+            else:
+                with pytest.raises(asyncio.CancelledError):
+                    await search._run()
+                assert search.store.folder(fid)["state"] == "queued"
+            assert not search.progress["active"]
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_worker_records_unexpected_indexing_failure(tmp_path, monkeypatch):
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        fid, _ = await search.store.call("add_folder", root)
+
+        async def fail(_):
+            raise RuntimeError("scan failed")
+
+        monkeypatch.setattr(search, "_index", fail)
+        search.pending = [fid]
+        try:
+            await search._run()
+            assert search.store.folder(fid)["state"] == "error"
+            assert search.store.folder(fid)["error"] == "scan failed"
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("media", [False, True])
+def test_cancelled_cpu_discovery_drains_before_closing(tmp_path, monkeypatch, media):
+    from rapid_mlx.local_search import service as module
+
+    started, release, closed = threading.Event(), threading.Event(), threading.Event()
+
+    class Iterator:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            started.set()
+            release.wait(2)
+            if media:
+                raise OSError("decoder failed during cancellation")
+            return [], 0
+
+        def close(self):
+            assert release.is_set()
+            closed.set()
+
+    monkeypatch.setattr(
+        module, "media_frames" if media else "scan_batches", lambda *args: Iterator()
+    )
+
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        fid, _ = await search.store.call("add_folder", root)
+        try:
+            task = asyncio.create_task(
+                search._index_media(root / "apple.png", root, True, None)
+                if media
+                else search._index_pinned({"id": fid}, root, None)
+            )
+            assert await asyncio.to_thread(started.wait, 2)
+            task.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert closed.is_set()
+        finally:
+            release.set()
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_status_reports_disappeared_registered_folder(tmp_path):
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        fid, _ = await search.store.call("add_folder", root)
+        root.rmdir()
+        try:
+            status = await search.status_async()
+            assert status["folders"][0]["id"] == fid
+            assert status["folders"][0]["state"] == "missing"
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_zero_embedding_is_rejected_and_releases_model(tmp_path):
+    class ZeroEmbedder(FakeEmbedder):
+        def embed(self, texts):
+            return [[0.0, 0.0] for _ in texts]
+
+    async def scenario():
+        search = engine(tmp_path, ZeroEmbedder())
+        try:
+            with pytest.raises(RuntimeError, match="zero embedding output"):
+                await search._embed_async(["apple"])
+            assert search.engine is None
+            assert search.worker_error == "zero embedding output"
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "mode", ["spawn_cancel", "probe_gone", "invalid_output", "kill_race"]
+)
+def test_parser_process_races_reap_child(monkeypatch, mode):
+    import psutil
+
+    from rapid_mlx.local_search import parsing
+
+    async def scenario():
+        started, release = asyncio.Event(), asyncio.Event()
+        communicating = asyncio.Event()
+
+        class Process:
+            pid = 123
+            returncode = None
+            killed = False
+            reaped = False
+
+            async def communicate(self, data):
+                communicating.set()
+                if mode == "probe_gone":
+                    await asyncio.sleep(0.03)
+                if mode == "kill_race":
+                    await asyncio.Event().wait()
+                self.returncode = 0
+                return (
+                    b"invalid json" if mode == "invalid_output" else b'{"units":[]}'
+                ), b""
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+                if mode == "kill_race":
+                    raise ProcessLookupError()
+
+            async def wait(self):
+                self.reaped = True
+                return self.returncode
+
+        process = Process()
+
+        async def spawn(*args, **kwargs):
+            started.set()
+            if mode == "spawn_cancel":
+                await release.wait()
+            return process
+
+        class Probe:
+            def memory_info(self):
+                if mode in {"probe_gone", "invalid_output"}:
+                    raise psutil.NoSuchProcess(process.pid)
+                from types import SimpleNamespace
+
+                return SimpleNamespace(rss=0)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+        monkeypatch.setattr(psutil, "Process", lambda _: Probe())
+        task = asyncio.create_task(parsing._run_parser(["parser"], b""))
+        await started.wait()
+        if mode in {"spawn_cancel", "kill_race"}:
+            if mode == "kill_race":
+                await communicating.wait()
+            task.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert process.killed
+        elif mode == "invalid_output":
+            with pytest.raises(SkippedError, match="Could not be read"):
+                await task
+        else:
+            assert await task == []
+        assert process.reaped
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_standalone_local_search_parser_flags_without_runtime(enabled):
+    import argparse
+    import ast
+
+    path = Path(__file__).resolve().parents[1] / "rapid_mlx" / "server.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_parser"
+    )
+    additions = [
+        node
+        for node in function.body
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and node.value.args
+        and isinstance(node.value.args[0], ast.Constant)
+        and node.value.args[0].value in ("--enable-local-search", "--local-search-dir")
+    ]
+    assert len(additions) == 2
+    parser = argparse.ArgumentParser()
+    exec(
+        compile(ast.Module(body=additions, type_ignores=[]), str(path), "exec"),
+        {"parser": parser},
+    )
+    args = parser.parse_args(
+        ["--enable-local-search", "--local-search-dir", "/index"] if enabled else []
+    )
+    assert args.enable_local_search is enabled
+    assert args.local_search_dir == ("/index" if enabled else None)
+
+
+def test_scan_prunes_nested_virtual_environment(tmp_path):
+    root = folder(tmp_path)
+    nested = root / "tools"
+    nested.mkdir()
+    (nested / "pyvenv.cfg").touch()
+    (nested / "ignored.txt").write_text("not indexed")
+    assert scan(root) == ([], 1)
+
+
+def test_slide_references_cannot_expand_cached_xml_without_bound():
+    drawing = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    presentation = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    data = office_zip(
+        {
+            "ppt/presentation.xml": f'<p:presentation xmlns:p="{presentation}" xmlns:r="{relationship}"><p:sldIdLst>'
+            + '<p:sldId r:id="s1"/>' * 100
+            + "</p:sldIdLst></p:presentation>",
+            "ppt/_rels/presentation.xml.rels": '<Relationships><Relationship Id="s1" Type="slide" Target="slides/slide1.xml"/></Relationships>',
+            "ppt/slides/slide1.xml": f'<a:root xmlns:a="{drawing}"><a:p><a:t>'
+            + "x" * 100
+            + "</a:t></a:p></a:root>",
+        }
+    )
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extract(Path("repeated.pptx"), data, max_bytes=4000)
+
+
+def test_unicode_short_keyword_discards_nonmatching_candidates(tmp_path):
+    root = folder(tmp_path)
+    store = Store(tmp_path / "index.sqlite3", "model")
+    try:
+        fid = store.add_folder(root)[0]
+        for n, text in enumerate(["ß", "unrelated"]):
+            path = root / f"{n}.txt"
+            path.write_text(text)
+            store.replace(
+                fid, path, path.stat(), str(n), [Chunk(text, 1, None)], None, "keyword"
+            )
+        rows = store.rows()
+        assert store.keyword(["ß"], set(rows), distinctive=["ß"]) == [next(iter(rows))]
+    finally:
+        store.close()
+
+
+def test_nested_document_paragraphs_cannot_expand_text_without_bound():
+    word = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    data = office_zip(
+        {
+            "word/document.xml": f'<w:document xmlns:w="{word}">'
+            + "<w:p>" * 20
+            + "<w:t>"
+            + "x" * 200
+            + "</w:t>"
+            + "</w:p>" * 20
+            + "</w:document>"
+        }
+    )
+    with pytest.raises(SkippedError, match="expanded size cap"):
+        extract(Path("nested.docx"), data, max_bytes=1000)
+
+
+@pytest.mark.parametrize("mode", ["failed_exit", "oversized_output"])
+def test_parser_rejects_failure_or_unbounded_output(monkeypatch, mode):
+    from rapid_mlx.local_search import parsing
+
+    monkeypatch.setattr(parsing, "MAX_BYTES", 1)
+    command = "raise SystemExit(1)" if mode == "failed_exit" else "print('x' * 9)"
+    with pytest.raises(SkippedError, match="Could not be read"):
+        asyncio.run(parsing.run_parser([sys.executable, "-c", command], b""))
+
+
+@pytest.mark.parametrize("unsafe", ["removed_folder", "private_file"])
+def test_search_omits_results_that_lose_folder_or_privacy_admission(
+    tmp_path, monkeypatch, unsafe
+):
+    from rapid_mlx.local_search import service as module
+
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        source = root / "apple.txt"
+        source.write_text("An apple orchard grows delicious fruit.")
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+            assert (await search.search("apple", 10, None))["results"]
+            if unsafe == "private_file":
+                monkeypatch.setattr(module, "excluded", lambda path: path == source)
+            else:
+                call = search.store.call
+
+                async def current_folders(method, *args, **kwargs):
+                    if method == "folders":
+                        return []
+                    return await call(method, *args, **kwargs)
+
+                monkeypatch.setattr(search.store, "call", current_folders)
+            assert not (await search.search("apple", 10, None))["results"]
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_cpu_read_drains_pinned_work_before_returning():
+    from rapid_mlx.local_search.service import cpu_call
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def read():
+        started.set()
+        release.wait(2)
+        finished.set()
+        return b"document"
+
+    async def scenario():
+        task = asyncio.create_task(cpu_call(read))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not finished.is_set()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert finished.is_set()
+        finally:
+            release.set()
+
     asyncio.run(scenario())

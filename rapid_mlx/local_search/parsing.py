@@ -1,11 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Killable document parser; no model imports or parser threads."""
+
 import asyncio
 import json
 import sys
 from pathlib import Path
 
-from .extraction import MAX_BYTES, OFFICE_SUFFIXES, SKIP_REASONS, SkippedError, Unit, extract
+from .extraction import (
+    MAX_BYTES,
+    OFFICE_SUFFIXES,
+    SKIP_REASONS,
+    SkippedError,
+    Unit,
+    extract,
+)
 
 PARSER_TIMEOUT_SECONDS = 10.0
 PARSER_MEMORY_BYTES = 512 * 1024 * 1024
@@ -15,14 +23,16 @@ async def parse_document(path, data):
     if path.suffix.lower() not in {".pdf", *OFFICE_SUFFIXES}:
         return await asyncio.to_thread(extract, path, data)
     return await run_parser(
-        [sys.executable, "-m", "rapid_mlx.local_search.parsing", path.suffix.lower()], data
+        [sys.executable, "-m", "rapid_mlx.local_search.parsing", path.suffix.lower()],
+        data,
     )
 
 
 async def run_parser(command, data):
     try:
-        async with asyncio.timeout(PARSER_TIMEOUT_SECONDS):
-            return await _run_parser(command, data)
+        return await asyncio.wait_for(
+            _run_parser(command, data), timeout=PARSER_TIMEOUT_SECONDS
+        )
     except asyncio.TimeoutError as exc:
         raise SkippedError(SKIP_REASONS["read"]) from exc
 
@@ -35,10 +45,14 @@ async def _run_parser(command, data):
     """
     import psutil
 
-    spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-        *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    ))
+    spawn = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    )
     try:
         process = await asyncio.shield(spawn)
     except asyncio.CancelledError:
@@ -48,6 +62,7 @@ async def _run_parser(command, data):
         await process.wait()
         raise
     communication = asyncio.create_task(process.communicate(data))
+
     async def bounded():
         probe = psutil.Process(process.pid)
         while not communication.done():
@@ -64,6 +79,7 @@ async def _run_parser(command, data):
         if "error" in message:
             raise SkippedError(message["error"])
         return [Unit(**unit) for unit in message["units"]]
+
     try:
         return await bounded()
     except SkippedError:
@@ -87,8 +103,12 @@ def main():
     from dataclasses import asdict
 
     if sys.platform != "darwin":
-        resource.setrlimit(resource.RLIMIT_AS, (PARSER_MEMORY_BYTES, PARSER_MEMORY_BYTES))
-        resource.setrlimit(resource.RLIMIT_DATA, (PARSER_MEMORY_BYTES, PARSER_MEMORY_BYTES))
+        resource.setrlimit(
+            resource.RLIMIT_AS, (PARSER_MEMORY_BYTES, PARSER_MEMORY_BYTES)
+        )
+        resource.setrlimit(
+            resource.RLIMIT_DATA, (PARSER_MEMORY_BYTES, PARSER_MEMORY_BYTES)
+        )
     resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
     try:
         data = sys.stdin.buffer.read(MAX_BYTES + 1)

@@ -8,35 +8,60 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 
 from . import MODEL_ID
 from .chunking import Chunk, chunk_units
+from .eligibility import semantic_chunk
 from .extraction import (
     AUDIO_SUFFIXES,
     LEGACY_OFFICE_SUFFIXES,
+    MAX_BYTES,
     MAX_EMBEDDED_CHUNKS_PER_FILE,
+    OFFICE_SUFFIXES,
     SKIP_REASONS,
+    TEXT_SUFFIXES,
+    VIDEO_MAX_BYTES,
     SkippedError,
     excluded,
-    skip_reason,
-    extract,
     file_kind,
     media_frames,
     next_media_batch,
+    open_root,
+    open_safe,
     read_safe,
     scan_batches,
+    skip_reason,
+    stat_safe,
     validate_folder,
-    open_root, open_safe, stat_safe, VIDEO_MAX_BYTES, TEXT_SUFFIXES, OFFICE_SUFFIXES, MAX_BYTES,
 )
-from .eligibility import semantic_chunk
-from .search import KINDS, fuse, grouped_rankings, query_statistics, query_terms, semantic_ranking, snippet, top_files
-from .store import StoreWorker, bounded_terms
 from .parsing import parse_document
+from .search import (
+    KINDS,
+    fuse,
+    grouped_rankings,
+    query_statistics,
+    query_terms,
+    semantic_ranking,
+    snippet,
+    top_files,
+)
+from .store import StoreWorker, bounded_terms
 
 logger = logging.getLogger(__name__)
+
+
+class Embedder(Protocol):
+    @property
+    def is_loaded(self) -> bool: ...
+
+    def embed(self, texts: str | list[str]) -> list[list[float]]: ...
+
+    def embed_images(self, images: list) -> list[list[float]]: ...
 
 
 def local_model_path(model_id: str) -> str | None:
@@ -50,7 +75,8 @@ def local_model_path(model_id: str) -> str | None:
 
     from ..cli import _cache_runnability
     from ..model_metadata import (
-        _cached_file, _complete_cached_checkpoint,
+        _cached_file,
+        _complete_cached_checkpoint,
         resolve_offline_cached_snapshot,
         resolve_unreferenced_cached_snapshot,
     )
@@ -66,6 +92,7 @@ def local_model_path(model_id: str) -> str | None:
         config = _cached_file(model_id, "config.json")
         if config is not None:
             from huggingface_hub.constants import HF_HUB_CACHE
+
             repo = Path(HF_HUB_CACHE) / ("models--" + model_id.replace("/", "--"))
             resolved = _complete_cached_checkpoint(repo, config.parent, model_id)
             return str(resolved) if resolved is not None else None
@@ -74,7 +101,7 @@ def local_model_path(model_id: str) -> str | None:
         return None
 
 
-def make_embedder(path: str):
+def make_embedder(path: str) -> Embedder:
     from ..embedding import EmbeddingEngine
 
     return EmbeddingEngine(
@@ -89,7 +116,7 @@ class LocalSearch:
         *,
         model_id=MODEL_ID,
         resolve_model=local_model_path,
-        embedder_factory=make_embedder,
+        embedder_factory: Callable[[str], Embedder] = make_embedder,
         model_worker=None,
         batch_size=4,
         yield_seconds=0.01,
@@ -98,7 +125,7 @@ class LocalSearch:
         self.store = StoreWorker(directory / "index.sqlite3", model_id)
         self.resolve_model = resolve_model
         self.embedder_factory = embedder_factory
-        self.engine = None
+        self.engine: Embedder | None = None
         self.model_worker = model_worker
         self._model_gate = asyncio.Lock()
         self._coordination = asyncio.Lock()
@@ -143,7 +170,9 @@ class LocalSearch:
             self.task = asyncio.create_task(self._run())
 
     def status(self) -> dict:
-        return self._status(self.resolve_model(self.model_id), self.store.folders(), self.store.totals())
+        return self._status(
+            self.resolve_model(self.model_id), self.store.folders(), self.store.totals()
+        )
 
     async def status_async(self) -> dict:
         model_path = await asyncio.to_thread(self.resolve_model, self.model_id)
@@ -153,7 +182,12 @@ class LocalSearch:
         for folder in folders:
             if not await asyncio.to_thread(Path(folder["path"]).is_dir):
                 folder["state"] = "missing"
-            elif model_path is not None and callable(self._worker()) and folder["state"] == "waiting_for_model" and self.progress["folder_id"] != folder["id"]:
+            elif (
+                model_path is not None
+                and callable(self._worker())
+                and folder["state"] == "waiting_for_model"
+                and self.progress["folder_id"] != folder["id"]
+            ):
                 await self.queue(folder["id"])
         return self._status(model_path, folders, totals, vision)
 
@@ -165,13 +199,18 @@ class LocalSearch:
                 "id": self.model_id,
                 "downloaded": downloaded,
                 "loaded": bool(self.engine and self.engine.is_loaded),
-                "vision": self._vision_available(model_path) if vision is None else vision,
+                "vision": self._vision_available(model_path)
+                if vision is None
+                else vision,
             },
             "folders": folders,
             "indexing": dict(self.progress),
             "totals": totals,
-            "semantic_unavailable_reason": self.worker_error or (
-                None if self._worker() is not None else "Engine has no sanctioned model worker; keyword-only"
+            "semantic_unavailable_reason": self.worker_error
+            or (
+                None
+                if self._worker() is not None
+                else "Engine has no sanctioned model worker; keyword-only"
             ),
         }
 
@@ -232,9 +271,12 @@ class LocalSearch:
         if self.model_worker is not None:
             return self.model_worker
         from ..config import get_config
+
         worker = getattr(get_config().engine, "execute_on_model_worker", None)
         if self.engine is not None and self._owner_worker != worker:
-            self.worker_error = "Model worker changed; restart Local Search to restore semantic search"
+            self.worker_error = (
+                "Model worker changed; restart Local Search to restore semantic search"
+            )
             return None
         return worker
 
@@ -242,15 +284,21 @@ class LocalSearch:
         # FIFO admission before submitting to the engine: the sole indexer can
         # have only its current <=4-input batch ahead of a waiting query.
         async with self._model_gate:
-            return await self._model_call_owned(func, *args, _teardown=_teardown, **kwargs)
+            return await self._model_call_owned(
+                func, *args, _teardown=_teardown, **kwargs
+            )
 
     async def _model_call_owned(self, func, *args, _teardown=False, **kwargs):
         worker = self._owner_worker if _teardown else self._worker()
         if not callable(worker):
-            self.worker_error = self.worker_error or "Engine has no sanctioned model worker; keyword-only"
+            self.worker_error = (
+                self.worker_error
+                or "Engine has no sanctioned model worker; keyword-only"
+            )
             raise RuntimeError(self.worker_error)
         # Retain the exact boundary owning this embedder even if cfg.engine changes.
         self._owner_worker = worker
+
         def work():
             try:
                 return True, func(*args, **kwargs)
@@ -258,6 +306,7 @@ class LocalSearch:
                 # Never transfer a traceback retaining MLX/model locals to the loop.
                 self._release_embedder()
                 return False, str(exc)
+
         task = asyncio.create_task(worker(work))
         try:
             success, result = await asyncio.shield(task)
@@ -279,6 +328,7 @@ class LocalSearch:
         owner = getattr(worker, "__self__", None)
         if self.model_worker is None:
             from ..config import get_config
+
             owner = get_config().engine
         status = getattr(owner, "lifecycle_status", None)
         if callable(status):
@@ -287,7 +337,9 @@ class LocalSearch:
         stats = getattr(owner, "get_stats", None)
         if callable(stats):
             snapshot = stats()
-            return bool(snapshot.get("num_running", 0) or snapshot.get("num_waiting", 0))
+            return bool(
+                snapshot.get("num_running", 0) or snapshot.get("num_waiting", 0)
+            )
         return False
 
     async def _wait_for_generation(self):
@@ -322,7 +374,8 @@ class LocalSearch:
             if path is None:
                 return None
             self.engine = self.embedder_factory(path)
-        method = self.engine.embed_images if images else self.engine.embed
+        engine = self.engine
+        method = engine.embed_images if images else engine.embed
         vectors = np.asarray(method(inputs), dtype=np.float32)
         if (
             vectors.ndim != 2
@@ -362,7 +415,9 @@ class LocalSearch:
                 if available:
                     try:
                         embedded = await self._embed_async(
-                            [frame.image for frame in batch], images=True, background=True
+                            [frame.image for frame in batch],
+                            images=True,
+                            background=True,
                         )
                         if embedded is None:
                             available = False
@@ -392,7 +447,10 @@ class LocalSearch:
                 try:
                     await self._index(folder)
                 except asyncio.CancelledError:
-                    if not self.closed and await self.store.call("folder", folder_id) is None:
+                    if (
+                        not self.closed
+                        and await self.store.call("folder", folder_id) is None
+                    ):
                         # An absorbed root resumes through the ordinary queue;
                         # committed files now belong to the containing root.
                         continue
@@ -402,7 +460,9 @@ class LocalSearch:
                     await self.store.call("set_folder", folder_id, "missing")
                 except Exception as exc:
                     logger.exception("Local-search indexing failed")
-                    await self.store.call("set_folder", folder_id, "error", error=str(exc))
+                    await self.store.call(
+                        "set_folder", folder_id, "error", error=str(exc)
+                    )
                 finally:
                     self.progress = self._idle()
         finally:
@@ -445,7 +505,9 @@ class LocalSearch:
                         break
                     paths, count = batch
                     skipped += count
-                    await self.store.call("set_folder", folder["id"], "indexing", skipped=skipped)
+                    await self.store.call(
+                        "set_folder", folder["id"], "indexing", skipped=skipped
+                    )
                     for path in paths:
                         if path.parent == index_directory:
                             continue
@@ -455,7 +517,9 @@ class LocalSearch:
 
             # Zero means discovery is ongoing; committed files are already searchable.
             self.progress["files_total"] = 0
-            available = await asyncio.to_thread(self.resolve_model, self.model_id) is not None
+            available = (
+                await asyncio.to_thread(self.resolve_model, self.model_id) is not None
+            )
             model_error = None
             if not callable(self._worker()):
                 available = False
@@ -473,15 +537,23 @@ class LocalSearch:
                         and previous["size"] == info.st_size
                         and previous["mtime_ns"] == info.st_mtime_ns
                         and previous["status"] != "pending"
-                        and not (available and previous["status"] in {"keyword", "budget"}
-                                 and await self.store.call("embedding_room", path) > previous.get("embedded", 0))
+                        and not (
+                            available
+                            and previous["status"] in {"keyword", "budget"}
+                            and await self.store.call("embedding_room", path)
+                            > previous.get("embedded", 0)
+                        )
                     ):
                         if previous["status"].startswith("skipped"):
                             skipped += 1
                         continue
                     if file_kind(path) != "text":
                         media_cap = 1 if file_kind(path) == "image" else 120
-                        media_available = available and await self.store.call("embedding_room", path) >= media_cap
+                        media_available = (
+                            available
+                            and await self.store.call("embedding_room", path)
+                            >= media_cap
+                        )
                         chunks, vectors, media_ok, error = await self._index_media(
                             path, root, media_available, root_fd
                         )
@@ -497,7 +569,8 @@ class LocalSearch:
                             raise OSError(
                                 "file changed during extraction; reindex to retry"
                             )
-                        await self.store.call("replace",
+                        await self.store.call(
+                            "replace",
                             folder["id"],
                             path,
                             info,
@@ -511,12 +584,21 @@ class LocalSearch:
                         raise SkippedError(SKIP_REASONS["unsupported"])
                     if path.suffix.lower() in AUDIO_SUFFIXES:
                         raise SkippedError(SKIP_REASONS["audio"])
-                    if path.suffix.lower() not in TEXT_SUFFIXES | OFFICE_SUFFIXES | {".pdf"} and path.name.lower() not in {"makefile", "dockerfile", "license", "readme"}:
+                    if path.suffix.lower() not in TEXT_SUFFIXES | OFFICE_SUFFIXES | {
+                        ".pdf"
+                    } and path.name.lower() not in {
+                        "makefile",
+                        "dockerfile",
+                        "license",
+                        "readme",
+                    }:
                         raise SkippedError(SKIP_REASONS["unsupported"])
                     if info.st_size > MAX_BYTES:
                         raise SkippedError(SKIP_REASONS["size"])
                     data, info = await cpu_call(read_safe, path, root, root_fd=root_fd)
-                    digest = await asyncio.to_thread(lambda: hashlib.sha256(data).hexdigest())
+                    digest = await asyncio.to_thread(
+                        lambda data=data: hashlib.sha256(data).hexdigest()
+                    )
                     if (
                         previous
                         and previous["content_hash"] == digest
@@ -538,7 +620,7 @@ class LocalSearch:
                     remaining = await self.store.call("embedding_room", path)
                     if available and eligible and remaining > 0:
                         order = sorted(
-                            eligible[:min(MAX_EMBEDDED_CHUNKS_PER_FILE, remaining)],
+                            eligible[: min(MAX_EMBEDDED_CHUNKS_PER_FILE, remaining)],
                             key=lambda i: len(chunks[i].text),
                         )
                         ordered_vectors = []
@@ -567,15 +649,24 @@ class LocalSearch:
                                 await self._model_call(self._release_embedder)
                             available = False
                             model_error = str(exc)
-                    await self.store.call("replace",
+                    await self.store.call(
+                        "replace",
                         folder["id"],
                         path,
                         info,
                         digest,
                         chunks,
                         vectors,
-                        ("budget" if available and eligible and remaining < min(len(eligible), MAX_EMBEDDED_CHUNKS_PER_FILE)
-                         else "indexed" if vectors is not None or not eligible else "keyword"),
+                        (
+                            "budget"
+                            if available
+                            and eligible
+                            and remaining
+                            < min(len(eligible), MAX_EMBEDDED_CHUNKS_PER_FILE)
+                            else "indexed"
+                            if vectors is not None or not eligible
+                            else "keyword"
+                        ),
                     )
                 except SkippedError as exc:
                     skipped += 1
@@ -585,7 +676,8 @@ class LocalSearch:
                         if previous:
                             await self.store.call("remove_file", previous["id"])
                         continue
-                    await self.store.call("replace",
+                    await self.store.call(
+                        "replace",
                         folder["id"],
                         path,
                         skipped_info,
@@ -606,18 +698,29 @@ class LocalSearch:
                         if previous:
                             await self.store.call("remove_file", previous["id"])
                     else:
-                        await self.store.call("replace", folder["id"], path, skipped_info, None, [], None,
-                                           "skipped: " + SKIP_REASONS["read"])
+                        await self.store.call(
+                            "replace",
+                            folder["id"],
+                            path,
+                            skipped_info,
+                            None,
+                            [],
+                            None,
+                            "skipped: " + SKIP_REASONS["read"],
+                        )
                     logger.debug("Local-search skipped %s: %s", path, exc)
                 finally:
                     self.progress["files_done"] += 1
-                    await self.store.call("set_folder", folder["id"], "indexing", skipped=skipped)
+                    await self.store.call(
+                        "set_folder", folder["id"], "indexing", skipped=skipped
+                    )
                     await asyncio.sleep(self.yield_seconds)
             self.progress["files_total"] = self.progress["files_done"]
             for path, row in old.items():
                 if path not in existing:
                     await self.store.call("remove_file", row["id"])
-            await self.store.call("set_folder",
+            await self.store.call(
+                "set_folder",
                 folder["id"],
                 "idle" if available else "waiting_for_model",
                 error=model_error,
@@ -642,10 +745,16 @@ class LocalSearch:
         terms = bounded_terms(terms, distinctive)
         distinctive = [term for term in distinctive if term in terms]
         highlight_terms = distinctive or [query.strip()]
-        evidence = {}
+        evidence: dict[int, int] = {}
         keyword = top_files(
-            await self.store.call("keyword", terms, rows, query=query, distinctive=distinctive,
-                               evidence=evidence),
+            await self.store.call(
+                "keyword",
+                terms,
+                rows,
+                query=query,
+                distinctive=distinctive,
+                evidence=evidence,
+            ),
             rows,
             max(100, limit * 5),
         )
@@ -656,26 +765,45 @@ class LocalSearch:
         try:
             vector = await self._embed_async([f"task: search result | query: {query}"])
             if vector is not None:
-                pooled_scores = await self.store.call("semantic_scores", vector[0], rows)
+                pooled_scores = await self.store.call(
+                    "semantic_scores", vector[0], rows
+                )
                 semantic_scores = dict(pooled_scores)
                 background = await self.store.call("semantic_background", rows)
-                by_kind = {kind: [] for kind in KINDS}
+                by_kind: dict[str, list[tuple[int, float]]] = {
+                    kind: [] for kind in KINDS
+                }
                 for i, score in pooled_scores:
                     by_kind[rows[i]["kind"]].append((i, score))
                 for kind in KINDS:
                     scores = by_kind[kind]
                     statistics = await asyncio.to_thread(query_statistics, scores, rows)
                     ids, mean, deviation = statistics
-                    semantic_standardized.update({
-                        i: (semantic_scores[i] - mean) / deviation if deviation > 0 else 0.0
-                        for i in ids
-                    })
-                    semantic_legs.append(semantic_ranking(scores, rows, background[kind], statistics=statistics))
+                    semantic_standardized.update(
+                        {
+                            i: (semantic_scores[i] - mean) / deviation
+                            if deviation > 0
+                            else 0.0
+                            for i in ids
+                        }
+                    )
+                    semantic_legs.append(
+                        semantic_ranking(
+                            scores, rows, background[kind], statistics=statistics
+                        )
+                    )
                 mode = "hybrid"
         except Exception as exc:
             logger.warning("Local-search keyword fallback: %s", exc)
-        include_groups = group_limit is not None and len(set(KINDS if kinds is None else kinds)) > 1
-        folders = {f["id"]: Path(f["path"]) for f in await self.store.call("folders", )}
+        include_groups = (
+            group_limit is not None and len(set(KINDS if kinds is None else kinds)) > 1
+        )
+        folders = {
+            f["id"]: Path(f["path"])
+            for f in await self.store.call(
+                "folders",
+            )
+        }
         valid_rows = {}
 
         def admitted(ranking):
@@ -696,7 +824,10 @@ class LocalSearch:
                             current = info
                     else:
                         current = stat_safe(path, root)
-                    if current.st_size != row["size"] or current.st_mtime != row["mtime"]:
+                    if (
+                        current.st_size != row["size"]
+                        or current.st_mtime != row["mtime"]
+                    ):
                         continue
                 except (OSError, ValueError):
                     continue
@@ -704,7 +835,7 @@ class LocalSearch:
                 valid_rows[chunk_id] = row
                 yield chunk_id, score, matched
 
-        result_cache = {}
+        result_cache: dict[int, dict[str, object]] = {}
 
         async def result(hit):
             chunk_id, score, matched = hit
@@ -712,27 +843,47 @@ class LocalSearch:
                 return {**result_cache[chunk_id], "score": score, "matched": matched}
             row = rows[chunk_id]
             text, highlights = (
-                await asyncio.to_thread(snippet, await self.store.call("chunk_text", chunk_id), highlight_terms)
-                if row["kind"] == "text" and row["content_indexed"] else ("", [])
+                await asyncio.to_thread(
+                    snippet,
+                    await self.store.call("chunk_text", chunk_id),
+                    highlight_terms,
+                )
+                if row["kind"] == "text" and row["content_indexed"]
+                else ("", [])
             )
             locator = json.loads(row["locator"])
             result_cache[chunk_id] = {
-                "content_indexed": row["content_indexed"], "skip_reason": row["skip_reason"],
+                "content_indexed": row["content_indexed"],
+                "skip_reason": row["skip_reason"],
                 "kind": row["kind"],
-                "timestamp": locator.get("timestamp") if row["kind"] == "video" else None,
-                "path": row["path"], "folder_id": row["folder_id"],
-                "title": row["title"], "snippet": text, "highlights": highlights,
-                "score": score, "matched": matched,
-                "page": locator.get("page"), "line": locator.get("line"),
-                "modified_at": row["mtime"], "size": row["size"],
+                "timestamp": locator.get("timestamp")
+                if row["kind"] == "video"
+                else None,
+                "path": row["path"],
+                "folder_id": row["folder_id"],
+                "title": row["title"],
+                "snippet": text,
+                "highlights": highlights,
+                "score": score,
+                "matched": matched,
+                "page": locator.get("page"),
+                "line": locator.get("line"),
+                "modified_at": row["mtime"],
+                "size": row["size"],
             }
 
             return result_cache[chunk_id]
 
-        ranking = await asyncio.to_thread(fuse,
-            [], keyword, rows=rows, semantic_legs=semantic_legs,
-            semantic_scores=semantic_scores, keyword_evidence=evidence,
-            semantic_standardized=semantic_standardized, limit=limit,
+        ranking = await asyncio.to_thread(
+            fuse,
+            [],
+            keyword,
+            rows=rows,
+            semantic_legs=semantic_legs,
+            semantic_scores=semantic_scores,
+            keyword_evidence=evidence,
+            semantic_standardized=semantic_standardized,
+            limit=limit,
         )
         hits = []
         admitted_hits = await asyncio.to_thread(lambda: list(admitted(ranking)))
@@ -740,22 +891,35 @@ class LocalSearch:
             hits.append(hit)
             if not include_groups and len(hits) == limit:
                 break
-        response = {"results": [await result(hit) for hit in hits[:limit]], "mode": mode}
+        response: dict[str, object] = {
+            "results": [await result(hit) for hit in hits[:limit]],
+            "mode": mode,
+        }
         if include_groups:
             # Preserve all safe chunks of admitted files for lexical/semantic
             # representative selection, including the best video frame.
             paths = {row["path"] for row in valid_rows.values()}
             candidates = set(keyword).union(*(set(leg) for leg in semantic_legs))
             group_rows = {i: rows[i] for i in candidates if rows[i]["path"] in paths}
-            groups = await asyncio.to_thread(grouped_rankings,
-                [i for i in keyword if i in group_rows], rows=group_rows,
-                semantic_legs=[[i for i in leg if i in group_rows] for leg in semantic_legs],
+            groups = await asyncio.to_thread(
+                grouped_rankings,
+                [i for i in keyword if i in group_rows],
+                rows=group_rows,
+                semantic_legs=[
+                    [i for i in leg if i in group_rows] for leg in semantic_legs
+                ],
                 semantic_scores=semantic_scores,
-                semantic_standardized={i: z for i, z in semantic_standardized.items() if i in group_rows},
+                semantic_standardized={
+                    i: z for i, z in semantic_standardized.items() if i in group_rows
+                },
                 keyword_evidence=evidence,
             )
             response["groups"] = [
-                {"kind": kind, "results": [await result(hit) for hit in group[:group_limit]], "total": len(group)}
+                {
+                    "kind": kind,
+                    "results": [await result(hit) for hit in group[:group_limit]],
+                    "total": len(group),
+                }
                 for kind, group in groups
             ]
         response["took_ms"] = (time.perf_counter() - start) * 1000

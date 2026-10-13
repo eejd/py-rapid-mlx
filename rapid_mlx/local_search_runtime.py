@@ -29,8 +29,8 @@ async def startup(app):
     app.openapi_schema = None
     if not _enabled:
         return
-    from .routes.local_search import router
     from .local_search.service import LocalSearch
+    from .routes.local_search import router
 
     app.state.local_search = LocalSearch(
         Path(_directory).expanduser() if _directory else default_directory()

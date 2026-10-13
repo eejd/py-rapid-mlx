@@ -109,6 +109,8 @@ async def search(body: SearchRequest, request: Request):
         for folder_id in body.folder_ids:
             await require_folder(engine, folder_id)
     try:
-        return await engine.search(body.query, body.limit, body.folder_ids, body.kinds, body.group_limit)
+        return await engine.search(
+            body.query, body.limit, body.folder_ids, body.kinds, body.group_limit
+        )
     except sqlite3.OperationalError:
         error("Query could not be processed", "invalid_query", "query")

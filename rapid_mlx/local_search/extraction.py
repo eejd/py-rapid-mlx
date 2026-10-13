@@ -43,7 +43,17 @@ SKIP_REASONS = {
     "private": "Private or system file",
     "audio": "Audio is not supported yet",
 }
-AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".aiff", ".wma", ".opus"}
+AUDIO_SUFFIXES = {
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".aiff",
+    ".wma",
+    ".opus",
+}
 OFFICE_SUFFIXES = {".docx", ".pptx", ".xlsx"}
 LEGACY_OFFICE_SUFFIXES = {".doc", ".xls", ".ppt", ".rtf", ".pages"}
 XLSX_MAX_CELLS_PER_SHEET = 10_000
@@ -55,7 +65,12 @@ def skip_reason(reason: str) -> str:
         return reason
     if "size cap" in reason:
         return SKIP_REASONS["size"]
-    if reason in {"unsupported", "unsupported HEIC", "binary", "unsupported XML entities"}:
+    if reason in {
+        "unsupported",
+        "unsupported HEIC",
+        "binary",
+        "unsupported XML entities",
+    }:
         return SKIP_REASONS["unsupported"]
     return SKIP_REASONS["read"]
 
@@ -142,22 +157,62 @@ SKIP_DIRS = {
     "Caches",
 }
 PACKAGE_SUFFIXES = (
-    ".app", ".bundle", ".framework", ".photoslibrary", ".photolibrary",
-    ".xcodeproj", ".xcworkspace", ".lproj", ".plugin", ".appex",
-    ".kext", ".prefpane", ".rtfd", ".pages", ".numbers", ".keynote",
+    ".app",
+    ".bundle",
+    ".framework",
+    ".photoslibrary",
+    ".photolibrary",
+    ".xcodeproj",
+    ".xcworkspace",
+    ".lproj",
+    ".plugin",
+    ".appex",
+    ".kext",
+    ".prefpane",
+    ".rtfd",
+    ".pages",
+    ".numbers",
+    ".keynote",
 )
-SKIP_PREFIXES = tuple(Path("/" + name) for name in (
-    "System", "Library", "usr", "bin", "sbin", "private", "dev", "cores",
-    "opt", "Network", "Volumes",
-))
+SKIP_PREFIXES = tuple(
+    Path("/" + name)
+    for name in (
+        "System",
+        "Library",
+        "usr",
+        "bin",
+        "sbin",
+        "private",
+        "dev",
+        "cores",
+        "opt",
+        "Network",
+        "Volumes",
+    )
+)
 USERS_DIRECTORY = Path("/Users")
 
 SECRET_PATTERNS = (
     ".env*",
-    "credentials", "secrets", "secret", "passwords", "password",
-    "credentials.*", "secrets.*", "secret.*", "passwords.*", "password.*",
-    "*.kdbx", "*.kdb", ".netrc", "*_rsa", "*_rsa.*", "service-account*.json",
-    "service_account*.json", "*credentials*.json", "*.keystore",
+    "credentials",
+    "secrets",
+    "secret",
+    "passwords",
+    "password",
+    "credentials.*",
+    "secrets.*",
+    "secret.*",
+    "passwords.*",
+    "password.*",
+    "*.kdbx",
+    "*.kdb",
+    ".netrc",
+    "*_rsa",
+    "*_rsa.*",
+    "service-account*.json",
+    "service_account*.json",
+    "*credentials*.json",
+    "*.keystore",
     "*.pem",
     "*.key",
     "id_rsa*",
@@ -203,11 +258,7 @@ def excluded(path: Path, *, directory: bool = False) -> bool:
         name.startswith(".")
         or any(fnmatch.fnmatch(name.lower(), p) for p in SECRET_PATTERNS)
         or (
-            directory
-            and (
-                name in SKIP_DIRS
-                or name.lower().endswith(PACKAGE_SUFFIXES)
-            )
+            directory and (name in SKIP_DIRS or name.lower().endswith(PACKAGE_SUFFIXES))
         )
     )
 
@@ -219,8 +270,10 @@ def validate_folder(value: str) -> Path:
     path = path.resolve(strict=True)
     if not path.is_dir():
         raise ValueError("path must be a directory")
-    if excluded_location(path, path) or (path / "pyvenv.cfg").exists() or any(
-        excluded(parent, directory=True) for parent in (path, *path.parents)
+    if (
+        excluded_location(path, path)
+        or (path / "pyvenv.cfg").exists()
+        or any(excluded(parent, directory=True) for parent in (path, *path.parents))
     ):
         raise ValueError("path is hidden, sensitive, or an excluded directory")
     return path
@@ -245,7 +298,9 @@ def open_root(root: Path):
 
 def scan_batches(root: Path, root_fd: int | None = None):
     """Discovery and reads share one pinned root, including across renames."""
-    if excluded_location(root, root) or any(excluded(p, directory=True) for p in (root, *root.parents)):
+    if excluded_location(root, root) or any(
+        excluded(p, directory=True) for p in (root, *root.parents)
+    ):
         yield [], 1
         return
     if root_fd is None:
@@ -253,15 +308,19 @@ def scan_batches(root: Path, root_fd: int | None = None):
             yield from scan_batches(root, fd)
         return
     skipped = 0
+
     def onerror(exc):
         nonlocal skipped
         skipped += 1
+
     def walk(fd, base):
         try:
             with os.scandir(fd) as entries:
                 dirs, names = [], []
                 for entry in entries:
-                    (dirs if entry.is_dir(follow_symlinks=False) else names).append(entry.name)
+                    (dirs if entry.is_dir(follow_symlinks=False) else names).append(
+                        entry.name
+                    )
         except OSError as exc:
             onerror(exc)
             yield base, [], [], fd
@@ -269,7 +328,9 @@ def scan_batches(root: Path, root_fd: int | None = None):
         yield base, dirs, names, fd
         for name in dirs:
             try:
-                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                child = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                )
             except OSError as exc:
                 onerror(exc)
                 continue
@@ -277,16 +338,19 @@ def scan_batches(root: Path, root_fd: int | None = None):
                 yield from walk(child, str(Path(base) / name))
             finally:
                 os.close(child)
-    for base, dirs, names, fd in walk(root_fd, "."):
 
+    for base, dirs, names, fd in walk(root_fd, "."):
         relative = Path(base)
-        files = []
+        files: list[Path] = []
         for name in list(dirs):
             path = root / relative / name
             import stat
+
             try:
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                child = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                )
                 try:
                     try:
                         os.stat("pyvenv.cfg", dir_fd=child, follow_symlinks=False)
@@ -295,7 +359,12 @@ def scan_batches(root: Path, root_fd: int | None = None):
                         venv = False
                 finally:
                     os.close(child)
-                skip = stat.S_ISLNK(info.st_mode) or excluded(path, directory=True) or excluded_location(path, root) or venv
+                skip = (
+                    stat.S_ISLNK(info.st_mode)
+                    or excluded(path, directory=True)
+                    or excluded_location(path, root)
+                    or venv
+                )
             except OSError:
                 skip = True
             if skip:
@@ -303,8 +372,11 @@ def scan_batches(root: Path, root_fd: int | None = None):
                 skipped += 1
         for name in sorted(names, key=lambda n: (file_kind(Path(n)) != "text", n)):
             import stat
+
             try:
-                link = stat.S_ISLNK(os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode)
+                link = stat.S_ISLNK(
+                    os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode
+                )
             except OSError:
                 link = True
             if link:
@@ -320,7 +392,8 @@ def scan_batches(root: Path, root_fd: int | None = None):
 
 def scan(root: Path) -> tuple[list[Path], int]:
     """Compatibility helper for callers that need a complete inventory."""
-    files, skipped = [], 0
+    files: list[Path] = []
+    skipped = 0
     for batch, count in scan_batches(root):
         # Preserve this inventory helper's exclusion contract. The indexer keeps
         # excluded regular files as metadata-only skips, never reading them.
@@ -338,7 +411,9 @@ def stat_safe(path: Path, root: Path):
         fd = os.dup(root_fd)
         try:
             for part in relative.parts[:-1]:
-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                child = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                )
                 os.close(fd)
                 fd = child
             info = os.stat(relative.name, dir_fd=fd, follow_symlinks=False)
@@ -355,9 +430,11 @@ def open_safe(path: Path, root: Path, max_bytes: int, root_fd: int | None = None
     relative = path.relative_to(root)
     flags = os.O_RDONLY | os.O_NOFOLLOW
     if root_fd is None:
-        with open_root(root) as pinned:
-            with open_safe(path, root, max_bytes, pinned) as source:
-                yield source
+        with (
+            open_root(root) as pinned,
+            open_safe(path, root, max_bytes, pinned) as source,
+        ):
+            yield source
         return
     fd = os.dup(root_fd)
     try:
@@ -406,7 +483,9 @@ def sample_timestamps(frame_count: int, fps: float) -> list[float]:
     duration = frame_count / fps
     count = math.ceil(duration / VIDEO_INTERVAL_SECONDS)
     if count > VIDEO_MAX_FRAMES:
-        return np.linspace(0, (frame_count - 1) / fps, VIDEO_MAX_FRAMES).tolist()
+        return [
+            float(t) for t in np.linspace(0, (frame_count - 1) / fps, VIDEO_MAX_FRAMES)
+        ]
     return [i * VIDEO_INTERVAL_SECONDS for i in range(count)]
 
 
@@ -617,20 +696,24 @@ class _OfficeXML:
 
 
 def _paragraphs(root, ns):
-    return "\n".join("".join(t.text or "" for t in p.iter(ns + "t"))
-                     for p in root.iter(ns + "p"))
+    return "\n".join(
+        "".join(t.text or "" for t in p.iter(ns + "t")) for p in root.iter(ns + "p")
+    )
 
 
-def _extract_office(suffix, data, max_bytes):
+def _extract_office(suffix, data, max_bytes) -> list[Unit]:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         xml = _OfficeXML(archive, max_bytes)
         if suffix == ".docx":
             names = ["word/document.xml"] + sorted(
-                name for name in archive.namelist()
-                if name.startswith("word/") and (
+                name
+                for name in archive.namelist()
+                if name.startswith("word/")
+                and (
                     posixpath.basename(name).startswith(("header", "footer"))
                     and name.endswith(".xml")
-                    or name in {"word/footnotes.xml", "word/endnotes.xml", "word/comments.xml"}
+                    or name
+                    in {"word/footnotes.xml", "word/endnotes.xml", "word/comments.xml"}
                 )
             )
             text = "\n".join(_paragraphs(xml.read(name), _WORD) for name in names)
@@ -643,13 +726,17 @@ def _extract_office(suffix, data, max_bytes):
             part = "ppt/presentation.xml"
             relationships = xml.relationships(part)
             ns = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
-            parts = [relationships[e.attrib[_REL_ID]][1]
-                     for e in xml.read(part).iter(ns + "sldId")]
+            parts = [
+                relationships[e.attrib[_REL_ID]][1]
+                for e in xml.read(part).iter(ns + "sldId")
+            ]
             for number, slide in enumerate(parts, 1):
                 texts = [_paragraphs(xml.read(slide), _DRAWING)]
-                texts.extend(_paragraphs(xml.read(target), _DRAWING)
-                             for kind, target in xml.relationships(slide).values()
-                             if kind == "notesSlide")
+                texts.extend(
+                    _paragraphs(xml.read(target), _DRAWING)
+                    for kind, target in xml.relationships(slide).values()
+                    if kind == "notesSlide"
+                )
                 text = "\n".join(texts)
                 total += len(text.encode("utf-8"))
                 if total > max_bytes:
@@ -658,8 +745,10 @@ def _extract_office(suffix, data, max_bytes):
         else:
             shared = []
             if "xl/sharedStrings.xml" in archive.namelist():
-                shared = ["".join(t.text or "" for t in si.iter(_SHEET + "t"))
-                          for si in xml.read("xl/sharedStrings.xml").iter(_SHEET + "si")]
+                shared = [
+                    "".join(t.text or "" for t in si.iter(_SHEET + "t"))
+                    for si in xml.read("xl/sharedStrings.xml").iter(_SHEET + "si")
+                ]
             part = "xl/workbook.xml"
             relationships = xml.relationships(part)
             for number, sheet in enumerate(xml.read(part).iter(_SHEET + "sheet"), 1):

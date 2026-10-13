@@ -9,8 +9,14 @@ for the OpenAI-compatible /v1/embeddings endpoint.
 import logging
 import sys
 import time
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
+
+if TYPE_CHECKING:
+    import mlx.nn as nn
+    from mlx_vlm.models.gemma4.processing_gemma4 import Gemma4ImageProcessor
+    from transformers import PreTrainedTokenizerBase
 
 logger = logging.getLogger(__name__)
 
@@ -177,10 +183,10 @@ class EmbeddingEngine:
         vision: bool = False,
     ):
         self.vision = vision
-        self._image_processor = None
+        self._image_processor: Gemma4ImageProcessor | None = None
         self.model_name = model_name
-        self._model = None
-        self._tokenizer = None
+        self._model: nn.Module | None = None
+        self._tokenizer: PreTrainedTokenizerBase | None = None
         if overflow_policy not in OVERFLOW_POLICIES:
             raise ValueError(
                 f"overflow_policy must be one of {OVERFLOW_POLICIES}, "
@@ -435,6 +441,10 @@ class EmbeddingEngine:
             )
         if not images:
             return []
+        model = self._model
+        tokenizer = self._tokenizer
+        max_length = self.effective_max_length
+        assert model is not None and tokenizer is not None and max_length is not None
         if self._image_processor is None:
             import json
 
@@ -455,25 +465,23 @@ class EmbeddingEngine:
                 with Image.open(image) as opened:
                     decoded.append(opened.convert("RGB"))
         prepared, counts = self._image_processor(decoded)
-        config = self._model.config
+        config = model.config
         pieces = [
-            self._tokenizer.decode([config.boi_token_id])
-            + self._tokenizer.decode([config.image_token_id]) * count
-            + self._tokenizer.decode([config.eoi_token_id])
+            tokenizer.decode([config.boi_token_id])
+            + tokenizer.decode([config.image_token_id]) * count
+            + tokenizer.decode([config.eoi_token_id])
             for count in counts
         ]
-        encoded = self._tokenizer(
-            pieces, padding=True, truncation=False, return_tensors="np"
-        )
+        encoded = tokenizer(pieces, padding=True, truncation=False, return_tensors="np")
         for row, count in zip(encoded["input_ids"], counts):
             if int((row == config.image_token_id).sum()) != count:
                 raise ValueError("Tokenizer failed to expand image placeholders")
         length = encoded["input_ids"].shape[1]
-        if length > self.effective_max_length:
+        if length > max_length:
             # Image placeholders cannot be truncated without corrupting scatter.
             raise EmbeddingInputTooLongError(
                 observed_tokens=length,
-                allowed_tokens=self.effective_max_length,
+                allowed_tokens=max_length,
                 index=0,
             )
         pixels = prepared["pixel_values"]
@@ -483,12 +491,15 @@ class EmbeddingEngine:
             else mx.array(pixels)
         )
         try:
-            output = self._model(
+            output = model(
                 mx.array(encoded["input_ids"]),
                 attention_mask=mx.array(encoded["attention_mask"]),
                 pixel_values=pixels,
             )
-            return output.text_embeds.astype(mx.float32).tolist()
+            return [
+                [float(value) for value in row]
+                for row in output.text_embeds.astype(mx.float32).tolist()
+            ]
         finally:
             mx.clear_cache()
 
