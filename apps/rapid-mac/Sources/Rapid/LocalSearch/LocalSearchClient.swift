@@ -49,6 +49,13 @@ struct LocalSearchStatus: Decodable, Sendable, Equatable {
         let chunks: Int
         let indexBytes: Int
         var filesByKind: LocalSearchKindCounts? = nil
+        var semanticIndexFull: Bool? = nil
+        var embeddedChunks: Int? = nil
+        var semanticChunkBudget: Int? = nil
+        var keywordOnlyChunks: Int? = nil
+        var indexedSummary: String {
+            filesByKind?.label ?? String(localized: "\(files) files indexed")
+        }
     }
     let enabled: Bool
     let model: Model

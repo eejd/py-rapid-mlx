@@ -474,7 +474,7 @@ struct SpawnArgumentsTests {
         // sends the page's ``scheme://host[:port]`` as the Origin
         // header, so ``http://localhost`` ONLY matches pages served
         // from default-port loopback (port 80). Browser tools served
-        // from ``http://localhost:3000`` (Open WebUI's default),
+        // from ``http://localhost:3000``,
         // ``http://localhost:8080`` etc. are INTENTIONALLY rejected
         // by this minimal allowlist — third-party in-browser tools
         // on non-default ports are not a supported integration in
@@ -539,7 +539,7 @@ struct SpawnArgumentsTests {
     @Test("serve argv reflects allocator-picked port (8001 fallback case)")
     func argvUsesProvidedPort() throws {
         // PortAllocator falls back to 8001 when 8000 is held by another
-        // app (LM Studio default, jupyter, etc.). The argv must reflect
+        // local server. The argv must reflect
         // the actually-allocated port, not the default constant.
         let argv = ServerManager.serveArguments(
             alias: "qwen3.5-4b-4bit",

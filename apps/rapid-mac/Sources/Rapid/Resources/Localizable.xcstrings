@@ -2,6 +2,36 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "%@ (%@)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@（%@）"
+          }
+        }
+      }
+    },
+    "Show all": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示全部"
+          }
+        }
+      }
+    },
+    "Show all %@": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示全部%@"
+          }
+        }
+      }
+    },
     "PDF text and Word (.docx) files are searchable. Scanned PDFs need readable text; older .doc files need conversion.": {
       "localizations": {
         "zh-Hans": {

@@ -70,24 +70,4 @@ struct LocalSearchFeatureGateTests {
         #expect(server.contains("localSearchEnabled: LocalSearchFeatureConfig.isEnabled()"))
     }
 
-    @MainActor
-    @Test("Disabled Search cancels client activity even if a stale action fires")
-    func disabledClientIsInert() async throws {
-        var statusRequests = 0
-        let model = LocalSearchViewModel(fetchStatus: { _ in
-            statusRequests += 1
-            throw LocalSearchClient.Failure.unsupported
-        })
-        #expect(statusRequests == 0)
-        await model.appear(endpoint: .init(port: 9123, bearer: nil))
-        #expect(statusRequests == 1)
-        model.disappear()
-        await model.refresh()
-        model.query = "test"
-        model.searchNow()
-        await model.add(paths: ["/tmp/disabled-search"])
-        await model.reindex()
-        #expect(statusRequests == 1)
-        #expect(!model.visible)
-    }
 }

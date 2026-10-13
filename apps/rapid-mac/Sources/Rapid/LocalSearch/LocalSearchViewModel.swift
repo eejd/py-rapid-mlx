@@ -77,6 +77,8 @@ final class LocalSearchViewModel {
     private var sessionGeneration = 0
     private var refreshGeneration = 0
     private var handledDownload: UUID?
+    private var mutationTask: Task<Bool, Never>?
+    private var operationError = false
     #if DEBUG
     private var handledHarnessFolder = false
 
@@ -120,6 +122,7 @@ final class LocalSearchViewModel {
     }
     func connect(_ endpoint: LocalSearchClient.Endpoint?) async {
         sessionGeneration += 1
+        cancelMutations()
         cancelSearch()
         pollTask?.cancel()
         self.endpoint = endpoint
@@ -138,9 +141,22 @@ final class LocalSearchViewModel {
         visible = false
         endpoint = nil
         sessionGeneration += 1
+        cancelMutations()
         cancelSearch()
         pollTask?.cancel()
         pollTask = nil
+    }
+    private func cancelMutations() {
+        mutationTask?.cancel()
+        mutationTask = nil
+        isMutating = false
+        retryAction = nil
+        pendingRemoval = nil
+        operationError = false
+    }
+    private func validateMutation(_ token: Int) throws {
+        try Task.checkCancellation()
+        guard visible, endpoint != nil, sessionGeneration == token else { throw CancellationError() }
     }
     private func cancelSearch() {
         generation += 1
@@ -162,6 +178,7 @@ final class LocalSearchViewModel {
         guard !text.isEmpty else { deriveState(); return }
         let token = generation
         let kinds = kindFilter.kinds
+        operationError = false
         state = .searching
         searchTask = Task { [weak self] in
             guard let self else { return }
@@ -202,7 +219,10 @@ final class LocalSearchViewModel {
             } ?? false
             status = updated
             let resetFilter = !visibleKindFilters.contains(kindFilter)
-            if resetFilter { kindFilter = .all; scheduleSearch(immediate: true) }
+            if resetFilter {
+                kindFilter = .all
+                if !operationError { scheduleSearch(immediate: true) }
+            }
             if !updated.enabled {
                 cancelSearch()
                 pollTask?.cancel()
@@ -212,14 +232,14 @@ final class LocalSearchViewModel {
                 state = .unsupported
                 return
             }
-            if searchTask == nil {
+            if searchTask == nil, !operationError {
                 deriveState()
                 if searchIfChanged, changed, !query.isEmpty { scheduleSearch(immediate: true) }
             }
             schedulePolling()
         } catch {
             guard visible, token == sessionGeneration, refreshToken == refreshGeneration, !Task.isCancelled else { return }
-            report(error)
+            if !operationError { report(error, operation: false) }
         }
     }
     private func schedulePolling() {
@@ -241,56 +261,102 @@ final class LocalSearchViewModel {
         else { state = .noResults }
     }
     func fileOpenFailed() {
+        operationError = true
         state = .error(String(localized: "This file could not be opened. It may have moved or its drive may be disconnected. Reconnect the drive, or search again to refresh results."))
     }
-    private func report(_ error: Error) {
+    private func report(_ error: Error, operation: Bool = true) {
+        operationError = operation
         if case LocalSearchClient.Failure.unsupported = error { state = .unsupported }
         else { state = .error(error.localizedDescription) }
     }
     func retry() async {
+        guard visible, endpoint != nil else { return }
         if let action = retryAction { await mutate(action) }
         else {
+            operationError = false
             await refresh()
             if case .error = state { return }
             if status != nil { searchNow() }
         }
     }
-    private func mutate(_ action: @escaping @MainActor () async throws -> Void) async {
-        guard !isMutating else { return }
+    @discardableResult
+    private func mutate(_ action: @escaping @MainActor () async throws -> Void) async -> Bool {
+        guard visible, endpoint != nil, !isMutating, !Task.isCancelled else { return false }
         isMutating = true
-        defer { isMutating = false }
         let token = sessionGeneration
-        do {
-            try await action()
-            guard visible, token == sessionGeneration else { return }
-            retryAction = nil
-            await refresh()
-            if case .error = state { return }
-            searchNow()
-        } catch {
-            guard visible, token == sessionGeneration else { return }
-            retryAction = action
-            report(error)
+        let task = Task { @MainActor in
+            defer {
+                if token == self.sessionGeneration {
+                    self.isMutating = false
+                    self.mutationTask = nil
+                }
+            }
+            do {
+                try self.validateMutation(token)
+                try await action()
+                try self.validateMutation(token)
+                self.retryAction = nil
+                self.operationError = false
+                await self.refresh()
+                if case .error = self.state { return true }
+                self.searchNow()
+                return true
+            } catch {
+                guard !Task.isCancelled, self.visible, token == self.sessionGeneration else { return false }
+                self.retryAction = action
+                self.report(error)
+                return false
+            }
+        }
+        mutationTask = task
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
     func add(paths: [String]) async {
-        guard let endpoint else { return }
-        await mutate { [client] in
-            for path in paths { try await client.add(path: path, endpoint: endpoint) }
+        guard visible, let endpoint else { return }
+        let token = sessionGeneration
+        await mutate { [self, client] in
+            for path in paths {
+                try validateMutation(token)
+                try await client.add(path: path, endpoint: endpoint)
+            }
         }
     }
     func remove(_ folder: LocalSearchFolder) async {
-        guard let endpoint else { return }
-        await mutate { [client] in try await client.remove(id: folder.id, endpoint: endpoint) }
+        guard visible, let endpoint else { return }
+        let token = sessionGeneration
+        await mutate { [self, client] in
+            try validateMutation(token)
+            try await client.remove(id: folder.id, endpoint: endpoint)
+        }
     }
     func downloadCompleted(_ jobID: UUID) async {
         guard visible, endpoint != nil, handledDownload != jobID else { return }
-        handledDownload = jobID
-        await reindex()
+        let token = sessionGeneration
+        // Completion waits behind admitted work without consuming the ID. A
+        // canceled session or failed reindex can deliver the completion again.
+        while let active = mutationTask {
+            _ = await active.value
+            guard visible, token == sessionGeneration, !Task.isCancelled else { return }
+        }
+        guard handledDownload != jobID, let endpoint else { return }
+        await mutate { [self, client] in
+            try validateMutation(token)
+            try await client.reindex(id: nil, endpoint: endpoint)
+            try validateMutation(token)
+            handledDownload = jobID
+        }
     }
     func reindex(_ id: String? = nil) async {
-        guard let endpoint else { return }
-        await mutate { [client] in try await client.reindex(id: id, endpoint: endpoint) }
+        guard visible, let endpoint else { return }
+        let token = sessionGeneration
+        await mutate { [self, client] in
+            try validateMutation(token)
+            try await client.reindex(id: id, endpoint: endpoint)
+        }
     }
     func moveSelection(_ delta: Int) {
         let displayed = displayedResults

@@ -185,9 +185,6 @@ struct LocalSearchView: View {
                     .accessibilityLabel(String(localized: "Reindex all folders"))
                     .accessibilityIdentifier("LocalSearch.Reindex")
             }
-            if let counts = status.totals.filesByKind {
-                Text(counts.label).font(.caption).foregroundStyle(.secondary)
-            }
             if foldersExpanded, !status.folders.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
@@ -261,7 +258,7 @@ struct LocalSearchView: View {
                         .lineLimit(1).truncationMode(.middle).help(path)
                 }
             } else {
-                Text(String(localized: "\(status.totals.files) files indexed"))
+                Text(status.totals.indexedSummary)
             }
         }
         .font(.caption).foregroundStyle(.secondary)
@@ -674,7 +671,12 @@ struct LocalSearchView: View {
     }
     private func abbreviated(_ path: String) -> String { LocalSearchPath.abbreviated(path) }
     private func open(_ result: LocalSearchResult) {
-        if !NSWorkspace.shared.open(URL(fileURLWithPath: result.path)) { model.fileOpenFailed() }
+        let url = URL(fileURLWithPath: result.path)
+        switch LocalSearchFileAction.action(for: url) {
+        case .open: if !NSWorkspace.shared.open(url) { model.fileOpenFailed() }
+        case .reveal: reveal(result)
+        case .unavailable: model.fileOpenFailed()
+        }
     }
     private func reveal(_ result: LocalSearchResult) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.path)]) }
     private func togglePreview(_ result: LocalSearchResult) {
