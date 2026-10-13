@@ -1145,15 +1145,21 @@ struct PreviewAutoRevealTests {
         let first = "graph TD\n  First --> Closed"
         let second = "graph TD\n  Second --> Opens"
         let view = block(first, "mermaid")
-        try? await Task.sleep(for: .milliseconds(1_500))
         let button = try #require(previewButton(view))
+        for _ in 0..<100 where button.isHidden || button.title != "Code" {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(!button.isHidden)
+        #expect(button.title == "Code")
         _ = button.target?.perform(button.action, with: button)
         #expect(button.title == "Preview")
 
         view.configure(
             code: second, language: "mermaid", options: MarkdownOptions(), isFinal: true
         )
-        try? await Task.sleep(for: .milliseconds(1_500))
+        for _ in 0..<100 where button.isHidden || button.title != "Code" {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         #expect(button.title == "Code")
         #expect(!button.isHidden)
     }
