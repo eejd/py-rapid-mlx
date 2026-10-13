@@ -72,6 +72,37 @@ private func searchResult(_ title: String) -> LocalSearchResult {
 }
 
 @Suite struct LocalSearchPresentationTests {
+    @Test(arguments: [0, 1, 2, 3], [false, true])
+    func accessibilityLabelOmitsAbsentComponents(locator: Int, nameOnly: Bool) {
+        let page = locator == 1 || locator == 3 ? 2 : nil
+        let line = locator == 2 || locator == 3 ? 7 : nil
+        var result = LocalSearchResult(path: "/tmp/docs/locked_memo.pdf", folderId: "folder",
+            title: "locked_memo.pdf", snippet: "A file", highlights: [], score: 0.5,
+            matched: ["keyword"], page: page, line: line, modifiedAt: 0, size: 12)
+        result.contentIndexed = !nameOnly
+        result.skipReason = nameOnly ? "Password-protected" : nil
+        let date = Date(timeIntervalSince1970: 0).formatted(date: .abbreviated, time: .omitted)
+        var expected = ["locked_memo.pdf"]
+        if let page { expected.append(String(localized: "page \(page)")) }
+        if let line { expected.append(String(localized: "line \(line)")) }
+        expected.append(nameOnly
+            ? String(localized: "Matched by file name — \(LocalSearchSkipReason.localized("Password-protected"))")
+            : "A file")
+        expected.append(String(localized: "in \("docs")"))
+        expected.append(String(localized: "modified \(date)"))
+        #expect(result.accessibilityLabel(folders: [searchFolder()]) == expected.joined(separator: ", "))
+        #expect(!result.accessibilityLabel(folders: [searchFolder()]).contains(", ,"))
+    }
+
+    @Test func accessibilityLabelOmitsEmptySnippet() {
+        let result = LocalSearchResult(path: "/tmp/docs/memo.txt", folderId: "folder",
+            title: "memo.txt", snippet: " \n", highlights: [], score: 0.5,
+            matched: ["keyword"], page: nil, line: nil, modifiedAt: 0, size: 12)
+        let date = Date(timeIntervalSince1970: 0).formatted(date: .abbreviated, time: .omitted)
+        #expect(result.accessibilityLabel(folders: [searchFolder()]) ==
+            ["memo.txt", String(localized: "in \("docs")"), String(localized: "modified \(date)")].joined(separator: ", "))
+    }
+
     @Test func folderShortcutsResolveSystemURLsAndWholeMacCoverage() throws {
         #expect(LocalSearchFolderShortcut.desktop.url == FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first)
         #expect(LocalSearchFolderShortcut.documents.url == FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)

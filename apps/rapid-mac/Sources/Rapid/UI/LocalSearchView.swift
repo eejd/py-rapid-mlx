@@ -105,7 +105,9 @@ struct LocalSearchView: View {
                             .accessibilityHidden(!model.isIndexing)
                             .accessibilityIdentifier("LocalSearch.IncompleteResults")
                         resultsContent
-                    }.onChange(of: model.selection) { _, id in
+                    }
+                    .multilineTextAlignment(.leading)
+                    .onChange(of: model.selection) { _, id in
                         if let id {
                             if let section = model.sections?.first(where: { $0.kind != .text && $0.results.contains { $0.id == id } }) {
                                 proxy.scrollTo("LocalSearch.Section." + section.id)
@@ -199,7 +201,10 @@ struct LocalSearchView: View {
                                     Text(folder.state.title).font(.caption).foregroundStyle(.secondary)
                                     if let explanation = folder.skippedExplanation {
                                         DisclosureGroup(String(localized: "Why files were not indexed")) {
-                                            Text(explanation).font(.caption).textSelection(.enabled)
+                                            Text(explanation)
+                                                .font(.caption).foregroundStyle(.secondary)
+                                                .multilineTextAlignment(.leading)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
                                         }.accessibilityIdentifier("LocalSearch.Folder.\(index).SkipReasons")
                                     }
                                     if let title = folder.recoveryTitle {
@@ -214,6 +219,7 @@ struct LocalSearchView: View {
                                     }
                                     if let error = folder.error { Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
                                 }
+                                .multilineTextAlignment(.leading)
                                 Spacer()
                                 Button { Task { await model.reindex(folder.id) } } label: { Image(systemName: "arrow.clockwise") }
                                     .buttonStyle(.rapidTertiary)
@@ -619,11 +625,7 @@ struct LocalSearchView: View {
     }
 
     private func resultAccessibilityLabel(_ result: LocalSearchResult) -> String {
-        let name = URL(fileURLWithPath: result.path).lastPathComponent
-        let folder = LocalSearchPath.resultFolder(result, folders: model.status?.folders ?? [])
-        let date = Date(timeIntervalSince1970: result.modifiedAt).formatted(date: .abbreviated, time: .omitted)
-        let page = result.page.map { String(localized: "page \($0)") } ?? ""
-        return String(localized: "\(name), \(page), \(result.snippetLabel), in \(folder), modified \(date)")
+        result.accessibilityLabel(folders: model.status?.folders ?? [])
     }
     private func copyPath(_ result: LocalSearchResult) {
         NSPasteboard.general.clearContents()

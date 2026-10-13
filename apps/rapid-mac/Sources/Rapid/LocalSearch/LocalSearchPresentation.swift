@@ -201,4 +201,20 @@ extension LocalSearchResult {
         return String(localized: "Matched by file name — \(LocalSearchSkipReason.localized(skipReason))")
     }
     var snippetLabel: String { nameOnlyExplanation ?? snippet }
+
+    func accessibilityLabel(folders: [LocalSearchFolder]) -> String {
+        let folder = LocalSearchPath.resultFolder(self, folders: folders)
+        let date = Date(timeIntervalSince1970: modifiedAt).formatted(date: .abbreviated, time: .omitted)
+        let components: [String?] = [
+            URL(fileURLWithPath: path).lastPathComponent,
+            page.map { String(localized: "page \($0)") },
+            line.map { String(localized: "line \($0)") },
+            snippetLabel,
+            String(localized: "in \(folder)"),
+            String(localized: "modified \(date)")
+        ]
+        return components.compactMap { $0 }
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: ", ")
+    }
 }
