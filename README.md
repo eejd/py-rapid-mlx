@@ -12,6 +12,23 @@
   <em>Decode speed, Qwen3.5-9B 4-bit on a Mac mini M4 Pro, greedy decoding, both servers at their defaults — <a href="https://rapidmlx.com/compare/mlx-lm">per-task results, method, and raw data</a>.</em>
 </p>
 
+**Faster decode than oMLX and LM Studio on Qwen3.5-9B, Qwen3.8-27B, and Qwen3.6-35B**
+
+Measured speed on a Mac Studio M5 Max (36 GB) — Rapid-MLX 0.16.1 vs
+oMLX 0.7.0 and LM Studio, using the same base 4-bit weights for each model.
+
+| Model | Metric | Rapid-MLX | oMLX | LM Studio |
+|---|---|---:|---:|---:|
+| Qwen3.5-9B | Decode (tok/s) | **115.5** | 77.9 | 81.0 |
+| Qwen3.5-9B | 4 streams (tok/s) | **248.2** | 224.6 | 230.0 |
+| Qwen3.8-27B | Decode (tok/s) | **37.9** | 25.3 | 26.0 |
+| Qwen3.8-27B | 4 streams (tok/s) | **82.8** | 75.3 | 69.7 |
+| Qwen3.6-35B | Decode (tok/s) | **173.4** | 145.8 | 124.5 |
+| Qwen3.6-35B | 4 streams (tok/s) | **293.9** | 281.9 | 265.6 |
+| Qwen3.6-35B | 2K-prompt first token (s, lower is better) | **0.55** | 1.14 | 1.49 |
+
+<sub>Single run per engine; default serving modes with Rapid's MTP text mode, oMLX's SSD cache, and LM Studio's configured context and four parallel slots. [Full results and raw data](https://rapidmlx.com/compare).</sub>
+
 <p align="center">
   <a href="https://pypi.org/project/rapid-mlx/"><img src="https://img.shields.io/pypi/v/rapid-mlx?color=blue&label=PyPI" alt="PyPI"></a>
   <a href="https://formulae.brew.sh/formula/rapid-mlx"><img src="https://img.shields.io/badge/Homebrew-core-orange?logo=homebrew" alt="Homebrew core"></a>
@@ -44,8 +61,7 @@
 ## How it compares
 
 Feature facts only, taken mostly from each project's own documentation as of
-2026-09-26 (sources below). For speed, see the measured results below the
-table.
+2026-09-26 (sources below). For speed, see the measured results above.
 
 | | Rapid-MLX | [oMLX](https://github.com/jundot/omlx) | [Ollama](https://github.com/ollama/ollama) | [LM Studio](https://lmstudio.ai) | [mlx-lm](https://github.com/ml-explore/mlx-lm) (`mlx_lm.server`) |
 |---|---|---|---|---|---|
@@ -64,24 +80,7 @@ LM Studio [Anthropic compatibility](https://lmstudio.ai/docs/developer/anthropic
 Ollama prompt-cache reuse is from our [benchmark notes](https://rapidmlx.com/blog/assets/engine-bench-2026-08/results.json).
 — = not verified for this table. Spot an error? Please [open an issue](https://github.com/raullenchai/Rapid-MLX/issues).</sub>
 
-**Measured speed vs mlx-lm:** Rapid-MLX 0.15.6 against mlx-lm 0.32.0
-(`mlx_lm.server`) on a 48 GB M4 Pro Mac mini, Qwen3.5-9B 4-bit, same weights,
-greedy decoding, both at defaults (measured 2026-10-04). Decode was 1.50× at
-the median of 18 streaming tasks (lowest 1.28×) and up to 4.27× on a
-whole-file code edit (46.4 → 198.4 tok/s; 4.00× against `mlx_lm.generate`,
-hence "4×"). The gain is speculative decoding (MTP plus prompt lookup), on by
-default for this model; a long-prompt agent turn was close to a tie (1.05× end
-to end), and Qwen3.5-4B, where it is off by default, was 1.12× at the median
-([per-task results and raw data](https://rapidmlx.com/compare/mlx-lm)).
-
-**Measured speed vs Ollama** (published 2026-08-11): at 8 concurrent streams on
-Qwen3.6-35B-A3B, aggregate decode was 3.0× Ollama's, 82.9 vs 27.2 tok/s
-(32 GB M2 Pro Mac mini, Rapid-MLX 0.12.11 vs Ollama 0.32.7). Including
-prefill, whole-batch throughput was 1.6×; single-stream decode was about 1.5×;
-a dense 12B model was no faster; and llama.cpp-family engines prefilled cold
-prompts faster ([method and raw data](https://rapidmlx.com/blog/rapid-mlx-vs-ollama-benchmark)).
-
-**Head-to-head with oMLX and Ollama** on the same Macs (18 GB and 48 GB) — decode, agent sessions, restart, concurrency, and where Rapid-MLX is slower, with raw data: [rapidmlx.com/compare](https://rapidmlx.com/compare).
+vs Apple's mlx-lm: per-task results and raw data at https://rapidmlx.com/compare/mlx-lm.
 
 ---
 
@@ -444,16 +443,16 @@ PyTorch or vLLM while serving.
 |---|---|---|
 | **Chat in the terminal** | `rapid-mlx chat qwen3.5-9b-4bit` | Streaming REPL, `/help` for slash commands, `--think` / `--no-think` to control CoT. |
 | **OpenAI server for your apps** | `rapid-mlx serve qwen3.5-9b-4bit` | Point Aider, LibreChat, Open WebUI, or LangChain at `http://localhost:8000/v1`. |
-| **Agent backends** | `rapid-mlx serve qwen3.6-35b-8bit &`<br>`rapid-mlx agents codex --setup && codex` | 11 clients auto-configure via `agents <name> --setup` once the server is up (12 in the family matrix, 5 Tier-1) — see [Agent support](#agent-support). |
+| **Agent backends** | `rapid-mlx serve qwen3.6-35b-8bit &`<br>`rapid-mlx agents codex --setup && codex` | 14 clients, including Cline, Goose, and Crush, auto-configure via `agents <name> --setup` once the server is up (12 in the family matrix, 5 Tier-1) — see [Agent support](#agent-support). |
 | **Benchmark your Mac** | `rapid-mlx benchmark run qwen3.5-9b-4bit` | Reproducible model-first benchmark; saves privately, with a separate consent-gated `benchmark share RUN_ID`. |
 
-→ [One-shot IDE setup](https://rapidmlx.com/docs/cli.html#launch) with `rapid-mlx launch <claude-code|cline|continue-dev>`
+→ [One-shot IDE setup](https://rapidmlx.com/docs/cli.html#launch) with `rapid-mlx launch <claude-code|cline|continue-dev>`; agent setup also supports `rapid-mlx agents cline --setup`, `rapid-mlx agents kilo-code --setup`, and `rapid-mlx agents continue --setup`. See the [Cline](docs/agents/cline.md), [Kilo Code](docs/agents/kilo-code.md), and [Continue](docs/agents/continue.md) guides.
 
 ---
 
 ## Agent Support
 
-All 12 agents below are wire-verified against real weights every release via their own integration-test cell. Of these, five are **Tier-1** — **Claude Code, Codex CLI, Hermes, Aider, and DeepSeek Harness** — re-verified end-to-end against the *current* client binary every release, with one guardian per API wire (Anthropic `/v1/messages`, OpenAI `/v1/responses`, and `/v1/chat/completions` covered for tool-calling depth, reach, and DeepSeek's own harness protocol). The other seven are **Tier-2**: wire-verified in the matrix and configured on-demand. The first nine agents each ship a `rapid-mlx agents <name> --setup` config template (except Claude Code, which is one env-var). Continue.dev and Pi also have one-command setup (11 setup-capable clients in all, though neither is part of the 12-agent family matrix); GitHub Copilot, Factory Droid, and Moonshot Kimi Code plug in through their own documented BYOK config (auth-gated, so the matrix cell is a wire smoke).
+All 12 agents below are wire-verified against real weights every release via their own integration-test cell. Of these, five are **Tier-1** — **Claude Code, Codex CLI, Hermes, Aider, and DeepSeek Harness** — re-verified end-to-end against the *current* client binary every release, with one guardian per API wire (Anthropic `/v1/messages`, OpenAI `/v1/responses`, and `/v1/chat/completions` covered for tool-calling depth, reach, and DeepSeek's own harness protocol). The other seven are **Tier-2**: wire-verified in the matrix and configured on-demand. The first nine agents each ship a `rapid-mlx agents <name> --setup` config template (except Claude Code, which is one env-var). Cline, Continue.dev, and Pi also have one-command setup, though none is part of the 12-agent family matrix; GitHub Copilot, Factory Droid, and Moonshot Kimi Code plug in through their own documented BYOK config (auth-gated, so the matrix cell is a wire smoke).
 
 Tier-1 is not a label — it is a job that blocks the release. `tests/integrations/agent_smoke.sh` drives each of the five through the same real multi-step bug-fix task against a local 35B model and asserts the repo's own test suite goes green afterwards; if any one of them fails, the version cannot tag or publish.
 
@@ -470,6 +469,8 @@ matrix below.
 | [Codex CLI](https://github.com/openai/codex) · [Claude Code](https://www.anthropic.com/claude-code) · [OpenCode](https://github.com/anomalyco/opencode) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [OpenHands](https://github.com/All-Hands-AI/OpenHands) · [Hermes Agent](https://github.com/NousResearch/hermes-agent) · [Aider](https://aider.chat) · [Kilo Code](https://github.com/Kilo-Org/kilocode) · [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) · [GitHub Copilot](https://github.com/features/copilot) · [Factory Droid](https://factory.ai) · [Moonshot Kimi Code](https://github.com/MoonshotAI/kimi-cli) | [LangChain](https://langchain.com) (+ [LangGraph](https://langchain-ai.github.io/langgraph/)) · [PydanticAI](https://ai.pydantic.dev) · [smolagents](https://github.com/huggingface/smolagents) |
 
 Also compatible with OpenAI-compatible clients that allow direct local endpoints via `http://localhost:8000/v1` — LibreChat, Open WebUI, and more plug in with a single URL change.
+
+Goose and Crush have setup profiles for a local server. After `rapid-mlx serve qwen3.5-4b-4bit`, run `rapid-mlx agents goose --setup` or `rapid-mlx agents crush --setup` in another terminal. See the [Goose](docs/agents/goose.md) and [Crush](docs/agents/crush.md) guides for the config paths and launch commands. These are separate from the 12-agent release matrix above.
 
 → [Full 12-agent + 3-framework matrix (test cells + xfail reasons)](https://rapidmlx.com/docs/matrix.html)
 → [Codex CLI](https://rapidmlx.com/docs/matrix.html#agent-codex-cli) · [Claude Code](https://rapidmlx.com/docs/matrix.html#agent-claude-code) · [OpenCode](https://rapidmlx.com/docs/matrix.html#agent-opencode) · [Qwen Code](https://rapidmlx.com/docs/matrix.html#agent-qwen-code) · [OpenHands](https://rapidmlx.com/docs/matrix.html#agent-openhands) · [Hermes](https://rapidmlx.com/docs/matrix.html#agent-hermes-agent) · [Aider](https://rapidmlx.com/docs/matrix.html#agent-aider) · [Kilo Code](https://rapidmlx.com/docs/matrix.html#agent-kilo-code) · [DeepSeek Harness](https://rapidmlx.com/docs/matrix.html#agent-deepseek-harness) · [Copilot](https://rapidmlx.com/docs/matrix.html#agent-copilot) · [Droid](https://rapidmlx.com/docs/matrix.html#agent-droid) · [Kimi Code](https://rapidmlx.com/docs/matrix.html#agent-kimi-code)

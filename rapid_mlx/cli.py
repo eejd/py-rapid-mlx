@@ -1006,6 +1006,22 @@ def _print_model_load_error(args: argparse.Namespace, exc: BaseException) -> Non
         # repository. Keep that typed failure instead of blaming the checkpoint.
         print(f"\n  Error loading model: {exc}")
         return
+    from rapid_mlx.telemetry.model_events import serve_error_class
+
+    if serve_error_class(exc, model_ref=args.model) == "unsupported_architecture":
+        from rapid_mlx.byom.preflight import render_architecture_guidance
+
+        try:
+            config = _resolve_checkpoint_config(args.model, None) or {}
+        except Exception:
+            config = {}
+        model_type = config.get("model_type")
+        if not isinstance(model_type, str):
+            model_type = None
+        print(f"\n  Error loading model: {exc}", file=sys.stderr)
+        for line in render_architecture_guidance(model_ref, config, model_type):
+            print(f"  {line}", file=sys.stderr)
+        return
     if (
         isinstance(exc, RepositoryNotFoundError)
         or "404" in str(exc)
@@ -3475,8 +3491,25 @@ def _normalize_speculative_config_or_exit(args):
             # single-stream on M2 Pro / M3 Ultra).  The alias registry remains
             # the single source of truth, and --no-spec-decode stays the
             # explicit user escape hatch on every surface.
-            raw_config = '{"method":"mtp"}'
-            args.speculative_config = raw_config
+            from .spec_decode.mtp import MTPEligibility, detect_mtp_eligibility
+
+            # The catalog qualifies a preset, but the local target config is
+            # authoritative for this particular checkpoint. A missing config
+            # must also fail closed: explicit MTP requests still reach the
+            # serve-time validator and retain its error.
+            hf_cfg, _ = _gather_kv_cache_dtype_inputs(args.model)
+            if (
+                detect_mtp_eligibility(hf_cfg, has_external_sidecar=True)
+                is MTPEligibility.NONE
+            ):
+                print(
+                    "Automatic MTP sidecar skipped: target config is unavailable "
+                    "or does not qualify; using plain decode.",
+                    file=sys.stderr,
+                )
+            else:
+                raw_config = '{"method":"mtp"}'
+                args.speculative_config = raw_config
 
     if raw_config is None:
         _fill_runtime_defaults(overwrite=False)
@@ -13434,6 +13467,12 @@ def agents_command(args):
 
     agent_name = args.agent_name
     base_url = args.base_url
+    # The CLI's shared alias resolver replaces --model with its HF repository
+    # before dispatch. Agent configs and commands must use the server's public
+    # alias when one was supplied, especially clients that validate model IDs.
+    requested_model = getattr(args, "_original_alias", None) or getattr(
+        args, "model", None
+    )
 
     # No agent specified → list all profiles
     if not agent_name:
@@ -13507,7 +13546,7 @@ def agents_command(args):
     if args.test:
         from rapid_mlx.agents.testing import AgentTestRunner  # pragma: no cover
 
-        model_id = args.model or None
+        model_id = requested_model or None
         runner = AgentTestRunner(
             profile,
             base_url=base_url,
@@ -13534,7 +13573,7 @@ def agents_command(args):
         # Only query the server when the profile template uses
         # {context_length} — avoids a 2-second timeout regression
         # for profiles that don't need it.
-        model_id = args.model or "default"
+        model_id = requested_model or "default"
         context_length = None
         cfg = profile.get_config_for_version(args.agent_version)
         needs_ctx = bool(cfg.template and "{context_length}" in cfg.template)
@@ -13554,7 +13593,7 @@ def agents_command(args):
             # User specified model — look up *that* model's context window
             context_length = fetch_context_window(base_url, model_id)
 
-        # Claude Code, Continue, DSH, pi and Qwen Code have first-class setup
+        # Cline, Claude Code, Continue, DSH, pi and Qwen Code have first-class setup
         # flows. They preview an exact diff, require consent, back up existing config,
         # write atomically, and verify the server afterwards. The generic
         # profile writer below still lacks the diff/consent/backup half, but
@@ -13643,6 +13682,15 @@ def agents_command(args):
                 # verification passed, was skipped with --no-check, or was
                 # deferred because no server was running yet.
                 track_agent_configured(plan.agent)
+            if profile.name == "cline":
+                from rapid_mlx.launch import cline
+
+                for note in cline.post_setup_notes(
+                    base_url,
+                    model_id,
+                    os.environ.get("RAPID_MLX_API_KEY"),
+                ):
+                    print(f"  {note}")
             print()
             return
 
@@ -14713,11 +14761,15 @@ def main():
         from rapid_mlx.local_model_path import (
             local_model_failure_message,
             raise_if_missing_local_model,
+            resolved_model_ref,
         )
         from rapid_mlx.model_aliases import RetiredModelAliasError, resolve_model
         from rapid_mlx.user_aliases import UserAliasError
 
         try:
+            supplied_model = args.model
+            if getattr(args, "command", None) == "serve":
+                args.model = resolved_model_ref(args.model)
             raise_if_missing_local_model(args.model)
             resolved = resolve_model(args.model)
         except FileNotFoundError as exc:
@@ -14728,7 +14780,7 @@ def main():
                     exc, alias_or_path=args.model, failure_stage="resolve"
                 )
             message = local_model_failure_message(
-                args.model, exc, include_supplied_path=True
+                supplied_model, exc, include_supplied_path=True
             )
             print(f"\n  Error: {message}", file=sys.stderr)
             raise SystemExit(1) from None
