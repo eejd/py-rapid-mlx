@@ -973,8 +973,6 @@ async def lifespan(app: FastAPI):
                 ),
             )
     await _residency_manager.start()
-    if _primary_model_lifecycle is not None:
-        await _primary_model_lifecycle.start()
 
     # Tool-grammar warmup (#558): the FIRST grammar-constrained tool call
     # otherwise pays a one-time ~1s llguidance ``LLTokenizer`` build on the
@@ -988,6 +986,11 @@ async def lifespan(app: FastAPI):
             await _warmup_tool_grammar(_engine)
         except Exception as _e:
             logger.debug(f"Tool-grammar warmup failed (non-fatal): {_e}")
+    # An already-loaded primary can reach this warmup without going through
+    # ensure_loaded(). Do not let its idle monitor unload the tokenizer while
+    # the off-thread grammar build is still using it.
+    if _primary_model_lifecycle is not None:
+        await _primary_model_lifecycle.start()
 
     # Prefix-cache load is deferred OFF the readiness path (#1359 follow-up
     # #1350): a large persisted cache used to block here — between engine
@@ -2978,10 +2981,16 @@ async def _load_dynamic_resident_model(
     resolved_path = resolve_model(
         model_path or (profile.hf_path if profile is not None else model_name)
     )
+    modality = profile.modality if profile is not None else "text"
+    image_engine = None
+    if modality == "image-gen":
+        from .runtime.image_lane import ImageEngine
+
+        image_engine = ImageEngine(model_name=resolved_path)
+        image_engine.validate_residency_mode(image_mode)
     from . import model_downloads
 
     model_downloads.require_local(resolved_path)
-    modality = profile.modality if profile is not None else "text"
     profile_force_text = bool(profile is not None and profile.is_text_only)
     load_path = resolved_path
     effective_force_text = profile_force_text
@@ -3025,9 +3034,8 @@ async def _load_dynamic_resident_model(
         model_config = detect_model_config(load_path)
 
     if modality == "image-gen":
-        from .runtime.image_lane import ImageEngine
-
-        engine = ImageEngine(model_name=resolved_path)
+        assert image_engine is not None
+        engine = image_engine
         # Dynamic loads are explicit operator/app requests. Materialize the
         # lazy mflux weights before returning so "resident" and budget usage
         # have their literal meanings on the control-plane response.
