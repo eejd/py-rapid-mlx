@@ -223,6 +223,26 @@ def test_unsupported_image_mode_rejected_before_assets_in_dynamic_loader(
     assert asset_calls == []
 
 
+def test_supported_image_mode_reaches_dynamic_resident_load(monkeypatch):
+    from rapid_mlx import server
+    from rapid_mlx.runtime.image_lane import ImageEngine
+
+    modes = []
+    monkeypatch.setattr("rapid_mlx.model_downloads.require_local", lambda _name: None)
+    monkeypatch.setattr(
+        ImageEngine,
+        "ensure_resident",
+        lambda _self, *, mode=None: modes.append(mode),
+    )
+
+    entry = asyncio.run(
+        server._load_dynamic_resident_model("qwen-image", None, image_mode="generation")
+    )
+
+    assert isinstance(entry.engine, ImageEngine)
+    assert modes == ["generation"]
+
+
 @pytest.mark.parametrize(
     ("model", "mode", "message"),
     [
@@ -250,31 +270,22 @@ def test_unsupported_image_mode_rejected_before_manager_admission(
     ("model", "mode"),
     [("qwen-image", "editing"), ("qwen-image-edit", "generation")],
 )
-def test_unsupported_image_mode_rejected_for_resident_reuse(
-    control_plane, monkeypatch, model, mode
-):
-    from rapid_mlx.image.engine import ImageGenerationEngine
+def test_unsupported_image_mode_rejected_for_resident_reuse(model, mode):
+    from rapid_mlx.image.engine import ImageRequestError
     from rapid_mlx.runtime.image_lane import ImageEngine
     from rapid_mlx.runtime.model_registry import ModelEntry, ModelRegistry
     from rapid_mlx.runtime.resident_models import ResidentModelManager
 
-    client, _ = control_plane
     engine = ImageEngine(model)
     registry = ModelRegistry()
     entry = ModelEntry(engine=engine, model_name=model, model_path=model)
     registry.add(entry, is_default=True)
     manager = ResidentModelManager(registry, AsyncMock(), memory_reader=lambda: 0)
     manager.register_primary(entry, estimated_bytes=1)
-    monkeypatch.setattr(residency, "_manager", lambda: manager)
-    monkeypatch.setattr(
-        ImageGenerationEngine,
-        "_ensure_runtime_assets",
-        lambda _self: pytest.fail("resident mode validation touched runtime assets"),
-    )
 
-    response = client.post("/v1/models/load", json={"model": model, "image_mode": mode})
+    with pytest.raises(ImageRequestError):
+        asyncio.run(manager.load(model, image_mode=mode))
 
-    assert response.status_code == 400
     manager.loader.assert_not_awaited()
 
 

@@ -597,6 +597,13 @@ def test_image_adapter_residency_without_mode_preserves_family_default(monkeypat
     assert modes == [None]
 
 
+def test_image_adapter_rejects_unknown_residency_mode():
+    engine = ImageEngine("Qwen/Qwen-Image")
+
+    with pytest.raises(ValueError, match="unsupported image residency mode"):
+        engine.validate_residency_mode("upscaling")
+
+
 def test_image_adapter_delegates_atomic_performance_methods(monkeypatch):
     engine = ImageEngine("Runpod/FLUX.2-klein-4B-mflux-4bit")
     expected = {"denoise_seconds": 8.0, "denoise_steps": 4}
