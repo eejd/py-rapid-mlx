@@ -128,6 +128,40 @@ def test_ready_banner_shows_served_model_name_when_overridden(monkeypatch):
     assert "Model:     lfm2.5-1b-4bit" not in out, out
 
 
+def test_interactive_ready_banner_ends_with_copyable_next(monkeypatch, capsys):
+    cfg = get_config()
+    cfg.bind_host = "localhost"
+    cfg.bind_port = 8766
+    cfg.model_alias = "lfm2.5-1b-4bit"
+    cfg.model_name = "studio-assistant"
+    cfg.api_key = None
+    monkeypatch.setattr(server, "_served_model_name_set", True)
+    monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: False
+    )
+    server.print_ready_banner()
+    out = capsys.readouterr().out
+    assert out.index("Ready: http://localhost:8766") < out.index("Next:")
+    assert "studio-assistant" in out
+    assert out.rstrip().endswith("OpenAI SDK base_url: http://localhost:8766/v1")
+
+
+def test_desktop_ready_banner_preserves_existing_shape(monkeypatch, capsys):
+    cfg = get_config()
+    cfg.bind_host = "localhost"
+    cfg.bind_port = 8766
+    cfg.model_alias = "lfm2.5-1b-4bit"
+    monkeypatch.setattr(server.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        "rapid_mlx.runtime.optional_runtime._running_in_desktop_sidecar", lambda: True
+    )
+    server.print_ready_banner()
+    out = capsys.readouterr().out
+    assert "Connect:" in out
+    assert "Next:" not in out
+
+
 async def test_ready_banner_suppressed_when_no_bind_info():
     """Embedded usage (uvicorn owned elsewhere) leaves bind_* unset — silent."""
     cfg = get_config()

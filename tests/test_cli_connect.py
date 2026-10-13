@@ -495,6 +495,28 @@ def test_banner_already_bracketed_host_not_double_bracketed():
     assert "[[::1]]" not in out
 
 
+def test_serve_next_uses_bound_endpoint_served_name_and_auth():
+    ep = connect.ServerEndpoints("::1", 9123, model="my served model")
+    out = connect.render_serve_next(ep, api_key="key with ' quote")
+    assert out.count("Next:") == 1
+    assert len(out.splitlines()) == 5
+    assert "http://[::1]:9123/v1/chat/completions" in out
+    assert "my served model" in out
+    assert "Authorization: Bearer " in out
+    assert "rapid-mlx agents <opencode|claude-code|codex> --setup" in out
+    assert "--base-url 'http://[::1]:9123/v1'" in out
+    assert out.endswith("OpenAI SDK base_url: http://[::1]:9123/v1\n")
+
+
+def test_serve_next_has_no_auth_header_without_key():
+    out = connect.render_serve_next(connect.ServerEndpoints("localhost", 8765, "m"))
+    assert "Authorization" not in out
+    assert (
+        connect.render_serve_next(connect.ServerEndpoints("", 0, "m", listen_fd=3))
+        == ""
+    )
+
+
 # --- #2348: connect must accept/use the live instance base URL ---------------
 # The serve banner advertises ``connect openai-python --base-url <url>`` so the
 # pasted command points at the *actual* running server (its port + model),
