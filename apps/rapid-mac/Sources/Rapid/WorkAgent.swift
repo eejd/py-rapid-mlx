@@ -31,6 +31,7 @@ final class WorkAgent {
     private(set) var isRunning = false
     private(set) var isBusy = false
     private(set) var isPreparing = false
+    private(set) var conversationRevision = 0
     var error: String?
     var permission: WorkPermission?
     var syntheticTestAutoApproval = false
@@ -52,16 +53,23 @@ final class WorkAgent {
 
     private init() {}
 
+    func beginNewChat() {
+        conversationRevision += 1
+        if isPreparing || isBusy { stop() }
+    }
+
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
         guard !isPreparing else { throw WorkError.message("Work is already starting.") }
+        let requestedRevision = conversationRevision
         let folder = folder.resolvingSymlinksInPath()
         let identity = "\(rapidPort):\(model):\(bearer)"
         if isRunning, sessionID != nil, self.folder == folder, serverIdentity == identity { return }
         isPreparing = true
         defer { isPreparing = false }
         stop()
+        let prepareGeneration = generation
         var completed = false
-        defer { if !completed { stop() } }
+        defer { if !completed && generation == prepareGeneration { stop() } }
         self.folder = folder
         serverIdentity = identity
         error = nil
@@ -98,6 +106,7 @@ final class WorkAgent {
         port = try Self.freePort()
         repeat { proxyPort = try Self.freePort() } while proxyPort == port
         secret = UUID().uuidString + UUID().uuidString
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
         let provider: [String: Any] = [
             "name": "custom_rapid_local", "engine": "openai", "display_name": "Rapid Local",
             "api_key_env": "RAPID_LOCAL_WORK_KEY",
@@ -187,6 +196,7 @@ final class WorkAgent {
         guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
             throw WorkError.message("The local Work inference gate did not start.")
         }
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
         process = try Self.launchHelper(
             profile: Self.fullAccess ? nil : gooseProfileURL, python: pythonExecutable,
             executable: goose,
@@ -198,12 +208,14 @@ final class WorkAgent {
         guard await Self.waitForHealth(process: process!, port: port) else {
             throw WorkError.message("The Work helper did not start under the privacy sandbox.")
         }
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
         isRunning = true
         let (initResult, response) = try await sendImmediate(method: "initialize", params: [
             "protocolVersion": 1,
             "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false]],
             "clientInfo": ["name": "Rapid Work", "version": "0.1"],
         ])
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
         guard initResult["error"] == nil,
               let id = response.value(forHTTPHeaderField: "Acp-Connection-Id") else {
             throw WorkError.message("The Work connection failed to initialize.")
@@ -211,6 +223,7 @@ final class WorkAgent {
         connection = id
         openStream(session: nil)
         try await newSession()
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
         completed = true
     }
 
