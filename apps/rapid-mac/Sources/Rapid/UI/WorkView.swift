@@ -14,6 +14,7 @@ struct WorkView: View {
     @State private var submitting = false
     @AppStorage("Rapid.Work.lastFolder") private var privateLastFolder = ""
     @AppStorage("Rapid.WorkFull.lastFolder") private var fullLastFolder = ""
+    @AppStorage("Rapid.WorkFull.folderExplicitlyChosen") private var fullFolderExplicitlyChosen = false
     private var lastFolder: String {
         get { WorkAgent.fullAccess ? fullLastFolder : privateLastFolder }
         nonmutating set {
@@ -45,6 +46,22 @@ struct WorkView: View {
             }
         }
         return nil
+    }
+
+    static func fullFolder(homeDirectory: URL, savedPath: String, explicitlyChosen: Bool,
+                           fileManager: FileManager = .default) throws -> URL {
+        if explicitlyChosen, !savedPath.isEmpty {
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: savedPath, isDirectory: &isDirectory), isDirectory.boolValue {
+                return URL(fileURLWithPath: savedPath, isDirectory: true)
+            }
+        }
+        // Older Full installs saved a folder without recording whether the user chose it.
+        let playground = homeDirectory
+            .appendingPathComponent("Desktop", isDirectory: true)
+            .appendingPathComponent("Goose-Playground", isDirectory: true)
+        try fileManager.createDirectory(at: playground, withIntermediateDirectories: true)
+        return playground
     }
 
     var body: some View {
@@ -168,13 +185,16 @@ struct WorkView: View {
                 await runSyntheticTest()
                 return
             }
-            if folder == nil, !lastFolder.isEmpty, FileManager.default.fileExists(atPath: lastFolder) {
+            if folder == nil, WorkAgent.fullAccess {
+                do {
+                    folder = try Self.fullFolder(homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+                                                 savedPath: fullLastFolder,
+                                                 explicitlyChosen: fullFolderExplicitlyChosen)
+                } catch {
+                    agent.error = error.localizedDescription
+                }
+            } else if folder == nil, !lastFolder.isEmpty, FileManager.default.fileExists(atPath: lastFolder) {
                 folder = URL(fileURLWithPath: lastFolder)
-            } else if folder == nil, WorkAgent.fullAccess {
-                let playground = FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent("Desktop/Goose-Playground", isDirectory: true)
-                try? FileManager.default.createDirectory(at: playground, withIntermediateDirectories: true)
-                folder = playground
             }
             if WorkAgent.fullAccess,
                let probe = ProcessInfo.processInfo.environment["WORK_FULL_LANDING_PROBE"],
@@ -227,6 +247,7 @@ struct WorkView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         folder = url
         lastFolder = url.path
+        if WorkAgent.fullAccess { fullFolderExplicitlyChosen = true }
         agent.stop()
     }
 

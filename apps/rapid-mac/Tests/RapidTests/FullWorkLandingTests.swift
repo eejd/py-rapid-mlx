@@ -31,4 +31,27 @@ struct FullWorkLandingTests {
         #expect(WorkView.recommendedModel(in: catalog.filter { $0.alias.contains("27b") },
                                           on: large)?.alias == "qwen3.6-27b-4bit")
     }
+
+    @Test("Full uses and creates the Playground until its own folder chooser is used")
+    func fullFolderSelection() throws {
+        let fileManager = FileManager.default
+        let home = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: home) }
+        let desktop = home.appendingPathComponent("Desktop", isDirectory: true)
+        let playground = desktop.appendingPathComponent("Goose-Playground", isDirectory: true)
+
+        for stalePath in ["", home.path, desktop.path] {
+            let folder = try WorkView.fullFolder(homeDirectory: home, savedPath: stalePath,
+                                                 explicitlyChosen: false, fileManager: fileManager)
+            #expect(folder == playground)
+            var isDirectory: ObjCBool = false
+            #expect(fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory))
+            #expect(isDirectory.boolValue)
+        }
+
+        let chosen = home.appendingPathComponent("Chosen", isDirectory: true)
+        try fileManager.createDirectory(at: chosen, withIntermediateDirectories: true)
+        #expect(try WorkView.fullFolder(homeDirectory: home, savedPath: chosen.path,
+                                        explicitlyChosen: true, fileManager: fileManager) == chosen)
+    }
 }
