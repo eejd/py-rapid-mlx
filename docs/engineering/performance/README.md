@@ -70,3 +70,4 @@ links to the report. When new evidence supersedes a report, retain or replace it
 with an explicit pointer to the newer qualification. Abandoned experiments with
 no live product contract may be removed after their durable conclusions move to
 current documentation or tests.
+- [Qwen 27B multi-session prefix selection research (2026-10-14)](2026-10-14-tensorfold-multisession-prefix-research.md)

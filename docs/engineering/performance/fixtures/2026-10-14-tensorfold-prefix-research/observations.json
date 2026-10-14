@@ -1,0 +1,765 @@
+{
+  "method": "Real tokenizer and pinned cache selection; dummy payloads; no model inference, TTFT or RAM measurement.",
+  "runtime_revision": "cb2ebf0540f42604e2759b2ddef497861e928248",
+  "rapid_revision": "7ac7ad58bc8cabe609c4c5ee737707b5ff8f07bc",
+  "model_snapshot": "70ae7fac63274ff2eac54152031433374cb80f2f",
+  "python": "3.12.14",
+  "versions": {
+    "mlx": "0.32.3",
+    "mlx-lm": "0.31.3",
+    "numpy": "2.5.4",
+    "transformers": "5.15.1"
+  },
+  "tokenizer_hashes": {
+    "tokenizer.json": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523",
+    "tokenizer_config.json": "792fa3f0cb88b111e54ef3134c873531008c4df471d108da17903426e308aa7b",
+    "chat_template.jinja": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+    "config.json": "14b65a0ee06517060a6bbd979bb1a8ff54e7b304b1a1f01d54344b88b8285e85"
+  },
+  "plan": "grid2048+msg256:248045:248045.74455",
+  "controls": {
+    "repeat": [
+      {
+        "prompt_tokens": 930,
+        "history_tokens": 923,
+        "cached_tokens": 0,
+        "suffix_tokens": 930,
+        "chunk_starts": [
+          0,
+          911
+        ],
+        "saved_cuts": [
+          911
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      {
+        "prompt_tokens": 930,
+        "history_tokens": 923,
+        "cached_tokens": 911,
+        "suffix_tokens": 19,
+        "chunk_starts": [
+          0,
+          911
+        ],
+        "saved_cuts": [],
+        "entries": 1,
+        "evictions": 0
+      }
+    ],
+    "followup": {
+      "prompt_tokens": 951,
+      "history_tokens": 944,
+      "cached_tokens": 911,
+      "suffix_tokens": 40,
+      "chunk_starts": [
+        0,
+        911
+      ],
+      "saved_cuts": [],
+      "entries": 1,
+      "evictions": 0
+    },
+    "fork_a": {
+      "prompt_tokens": 952,
+      "history_tokens": 945,
+      "cached_tokens": 911,
+      "suffix_tokens": 41,
+      "chunk_starts": [
+        0,
+        911
+      ],
+      "saved_cuts": [],
+      "entries": 1,
+      "evictions": 0
+    },
+    "fork_b": {
+      "prompt_tokens": 952,
+      "history_tokens": 945,
+      "cached_tokens": 911,
+      "suffix_tokens": 41,
+      "chunk_starts": [
+        0,
+        911
+      ],
+      "saved_cuts": [],
+      "entries": 1,
+      "evictions": 0
+    }
+  },
+  "rows": [
+    {
+      "repetitions": 16,
+      "common_tokens": 93,
+      "cold": {
+        "prompt_tokens": 114,
+        "history_tokens": 107,
+        "cached_tokens": 0,
+        "suffix_tokens": 114,
+        "chunk_starts": [
+          0
+        ],
+        "saved_cuts": [],
+        "entries": 0,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 114,
+        "history_tokens": 107,
+        "cached_tokens": 0,
+        "suffix_tokens": 114,
+        "chunk_starts": [
+          0
+        ],
+        "saved_cuts": [],
+        "entries": 0,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 113,
+        "history_tokens": 106,
+        "cached_tokens": 0,
+        "suffix_tokens": 113,
+        "chunk_starts": [
+          0
+        ],
+        "saved_cuts": [],
+        "entries": 0,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 114,
+        "history_tokens": 107,
+        "cached_tokens": 0,
+        "suffix_tokens": 114,
+        "chunk_starts": [
+          0
+        ],
+        "saved_cuts": [],
+        "entries": 0,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 114,
+        "history_tokens": 107,
+        "cached_tokens": 0,
+        "suffix_tokens": 114,
+        "chunk_starts": [
+          0
+        ],
+        "saved_cuts": [],
+        "entries": 0,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    },
+    {
+      "repetitions": 48,
+      "common_tokens": 253,
+      "cold": {
+        "prompt_tokens": 274,
+        "history_tokens": 267,
+        "cached_tokens": 0,
+        "suffix_tokens": 274,
+        "chunk_starts": [
+          0,
+          257
+        ],
+        "saved_cuts": [
+          257
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 274,
+        "history_tokens": 267,
+        "cached_tokens": 0,
+        "suffix_tokens": 274,
+        "chunk_starts": [
+          0,
+          257
+        ],
+        "saved_cuts": [
+          257
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 273,
+        "history_tokens": 266,
+        "cached_tokens": 0,
+        "suffix_tokens": 273,
+        "chunk_starts": [
+          0,
+          266
+        ],
+        "saved_cuts": [
+          266
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 274,
+        "history_tokens": 267,
+        "cached_tokens": 0,
+        "suffix_tokens": 274,
+        "chunk_starts": [
+          0,
+          257
+        ],
+        "saved_cuts": [
+          257
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 274,
+        "history_tokens": 267,
+        "cached_tokens": 0,
+        "suffix_tokens": 274,
+        "chunk_starts": [
+          0,
+          257
+        ],
+        "saved_cuts": [
+          257
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    },
+    {
+      "repetitions": 96,
+      "common_tokens": 493,
+      "cold": {
+        "prompt_tokens": 514,
+        "history_tokens": 507,
+        "cached_tokens": 0,
+        "suffix_tokens": 514,
+        "chunk_starts": [
+          0,
+          497
+        ],
+        "saved_cuts": [
+          497
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 514,
+        "history_tokens": 507,
+        "cached_tokens": 0,
+        "suffix_tokens": 514,
+        "chunk_starts": [
+          0,
+          497
+        ],
+        "saved_cuts": [
+          497
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 513,
+        "history_tokens": 506,
+        "cached_tokens": 491,
+        "suffix_tokens": 22,
+        "chunk_starts": [
+          0,
+          491
+        ],
+        "saved_cuts": [],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 514,
+        "history_tokens": 507,
+        "cached_tokens": 0,
+        "suffix_tokens": 514,
+        "chunk_starts": [
+          0,
+          497
+        ],
+        "saved_cuts": [
+          497
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 514,
+        "history_tokens": 507,
+        "cached_tokens": 0,
+        "suffix_tokens": 514,
+        "chunk_starts": [
+          0,
+          497
+        ],
+        "saved_cuts": [
+          497
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    },
+    {
+      "repetitions": 180,
+      "common_tokens": 913,
+      "cold": {
+        "prompt_tokens": 934,
+        "history_tokens": 927,
+        "cached_tokens": 0,
+        "suffix_tokens": 934,
+        "chunk_starts": [
+          0,
+          917
+        ],
+        "saved_cuts": [
+          917
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 934,
+        "history_tokens": 927,
+        "cached_tokens": 0,
+        "suffix_tokens": 934,
+        "chunk_starts": [
+          0,
+          917
+        ],
+        "saved_cuts": [
+          917
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 933,
+        "history_tokens": 926,
+        "cached_tokens": 911,
+        "suffix_tokens": 22,
+        "chunk_starts": [
+          0,
+          911
+        ],
+        "saved_cuts": [],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 934,
+        "history_tokens": 927,
+        "cached_tokens": 0,
+        "suffix_tokens": 934,
+        "chunk_starts": [
+          0,
+          917
+        ],
+        "saved_cuts": [
+          917
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 934,
+        "history_tokens": 927,
+        "cached_tokens": 0,
+        "suffix_tokens": 934,
+        "chunk_starts": [
+          0,
+          917
+        ],
+        "saved_cuts": [
+          917
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    },
+    {
+      "repetitions": 300,
+      "common_tokens": 1513,
+      "cold": {
+        "prompt_tokens": 1534,
+        "history_tokens": 1527,
+        "cached_tokens": 0,
+        "suffix_tokens": 1534,
+        "chunk_starts": [
+          0,
+          1517
+        ],
+        "saved_cuts": [
+          1517
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 1534,
+        "history_tokens": 1527,
+        "cached_tokens": 0,
+        "suffix_tokens": 1534,
+        "chunk_starts": [
+          0,
+          1517
+        ],
+        "saved_cuts": [
+          1517
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 1533,
+        "history_tokens": 1526,
+        "cached_tokens": 1511,
+        "suffix_tokens": 22,
+        "chunk_starts": [
+          0,
+          1511
+        ],
+        "saved_cuts": [],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 1534,
+        "history_tokens": 1527,
+        "cached_tokens": 0,
+        "suffix_tokens": 1534,
+        "chunk_starts": [
+          0,
+          1517
+        ],
+        "saved_cuts": [
+          1517
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 1534,
+        "history_tokens": 1527,
+        "cached_tokens": 0,
+        "suffix_tokens": 1534,
+        "chunk_starts": [
+          0,
+          1517
+        ],
+        "saved_cuts": [
+          1517
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    },
+    {
+      "repetitions": 500,
+      "common_tokens": 2513,
+      "cold": {
+        "prompt_tokens": 2534,
+        "history_tokens": 2527,
+        "cached_tokens": 0,
+        "suffix_tokens": 2534,
+        "chunk_starts": [
+          0,
+          2048,
+          2517
+        ],
+        "saved_cuts": [
+          2517
+        ],
+        "entries": 1,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 2534,
+        "history_tokens": 2527,
+        "cached_tokens": 0,
+        "suffix_tokens": 2534,
+        "chunk_starts": [
+          0,
+          2048,
+          2517
+        ],
+        "saved_cuts": [
+          2517
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 2533,
+        "history_tokens": 2526,
+        "cached_tokens": 2511,
+        "suffix_tokens": 22,
+        "chunk_starts": [
+          0,
+          2048,
+          2511
+        ],
+        "saved_cuts": [],
+        "entries": 1,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 2534,
+        "history_tokens": 2527,
+        "cached_tokens": 0,
+        "suffix_tokens": 2534,
+        "chunk_starts": [
+          0,
+          2048,
+          2517
+        ],
+        "saved_cuts": [
+          2048,
+          2517
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 2534,
+        "history_tokens": 2527,
+        "cached_tokens": 2048,
+        "suffix_tokens": 486,
+        "chunk_starts": [
+          0,
+          2048,
+          2517
+        ],
+        "saved_cuts": [
+          2517
+        ],
+        "entries": 3,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    },
+    {
+      "repetitions": 900,
+      "common_tokens": 4513,
+      "cold": {
+        "prompt_tokens": 4534,
+        "history_tokens": 4527,
+        "cached_tokens": 0,
+        "suffix_tokens": 4534,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          4517
+        ],
+        "saved_cuts": [
+          2048,
+          4517
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 4534,
+        "history_tokens": 4527,
+        "cached_tokens": 2048,
+        "suffix_tokens": 2486,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          4517
+        ],
+        "saved_cuts": [
+          4096,
+          4517
+        ],
+        "entries": 4,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 4533,
+        "history_tokens": 4526,
+        "cached_tokens": 4511,
+        "suffix_tokens": 22,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          4511
+        ],
+        "saved_cuts": [],
+        "entries": 2,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 4534,
+        "history_tokens": 4527,
+        "cached_tokens": 0,
+        "suffix_tokens": 4534,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          4517
+        ],
+        "saved_cuts": [
+          2048,
+          4096,
+          4517
+        ],
+        "entries": 3,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 4534,
+        "history_tokens": 4527,
+        "cached_tokens": 4096,
+        "suffix_tokens": 438,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          4517
+        ],
+        "saved_cuts": [
+          4517
+        ],
+        "entries": 4,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    },
+    {
+      "repetitions": 1700,
+      "common_tokens": 8513,
+      "cold": {
+        "prompt_tokens": 8534,
+        "history_tokens": 8527,
+        "cached_tokens": 0,
+        "suffix_tokens": 8534,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          6144,
+          8192,
+          8517
+        ],
+        "saved_cuts": [
+          6144,
+          8517
+        ],
+        "entries": 2,
+        "evictions": 0
+      },
+      "varied_system_tail": {
+        "prompt_tokens": 8534,
+        "history_tokens": 8527,
+        "cached_tokens": 6144,
+        "suffix_tokens": 2390,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          6144,
+          8192,
+          8517
+        ],
+        "saved_cuts": [
+          8192,
+          8517
+        ],
+        "entries": 4,
+        "evictions": 0
+      },
+      "metadata_in_user": {
+        "prompt_tokens": 8533,
+        "history_tokens": 8526,
+        "cached_tokens": 8511,
+        "suffix_tokens": 22,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          6144,
+          8192,
+          8511
+        ],
+        "saved_cuts": [],
+        "entries": 2,
+        "evictions": 0
+      },
+      "counterfactual_cold": {
+        "prompt_tokens": 8534,
+        "history_tokens": 8527,
+        "cached_tokens": 0,
+        "suffix_tokens": 8534,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          6144,
+          8192,
+          8517
+        ],
+        "saved_cuts": [
+          6144,
+          8192,
+          8517
+        ],
+        "entries": 3,
+        "evictions": 0
+      },
+      "counterfactual_warm": {
+        "prompt_tokens": 8534,
+        "history_tokens": 8527,
+        "cached_tokens": 8192,
+        "suffix_tokens": 342,
+        "chunk_starts": [
+          0,
+          2048,
+          4096,
+          6144,
+          8192,
+          8517
+        ],
+        "saved_cuts": [
+          8517
+        ],
+        "entries": 4,
+        "evictions": 0
+      },
+      "early_edit_cached_tokens": 0
+    }
+  ],
+  "pressure_revisit": {
+    "prompt_tokens": 932,
+    "history_tokens": 925,
+    "cached_tokens": 0,
+    "suffix_tokens": 932,
+    "chunk_starts": [
+      0,
+      915
+    ],
+    "saved_cuts": [
+      915
+    ],
+    "entries": 11,
+    "evictions": 6
+  }
+}
