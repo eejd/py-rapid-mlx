@@ -4089,6 +4089,38 @@ def _install_suffix_decoding(
     return True
 
 
+def _pflash_cached_prefix_tokens(
+    pflash_config: Any,
+    memory_aware_cache: Any,
+    block_aware_cache: Any,
+    tokens: list[int],
+) -> int:
+    """Tokens of ``tokens`` the memory-aware prefix cache would reuse, for the
+    PFlash ``uncached`` threshold basis.
+
+    Returns 0 — i.e. leaves PFlash on its ``total`` arithmetic — unless the
+    basis is ``uncached``, the mode is ``auto``, the memory-aware cache (not
+    the block-aware one) is in use and the prompt is long enough for the
+    threshold to matter.  Uses ``probe``, which has no side effects on the
+    cache, so a prompt that is probed and then compressed anyway costs nothing
+    and a prompt that stays uncompressed is fetched once by the normal path.
+    """
+    if getattr(pflash_config, "threshold_basis", "total") != "uncached":
+        return 0
+    if getattr(pflash_config, "mode", "off") != "auto":
+        return 0
+    if block_aware_cache is not None or memory_aware_cache is None:
+        return 0
+    if len(tokens) < int(getattr(pflash_config, "threshold", 0)):
+        return 0
+    probe = getattr(memory_aware_cache, "probe", None)
+    if not callable(probe):
+        return 0
+    result = probe(list(tokens))
+    matched = int(getattr(result, "matched_tokens", 0) or 0)
+    return max(0, min(matched, len(tokens)))
+
+
 class Scheduler:
     """
     Scheduler for continuous batching using mlx-lm BatchGenerator.
@@ -8296,26 +8328,19 @@ class Scheduler:
             original_tokens = list(request.prompt_token_ids)
             original_prefix_boundary = request.prefix_boundary
             scoring_start = time.monotonic()
-            # threshold_basis=uncached: probe the memory-aware prefix cache
-            # before deciding to compress. If the uncached remainder is below
-            # the threshold, keep the fetched entry for the lookup in
-            # ``_fetch_memory_aware_prefix`` and skip compression; otherwise
-            # drop it and compress exactly as ``total`` would.
-            _pflash_cached_prefix = 0
-            _pf_cfg = self.config.pflash_config
-            if (
-                getattr(_pf_cfg, "threshold_basis", "total") == "uncached"
-                and _pf_cfg.mode == "auto"
-                and self.block_aware_cache is None
-                and self.memory_aware_cache is not None
-                and len(original_tokens) >= _pf_cfg.threshold
-            ):
-                _pf_cache, _pf_rem = self.memory_aware_cache.fetch(original_tokens)
-                _pf_match = self.memory_aware_cache._last_match_type
-                if _pf_cache:
-                    _pflash_cached_prefix = len(original_tokens) - len(_pf_rem)
-                    if len(_pf_rem) < _pf_cfg.threshold:
-                        request._pflash_prefetch = (_pf_cache, _pf_rem, _pf_match)
+            # threshold_basis=uncached: ask the memory-aware prefix cache,
+            # with a side-effect-free probe, how much of this prompt it would
+            # reuse, and let PFlash compare only the uncached remainder to the
+            # threshold.  Nothing is fetched here: if the request stays
+            # uncompressed, ``_fetch_memory_aware_prefix`` performs the one
+            # real fetch (LRU touch, statistics, materialisation) exactly as
+            # it does today; if it is compressed, the cache is never touched.
+            _pflash_cached_prefix = _pflash_cached_prefix_tokens(
+                self.config.pflash_config,
+                self.memory_aware_cache,
+                self.block_aware_cache,
+                original_tokens,
+            )
             compressed_tokens, metadata = compress_request_tokens(
                 original_tokens,
                 self.config.pflash_config,
@@ -8323,8 +8348,6 @@ class Scheduler:
                 requires_prompt_integrity=request.requires_prompt_integrity,
                 cached_prefix_tokens=_pflash_cached_prefix,
             )
-            if metadata.get("compressed"):
-                request._pflash_prefetch = None
             metadata["scoring_seconds"] = time.monotonic() - scoring_start
             metadata["logical_prompt_tokens"] = len(original_tokens)
             metadata["model_prompt_tokens"] = len(compressed_tokens)
@@ -8467,17 +8490,9 @@ class Scheduler:
         store: Any = self.memory_aware_cache
         prompt: list[int] = request.prompt_token_ids or []
         _fetch_t0 = _time.monotonic()
-        _prefetch = getattr(request, "_pflash_prefetch", None)
-        if _prefetch is not None:
-            # Reuse the probe already done by the PFlash uncached-basis check
-            # so the cache is fetched (and LRU-touched) once per request.
-            request._pflash_prefetch = None
-            cache, remaining, _prefetch_match = _prefetch
-        else:
-            cache, remaining = store.fetch(prompt)
-            _prefetch_match = None
+        cache, remaining = store.fetch(prompt)
         _fetch_dt = _time.monotonic() - _fetch_t0
-        request.cache_hit_type = _prefetch_match or store._last_match_type
+        request.cache_hit_type = store._last_match_type
         if cache:
             request.prompt_cache = cache
             request.cached_tokens = len(prompt) - len(remaining)

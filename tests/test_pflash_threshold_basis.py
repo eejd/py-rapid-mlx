@@ -1,4 +1,4 @@
-"""--pflash-threshold-basis uncached: compress only when the uncached part is large."""
+"""--pflash-threshold-basis uncached: pure threshold arithmetic (scheduler/cache contract: test_pflash_threshold_basis_scheduler.py)."""
 
 from types import SimpleNamespace
 
