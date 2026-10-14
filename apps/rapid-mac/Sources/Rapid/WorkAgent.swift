@@ -112,21 +112,30 @@ final class WorkAgent {
         port = try Self.freePort()
         repeat { proxyPort = try Self.freePort() } while proxyPort == port
         secret = UUID().uuidString + UUID().uuidString
+        let contextLimit = Self.fullAccess
+            ? await Self.contextLimit(rapidPort: rapidPort, model: model, bearer: bearer)
+            : 16384
         guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
         let provider: [String: Any] = [
             "name": "custom_rapid_local", "engine": "openai", "display_name": "Rapid Local",
             "api_key_env": "RAPID_LOCAL_WORK_KEY",
             "base_url": "http://127.0.0.1:\(proxyPort)/v1/chat/completions",
-            "models": [["name": model, "context_limit": 16384]],
-            "supports_streaming": true, "requires_auth": true,
+            "models": [["name": model, "context_limit": contextLimit]],
+            "supports_streaming": true, "requires_auth": true, "dynamic_models": false,
         ]
         let providerURL = providerDirectory.appendingPathComponent("custom_rapid_local.json")
         try JSONSerialization.data(withJSONObject: provider).write(to: providerURL, options: .atomic)
         let skillDirectory = support.appendingPathComponent(".agents/skills/local-documents", isDirectory: true)
-        try fileManager.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
-        let skillSource = resources.appendingPathComponent("Helpers/local-documents/SKILL.md")
-        try? fileManager.removeItem(at: skillDirectory.appendingPathComponent("SKILL.md"))
-        try fileManager.copyItem(at: skillSource, to: skillDirectory.appendingPathComponent("SKILL.md"))
+        if Self.fullAccess {
+            if fileManager.fileExists(atPath: skillDirectory.path) {
+                try fileManager.removeItem(at: skillDirectory)
+            }
+        } else {
+            try fileManager.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
+            let skillSource = resources.appendingPathComponent("Helpers/local-documents/SKILL.md")
+            try? fileManager.removeItem(at: skillDirectory.appendingPathComponent("SKILL.md"))
+            try fileManager.copyItem(at: skillSource, to: skillDirectory.appendingPathComponent("SKILL.md"))
+        }
         let gooseProfileURL = temporary.appendingPathComponent("work-\(UUID().uuidString).sb")
         let proxyProfileURL = temporary.appendingPathComponent("proxy-\(UUID().uuidString).sb")
         if !Self.fullAccess {
@@ -207,7 +216,7 @@ final class WorkAgent {
             profile: Self.fullAccess ? nil : gooseProfileURL, python: pythonExecutable,
             executable: goose,
             arguments: ["serve", "--host", "127.0.0.1", "--port", String(port),
-                        "--platform", "desktop", "--with-builtin", Self.fullAccess
+                        "--platform", Self.fullAccess ? "cli" : "desktop", "--with-builtin", Self.fullAccess
                             ? "developer,computercontroller,memory,autovisualiser,tutorial"
                             : "developer"],
             directory: folder, environment: env)
@@ -499,6 +508,30 @@ final class WorkAgent {
             throw WorkError.message("Work transport rejected a request.")
         }
         return (data, response)
+    }
+
+    static func contextLimit(from data: Data, model: String) -> Int? {
+        guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = payload["data"] as? [[String: Any]],
+              let entry = models.first(where: { $0["id"] as? String == model }),
+              let limit = entry["context_window"] as? Int,
+              limit > 0 else { return nil }
+        return limit
+    }
+
+    private static func contextLimit(rapidPort: Int, model: String, bearer: String) async -> Int {
+        let fallback = 32768  // Matches `rapid-mlx agents goose --setup` when metadata is unavailable.
+        guard let url = URL(string: "http://127.0.0.1:\(rapidPort)/v1/models") else { return fallback }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 5
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return fallback }
+            return contextLimit(from: data, model: model) ?? fallback
+        } catch {
+            return fallback
+        }
     }
 
     private static func freePort() throws -> Int {
