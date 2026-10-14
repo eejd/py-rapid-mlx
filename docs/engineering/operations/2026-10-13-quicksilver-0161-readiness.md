@@ -3,21 +3,27 @@
 Assessment date: 2026-10-13. Owner: Atlas; validation host: Studio.
 Scope: Desktop Share Compute / Compute & Earn, CLI provider mode, pool relay,
 gateway routing and metering, contributor accounting, and website onboarding.
-No production configuration, deployments, keys, registrations, or balances were
-changed by this assessment.
+The source assessment made no production changes. Subsequent owner-authorized
+live acceptance registered temporary test nodes and made metered consumer
+requests. No production configuration or deployment was changed.
 
 ## Decision
 
-**Updated after real production-path testing on 2026-10-14 UTC:** initial
-readiness was conditional on end-to-end acceptance. That acceptance found a
-reproducible cancellation failure. Hold broad community beta promotion until
-the cancellation chain is repaired and the same workload passes. Basic
-single-model serving works; this finding concerns resource recovery and
-latency after a customer abandons a stream. See the production-path follow-up
-below. The earlier source-only recommendation is superseded by this evidence.
+**Updated after owner disposition on 2026-10-14 UTC:** the owner accepts that
+each admitted call may finish after its client disconnects. Cancellation
+propagation is out of scope and is not a release blocker for the Qwen-only
+community beta. The earlier hold for cancellation is superseded. Basic
+single-model serving works. The owner subsequently clarified that the target
+configuration is **TensorFold**, making the ordinary MTP test a control rather
+than acceptance of the intended engine. TensorFold + QuickSilver text calls
+work with a manually prepared runtime and one advertised slot. Stock 0.16.1
+does not select or bundle that runtime, so do not label its default
+Compute/Earn flow ready for this TensorFold requirement. See the
+[TensorFold E2E findings](../performance/2026-10-14-quicksilver-tensorfold-27b-e2e.md).
 
-The 0.16.1 provider implementation is suitable for a narrowly scoped,
-explicitly enabled Qwen3.8-27B beta after the release actions below. Do not
+The 0.16.1 provider implementation can support a narrowly scoped,
+explicitly enabled Qwen3.8-27B text beta after the TensorFold runtime/alias/
+capacity integration and release actions below. Do not
 promote the current experience to a default-on, general-availability feature.
 The code is already included in the released 0.16.1 Desktop and engine tags;
 the Desktop preference remains default-off. Shipping the feature code and
@@ -108,8 +114,9 @@ traceability. Use the signed 0.16.1 artifact and a distinct consumer account.
 
 1. First-run key entry, permitted-model download/selection, registration,
    warmup, readiness and a successful streamed inference.
-2. Client cancellation, node disconnect/reconnect, capacity exhaustion and
-   cloud fallback before output. A partial stream must fail explicitly rather
+2. Node disconnect/reconnect, capacity exhaustion and cloud fallback before
+   output. Client cancellation propagation is accepted as out of scope.
+   A partial stream must fail explicitly rather
    than silently restart on another model/node.
 3. Stop sharing and quit: verify child teardown, released capacity, and the
    prior local model becoming ready again.
@@ -198,7 +205,7 @@ Observed results:
 | Natural tunnel reconnect and subsequent inference | Passed |
 | Restart without the input provider credential | Passed; same node registration reused |
 | Graceful stop and removal of local listener | Passed |
-| Public-client cancellation promptly stops generation | **Failed** |
+| Public-client cancellation promptly stops generation | Failed; owner accepts continued generation |
 | Earnings credited to the contributor account | Not yet verified |
 
 Customer response IDs and routing headers are sanitized by the public API.
@@ -208,7 +215,12 @@ flags, message counts and generation limits. Do not assume every successful
 consumer call in this run reached this node: other pool nodes and cloud
 fallback remained available throughout.
 
-#### P1: cancellation continues generating and delays the next request
+#### Accepted limitation: generation continues after client cancellation
+
+Owner disposition: do not implement cancellation propagation for this beta.
+The observations below remain valid evidence, but the cancellation behavior
+is no longer a release blocker. Concurrent short-request latency is being
+investigated independently.
 
 Owners: QuickSilver gateway/edge owner and Vector; Harbor owns the acceptance
 rerun. This is an observed cross-service failure, not a localized code fix yet.
@@ -245,14 +257,9 @@ The first mixed-routing run also had a 38.269-second short request after a
 cancel; that sample was not traced to this test node and is not used to
 localize the failure. Existing unit tests cover abort frames at the relay/node
 boundary. They do not establish propagation of a real public customer's
-disconnect through every intermediary. Investigate edge-to-gateway and
-gateway-to-relay cancellation before attributing this to the Mac tunnel alone.
-
-Acceptance for the repair: repeat both Python-close and curl-timeout cases;
-prove node generation stops well before its token cap, in-flight capacity is
-released, and the short follow-up does not wait for the abandoned generation.
-Use a controlled baseline rather than claiming a general latency SLO from
-these few samples.
+disconnect through every intermediary. The owner has explicitly deferred
+that propagation work. The concurrent TTFT investigation below supersedes
+the earlier proposed cancellation-repair acceptance gate.
 
 #### Privacy, accounting, and cleanup boundaries
 
