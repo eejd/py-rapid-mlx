@@ -237,7 +237,7 @@ class LocalSearch:
         checkpoint = await asyncio.to_thread(_checkpoint_identity, model_path)
         if model_path is None:
             self._attempted_checkpoints.clear()
-        worker = self._worker()
+        worker = await self._refresh_worker()
         if not callable(worker):
             self._attempted_checkpoints.clear()
         folders = await self.store.call("folders")
@@ -333,21 +333,37 @@ class LocalSearch:
     async def close(self):
         self.closed = True
         await self._cancel_worker()
-        if self.engine is not None:
-            await self._model_call(self._release_embedder, _teardown=True)
-        await asyncio.to_thread(self.store.close)
+        try:
+            if self.engine is not None:
+                await self._model_call(self._release_embedder, _teardown=True)
+        finally:
+            await asyncio.to_thread(self.store.close)
 
     def _worker(self):
         if self.model_worker is not None:
             return self.model_worker
         from ..config import get_config
 
-        worker = getattr(get_config().engine, "execute_on_model_worker", None)
-        if self.engine is not None and self._owner_worker != worker:
-            self.worker_error = (
-                "Model worker changed; restart Local Search to restore semantic search"
-            )
-            return None
+        return getattr(get_config().engine, "execute_on_model_worker", None)
+
+    async def _refresh_worker(self):
+        """Release a resident embedder on its owner before adopting a new worker."""
+        worker = self._worker()
+        if self.engine is None or self._owner_worker == worker:
+            return worker
+        async with self._model_gate:
+            worker = self._worker()
+            if self.engine is None or self._owner_worker == worker:
+                return worker
+            if not callable(self._owner_worker):
+                self.worker_error = "Model worker changed before teardown"
+                return None
+            try:
+                await self._model_call_owned(self._release_embedder, _teardown=True)
+            except ModelLoadError as exc:
+                self.worker_error = str(exc)
+                return None
+        self.worker_error = None
         return worker
 
     async def _model_call(self, func, *args, _teardown=False, **kwargs):
@@ -382,8 +398,8 @@ class LocalSearch:
                 self._release_embedder()
                 return "model", str(exc)
 
-        task = asyncio.create_task(worker(work))
         try:
+            task = asyncio.create_task(worker(work))
             kind, result = await asyncio.shield(task)
             if kind == "input":
                 self.worker_error = None
@@ -397,9 +413,24 @@ class LocalSearch:
             # A running GPU call cannot be interrupted; drain before teardown.
             await task
             raise
+        except (EmbeddingInputError, ModelLoadError):
+            raise
+        except Exception as exc:
+            self.worker_error = str(exc)
+            raise ModelLoadError(str(exc), load_failed=False) from None
 
     def _release_embedder(self):
         self.engine = None
+        self._owner_worker = None
+
+    async def _release_after_model_error(self):
+        if self.engine is None:
+            return
+        try:
+            await self._model_call(self._release_embedder, _teardown=True)
+        except ModelLoadError:
+            # Keep the owner boundary for a later status-driven recovery attempt.
+            pass
 
     def _generation_busy(self):
         worker = self._worker()
@@ -431,6 +462,7 @@ class LocalSearch:
             self.progress.pop("paused_reason", None)
 
     async def _embed_async(self, inputs, *, background=False, **kwargs):
+        await self._refresh_worker()
         if not background:
             return await self._model_call(self._embed, inputs, **kwargs)
         while True:
@@ -455,23 +487,36 @@ class LocalSearch:
                 self.engine = self.embedder_factory(path)
             except Exception as exc:
                 raise ModelLoadError(str(exc)) from None
+        engine = self.engine
+        method = engine.embed_images if images else engine.embed
         try:
-            engine = self.engine
-            method = engine.embed_images if images else engine.embed
             vectors = np.asarray(method(inputs), dtype=np.float32)
-            if (
-                vectors.ndim != 2
-                or vectors.shape[0] != len(inputs)
-                or not np.isfinite(vectors).all()
-            ):
-                raise ValueError("invalid embedding output")
-            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-            if np.any(norms <= 0):
-                raise ValueError("zero embedding output")
-            return vectors / norms
+        except EmbeddingInputError:
+            raise
         except Exception as exc:
-            # Classified inside the owning worker; only kind/message cross it.
-            raise EmbeddingInputError(str(exc)) from None
+            from ..embedding import (
+                EmbeddingInputTooLongError,
+                EmbeddingUnsupportedMediaError,
+            )
+
+            if (
+                isinstance(
+                    exc, (EmbeddingInputTooLongError, EmbeddingUnsupportedMediaError)
+                )
+                or str(exc) == "Tokenizer failed to expand image placeholders"
+            ):
+                raise EmbeddingInputError(str(exc)) from None
+            raise
+        if (
+            vectors.ndim != 2
+            or vectors.shape[0] != len(inputs)
+            or not np.isfinite(vectors).all()
+        ):
+            raise EmbeddingInputError("invalid embedding output")
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        if np.any(norms <= 0):
+            raise EmbeddingInputError("zero embedding output")
+        return vectors / norms
 
     async def _index_media(self, path, root, available, root_fd):
         frames = media_frames(path, root, root_fd)
@@ -511,8 +556,7 @@ class LocalSearch:
                             vectors.extend(embedded)
                     except ModelLoadError as exc:
                         logger.warning("Local-search image model unavailable: %s", exc)
-                        if self.engine is not None:
-                            await self._model_call(self._release_embedder)
+                        await self._release_after_model_error()
                         available = False
                         error = exc
                     except Exception as exc:
@@ -627,7 +671,7 @@ class LocalSearch:
             self.progress["files_total"] = 0
             model_path = await asyncio.to_thread(self.resolve_model, self.model_id)
             checkpoint = await asyncio.to_thread(_checkpoint_identity, model_path)
-            worker = self._worker()
+            worker = await self._refresh_worker()
             available = model_path is not None
             model_error = None
             load_failed = False
@@ -759,8 +803,7 @@ class LocalSearch:
                                     vectors[i] = vector
                         except ModelLoadError as exc:
                             logger.warning("Local-search model unavailable: %s", exc)
-                            if self.engine is not None:
-                                await self._model_call(self._release_embedder)
+                            await self._release_after_model_error()
                             available = False
                             model_error = str(exc)
                             load_failed |= exc.load_failed

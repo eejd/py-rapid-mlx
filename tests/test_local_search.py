@@ -48,6 +48,8 @@ FIRST_ROUTES = [
 @pytest.mark.parametrize("existing", [False, True])
 def test_index_owner_only_under_permissive_umask(tmp_path, monkeypatch, existing):
     path = tmp_path / "public-parent" / "index" / "index.sqlite3"
+    path.parent.parent.mkdir(mode=0o1777)
+    path.parent.parent.chmod(0o1777)
     previous_umask = os.umask(0)
     first = second = None
     try:
@@ -77,7 +79,7 @@ def test_index_owner_only_under_permissive_umask(tmp_path, monkeypatch, existing
             second.db.execute("INSERT INTO meta VALUES ('private_text', 'secret')")
         for suffix in ("", "-wal", "-shm"):
             assert stat.S_IMODE(Path(str(path) + suffix).stat().st_mode) == 0o600
-        assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o777
+        assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o1777
     finally:
         if second is not None:
             second.close()
@@ -198,19 +200,21 @@ def test_unsafe_index_refused_with_readable_status(
         from rapid_mlx.local_search import store as module
 
         monkeypatch.setattr(module.sys, "platform", "darwin")
+        target = directory.stat().st_ino
 
-        def probe(_):
+        def probe(fd):
+            if os.fstat(fd).st_ino != target:
+                return False
             if unsafe == "acl_probe_denied":
                 raise PermissionError("ACL probe denied")
             return True
 
-        def strip(_):
-            if unsafe == "acl_denied":
+        def strip(fd):
+            if os.fstat(fd).st_ino == target and unsafe == "acl_denied":
                 raise PermissionError("ACL repair denied")
-            return ""
 
         monkeypatch.setattr(module, "_acl_present", probe)
-        monkeypatch.setattr(module, "_acl_command", strip)
+        monkeypatch.setattr(module, "_remove_acl", strip)
     elif unsafe == "hardlink":
         os.link(outside, path)
     else:
@@ -1433,6 +1437,7 @@ def test_missing_model_keyword_and_resume(tmp_path):
         "placeholder",
         "invalid_output",
         "zero_output",
+        "lazy_load",
         "factory",
         "resolve",
     ],
@@ -1478,7 +1483,11 @@ def test_embedding_failure_scope(tmp_path, monkeypatch, media, failure):
                     )
                 if failure == "placeholder":
                     raise ValueError("Tokenizer failed to expand image placeholders")
-                raise ValueError("invalid embedding output")
+                if failure == "input":
+                    from rapid_mlx.local_search.service import EmbeddingInputError
+
+                    raise EmbeddingInputError("invalid embedding input")
+                raise ValueError("model execution failed")
             return original(inputs)
 
         monkeypatch.setattr(fake, "embed_images" if media else "embed", failing_input)
@@ -1505,11 +1514,17 @@ def test_embedding_failure_scope(tmp_path, monkeypatch, media, failure):
             state = search.store.folder(fid)
             assert files[str(paths[0])]["status"] == "keyword"
             assert files[str(paths[0])]["embedded"] == 0
-            if failure in {"factory", "resolve"}:
-                assert calls == []
+            if failure in {"factory", "resolve", "lazy_load"}:
+                assert calls == (
+                    [] if failure in {"factory", "resolve"} else [str(paths[0])]
+                )
                 assert all(row["embedded"] == 0 for row in files.values())
                 assert state["state"] == "waiting_for_model"
-                assert state["error"] == "device unavailable"
+                assert state["error"] == (
+                    "model execution failed"
+                    if failure == "lazy_load"
+                    else "device unavailable"
+                )
                 assert search.engine is None
                 assert fid in search._attempted_checkpoints
                 assert release.called
@@ -1551,6 +1566,65 @@ def test_missing_worker_is_model_failure(tmp_path, monkeypatch, resident, backgr
             assert search.engine is None
             assert search.worker_error == str(caught.value)
             assert not search._attempted_checkpoints
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_loaded_embedder_recovers_after_worker_replacement(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from rapid_mlx.config import get_config
+
+    async def scenario():
+        root = folder(tmp_path)
+        first = root / "first.txt"
+        first.write_text("An apple orchard grows delicious fruit.")
+        model = folder(tmp_path, "model")
+        (model / "model.safetensors").write_bytes(b"unchanged checkpoint")
+        cfg = get_config()
+        original_worker = cfg.engine.execute_on_model_worker
+        calls = []
+
+        async def worker(name, func):
+            calls.append(name)
+            return await original_worker(func)
+
+        async def worker_a(func):
+            return await worker("a", func)
+
+        async def worker_b(func):
+            return await worker("b", func)
+
+        monkeypatch.setattr(
+            cfg, "engine", SimpleNamespace(execute_on_model_worker=worker_a)
+        )
+        fake = FakeEmbedder()
+        search = LocalSearch(
+            tmp_path / "index",
+            resolve_model=lambda _: str(model),
+            embedder_factory=lambda _: fake,
+            yield_seconds=0,
+        )
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            assert search.engine is fake
+            second = root / "second.txt"
+            second.write_text("A banana orchard grows delicious fruit.")
+            await search.store.call("set_folder", fid, "waiting_for_model")
+            monkeypatch.setattr(
+                cfg, "engine", SimpleNamespace(execute_on_model_worker=worker_b)
+            )
+
+            status = await search.status_async()
+            assert status["folders"][0]["state"] in {"queued", "indexing"}
+            await search.wait_idle()
+            assert search.store.folder(fid)["state"] == "idle"
+            assert search.store.files(fid)[str(second)]["embedded"] > 0
+            assert "a" in calls and calls[-1] == "b"
+            assert search._owner_worker == worker_b
         finally:
             await search.close()
 
@@ -4989,7 +5063,7 @@ def test_corpus_budget_survives_restart_and_recovers(tmp_path, monkeypatch):
     store.close()
 
 
-def test_model_worker_change_does_not_bypass_current_engine(tmp_path, monkeypatch):
+def test_model_worker_removal_releases_current_engine(tmp_path, monkeypatch):
     from rapid_mlx.config import get_config
 
     async def scenario():
@@ -5003,10 +5077,11 @@ def test_model_worker_change_does_not_bypass_current_engine(tmp_path, monkeypatc
         monkeypatch.setattr(get_config(), "engine", object())
         result = await search.search("apple", 20, None)
         assert result["mode"] == "keyword" and len(fake.calls) == calls
-        assert "worker changed" in search.status()["semantic_unavailable_reason"]
-        await (
-            search.close()
-        )  # Teardown still runs through the original owning boundary.
+        assert search.engine is None
+        assert "no sanctioned model worker" in search.status()[
+            "semantic_unavailable_reason"
+        ]
+        await search.close()
 
     asyncio.run(scenario())
 
@@ -7673,23 +7748,37 @@ def test_index_acl_repair_precedes_file_creation(tmp_path, monkeypatch, precreat
     probes, stripped = [], []
     monkeypatch.setattr(module.sys, "platform", "darwin")
 
-    def probe(target):
+    def target_for(fd):
+        info = os.fstat(fd)
+        return next(
+            (
+                target
+                for target in (path.parent, *files)
+                if target.exists()
+                and (target.stat().st_dev, target.stat().st_ino)
+                == (info.st_dev, info.st_ino)
+            ),
+            None,
+        )
+
+    def probe(fd):
+        target = target_for(fd)
         probes.append(target)
-        if target != path.parent:
+        if target is not None and target != path.parent:
             assert path.parent not in acls, (
                 "directory inheritance must be removed first"
             )
         return target in acls
 
-    def strip(args):
-        assert args[:2] == ["/bin/chmod", "-N"]
-        target = Path(args[2])
+    def strip(fd):
+        target = target_for(fd)
+        if target not in acls:
+            return
         stripped.append(target)
         acls.remove(target)
-        return ""
 
     monkeypatch.setattr(module, "_acl_present", probe)
-    monkeypatch.setattr(module, "_acl_command", strip)
+    monkeypatch.setattr(module, "_remove_acl", strip)
     connect = sqlite3.connect
 
     def protected_connect(*args, **kwargs):
@@ -7729,61 +7818,23 @@ def test_index_acl_foreign_owner_is_not_modified(tmp_path, monkeypatch, target):
 
     monkeypatch.setattr(module.sys, "platform", "darwin")
     monkeypatch.setattr(os, "fstat", owner)
-    probes = []
-    monkeypatch.setattr(
-        module, "_acl_present", lambda path: probes.append(path) or False
-    )
-    monkeypatch.setattr(
-        module, "_acl_command", lambda _: pytest.fail("foreign ACL modified")
-    )
+    monkeypatch.setattr(module, "_acl_present", lambda _: False)
+
+    def strip(fd):
+        if fstat(fd).st_ino == foreign:
+            pytest.fail("foreign ACL modified")
+
+    monkeypatch.setattr(module, "_remove_acl", strip)
     with pytest.raises(PermissionError, match="owned by the current user"):
         Store(path, "test")
-    assert probes == ([] if target == "directory" else [path.parent])
 
 
-@pytest.mark.parametrize(
-    "output,expected",
-    [("header\n", False), ("header\n 0: everyone allow read\n", True), ("", None)],
-)
-def test_index_acl_probe_output(tmp_path, monkeypatch, output, expected):
-    from rapid_mlx.local_search import store as module
-
-    def run(args, **kwargs):
-        assert args == ["/bin/ls", "-lde", str(tmp_path.absolute())]
-        assert kwargs == {
-            "check": True,
-            "capture_output": True,
-            "text": True,
-            "timeout": 5,
-        }
-        return subprocess.CompletedProcess(args, 0, stdout=output)
-
-    monkeypatch.setattr(module.subprocess, "run", run)
-    if expected is None:
-        with pytest.raises(PermissionError, match="Could not inspect"):
-            module._acl_present(tmp_path)
-    else:
-        assert module._acl_present(tmp_path) is expected
-
-
-@pytest.mark.parametrize(
-    "failure",
-    [
-        FileNotFoundError("missing tool"),
-        subprocess.CalledProcessError(1, "/bin/ls"),
-        subprocess.TimeoutExpired("/bin/ls", 5),
-    ],
-)
-def test_index_acl_tool_failure_refuses_store(monkeypatch, failure):
-    from rapid_mlx.local_search import store as module
-
-    def run(*args, **kwargs):
-        raise failure
-
-    monkeypatch.setattr(module.subprocess, "run", run)
-    with pytest.raises(PermissionError, match="Could not secure") as exc:
-        module._acl_command(["/bin/ls", "-lde", "/index"])
-    assert exc.value.__cause__ is failure
+def test_index_refuses_nonsticky_replaceable_parent(tmp_path):
+    parent = tmp_path / "shared"
+    parent.mkdir(mode=0o777)
+    parent.chmod(0o777)
+    with pytest.raises(PermissionError, match="replaced by another account"):
+        Store(parent / "index" / "index.sqlite3", "test")
 
 
 def test_index_acl_non_darwin_unchanged(tmp_path, monkeypatch):
@@ -7824,13 +7875,25 @@ def test_index_removes_real_darwin_acls(tmp_path, monkeypatch, inherited):
             subprocess.run(
                 ["/bin/chmod", "+a", "everyone allow read", str(target)], check=True
             )
-        assert module._acl_present(path)
-    assert module._acl_present(path.parent)
+    def acl_present(target):
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            return module._acl_present(fd)
+        finally:
+            os.close(fd)
+
+    if inherited:
+        with pytest.raises(PermissionError, match="replaced by another account"):
+            Store(path, "test")
+        subprocess.run(["/bin/chmod", "-N", str(tmp_path)], check=True)
+        return
+    assert acl_present(path)
+    assert acl_present(path.parent)
     connect = sqlite3.connect
 
     def protected_connect(*args, **kwargs):
-        assert not module._acl_present(path.parent)
-        assert not module._acl_present(path)
+        assert not acl_present(path.parent)
+        assert not acl_present(path)
         return connect(*args, **kwargs)
 
     monkeypatch.setattr(sqlite3, "connect", protected_connect)
@@ -7838,11 +7901,11 @@ def test_index_removes_real_darwin_acls(tmp_path, monkeypatch, inherited):
     try:
         for suffix in ("", "-wal", "-shm"):
             file = Path(str(path) + suffix)
-            assert not module._acl_present(file)
+            assert not acl_present(file)
             assert stat.S_IMODE(file.stat().st_mode) == 0o600
         store.db.execute("PRAGMA journal_mode=DELETE")
         store.db.execute("INSERT INTO meta VALUES ('private_text', 'secret')")
-        assert not module._acl_present(Path(str(path) + "-journal"))
+        assert not acl_present(Path(str(path) + "-journal"))
         store.db.rollback()
     finally:
         store.close()
@@ -7946,9 +8009,7 @@ def test_model_recovers_when_worker_returns(tmp_path, monkeypatch, outage, media
         try:
             fid = (await search.add_folder(str(root)))[0]["id"]
             await search.wait_idle()
-            assert search.store.folder(fid)["state"] == (
-                "idle" if outage == "dispatch_error" else "waiting_for_model"
-            )
+            assert search.store.folder(fid)["state"] == "waiting_for_model"
             if outage in {"missing", "dispatch_error"}:
                 assert fid not in search._attempted_checkpoints
             else:
@@ -7976,10 +8037,6 @@ def test_model_recovers_when_worker_returns(tmp_path, monkeypatch, outage, media
             monkeypatch.setattr(
                 cfg, "engine", SimpleNamespace(execute_on_model_worker=worker)
             )
-            if outage == "dispatch_error":
-                # A raw dispatch exception is not a ModelLoadError and does not
-                # poison the folder. Explicit reindex retries its keyword files.
-                await search.queue(fid)
             await search.status_async()
             await search.wait_idle()
             assert index.await_count == 2

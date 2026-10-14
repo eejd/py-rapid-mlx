@@ -7,7 +7,6 @@ import json
 import os
 import sqlite3
 import stat
-import subprocess
 import sys
 import time
 import uuid
@@ -51,55 +50,118 @@ def _owner_only(fd: int, mode: int) -> None:
             raise PermissionError("Could not make local-search index owner-only")
 
 
-def _acl_present(path: Path) -> bool:
-    # Darwin's supported tools avoid depending on private ACL struct layouts.
-    # -d inspects the directory itself; -e prints its extended ACL entries.
-    output = _acl_command(["/bin/ls", "-lde", str(path.absolute())])
-    lines = output.splitlines()
-    if not lines:
+def _acl_present(fd: int) -> bool:
+    if sys.platform != "darwin":
+        return False
+    import ctypes
+    import errno
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.acl_get_fd.argtypes = [ctypes.c_int]
+    libc.acl_get_fd.restype = ctypes.c_void_p
+    libc.acl_free.argtypes = [ctypes.c_void_p]
+    libc.acl_free.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    acl = libc.acl_get_fd(fd)
+    if not acl:
+        if ctypes.get_errno() == errno.ENOENT:
+            return False
         raise PermissionError("Could not inspect local-search index ACL")
-    return any(line.strip() for line in lines[1:])
+    if libc.acl_free(acl) != 0:
+        raise PermissionError("Could not inspect local-search index ACL")
+    return True
 
 
-def _acl_command(args: list[str]) -> str:
+def _remove_acl(fd: int) -> None:
+    if sys.platform != "darwin" or not _acl_present(fd):
+        return
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.acl_init.argtypes = [ctypes.c_int]
+    libc.acl_init.restype = ctypes.c_void_p
+    libc.acl_set_fd.argtypes = [ctypes.c_int, ctypes.c_void_p]
+    libc.acl_set_fd.restype = ctypes.c_int
+    libc.acl_free.argtypes = [ctypes.c_void_p]
+    libc.acl_free.restype = ctypes.c_int
+    acl = libc.acl_init(0)
+    if not acl:
+        raise PermissionError("Could not secure local-search index ACL")
     try:
-        return subprocess.run(
-            args, check=True, capture_output=True, text=True, timeout=5
-        ).stdout
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise PermissionError("Could not secure local-search index ACL") from exc
+        if libc.acl_set_fd(fd, acl) != 0:
+            raise PermissionError("Could not secure local-search index ACL")
+    finally:
+        libc.acl_free(acl)
+    if _acl_present(fd):
+        raise PermissionError("Could not remove local-search index ACL")
 
 
-def _remove_acl(path: Path) -> None:
-    if sys.platform == "darwin" and _acl_present(path):
-        _acl_command(["/bin/chmod", "-N", str(path.absolute())])
-        if _acl_present(path):
-            raise PermissionError("Could not remove local-search index ACL")
+def _open_stable_directory(path: Path) -> int:
+    """Open a path whose components cannot be replaced by another account."""
+    absolute = path.absolute()
+    current = os.open(absolute.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in absolute.parts[1:]:
+            child = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
+            )
+            try:
+                parent = os.fstat(current)
+                owner = os.fstat(child).st_uid
+                if parent.st_uid not in {0, os.geteuid()} or (
+                    sys.platform == "darwin" and _acl_present(current)
+                ):
+                    raise PermissionError(
+                        "Local-search index path can be replaced by another account"
+                    )
+                writable = parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                sticky_owner = parent.st_mode & stat.S_ISVTX and owner == os.geteuid()
+                if writable and not sticky_owner:
+                    raise PermissionError(
+                        "Local-search index path can be replaced by another account"
+                    )
+            except Exception:
+                os.close(child)
+                raise
+            os.close(current)
+            current = child
+        return current
+    except Exception:
+        os.close(current)
+        raise
+
+
+def _validate_index_entries(directory: int, names: set[str]) -> None:
+    entries = set(os.listdir(directory))
+    if entries - names or any(
+        not stat.S_ISREG(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode)
+        for name in entries
+    ):
+        raise PermissionError(
+            "Local-search index directory contains unrelated files; "
+            "choose a dedicated index directory"
+        )
 
 
 def _prepare_index(path: Path) -> None:
     """Secure the index before SQLite can read, recover, or write any text."""
     names = {path.name + suffix for suffix in ("", "-wal", "-shm", "-journal")}
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = _open_stable_directory(path.parent)
     try:
         # Never chmod parents or a pre-existing directory containing unrelated
         # entries. A private mixed directory needs no chmod and is safe to use.
-        if stat.S_IMODE(os.fstat(directory).st_mode) != 0o700:
-            entries = set(os.listdir(directory))
-            if entries - names or any(
-                not stat.S_ISREG(
-                    os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode
-                )
-                for name in entries
-            ):
-                raise PermissionError(
-                    "Local-search index directory contains unrelated files; "
-                    "choose a dedicated index directory"
-                )
+        needs_repair = stat.S_IMODE(os.fstat(directory).st_mode) != 0o700 or (
+            sys.platform == "darwin" and _acl_present(directory)
+        )
+        if needs_repair:
+            _validate_index_entries(directory, names)
         _owner_only(directory, 0o700)
-        # Strip inheritance before O_CREAT or SQLite can create companions.
-        _remove_acl(path.parent)
+        _remove_acl(directory)
+        if sys.platform == "darwin" and _acl_present(directory):
+            raise PermissionError("Could not remove local-search index ACL")
+        if needs_repair:
+            _validate_index_entries(directory, names)
         for name in sorted(names):
             flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
             if name == path.name:
@@ -115,7 +177,9 @@ def _prepare_index(path: Path) -> None:
                         "Local-search index files must be regular files without hard links"
                     )
                 _owner_only(fd, 0o600)
-                _remove_acl(path.parent / name)
+                _remove_acl(fd)
+                if sys.platform == "darwin" and _acl_present(fd):
+                    raise PermissionError("Could not remove local-search index ACL")
             finally:
                 os.close(fd)
     finally:
