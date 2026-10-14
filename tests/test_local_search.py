@@ -8792,6 +8792,9 @@ def test_store_preserves_metadata_probe_io_error(tmp_path, monkeypatch):
     try:
         with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
             Store(path, "model")
+        assert len(connections) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connections[0].execute("SELECT 1")
     finally:
         for connection in connections:
             connection.close()

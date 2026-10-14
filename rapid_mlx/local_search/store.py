@@ -203,27 +203,31 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         # Refuse future indexes before executing any schema/WAL mutations.
-        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
-            try:
-                version = self.db.execute(
-                    "SELECT value FROM meta WHERE key='schema_version'"
-                ).fetchone()
-            except sqlite3.OperationalError as exc:
-                if not str(exc).startswith(("no such table:", "no such column:")):
-                    raise
-                self.db.close()
-                raise SchemaVersionError(
-                    "Local Search index was created by a newer or incompatible "
-                    "version. Update Rapid-MLX to open this index, or choose a "
-                    "new index directory."
-                ) from exc
-            if version and version[0] not in ("1", "2", SCHEMA_VERSION):
-                self.db.close()
-                raise SchemaVersionError(
-                    f"Local Search index schema version {version[0]} is unsupported "
-                    f"(this application supports {SCHEMA_VERSION}). Update Rapid-MLX "
-                    "to open this index, or choose a new index directory."
-                )
+        try:
+            if self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table'"
+            ).fetchone():
+                try:
+                    version = self.db.execute(
+                        "SELECT value FROM meta WHERE key='schema_version'"
+                    ).fetchone()
+                except sqlite3.OperationalError as exc:
+                    if not str(exc).startswith(("no such table:", "no such column:")):
+                        raise
+                    raise SchemaVersionError(
+                        "Local Search index was created by a newer or incompatible "
+                        "version. Update Rapid-MLX to open this index, or choose a "
+                        "new index directory."
+                    ) from exc
+                if version and version[0] not in ("1", "2", SCHEMA_VERSION):
+                    raise SchemaVersionError(
+                        f"Local Search index schema version {version[0]} is unsupported "
+                        f"(this application supports {SCHEMA_VERSION}). Update Rapid-MLX "
+                        "to open this index, or choose a new index directory."
+                    )
+        except BaseException:
+            self.db.close()
+            raise
         self.db.create_function(
             "local_basename",
             1,
