@@ -20,6 +20,8 @@ GOOSE_BIN="$(find "$TMP" -type f -name goose -print -quit)"
 [[ -n "$GOOSE_BIN" ]] || { echo "goose executable missing" >&2; exit 1; }
 cp "$GOOSE_BIN" "$HELPERS/goose"
 chmod 755 "$HELPERS/goose"
+cp "$ROOT/Work/work-inference-proxy.py" "$HELPERS/work-inference-proxy.py"
+cp "$ROOT/Work/launch-sandboxed.py" "$HELPERS/launch-sandboxed.py"
 curl -fLsS 'https://raw.githubusercontent.com/aaif-goose/goose/v1.54.0/LICENSE' \
     -o "$CONTENTS/Resources/Licenses/goose-APACHE-2.0.txt"
 PYTHON="$CONTENTS/Resources/rapid-mlx/python/bin/python3.12"

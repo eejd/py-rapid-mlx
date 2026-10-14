@@ -223,7 +223,11 @@ join_parallel_sidecar
 echo "==> assembling Rapid-MLX Desktop.app"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$CONTENTS/Frameworks"
-cp "${WORK_MVP_PREBUILT_RAPID:-$ROOT/.build/$CONFIG/Rapid}" "$CONTENTS/MacOS/Rapid"
+RAPID_EXECUTABLE="$ROOT/.build/$CONFIG/Rapid"
+if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PREBUILT_RAPID:-}" ]]; then
+    RAPID_EXECUTABLE="$WORK_MVP_PREBUILT_RAPID"
+fi
+cp "$RAPID_EXECUTABLE" "$CONTENTS/MacOS/Rapid"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 if [[ "${WORK_MVP:-0}" == "1" ]]; then
     plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-mvp' "$CONTENTS/Info.plist"
