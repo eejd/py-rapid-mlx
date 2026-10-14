@@ -5111,9 +5111,10 @@ def test_model_worker_removal_releases_current_engine(tmp_path, monkeypatch):
         result = await search.search("apple", 20, None)
         assert result["mode"] == "keyword" and len(fake.calls) == calls
         assert search.engine is None
-        assert "no sanctioned model worker" in search.status()[
-            "semantic_unavailable_reason"
-        ]
+        assert (
+            "no sanctioned model worker"
+            in search.status()["semantic_unavailable_reason"]
+        )
         await search.close()
 
     asyncio.run(scenario())
@@ -7908,6 +7909,7 @@ def test_index_removes_real_darwin_acls(tmp_path, monkeypatch, inherited):
             subprocess.run(
                 ["/bin/chmod", "+a", "everyone allow read", str(target)], check=True
             )
+
     def acl_present(target):
         fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
         try:
