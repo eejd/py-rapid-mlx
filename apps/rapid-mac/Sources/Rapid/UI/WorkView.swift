@@ -57,10 +57,12 @@ struct WorkView: View {
                 }
                 Spacer()
                 Button("Choose Folder") { chooseFolder() }
+                    .accessibilityIdentifier("WorkView.ChooseFolder")
                     .disabled(submitting || agent.isBusy || agent.isPreparing || agent.isOpeningSession)
                 Button("New Session") {
                     Task { try? await agent.newSession() }
-                }.disabled(!agent.isRunning || submitting || agent.isBusy || agent.isPreparing || agent.isOpeningSession)
+                }.accessibilityIdentifier("WorkView.NewSession")
+                    .disabled(!agent.isRunning || submitting || agent.isBusy || agent.isPreparing || agent.isOpeningSession)
             }
             .padding()
             if WorkAgent.fullAccess {
@@ -82,6 +84,7 @@ struct WorkView: View {
                             Button("Start recommended: \(recommendedModel.alias)") {
                                 startModel(recommendedModel.alias)
                             }
+                            .accessibilityIdentifier("WorkView.StartRecommendedModel")
                         }
                         Menu("Choose a model") {
                             if availableModels.isEmpty {
@@ -89,11 +92,14 @@ struct WorkView: View {
                             } else {
                                 ForEach(availableModels, id: \.alias) { entry in
                                     Button(entry.alias) { startModel(entry.alias) }
+                                        .accessibilityIdentifier("WorkView.StartModel.\(entry.alias)")
                                 }
                             }
                         }
+                        .accessibilityIdentifier("WorkView.ChooseModel")
                     } else {
                         Button("Start Default Model", action: startDefaultModel)
+                            .accessibilityIdentifier("WorkView.StartDefaultModel")
                     }
                 }
             } else if folder == nil {
@@ -103,6 +109,7 @@ struct WorkView: View {
                     Text("Choose a folder of PDF, CSV, or XLSX files. Ask for a summary or a new file. Your documents stay on this Mac.")
                 } actions: {
                     Button("Choose Folder") { chooseFolder() }
+                        .accessibilityIdentifier("WorkView.ChooseFolderEmptyState")
                 }
             } else {
                 ScrollView {
@@ -127,6 +134,7 @@ struct WorkView: View {
                                       systemImage: step.status == "completed" ? "checkmark.circle" : "terminal")
                                     .lineLimit(1)
                             }
+                            .accessibilityIdentifier("WorkView.Step.\(step.id)")
                             .padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
                         }
                         if let error = agent.error {
@@ -138,14 +146,17 @@ struct WorkView: View {
                 Divider()
                 HStack(alignment: .bottom) {
                     TextField("Ask about files, or request a new file…", text: $message, axis: .vertical)
+                        .accessibilityIdentifier("WorkView.Message")
                         .lineLimit(2...5)
                         .onSubmit(send)
                     if agent.isBusy {
                         Button("Stop") { agent.cancel() }
+                            .accessibilityIdentifier("WorkView.Stop")
                     } else if submitting || agent.isPreparing || agent.isOpeningSession {
                         ProgressView("Starting…")
                     } else {
                         Button("Send", action: send)
+                            .accessibilityIdentifier("WorkView.Send")
                             .buttonStyle(.borderedProminent)
                             .disabled(submitting || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
@@ -197,7 +208,9 @@ struct WorkView: View {
                 HStack {
                     Spacer()
                     Button("Deny") { agent.answerPermission(request, allow: false) }
+                        .accessibilityIdentifier("WorkView.PermissionDeny")
                     Button("Allow Once") { agent.answerPermission(request, allow: true) }
+                        .accessibilityIdentifier("WorkView.PermissionAllowOnce")
                         .buttonStyle(.borderedProminent)
                 }
             }
