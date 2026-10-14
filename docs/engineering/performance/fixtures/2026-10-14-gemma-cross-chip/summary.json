@@ -1,0 +1,149 @@
+{
+  "m2-e2b": {
+    "16": {
+      "baseline_ttft_s": 0.381784396,
+      "candidate_ttft_s": 0.1228413745,
+      "reduction_pct": 67.82441194898914
+    },
+    "64": {
+      "baseline_ttft_s": 1.308454604,
+      "candidate_ttft_s": 0.36875820800000003,
+      "reduction_pct": 71.81727154517314
+    },
+    "192": {
+      "baseline_ttft_s": 1.0958878545,
+      "candidate_ttft_s": 1.0945286875,
+      "reduction_pct": 0.1240242780699563
+    },
+    "image": {
+      "baseline_ttft_s": 0.8226132085,
+      "candidate_ttft_s": 0.49589720800000003,
+      "reduction_pct": 39.71684348416342
+    },
+    "routing": {
+      "solo_before": {
+        "baseline": {
+          "ttft_s": 0.08348752100000001,
+          "decode_s": 5.852048395500001,
+          "total_s": 5.9355359165
+        },
+        "native_prototype": {
+          "ttft_s": 0.057103313,
+          "decode_s": 5.88172625,
+          "total_s": 5.938829563
+        }
+      },
+      "solo_after": {
+        "baseline": {
+          "ttft_s": 0.0916836875,
+          "decode_s": 5.856720854500001,
+          "total_s": 5.9484045420000005
+        },
+        "native_prototype": {
+          "ttft_s": 0.037537416500000004,
+          "decode_s": 5.8780357295000005,
+          "total_s": 5.915573146
+        }
+      },
+      "active": {
+        "baseline": {
+          "ttft_s": 0.0968407295,
+          "decode_s": 5.848656625,
+          "total_s": 5.9454973545000005
+        },
+        "native_prototype": {
+          "ttft_s": 0.038471292000000004,
+          "decode_s": 6.330509791500001,
+          "total_s": 6.3689810835
+        }
+      },
+      "waiter": {
+        "baseline": {
+          "ttft_s": 5.7852669164999995,
+          "decode_s": 0.6863550835000001,
+          "total_s": 6.471622
+        },
+        "native_prototype": {
+          "ttft_s": 0.0672725205,
+          "decode_s": 1.099734979,
+          "total_s": 1.1670074995
+        }
+      }
+    },
+    "last-logits-quality": {
+      "passed": 28
+    },
+    "gemma-quality": {
+      "passed": 28
+    },
+    "host_samples": {
+      "count": 190,
+      "swap_values": [
+        2954166272
+      ],
+      "foreign_large_python_count": 0
+    }
+  },
+  "m4-e4b": {
+    "routing": {
+      "solo_before": {
+        "baseline": {
+          "ttft_s": 0.08493925,
+          "decode_s": 7.274654271,
+          "total_s": 7.359593521
+        },
+        "native_prototype": {
+          "ttft_s": 0.05752083350000001,
+          "decode_s": 7.307839062999999,
+          "total_s": 7.3653598965
+        }
+      },
+      "solo_after": {
+        "baseline": {
+          "ttft_s": 0.0981683125,
+          "decode_s": 7.2693457085,
+          "total_s": 7.367514021
+        },
+        "native_prototype": {
+          "ttft_s": 0.0413072915,
+          "decode_s": 7.299307375,
+          "total_s": 7.3406146665000005
+        }
+      },
+      "active": {
+        "baseline": {
+          "ttft_s": 0.08513395900000001,
+          "decode_s": 7.286332208,
+          "total_s": 7.3714661669999995
+        },
+        "native_prototype": {
+          "ttft_s": 0.041132271,
+          "decode_s": 7.409541271,
+          "total_s": 7.450673542
+        }
+      },
+      "waiter": {
+        "baseline": {
+          "ttft_s": 7.161913354499999,
+          "decode_s": 0.891491875,
+          "total_s": 8.053405229500001
+        },
+        "native_prototype": {
+          "ttft_s": 0.0746572495,
+          "decode_s": 0.9653222295,
+          "total_s": 1.0399794789999999
+        }
+      }
+    },
+    "gemma-quality": {
+      "passed": 28
+    },
+    "host_samples": {
+      "count": 107,
+      "swap_values": [
+        195493888
+      ],
+      "foreign_large_python_count": 0
+    }
+  }
+}
