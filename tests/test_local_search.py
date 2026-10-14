@@ -1414,7 +1414,9 @@ def test_missing_model_keyword_and_resume(tmp_path):
             "keyword"
         ]
         available[0] = True
-        assert (await search.status_async())["model"]["downloaded"] is True
+        resumed = await search.status_async()
+        assert resumed["model"]["downloaded"] is True
+        assert resumed["folders"][0]["state"] in {"queued", "indexing"}
         await search.wait_idle()
         assert search.store.folder(fid)["state"] == "idle" and fake.calls
         await search.close()
@@ -1422,14 +1424,144 @@ def test_missing_model_keyword_and_resume(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ["factory", "embedding"])
+@pytest.mark.parametrize("media", [False, True], ids=["text", "image"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "input",
+        "too_long",
+        "placeholder",
+        "invalid_output",
+        "zero_output",
+        "factory",
+        "resolve",
+    ],
+)
+def test_embedding_failure_scope(tmp_path, monkeypatch, media, failure):
+    from unittest.mock import Mock
+
+    from PIL import Image
+
+    EmbeddingInputTooLongError = cpu_embedding_module(
+        monkeypatch
+    ).EmbeddingInputTooLongError
+    from rapid_mlx.local_search import service as module
+
+    async def scenario():
+        root = folder(tmp_path)
+        paths = [root / (f"{name}.png" if media else f"{name}.txt") for name in "abc"]
+        for path in paths:
+            if media:
+                Image.new("RGB", (4, 4)).save(path)
+            else:
+                path.write_text("An apple orchard grows delicious fruit.")
+        # Explicit discovery order makes the continuation contract deterministic.
+        monkeypatch.setattr(
+            module, "scan_batches", lambda *_: (batch for batch in [(paths, 0)])
+        )
+        fake = FakeEmbedder()
+        original = fake.embed_images if media else fake.embed
+        calls = []
+        loop_thread = threading.get_ident()
+
+        def failing_input(inputs):
+            assert threading.get_ident() != loop_thread
+            calls.append(search.progress["current_path"])
+            if len(calls) == 1:
+                if failure == "invalid_output":
+                    return [[float("nan"), 1.0] for _ in inputs]
+                if failure == "zero_output":
+                    return [[0.0, 0.0] for _ in inputs]
+                if failure == "too_long":
+                    raise EmbeddingInputTooLongError(
+                        observed_tokens=100, allowed_tokens=10, index=0
+                    )
+                if failure == "placeholder":
+                    raise ValueError("Tokenizer failed to expand image placeholders")
+                raise ValueError("invalid embedding output")
+            return original(inputs)
+
+        monkeypatch.setattr(fake, "embed_images" if media else "embed", failing_input)
+        search = engine(tmp_path, fake)
+        factory = Mock(return_value=fake)
+        if failure == "factory":
+            factory.side_effect = ValueError("device unavailable")
+        search.embedder_factory = factory
+        if failure == "resolve":
+            resolve = search.resolve_model
+
+            def failing_resolve(model_id):
+                if threading.current_thread().name.startswith("test-model-worker"):
+                    raise ValueError("device unavailable")
+                return resolve(model_id)
+
+            monkeypatch.setattr(search, "resolve_model", failing_resolve)
+        release = Mock(wraps=search._release_embedder)
+        monkeypatch.setattr(search, "_release_embedder", release)
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            files = search.store.files(fid)
+            state = search.store.folder(fid)
+            assert files[str(paths[0])]["status"] == "keyword"
+            assert files[str(paths[0])]["embedded"] == 0
+            if failure in {"factory", "resolve"}:
+                assert calls == []
+                assert all(row["embedded"] == 0 for row in files.values())
+                assert state["state"] == "waiting_for_model"
+                assert state["error"] == "device unavailable"
+                assert search.engine is None
+                assert fid in search._attempted_checkpoints
+                assert release.called
+            else:
+                assert calls == [str(path) for path in paths]
+                assert all(files[str(path)]["embedded"] > 0 for path in paths[1:])
+                assert state["state"] == "idle"
+                assert state["error"] is None
+                assert search.worker_error is None
+                assert search.engine is fake
+                assert factory.call_count == 1
+                assert fid not in search._attempted_checkpoints
+                release.assert_not_called()
+            result = await search.search(paths[0].name, 20, None)
+            assert any(hit["path"] == str(paths[0]) for hit in result["results"])
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("resident", [False, True])
+@pytest.mark.parametrize("background", [False, True])
+def test_missing_worker_is_model_failure(tmp_path, monkeypatch, resident, background):
+    from types import SimpleNamespace
+
+    from rapid_mlx.config import get_config
+    from rapid_mlx.local_search.service import ModelLoadError
+
+    async def scenario():
+        search = engine(tmp_path, FakeEmbedder())
+        if resident:
+            await search._embed_async(["warmup"])
+        monkeypatch.setattr(get_config(), "engine", SimpleNamespace())
+        try:
+            with pytest.raises(ModelLoadError) as caught:
+                await search._embed_async(["apple"], background=background)
+            assert not caught.value.load_failed
+            assert search.engine is None
+            assert search.worker_error == str(caught.value)
+            assert not search._attempted_checkpoints
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "change",
     ["path", "directory_mtime", "file_mtime", "replacement", "blob", "absent_present"],
 )
-def test_failed_checkpoint_polls_wait_for_change(
-    tmp_path, monkeypatch, failure, change
-):
+def test_failed_checkpoint_polls_wait_for_change(tmp_path, monkeypatch, change):
     from rapid_mlx.local_search import service as module
 
     async def scenario():
@@ -1446,17 +1578,9 @@ def test_failed_checkpoint_polls_wait_for_change(
         model_path = [str(model)]
         broken = [True]
         fake = FakeEmbedder()
-        original_embed = fake.embed
-
-        def embed(texts):
-            if broken[0] and failure == "embedding":
-                raise ValueError("incompatible checkpoint")
-            return original_embed(texts)
-
-        fake.embed = embed
 
         def factory(_):
-            if broken[0] and failure == "factory":
+            if broken[0]:
                 raise ValueError("incompatible checkpoint")
             return fake
 
@@ -2085,7 +2209,7 @@ def test_replaced_folder_symlink_is_rejected(tmp_path):
     asyncio.run(scenario())
 
 
-def test_invalid_model_keeps_keyword_text(tmp_path):
+def test_invalid_output_keeps_keyword_text(tmp_path):
     async def scenario():
         root = folder(tmp_path)
         (root / "a.txt").write_text("apple")
@@ -2094,8 +2218,9 @@ def test_invalid_model_keeps_keyword_text(tmp_path):
         search = engine(tmp_path, fake)
         fid = (await search.add_folder(str(root)))[0]["id"]
         await search.wait_idle()
-        assert search.store.folder(fid)["state"] == "waiting_for_model"
-        assert search.store.folder(fid)["error"] == "invalid embedding output"
+        assert search.store.folder(fid)["state"] == "idle"
+        assert search.store.folder(fid)["error"] is None
+        assert search.engine is fake
         assert not search.store.vectors
         result = await search.search("apple", 20, None)
         assert result["mode"] == "keyword" and len(result["results"]) == 1
@@ -6162,7 +6287,9 @@ def test_index_handles_embedding_disappearance_and_media_changes(
             if outcome == "error":
                 search._owner_worker = search._worker()
                 search.engine = FakeEmbedder()
-                raise RuntimeError("device unavailable")
+                from rapid_mlx.local_search.service import ModelLoadError
+
+                raise ModelLoadError("device unavailable")
             return None
 
         monkeypatch.setattr(search, "_embed_async", embed)
@@ -6185,9 +6312,7 @@ def test_index_handles_embedding_disappearance_and_media_changes(
                 assert row["status"] == "keyword"
                 assert search.engine is None
                 state = search.store.folder(registered["id"])
-                assert state["state"] == (
-                    "idle" if media and outcome == "none" else "waiting_for_model"
-                )
+                assert state["state"] == "waiting_for_model"
                 if outcome == "error":
                     assert state["error"] == "device unavailable"
         finally:
@@ -6381,18 +6506,22 @@ def test_status_reports_disappeared_registered_folder(tmp_path):
     asyncio.run(scenario())
 
 
-def test_zero_embedding_is_rejected_and_releases_model(tmp_path):
+def test_zero_embedding_is_rejected_and_preserves_model(tmp_path):
     class ZeroEmbedder(FakeEmbedder):
         def embed(self, texts):
             return [[0.0, 0.0] for _ in texts]
 
     async def scenario():
-        search = engine(tmp_path, ZeroEmbedder())
+        from rapid_mlx.local_search.service import EmbeddingInputError
+
+        fake = ZeroEmbedder()
+        search = engine(tmp_path, fake)
+        search.worker_error = "previous load failure"
         try:
-            with pytest.raises(RuntimeError, match="zero embedding output"):
+            with pytest.raises(EmbeddingInputError, match="zero embedding output"):
                 await search._embed_async(["apple"])
-            assert search.engine is None
-            assert search.worker_error == "zero embedding output"
+            assert search.engine is fake
+            assert search.worker_error is None
         finally:
             await search.close()
 
@@ -7770,9 +7899,7 @@ def test_first_route_refuses_newer_schema(tmp_path, method, route, body):
     ],
 )
 @pytest.mark.parametrize("media", [False, True])
-def test_waiting_model_recovers_when_worker_returns(
-    tmp_path, monkeypatch, outage, media
-):
+def test_model_recovers_when_worker_returns(tmp_path, monkeypatch, outage, media):
     from types import SimpleNamespace
 
     from rapid_mlx.config import get_config
@@ -7819,7 +7946,9 @@ def test_waiting_model_recovers_when_worker_returns(
         try:
             fid = (await search.add_folder(str(root)))[0]["id"]
             await search.wait_idle()
-            assert search.store.folder(fid)["state"] == "waiting_for_model"
+            assert search.store.folder(fid)["state"] == (
+                "idle" if outage == "dispatch_error" else "waiting_for_model"
+            )
             if outage in {"missing", "dispatch_error"}:
                 assert fid not in search._attempted_checkpoints
             else:
@@ -7847,6 +7976,10 @@ def test_waiting_model_recovers_when_worker_returns(
             monkeypatch.setattr(
                 cfg, "engine", SimpleNamespace(execute_on_model_worker=worker)
             )
+            if outage == "dispatch_error":
+                # A raw dispatch exception is not a ModelLoadError and does not
+                # poison the folder. Explicit reindex retries its keyword files.
+                await search.queue(fid)
             await search.status_async()
             await search.wait_idle()
             assert index.await_count == 2

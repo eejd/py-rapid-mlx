@@ -56,7 +56,15 @@ logger = logging.getLogger(__name__)
 
 
 class ModelLoadError(RuntimeError):
-    """The sanctioned worker ran model loading/embedding and it failed."""
+    """Model loading failed or no sanctioned worker is available."""
+
+    def __init__(self, message, *, load_failed=True):
+        super().__init__(message)
+        self.load_failed = load_failed
+
+
+class EmbeddingInputError(RuntimeError):
+    """Embedding or validation failed for the current inputs."""
 
 
 class Embedder(Protocol):
@@ -247,6 +255,7 @@ class LocalSearch:
                 and self.progress["folder_id"] != folder["id"]
             ):
                 await self.queue(folder["id"])
+                folder["state"] = "queued"
         return self._status(model_path, folders, totals, vision)
 
     def _status(self, model_path, folders, totals, vision=None) -> dict:
@@ -352,26 +361,34 @@ class LocalSearch:
     async def _model_call_owned(self, func, *args, _teardown=False, **kwargs):
         worker = self._owner_worker if _teardown else self._worker()
         if not callable(worker):
-            self.worker_error = (
+            message = (
                 self.worker_error
                 or "Engine has no sanctioned model worker; keyword-only"
             )
-            raise RuntimeError(self.worker_error)
+            if self.engine is not None and callable(self._owner_worker):
+                await self._model_call_owned(self._release_embedder, _teardown=True)
+            self.worker_error = message
+            raise ModelLoadError(message, load_failed=False)
         # Retain the exact boundary owning this embedder even if cfg.engine changes.
         self._owner_worker = worker
 
         def work():
             try:
-                return True, func(*args, **kwargs)
+                return "ok", func(*args, **kwargs)
+            except EmbeddingInputError as exc:
+                return "input", str(exc)
             except Exception as exc:
                 # Never transfer a traceback retaining MLX/model locals to the loop.
                 self._release_embedder()
-                return False, str(exc)
+                return "model", str(exc)
 
         task = asyncio.create_task(worker(work))
         try:
-            success, result = await asyncio.shield(task)
-            if not success:
+            kind, result = await asyncio.shield(task)
+            if kind == "input":
+                self.worker_error = None
+                raise EmbeddingInputError(result)
+            if kind == "model":
                 self.worker_error = result
                 raise ModelLoadError(result)
             self.worker_error = None
@@ -431,28 +448,36 @@ class LocalSearch:
 
     def _embed(self, inputs: list, *, images=False):
         if self.engine is None:
-            path = self.resolve_model(self.model_id)
-            if path is None:
-                return None
-            self.engine = self.embedder_factory(path)
-        engine = self.engine
-        method = engine.embed_images if images else engine.embed
-        vectors = np.asarray(method(inputs), dtype=np.float32)
-        if (
-            vectors.ndim != 2
-            or vectors.shape[0] != len(inputs)
-            or not np.isfinite(vectors).all()
-        ):
-            raise ValueError("invalid embedding output")
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        if np.any(norms <= 0):
-            raise ValueError("zero embedding output")
-        return vectors / norms
+            try:
+                path = self.resolve_model(self.model_id)
+                if path is None:
+                    return None
+                self.engine = self.embedder_factory(path)
+            except Exception as exc:
+                raise ModelLoadError(str(exc)) from None
+        try:
+            engine = self.engine
+            method = engine.embed_images if images else engine.embed
+            vectors = np.asarray(method(inputs), dtype=np.float32)
+            if (
+                vectors.ndim != 2
+                or vectors.shape[0] != len(inputs)
+                or not np.isfinite(vectors).all()
+            ):
+                raise ValueError("invalid embedding output")
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            if np.any(norms <= 0):
+                raise ValueError("zero embedding output")
+            return vectors / norms
+        except Exception as exc:
+            # Classified inside the owning worker; only kind/message cross it.
+            raise EmbeddingInputError(str(exc)) from None
 
     async def _index_media(self, path, root, available, root_fd):
         frames = media_frames(path, root, root_fd)
         chunks, vectors = [], []
         error = None
+        input_failed = False
         try:
             while True:
                 # Finish the CPU read before closing its pinned descriptor on cancel.
@@ -473,7 +498,7 @@ class LocalSearch:
                     Chunk("", None, None, file_kind(path), frame.timestamp)
                     for frame in batch
                 )
-                if available:
+                if available and not input_failed:
                     try:
                         embedded = await self._embed_async(
                             [frame.image for frame in batch],
@@ -484,17 +509,25 @@ class LocalSearch:
                             available = False
                         else:
                             vectors.extend(embedded)
-                    except Exception as exc:
+                    except ModelLoadError as exc:
                         logger.warning("Local-search image model unavailable: %s", exc)
                         if self.engine is not None:
                             await self._model_call(self._release_embedder)
                         available = False
                         error = exc
+                    except Exception as exc:
+                        logger.debug("Local-search image embedding skipped: %s", exc)
+                        input_failed = True
                 del batch
                 await asyncio.sleep(self.yield_seconds)
         finally:
             await asyncio.to_thread(frames.close)
-        return chunks, vectors if available else None, available, error
+        return (
+            chunks,
+            vectors if available and not input_failed else None,
+            available,
+            error,
+        )
 
     async def _run(self):
         try:
@@ -636,9 +669,11 @@ class LocalSearch:
                             path, root, media_available, root_fd
                         )
                         model_error = str(error) if error else model_error
-                        load_failed |= isinstance(error, ModelLoadError)
-                        if error:
-                            available = False
+                        load_failed |= (
+                            isinstance(error, ModelLoadError) and error.load_failed
+                        )
+                        if media_available:
+                            available = media_ok
                         after = await asyncio.to_thread(path.lstat)
                         if (info.st_size, info.st_mtime_ns, info.st_ino) != (
                             after.st_size,
@@ -656,7 +691,7 @@ class LocalSearch:
                             None,
                             chunks,
                             vectors,
-                            "indexed" if media_ok else "keyword",
+                            "indexed" if vectors is not None else "keyword",
                         )
                         continue
                     if path.suffix.lower() in LEGACY_OFFICE_SUFFIXES:
@@ -722,13 +757,15 @@ class LocalSearch:
                                 vectors = [None] * len(chunks)
                                 for i, vector in zip(order, ordered_vectors):
                                     vectors[i] = vector
-                        except Exception as exc:
+                        except ModelLoadError as exc:
                             logger.warning("Local-search model unavailable: %s", exc)
                             if self.engine is not None:
                                 await self._model_call(self._release_embedder)
                             available = False
                             model_error = str(exc)
-                            load_failed |= isinstance(exc, ModelLoadError)
+                            load_failed |= exc.load_failed
+                        except Exception as exc:
+                            logger.debug("Local-search text embedding skipped: %s", exc)
                     await self.store.call(
                         "replace",
                         folder["id"],
