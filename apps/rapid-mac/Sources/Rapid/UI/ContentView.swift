@@ -951,7 +951,7 @@ struct ContentView: View {
     private func newChat() {
         if WorkAgent.fullAccess {
             section = .work
-            if WorkAgent.shared.isBusy { WorkAgent.shared.stop() }
+            WorkAgent.shared.beginNewChat()
             Task {
                 do { try await WorkAgent.shared.newSession() }
                 catch { WorkAgent.shared.error = error.localizedDescription }

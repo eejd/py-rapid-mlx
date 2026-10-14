@@ -157,13 +157,13 @@ struct WorkView: View {
                 await runSyntheticTest()
                 return
             }
-            if folder == nil, WorkAgent.fullAccess {
+            if folder == nil, !lastFolder.isEmpty, FileManager.default.fileExists(atPath: lastFolder) {
+                folder = URL(fileURLWithPath: lastFolder)
+            } else if folder == nil, WorkAgent.fullAccess {
                 let playground = FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent("Desktop/Goose-Playground", isDirectory: true)
                 try? FileManager.default.createDirectory(at: playground, withIntermediateDirectories: true)
                 folder = playground
-            } else if folder == nil, !lastFolder.isEmpty, FileManager.default.fileExists(atPath: lastFolder) {
-                folder = URL(fileURLWithPath: lastFolder)
             }
             if WorkAgent.fullAccess,
                let probe = ProcessInfo.processInfo.environment["WORK_FULL_LANDING_PROBE"],
@@ -224,13 +224,16 @@ struct WorkView: View {
         guard !prompt.isEmpty else { return }
         submitting = true
         message = ""
+        let revision = agent.conversationRevision
         Task {
             defer { submitting = false }
             do {
+                guard agent.conversationRevision == revision else { return }
                 try await agent.prepare(folder: folder, rapidPort: server.activePort, model: model, bearer: bearer)
+                guard agent.conversationRevision == revision else { return }
                 await agent.prompt(prompt)
             } catch {
-                agent.error = error.localizedDescription
+                if agent.conversationRevision == revision { agent.error = error.localizedDescription }
             }
         }
     }

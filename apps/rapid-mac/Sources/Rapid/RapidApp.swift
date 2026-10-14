@@ -544,7 +544,7 @@ struct RapidApp: App {
             if WorkAgent.fullAccess {
                 CommandGroup(replacing: .newItem) {
                     Button("New Chat") {
-                        if WorkAgent.shared.isBusy { WorkAgent.shared.stop() }
+                        WorkAgent.shared.beginNewChat()
                         Task { try? await WorkAgent.shared.newSession() }
                         NotificationCenter.default.post(name: .newWorkChat, object: nil)
                         openWindow(id: "main")
