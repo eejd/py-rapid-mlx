@@ -245,7 +245,12 @@ Optional `group_limit` is 1–50. When supplied for a scope requesting multiple
 kinds (including `kinds: null`), the response also includes `groups`, an ordered
 array of `{kind, results, total}`. Empty groups are omitted. Each group ranks its
 own files with lexical tiers first, then semantic ranking, returns at most
-`group_limit` results, and counts all admitted files of that kind in `total`.
+`group_limit` results. A group's `total` counts matching files of that kind
+within the candidate window: up to the top `max(100, limit × 5)` keyword files
+across kinds, plus up to 100 admitted semantic files per kind. Each file counts
+once, so `total` is at most `max(100, limit × 5) + 100` per kind (just
+`max(100, limit × 5)` for keyword-only search). It may be lower than the true
+count for very broad queries.
 Groups with lexical evidence at their head precede other groups; otherwise
 their heads' standardized semantic strengths determine section order, with a
 stable kind order for ties. The flat `results` and its current standardized
@@ -380,8 +385,9 @@ Lexical hits retain their positions, and these normal-tail strengths are orderin
 Weaker evidence uses reciprocal rank fusion with k=60 and the existing rank-one
 5% and rank-two/three 2% bonuses. Text uses its strongest lexical chunk for a
 keyword hit; video keeps its best qualifying semantic frame and timestamp.
-Exact byte-content copies are adjacent with the strongest group score, while
-all paths remain discoverable. Similar but nonidentical content remains separate
+Exact byte-content copies of text/document files with a content hash are adjacent
+with the strongest group score, while all paths remain discoverable. Identical
+images/videos are listed individually. Similar but nonidentical content remains separate
 to preserve potentially meaningful differences. Highlights cover distinctive
 terms, or the literal query when none are distinctive.
 

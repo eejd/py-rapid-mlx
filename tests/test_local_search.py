@@ -3005,6 +3005,39 @@ def test_group_totals_exclude_missing_files_and_respect_scope(tmp_path):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("limit", [1, 30])
+def test_group_totals_are_bounded_by_keyword_candidate_window(tmp_path, limit):
+    async def scenario():
+        search = LocalSearch(tmp_path / "index", resolve_model=lambda _: None)
+        try:
+            root = folder(tmp_path)
+            fid = search.store.add_folder(root)[0]
+            for n in range(160):
+                path = root / f"note-{n}.txt"
+                path.write_text("apple orchard")
+                search.store.replace(
+                    fid,
+                    path,
+                    path.stat(),
+                    None,
+                    [Chunk("apple orchard", None, None, "text")],
+                    None,
+                    "keyword",
+                )
+            response = await search.search("apple", limit, None, group_limit=1)
+            assert response["mode"] == "keyword"
+            assert len(response["results"]) == limit
+            assert len(response["groups"]) == 1
+            group = response["groups"][0]
+            assert group["kind"] == "text"
+            assert len(group["results"]) == 1
+            assert group["total"] == max(100, limit * 5) < 160
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
 def test_adaptive_gate_and_keyword_bypass_with_fake_embedder(tmp_path):
     async def scenario():
         root = folder(tmp_path)

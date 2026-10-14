@@ -246,9 +246,10 @@ def fuse(
             ranking[n] = i
             normalized[i] = score
     if rows is not None:
-        # Exact byte-content copies remain discoverable at every path, adjacent
-        # to their strongest hit. No approximate deduplication: similar reports
-        # can differ in the one fact a professional is looking for.
+        # Hashed text/document byte-content copies remain discoverable at every
+        # path, adjacent to their strongest hit. Images/videos have no content
+        # hash and are listed individually. No approximate deduplication: similar
+        # reports can differ in the one fact a professional is looking for.
         groups: dict[tuple[str, str], list[int]] = {}
         for i in ranking:
             row = rows[i]
