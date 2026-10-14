@@ -18,10 +18,13 @@ import Observation
 final class CompositeToolRegistry: ToolRegistry {
     let builtin: BuiltinToolRegistry
     let mcp: MCPToolRegistry
+    let includeBuiltin: Bool
 
-    init(builtin: BuiltinToolRegistry, mcp: MCPToolRegistry) {
+    init(builtin: BuiltinToolRegistry, mcp: MCPToolRegistry,
+         includeBuiltin: Bool = !WorkAgent.fullAccess) {
         self.builtin = builtin
         self.mcp = mcp
+        self.includeBuiltin = includeBuiltin
     }
 
     /// Built-ins first so the stable, always-present tools lead the list the
@@ -32,6 +35,7 @@ final class CompositeToolRegistry: ToolRegistry {
     /// built-in, and a connector that claims the name must not inherit the
     /// trust the user has already placed in it.
     var definitions: [ToolDefinition] {
+        if !includeBuiltin { return mcp.definitions }
         let builtinNames = Set(builtin.definitions.map { $0.function.name })
         return builtin.definitions
             + mcp.definitions.filter { !builtinNames.contains($0.function.name) }
@@ -39,7 +43,7 @@ final class CompositeToolRegistry: ToolRegistry {
 
     func run(_ call: ToolCall) async -> ToolCallResult {
         let name = call.function.name
-        if builtin.definitions.contains(where: { $0.function.name == name }) {
+        if includeBuiltin && builtin.definitions.contains(where: { $0.function.name == name }) {
             return await builtin.run(call)
         }
         if mcp.catalog.tools.contains(where: { $0.function.name == name }) {

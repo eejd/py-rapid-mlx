@@ -136,7 +136,10 @@ struct ContentView: View {
     /// Starts on Chat unless a GUI harness asked for another surface — see
     /// ``SidebarSection/harnessRequested(environment:)``, which is inert
     /// outside golden mode.
-    @State private var section: SidebarSection = SidebarSection.harnessRequested() ?? .chat
+    @State private var section: SidebarSection = SidebarSection.initial(
+        bundleIdentifier: Bundle.main.bundleIdentifier,
+        environment: ProcessInfo.processInfo.environment
+    )
     /// Measured width of the whole shell, used for the one responsive
     /// decision the chrome makes: whether the rail is collapsed. Zero until
     /// the first layout pass, which is why ``usesCompactRail`` treats zero as
@@ -341,6 +344,9 @@ struct ContentView: View {
         }
         .onAppear {
             showCommandPaletteFromRequest(commandPaletteRequest.requestID)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newWorkChat)) { _ in
+            if WorkAgent.fullAccess { section = .work }
         }
         .lifecycleModifiers(
             of: self,
@@ -702,8 +708,7 @@ struct ContentView: View {
                     cuaViewModel: cuaServer.viewModel,
                     chat: chat,
                 onNewChat: {
-                    chat.newConversation()
-                    section = .chat
+                    newChat()
                 },
                 onSearchChats: {
                     openConversationSearch()
@@ -902,8 +907,7 @@ struct ContentView: View {
         showCommandPalette = false
         switch command {
         case .newChat:
-            chat.newConversation()
-            section = .chat
+            newChat()
         case .searchChats:
             openConversationSearch()
         case .images:
@@ -944,7 +948,22 @@ struct ContentView: View {
         }
     }
 
+    private func newChat() {
+        if WorkAgent.fullAccess {
+            section = .work
+            if WorkAgent.shared.isBusy { WorkAgent.shared.stop() }
+            Task {
+                do { try await WorkAgent.shared.newSession() }
+                catch { WorkAgent.shared.error = error.localizedDescription }
+            }
+        } else {
+            chat.newConversation()
+            section = .chat
+        }
+    }
+
     private func openConversationSearch() {
+        guard !WorkAgent.fullAccess else { return }
         showCommandPalette = false
         showConversationSearch = true
     }
@@ -969,8 +988,7 @@ struct ContentView: View {
                     now: Date(),
                     onNewChat: {
                         showConversationSearch = false
-                        chat.newConversation()
-                        section = .chat
+                        newChat()
                     },
                     onSelectConversation: { id in
                         showConversationSearch = false
@@ -1316,7 +1334,7 @@ struct ContentView: View {
     private var detailArea: some View {
         switch section {
         case .chat:
-            mainArea
+            if WorkAgent.fullAccess { workArea } else { mainArea }
         case .search:
             if localSearchEnabled {
                 LocalSearchView(server: server, model: localSearch, onStartModel: {
@@ -1358,14 +1376,7 @@ struct ContentView: View {
                 onReadinessAction: performReadinessAction
             )
         case .work:
-            WorkView(server: server, startDefaultModel: {
-                if let target = ServerManager.lastServedAlias() {
-                    startModel(target)
-                } else {
-                    section = .chat
-                    performReadinessAction(.chooseModel)
-                }
-            })
+            workArea
         case .benchmark:
             if communityBenchmarkEnabled {
                 CommunityBenchmarkView(
@@ -1431,6 +1442,19 @@ struct ContentView: View {
                 mainArea
             }
         }
+    }
+
+    private var workArea: some View {
+        WorkView(server: server, selectedSection: section,
+                 cachedModels: catalogEntries, startModel: startModel,
+                 startDefaultModel: {
+            if let target = ServerManager.lastServedAlias() {
+                startModel(target)
+            } else {
+                section = .chat
+                performReadinessAction(.chooseModel)
+            }
+        })
     }
 
     // MARK: - Main area
@@ -1569,6 +1593,7 @@ struct ContentView: View {
     /// different alias. Eligibility keys on app-owned state only (see
     /// ``QuickstartCoordinator.isEligible``), never the shared HF cache.
     private var quickstartVisible: Bool {
+        if WorkAgent.fullAccess { return false }
         // Quickstart is a Chat onboarding surface. Server/model transitions
         // inside Audio or Images must never interrupt those workflows with a
         // global onboarding sheet.

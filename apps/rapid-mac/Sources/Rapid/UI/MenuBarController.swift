@@ -202,8 +202,13 @@ final class MenuBarController: NSObject {
         case .open:
             bringMainWindowForward()
         case .newChat:
-            // Start a fresh conversation and surface the window.
-            AppDelegate.shared.chat?.newConversation()
+            if WorkAgent.fullAccess {
+                if WorkAgent.shared.isBusy { WorkAgent.shared.stop() }
+                Task { try? await WorkAgent.shared.newSession() }
+                NotificationCenter.default.post(name: .newWorkChat, object: nil)
+            } else {
+                AppDelegate.shared.chat?.newConversation()
+            }
             bringMainWindowForward()
         case .update:
             if let sparkle = AppDelegate.shared.sparkleUpdater, sparkle.isEnabled {
