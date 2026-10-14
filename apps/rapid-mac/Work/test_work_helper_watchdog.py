@@ -16,11 +16,16 @@ import subprocess
 import sys
 import time
 
-watchdog, pid_path, ready_path, group_leader = sys.argv[1:]
+watchdog, pid_path, ready_path, group_leader, resistant = sys.argv[1:]
+helper_code = (
+    "import pathlib,signal,sys,time; "
+    + ("signal.signal(signal.SIGTERM, signal.SIG_IGN); " if resistant == "1" else "")
+    + "pathlib.Path(sys.argv[1]).touch(); time.sleep(30)"
+)
 helper = subprocess.Popen(
     [
-        sys.executable, watchdog, str(os.getpid()), sys.executable, "-c",
-        "import pathlib,sys,time; pathlib.Path(sys.argv[1]).touch(); time.sleep(30)",
+        sys.executable, "-I", "-S", watchdog, str(os.getpid()), sys.executable, "-c",
+        helper_code,
         ready_path,
     ],
     start_new_session=group_leader == "1",
@@ -38,9 +43,16 @@ sys.exit(0 if ready.exists() else 3)
 
 class WatchdogTests(unittest.TestCase):
     def test_helper_exits_when_owner_disappears(self):
-        for starts_as_group_leader in (False, True):
+        for starts_as_group_leader, resistant in (
+            (False, False),
+            (True, False),
+            (False, True),
+            (True, True),
+        ):
             with (
-                self.subTest(starts_as_group_leader=starts_as_group_leader),
+                self.subTest(
+                    starts_as_group_leader=starts_as_group_leader, resistant=resistant
+                ),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 pid_file = pathlib.Path(directory) / "helper.pid"
@@ -54,6 +66,7 @@ class WatchdogTests(unittest.TestCase):
                         str(pid_file),
                         str(ready_file),
                         "1" if starts_as_group_leader else "0",
+                        "1" if resistant else "0",
                     ],
                     check=True,
                 )

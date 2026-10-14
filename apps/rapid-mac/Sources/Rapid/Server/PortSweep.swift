@@ -131,6 +131,18 @@ enum PortSweep {
             return []
         }
         let raw = pidsOnPort(port: port)
+        // The other flavor keeps its own ownership record. A live Full
+        // server is never an orphan of this private app, even though its
+        // executable matches the usual fallback heuristic.
+        let fullRecordURL = ApplicationSupportLocator.applicationSupportBase(
+            environment: ProcessInfo.processInfo.environment
+        ).appendingPathComponent("Rapid/work-full-desktop/owned-server.json")
+        if let fullRecord = OwnedServerRecord.load(from: fullRecordURL),
+           fullRecord.port == port,
+           raw.contains(fullRecord.pid),
+           recordIdentityHolds(fullRecord) {
+            return []
+        }
         // codex r1 (#20): if NOTHING is listening on the swept port
         // but a record still references it, our owned child exited
         // after persisting the record (crash, hard kill, app died
