@@ -1357,6 +1357,15 @@ struct ContentView: View {
                 readiness: readiness,
                 onReadinessAction: performReadinessAction
             )
+        case .work:
+            WorkView(server: server, startDefaultModel: {
+                if let target = ServerManager.lastServedAlias() {
+                    startModel(target)
+                } else {
+                    section = .chat
+                    performReadinessAction(.chooseModel)
+                }
+            })
         case .benchmark:
             if communityBenchmarkEnabled {
                 CommunityBenchmarkView(

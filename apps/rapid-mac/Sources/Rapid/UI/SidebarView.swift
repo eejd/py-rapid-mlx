@@ -11,6 +11,7 @@ enum SidebarSection: Hashable {
     case video
     case computerUse
     case launch
+    case work
     case benchmark
     case shareCompute
 
@@ -40,6 +41,7 @@ enum SidebarSection: Hashable {
         case "video": return .video
         case "computerUse": return .computerUse
         case "launch": return .launch
+        case "work": return .work
         case "benchmark": return .benchmark
         case "shareCompute": return .shareCompute
         default: return nil
@@ -310,6 +312,13 @@ struct SidebarView: View {
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
+            row(
+                title: "Work (beta)",
+                systemImage: "folder.badge.gearshape",
+                isSelected: selection == .work,
+                action: { selection = .work }
+            )
+            .accessibilityIdentifier("Sidebar.Work")
 
             if computerUseEnabled {
                 if let cuaViewModel {
@@ -665,6 +674,13 @@ struct SidebarView: View {
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
+            compactItem(
+                title: "Work (beta)",
+                systemImage: "folder.badge.gearshape",
+                isSelected: selection == .work,
+                action: { selection = .work }
+            )
+            .accessibilityIdentifier("Sidebar.Work")
 
             if videoGenerationEnabled {
                 compactItem(
