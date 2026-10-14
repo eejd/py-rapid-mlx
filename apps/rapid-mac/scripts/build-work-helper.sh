@@ -24,6 +24,8 @@ cp "$ROOT/Work/work-inference-proxy.py" "$HELPERS/work-inference-proxy.py"
 cp "$ROOT/Work/work-helper-watchdog.py" "$HELPERS/work-helper-watchdog.py"
 curl -fLsS 'https://raw.githubusercontent.com/aaif-goose/goose/v1.54.0/LICENSE' \
     -o "$CONTENTS/Resources/Licenses/goose-APACHE-2.0.txt"
+cp "$ROOT/Resources/Licenses/goose-third-party-licenses.txt" \
+    "$CONTENTS/Resources/Licenses/goose-third-party-licenses.txt"
 PYTHON="$CONTENTS/Resources/rapid-mlx/python/bin/python3.12"
 SITE="$CONTENTS/Resources/rapid-mlx/site-packages"
 [[ -x "$PYTHON" && -d "$SITE" ]] || { echo "Work MVP needs the bundled Python sidecar" >&2; exit 1; }
