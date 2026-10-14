@@ -4334,14 +4334,16 @@ class MLLMBatchGenerator:
     def _next(self) -> list[MLLMBatchResponse]:
         if not getattr(self, "cooperative_prefill", False):
             return self._next_unlocked()
-        with self._prefill_step_lock:
-            if self._prefill_close_requested.is_set():
-                return []
-            try:
-                return self._next_unlocked()
-            finally:
+        try:
+            with self._prefill_step_lock:
                 if self._prefill_close_requested.is_set():
-                    self.close()
+                    return []
+                return self._next_unlocked()
+        finally:
+            # Check after releasing the lock: a close request arriving just
+            # before release must not be lost after its nonblocking acquire.
+            if self._prefill_close_requested.is_set():
+                self.close()
 
     def _next_unlocked(self) -> list[MLLMBatchResponse]:
         """
@@ -4380,6 +4382,8 @@ class MLLMBatchGenerator:
                     )
                     self._pending_prefill = pending
                 try:
+                    # Public next() supplies this step's stream context; it
+                    # exits before the suspended continuation returns control.
                     next(pending[1])
                     # Preserve the existing next-step contribution across
                     # resumes without counting executor waits between calls.

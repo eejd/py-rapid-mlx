@@ -3289,6 +3289,94 @@ def test_close_releases_suspended_prefill():
     assert released == [True]
 
 
+def test_close_request_during_step_lock_release_is_not_lost():
+    before_unlock, release, cleaned = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+
+    class ExitBarrier:
+        def __init__(self):
+            self.lock = threading.RLock()
+
+        def acquire(self, **kwargs):
+            return self.lock.acquire(**kwargs)
+
+        def release(self):
+            self.lock.release()
+
+        def __enter__(self):
+            self.lock.acquire()
+
+        def __exit__(self, *args):
+            try:
+                before_unlock.set()
+                assert release.wait(timeout=5)
+            finally:
+                self.lock.release()
+
+    gen = _suspended_generator()
+    gen._old_wired_limit = None
+    gen._prefill_step_lock = ExitBarrier()
+
+    def pending(requests, cooperative):
+        try:
+            yield
+        finally:
+            cleaned.set()
+
+    gen._process_prompt_steps = pending
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        step = executor.submit(gen._next)
+        try:
+            assert before_unlock.wait(timeout=2)
+            gen.close()
+            assert not cleaned.is_set()
+        finally:
+            release.set()
+        assert step.result(timeout=2) == []
+    assert cleaned.is_set()
+    assert gen._pending_prefill is None
+
+
+def test_public_next_enters_and_exits_stream_on_every_prefill_resume(monkeypatch):
+    from contextlib import contextmanager
+
+    gen = _suspended_generator()
+    gen._old_wired_limit = None
+    gen._stream = object()
+    events = []
+    in_stream = False
+
+    @contextmanager
+    def stream(selected):
+        nonlocal in_stream
+        assert selected is gen._stream
+        assert not in_stream
+        in_stream = True
+        events.append("enter")
+        try:
+            yield
+        finally:
+            in_stream = False
+            events.append("exit")
+
+    def pending(requests, cooperative):
+        for _ in range(2):
+            assert in_stream
+            events.append("forward")
+            yield
+
+    monkeypatch.setattr(mx, "stream", stream)
+    gen._process_prompt_steps = pending
+    for _ in range(2):
+        assert gen.next() == []
+        assert not in_stream
+    assert events == ["enter", "forward", "exit"] * 2
+    gen.close()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_chunk", [False, True])
 async def test_stop_defers_executing_prefill_cleanup_on_borrowed_executor(
