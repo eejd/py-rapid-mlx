@@ -203,10 +203,20 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         # Refuse future indexes before executing any schema/WAL mutations.
-        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone():
-            version = self.db.execute(
-                "SELECT value FROM meta WHERE key='schema_version'"
-            ).fetchone()
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
+            try:
+                version = self.db.execute(
+                    "SELECT value FROM meta WHERE key='schema_version'"
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                if not str(exc).startswith(("no such table:", "no such column:")):
+                    raise
+                self.db.close()
+                raise SchemaVersionError(
+                    "Local Search index was created by a newer or incompatible "
+                    "version. Update Rapid-MLX to open this index, or choose a "
+                    "new index directory."
+                ) from exc
             if version and version[0] not in ("1", "2", SCHEMA_VERSION):
                 self.db.close()
                 raise SchemaVersionError(
@@ -652,9 +662,20 @@ class Store:
             row = self.db.execute(
                 "SELECT vocabulary FROM file_signatures WHERE file_id=?", (file_id,)
             ).fetchone()
-            vocabulary = (
-                zlib.decompress(row[0]).decode("utf-8") if row and row[0] else ""
-            )
+            vocabulary = ""
+            if row and row[0]:
+                try:
+                    decoder = zlib.decompressobj()
+                    raw = decoder.decompress(row[0], MAX_FILE_SIGNATURE_BYTES + 1)
+                    if (
+                        len(raw) <= MAX_FILE_SIGNATURE_BYTES
+                        and decoder.eof
+                        and not decoder.unconsumed_tail
+                        and not decoder.unused_data
+                    ):
+                        vocabulary = raw.decode("utf-8")
+                except (zlib.error, UnicodeDecodeError):
+                    pass
             coverage[file_id] = {term for term in wanted if term in vocabulary}
         support = file_evidence(coverage, wanted)
         return {i: support.get(rows[i]["file_id"], 0.0) for i in candidates}

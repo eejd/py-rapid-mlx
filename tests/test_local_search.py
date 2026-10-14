@@ -8636,7 +8636,8 @@ def test_file_signature_migration_preserves_stored_text(tmp_path, version):
     store.close()
 
 
-def test_future_schema_is_structured_error_on_all_routes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("layout", ["future", "different_columns", "missing_meta"])
+def test_future_schema_is_structured_error_on_all_routes(tmp_path, monkeypatch, layout):
     import sqlite3
 
     from rapid_mlx.routes.local_search import router
@@ -8646,10 +8647,15 @@ def test_future_schema_is_structured_error_on_all_routes(tmp_path, monkeypatch):
         directory.mkdir()
         db = directory / "index.sqlite3"
         connection = sqlite3.connect(db)
-        connection.execute(
-            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-        )
-        connection.execute("INSERT INTO meta VALUES ('schema_version','999')")
+        if layout == "future":
+            connection.execute(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.execute("INSERT INTO meta VALUES ('schema_version','999')")
+        elif layout == "different_columns":
+            connection.execute("CREATE TABLE meta (name TEXT, version TEXT)")
+        else:
+            connection.execute("CREATE TABLE future_metadata (version TEXT)")
         connection.commit()
         before = db.read_bytes()
         connection.close()
@@ -8723,3 +8729,129 @@ def test_failed_replacement_preserves_file_signature(tmp_path):
         assert store.keyword(["apple"], set(store.rows()))
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("layout", ["different_columns", "missing_meta"])
+def test_store_rejects_incompatible_metadata(tmp_path, layout):
+    from rapid_mlx.local_search.store import SchemaVersionError
+
+    path = tmp_path / "index.sqlite3"
+    with sqlite3.connect(path) as connection:
+        table = "meta" if layout == "different_columns" else "future_metadata"
+        connection.execute(f"CREATE TABLE {table} (version TEXT)")
+    before = path.read_bytes()
+    with pytest.raises(SchemaVersionError, match="newer or incompatible version"):
+        Store(path, "model")
+    assert path.read_bytes() == before
+
+
+def test_store_initializes_empty_database(tmp_path):
+    from rapid_mlx.local_search.store import SCHEMA_VERSION
+
+    path = tmp_path / "index.sqlite3"
+    sqlite3.connect(path).close()
+    store = Store(path, "model")
+    try:
+        assert (
+            store.db.execute(
+                "SELECT value FROM meta WHERE key='schema_version'"
+            ).fetchone()[0]
+            == SCHEMA_VERSION
+        )
+    finally:
+        store.close()
+
+
+def test_store_preserves_database_corruption_error(tmp_path):
+    path = tmp_path / "index.sqlite3"
+    path.write_bytes(b"not a SQLite database")
+    with pytest.raises(sqlite3.DatabaseError, match="file is not a database"):
+        Store(path, "model")
+
+
+def test_store_preserves_metadata_probe_io_error(tmp_path, monkeypatch):
+    path = tmp_path / "index.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+
+    class FailingConnection(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql == "SELECT value FROM meta WHERE key='schema_version'":
+                raise sqlite3.OperationalError("disk I/O error")
+            return super().execute(sql, *args, **kwargs)
+
+    connect = sqlite3.connect
+    connections = []
+
+    def failing_connect(*args, **kwargs):
+        connection = connect(*args, factory=FailingConnection, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", failing_connect)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+            Store(path, "model")
+    finally:
+        for connection in connections:
+            connection.close()
+
+
+@pytest.mark.parametrize(
+    "damage", ["corrupt", "over_cap", "truncated", "invalid_utf8", "trailing_data"]
+)
+def test_search_damaged_file_signature_is_neutral(tmp_path, monkeypatch, damage):
+    import zlib
+
+    from rapid_mlx.local_search import service as service_module
+    from rapid_mlx.local_search.store import MAX_FILE_SIGNATURE_BYTES
+
+    blobs = {
+        "corrupt": b"invalid zlib data",
+        "over_cap": zlib.compress(b"apple " * MAX_FILE_SIGNATURE_BYTES),
+        "truncated": zlib.compress(b"apple")[:-1],
+        "invalid_utf8": zlib.compress(b"apple\xff"),
+        "trailing_data": zlib.compress(b"apple") + b"junk",
+    }
+    # Ensure semantic candidates request evidence even when keyword matches exist.
+    monkeypatch.setattr(Store, "keyword", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        service_module,
+        "semantic_ranking",
+        lambda scores, *args, **kwargs: [i for i, _ in scores],
+    )
+
+    async def scenario():
+        search = engine(tmp_path)
+        root = folder(tmp_path)
+        for name in ("damaged.txt", "valid.txt"):
+            (root / name).write_text("apple orchard")
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+            rows = await search.store.call("search_rows")
+            damaged_id = next(
+                row["file_id"]
+                for row in rows.values()
+                if row["path"].endswith("damaged.txt")
+            )
+            await search.store.call(
+                "sql",
+                "UPDATE file_signatures SET vocabulary=? WHERE file_id=?",
+                (blobs[damage], damaged_id),
+            )
+            support = await search.store.call(
+                "query_evidence", list(rows), rows, ["apple"]
+            )
+            assert support == {
+                i: float(row["path"].endswith("valid.txt")) for i, row in rows.items()
+            }
+            result = await search.search("apple", 10, None)
+            assert {Path(hit["path"]).name for hit in result["results"]} == {
+                "damaged.txt",
+                "valid.txt",
+            }
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())

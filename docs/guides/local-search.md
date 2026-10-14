@@ -417,7 +417,8 @@ in the same transaction as the file's chunks and deleted with the file.
 one separator byte per distinct token, to 256 KiB per file; compressed storage
 adds at most 1 KiB of format overhead. A file exceeding this bound stores a NULL
 signature and supplies zero term support, rather than evidence from an arbitrary
-prefix. Its keyword/semantic retrieval and vectors remain available. Query work
+prefix. Reads enforce the same cap; malformed signatures also supply zero term
+support. Its keyword/semantic retrieval and vectors remain available. Query work
 is bounded by candidate file count × vocabulary cap × bounded query term count,
 independent of corpus postings and document chunk count. Schema 3 adds these
 signatures without rebuilding embeddings.
