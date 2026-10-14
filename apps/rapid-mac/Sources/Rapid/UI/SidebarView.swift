@@ -167,6 +167,12 @@ struct SidebarView: View {
     /// resident-pool unload path.
     var onUnloadResidentModels: (() async -> Void)? = nil
 
+    private var workHelperAvailable: Bool {
+        guard let resources = Bundle.main.resourceURL else { return false }
+        return FileManager.default.isExecutableFile(
+            atPath: resources.appendingPathComponent("Helpers/goose").path)
+    }
+
     /// The "now" the date buckets are computed against. Rolled forward by
     /// ``dayBoundaryTicker`` at each midnight so an open, untouched sidebar
     /// re-labels yesterday's conversations instead of freezing on the day it
@@ -312,13 +318,15 @@ struct SidebarView: View {
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
-            row(
-                title: "Work (beta)",
-                systemImage: "folder.badge.gearshape",
-                isSelected: selection == .work,
-                action: { selection = .work }
-            )
-            .accessibilityIdentifier("Sidebar.Work")
+            if workHelperAvailable {
+                row(
+                    title: "Work (beta)",
+                    systemImage: "folder.badge.gearshape",
+                    isSelected: selection == .work,
+                    action: { selection = .work }
+                )
+                .accessibilityIdentifier("Sidebar.Work")
+            }
 
             if computerUseEnabled {
                 if let cuaViewModel {
@@ -674,13 +682,15 @@ struct SidebarView: View {
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
-            compactItem(
-                title: "Work (beta)",
-                systemImage: "folder.badge.gearshape",
-                isSelected: selection == .work,
-                action: { selection = .work }
-            )
-            .accessibilityIdentifier("Sidebar.Work")
+            if workHelperAvailable {
+                compactItem(
+                    title: "Work (beta)",
+                    systemImage: "folder.badge.gearshape",
+                    isSelected: selection == .work,
+                    action: { selection = .work }
+                )
+                .accessibilityIdentifier("Sidebar.Work")
+            }
 
             if videoGenerationEnabled {
                 compactItem(

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Darwin
 import Foundation
 import Observation
@@ -28,7 +29,9 @@ final class WorkAgent {
     var permission: WorkPermission?
     var syntheticTestAutoApproval = false
     private var process: Process?
+    private var proxyProcess: Process?
     private var port = 0
+    private var proxyPort = 0
     private var secret = ""
     private var connection: String?
     private var sessionID: String?
@@ -37,15 +40,19 @@ final class WorkAgent {
     private var streams: [Task<Void, Never>] = []
     private var folder: URL?
     private var serverIdentity: String?
-    private var sandboxProfileURL: URL?
+    private var sandboxProfileURLs: [URL] = []
+    private var pendingPermissions: [WorkPermission] = []
+    private var generation = 0
 
     private init() {}
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
+        let folder = folder.resolvingSymlinksInPath()
         let identity = "\(rapidPort):\(model):\(bearer)"
         if isRunning, sessionID != nil, self.folder == folder, serverIdentity == identity { return }
         stop()
-        let folder = folder.resolvingSymlinksInPath()
+        var completed = false
+        defer { if !completed { stop() } }
         self.folder = folder
         serverIdentity = identity
         error = nil
@@ -54,14 +61,25 @@ final class WorkAgent {
         let fileManager = FileManager.default
         let resources = Bundle.main.resourceURL!
         let goose = resources.appendingPathComponent("Helpers/goose")
-        guard fileManager.isExecutableFile(atPath: goose.path) else {
+        let proxy = resources.appendingPathComponent("Helpers/work-inference-proxy.py")
+        let launcher = resources.appendingPathComponent("Helpers/launch-sandboxed.py")
+        guard fileManager.isExecutableFile(atPath: goose.path),
+              fileManager.fileExists(atPath: proxy.path),
+              fileManager.fileExists(atPath: launcher.path) else {
             throw WorkError.message("Work helper is missing from this build.")
         }
         let python = resources.appendingPathComponent("rapid-mlx/python/bin")
-        let support = fileManager.homeDirectoryForCurrentUser
+        let pythonExecutable = python.appendingPathComponent("python3")
+        let rootSupport = fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Rapid/agent", isDirectory: true)
+        let folderHash = SHA256.hash(data: Data(folder.path.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let support = rootSupport.appendingPathComponent("workspaces/\(folderHash)", isDirectory: true)
         let temporary = support.appendingPathComponent("tmp", isDirectory: true)
         let providerDirectory = support.appendingPathComponent("config/custom_providers", isDirectory: true)
+        try fileManager.createDirectory(at: rootSupport, withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: rootSupport.path)
         try fileManager.createDirectory(at: support, withIntermediateDirectories: true,
                                         attributes: [.posixPermissions: 0o700])
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
@@ -70,10 +88,13 @@ final class WorkAgent {
                                             attributes: [.posixPermissions: 0o700])
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         }
+        port = try Self.freePort()
+        repeat { proxyPort = try Self.freePort() } while proxyPort == port
+        secret = UUID().uuidString + UUID().uuidString
         let provider: [String: Any] = [
             "name": "custom_rapid_local", "engine": "openai", "display_name": "Rapid Local",
             "api_key_env": "RAPID_LOCAL_WORK_KEY",
-            "base_url": "http://127.0.0.1:\(rapidPort)/v1/chat/completions",
+            "base_url": "http://127.0.0.1:\(proxyPort)/v1/chat/completions",
             "models": [["name": model, "context_limit": 16384]],
             "supports_streaming": true, "requires_auth": true,
         ]
@@ -84,18 +105,16 @@ final class WorkAgent {
         let skillSource = resources.appendingPathComponent("Helpers/local-documents/SKILL.md")
         try? fileManager.removeItem(at: skillDirectory.appendingPathComponent("SKILL.md"))
         try fileManager.copyItem(at: skillSource, to: skillDirectory.appendingPathComponent("SKILL.md"))
-        port = try Self.freePort()
-        secret = UUID().uuidString + UUID().uuidString
-        let profile = Self.profile(folder: folder, support: support, temporary: temporary,
-                                   resources: resources, rapidPort: rapidPort, goosePort: port)
-        let profileURL = temporary.appendingPathComponent("work-\(UUID().uuidString).sb")
-        try profile.write(to: profileURL, atomically: true, encoding: .utf8)
-        sandboxProfileURL = profileURL
-        let child = Process()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-        child.arguments = ["-f", profileURL.path, goose.path, "serve", "--host", "127.0.0.1",
-                           "--port", String(port), "--platform", "desktop", "--with-builtin", "developer"]
-        child.currentDirectoryURL = folder
+        let gooseProfileURL = temporary.appendingPathComponent("work-\(UUID().uuidString).sb")
+        let proxyProfileURL = temporary.appendingPathComponent("proxy-\(UUID().uuidString).sb")
+        try Self.profile(folder: folder, support: support, temporary: temporary,
+                         resources: resources, outboundPorts: [proxyPort, port])
+            .write(to: gooseProfileURL, atomically: true, encoding: .utf8)
+        sandboxProfileURLs.append(gooseProfileURL)
+        try Self.profile(folder: folder, support: support, temporary: temporary,
+                         resources: resources, outboundPorts: [rapidPort])
+            .write(to: proxyProfileURL, atomically: true, encoding: .utf8)
+        sandboxProfileURLs.append(proxyProfileURL)
         // Start from an allowlist: the shell tool must not inherit the app's
         // unrelated credentials or proxy configuration.
         var env: [String: String] = [
@@ -119,24 +138,25 @@ final class WorkAgent {
         env["PIP_NO_INDEX"] = "1"
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["TMPDIR"] = temporary.path
-        child.environment = env
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-        try child.run()
-        process = child
-        var healthy = false
-        for _ in 0..<60 {
-            if !child.isRunning { break }
-            if let url = URL(string: "http://127.0.0.1:\(port)/health"),
-               let (_, response) = try? await URLSession.shared.data(from: url),
-               (response as? HTTPURLResponse)?.statusCode == 200 {
-                healthy = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(500))
+        var proxyEnv = env
+        proxyEnv.removeValue(forKey: "GOOSE_SERVER__SECRET_KEY")
+        proxyEnv.removeValue(forKey: "RAPID_LOCAL_WORK_KEY")
+        proxyEnv["WORK_PROXY_BEARER"] = bearer
+        proxyProcess = try Self.launchSandboxed(
+            python: pythonExecutable, launcher: launcher, profile: proxyProfileURL,
+            executable: pythonExecutable,
+            arguments: [proxy.path, String(proxyPort), String(rapidPort), model],
+            directory: support, environment: proxyEnv)
+        guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
+            throw WorkError.message("The local Work inference gate did not start.")
         }
-        guard healthy else {
-            stop()
+        process = try Self.launchSandboxed(
+            python: pythonExecutable, launcher: launcher, profile: gooseProfileURL,
+            executable: goose,
+            arguments: ["serve", "--host", "127.0.0.1", "--port", String(port),
+                        "--platform", "desktop", "--with-builtin", "developer"],
+            directory: folder, environment: env)
+        guard await Self.waitForHealth(process: process!, port: port) else {
             throw WorkError.message("The Work helper did not start under the privacy sandbox.")
         }
         isRunning = true
@@ -152,17 +172,20 @@ final class WorkAgent {
         connection = id
         openStream(session: nil)
         try await newSession()
+        completed = true
     }
 
     func newSession() async throws {
         guard let folder else { return }
+        guard !isBusy else { throw WorkError.message("Stop the current task before starting a new session.") }
         if let old = sessionID {
-            streams.last?.cancel()
             try? await notify(method: "session/cancel", params: ["sessionId": old], session: old)
+            streams.last?.cancel()
         }
         text = ""
         steps = []
         permission = nil
+        pendingPermissions = []
         let result = try await call(method: "session/new", params: [
             "cwd": folder.path, "mcpServers": [],
             "_meta": ["client": "Rapid Work"],
@@ -177,6 +200,7 @@ final class WorkAgent {
 
     func prompt(_ message: String) async {
         guard let sessionID else { return }
+        let promptGeneration = generation
         isBusy = true
         error = nil
         do {
@@ -189,39 +213,55 @@ final class WorkAgent {
                 "prompt": [["type": "text", "text": instruction]],
             ], session: sessionID, timeout: 900)
         } catch {
-            self.error = error.localizedDescription
+            if generation == promptGeneration { self.error = error.localizedDescription }
         }
-        isBusy = false
+        if generation == promptGeneration { isBusy = false }
     }
 
     func cancel() {
         guard let sessionID else { return }
-        Task { try? await notify(method: "session/cancel", params: ["sessionId": sessionID], session: sessionID) }
-        isBusy = false
+        Task {
+            try? await notify(method: "session/cancel", params: ["sessionId": sessionID], session: sessionID)
+            stop()
+        }
     }
 
-    func answerPermission(allow: Bool) {
-        guard let permission else { return }
+    func answerPermission(_ request: WorkPermission, allow: Bool) {
         let kind = allow ? "allow_once" : "reject_once"
-        guard let option = permission.options.first(where: { $0["kind"] as? String == kind }),
+        guard let option = request.options.first(where: { $0["kind"] as? String == kind }),
               let optionID = option["optionId"] as? String else { return }
-        self.permission = nil
+        if permission?.id == request.id {
+            permission = pendingPermissions.isEmpty ? nil : pendingPermissions.removeFirst()
+        }
         Task {
-            try? await post(["jsonrpc": "2.0", "id": permission.id,
+            try? await post(["jsonrpc": "2.0", "id": request.id,
                              "result": ["outcome": ["outcome": "selected", "optionId": optionID]]],
-                            session: permission.sessionID)
+                            session: request.sessionID)
         }
     }
 
     func stop() {
+        generation += 1
         streams.forEach { $0.cancel() }
         streams = []
-        if process?.isRunning == true { process?.terminate() }
+        let children = [process, proxyProcess].compactMap { $0 }
+        for child in children {
+            let group = child.processIdentifier
+            if group > 0 { _ = Darwin.kill(-group, SIGTERM) }
+        }
+        if !children.isEmpty { usleep(150_000) }
+        for child in children {
+            let group = child.processIdentifier
+            if group > 0 { _ = Darwin.kill(-group, SIGKILL) }
+        }
         process = nil
-        if let sandboxProfileURL { try? FileManager.default.removeItem(at: sandboxProfileURL) }
-        sandboxProfileURL = nil
+        proxyProcess = nil
+        for profile in sandboxProfileURLs { try? FileManager.default.removeItem(at: profile) }
+        sandboxProfileURLs = []
         isRunning = false
         isBusy = false
+        permission = nil
+        pendingPermissions = []
         connection = nil
         sessionID = nil
         secret = ""
@@ -278,10 +318,16 @@ final class WorkAgent {
            let sid = params["sessionId"] as? String,
            let tool = params["toolCall"] as? [String: Any] {
             let input = tool["rawInput"] as? [String: Any]
-            permission = WorkPermission(id: String(describing: id), sessionID: sid,
+            let request = WorkPermission(id: String(describing: id), sessionID: sid,
                 command: input?["command"] as? String ?? tool["title"] as? String ?? "Unknown command",
                 options: params["options"] as? [[String: Any]] ?? [])
-            if syntheticTestAutoApproval { answerPermission(allow: true) }
+            if syntheticTestAutoApproval {
+                answerPermission(request, allow: true)
+            } else if permission == nil {
+                permission = request
+            } else {
+                pendingPermissions.append(request)
+            }
             return
         }
         guard message["method"] as? String == "session/update",
@@ -304,6 +350,21 @@ final class WorkAgent {
             steps[index].status = update["status"] as? String ?? "Updated"
             if let raw = update["rawOutput"] as? [String: Any] {
                 steps[index].output = (raw["stdout"] as? String ?? "") + (raw["stderr"] as? String ?? "")
+            }
+            if let content = update["content"] as? [[String: Any]] {
+                let text = content.compactMap { item -> String? in
+                    if let nested = item["content"] as? [String: Any],
+                       nested["type"] as? String == "text" { return nested["text"] as? String }
+                    if item["type"] as? String == "text" { return item["text"] as? String }
+                    return nil
+                }.joined(separator: "\n")
+                if !text.isEmpty { steps[index].output = text }
+            }
+            if let meta = update["_meta"] as? [String: Any],
+               let notification = meta["toolNotification"] as? [String: Any],
+               let params = notification["params"] as? [String: Any],
+               let chunks = params["chunks"] as? [[String: Any]] {
+                steps[index].output += chunks.compactMap { $0["output"] as? String }.joined()
             }
         default: break
         }
@@ -387,8 +448,41 @@ final class WorkAgent {
         return Int(UInt16(bigEndian: address.sin_port))
     }
 
+    private static func launchSandboxed(python: URL, launcher: URL, profile: URL,
+                                        executable: URL, arguments: [String], directory: URL,
+                                        environment: [String: String]) throws -> Process {
+        let child = Process()
+        child.executableURL = python
+        child.arguments = [launcher.path, "-f", profile.path, executable.path] + arguments
+        child.currentDirectoryURL = directory
+        child.environment = environment
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        try child.run()
+        for _ in 0..<100 {
+            if getpgid(child.processIdentifier) == child.processIdentifier { return child }
+            if !child.isRunning { break }
+            usleep(10_000)
+        }
+        if child.isRunning { child.terminate() }
+        throw WorkError.message("Could not isolate the Work helper process group.")
+    }
+
+    private static func waitForHealth(process: Process, port: Int) async -> Bool {
+        for _ in 0..<60 {
+            if !process.isRunning { return false }
+            if let url = URL(string: "http://127.0.0.1:\(port)/health"),
+               let (_, response) = try? await URLSession.shared.data(from: url),
+               (response as? HTTPURLResponse)?.statusCode == 200 {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return false
+    }
+
     private static func profile(folder: URL, support: URL, temporary: URL,
-                                resources: URL, rapidPort: Int, goosePort: Int) -> String {
+                                resources: URL, outboundPorts: [Int]) -> String {
         func quoted(_ value: String) -> String {
             "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
         }
@@ -403,6 +497,9 @@ final class WorkAgent {
             }
         }
         let ancestorRules = ancestors.sorted().map { "(literal \(quoted($0)))" }.joined(separator: " ")
+        let networkRules = outboundPorts.map {
+            "(allow network-outbound (remote ip \"localhost:\($0)\"))"
+        }.joined(separator: "\n")
         return """
         (version 1)
         (deny default)
@@ -419,8 +516,7 @@ final class WorkAgent {
         (allow file-write* (literal "/dev/null") (subpath \(quoted(folder.path)))
             (subpath \(quoted(support.path))) (subpath \(quoted(temporary.path))))
         (allow network-inbound (local ip "localhost:*"))
-        (allow network-outbound (remote ip "localhost:\(rapidPort)"))
-        (allow network-outbound (remote ip "localhost:\(goosePort)"))
+        \(networkRules)
         """
     }
 }

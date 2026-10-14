@@ -8,6 +8,7 @@ struct WorkView: View {
     @State private var message = ""
     @State private var folder: URL?
     @State private var expanded: Set<String> = []
+    @State private var submitting = false
     @AppStorage("Rapid.Work.lastFolder") private var lastFolder = ""
 
     var body: some View {
@@ -20,9 +21,10 @@ struct WorkView: View {
                 }
                 Spacer()
                 Button("Choose Folder") { chooseFolder() }
+                    .disabled(submitting || agent.isBusy)
                 Button("New Session") {
                     Task { try? await agent.newSession() }
-                }.disabled(!agent.isRunning)
+                }.disabled(!agent.isRunning || submitting || agent.isBusy)
             }
             .padding()
             Divider()
@@ -80,10 +82,12 @@ struct WorkView: View {
                         .onSubmit(send)
                     if agent.isBusy {
                         Button("Stop") { agent.cancel() }
+                    } else if submitting {
+                        ProgressView("Starting…")
                     } else {
                         Button("Send", action: send)
                             .buttonStyle(.borderedProminent)
-                            .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(submitting || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }.padding()
             }
@@ -113,8 +117,8 @@ struct WorkView: View {
                 .frame(maxHeight: 300)
                 HStack {
                     Spacer()
-                    Button("Deny") { agent.answerPermission(allow: false) }
-                    Button("Allow Once") { agent.answerPermission(allow: true) }
+                    Button("Deny") { agent.answerPermission(request, allow: false) }
+                    Button("Allow Once") { agent.answerPermission(request, allow: true) }
                         .buttonStyle(.borderedProminent)
                 }
             }
@@ -136,11 +140,13 @@ struct WorkView: View {
 
     private func send() {
         guard let folder, let model = server.servingAlias,
-              let bearer = server.activeBearer, !agent.isBusy else { return }
+              let bearer = server.activeBearer, !agent.isBusy, !submitting else { return }
         let prompt = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
+        submitting = true
         message = ""
         Task {
+            defer { submitting = false }
             do {
                 try await agent.prepare(folder: folder, rapidPort: server.activePort, model: model, bearer: bearer)
                 await agent.prompt(prompt)
