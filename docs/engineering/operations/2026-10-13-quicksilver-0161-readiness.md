@@ -8,6 +8,14 @@ changed by this assessment.
 
 ## Decision
 
+**Updated after real production-path testing on 2026-10-14 UTC:** initial
+readiness was conditional on end-to-end acceptance. That acceptance found a
+reproducible cancellation failure. Hold broad community beta promotion until
+the cancellation chain is repaired and the same workload passes. Basic
+single-model serving works; this finding concerns resource recovery and
+latency after a customer abandons a stream. See the production-path follow-up
+below. The earlier source-only recommendation is superseded by this evidence.
+
 The 0.16.1 provider implementation is suitable for a narrowly scoped,
 explicitly enabled Qwen3.8-27B beta after the release actions below. Do not
 promote the current experience to a default-on, general-availability feature.
@@ -168,6 +176,105 @@ An initial main checkout disappeared while Swift was compiling; its
 missing-file failure was resolved by the fresh exact-release checkout.
 
 ## Rollout and rollback handoff
+
+### Follow-up: real QuickSilver provider and consumer path
+
+With owner-supplied credentials, Machine Control assigned an available M4 Pro
+Mac mini with 48 GiB RAM and no running Rapid service. The same signed 0.16.1
+artifact and model revision above were used. A distinct task worker registered
+successfully, warmed up, connected over verified TLS, and began processing
+real API traffic. No production service deployment or routing configuration
+was changed.
+
+Observed results:
+
+| Check | Result |
+| --- | --- |
+| Provider registration, warmup, relay connection | Passed |
+| Ordinary and SSE requests, final usage/DONE | Passed |
+| Three simultaneous short requests | All succeeded |
+| Forced tool call through the public API | Succeeded; this individual call was not traced to the test node |
+| Long prompt routed away from the test node | Succeeded; cloud-shaped response, no matching test-node request |
+| Natural tunnel reconnect and subsequent inference | Passed |
+| Restart without the input provider credential | Passed; same node registration reused |
+| Graceful stop and removal of local listener | Passed |
+| Public-client cancellation promptly stops generation | **Failed** |
+| Earnings credited to the contributor account | Not yet verified |
+
+Customer response IDs and routing headers are sanitized by the public API.
+Test-node delivery was correlated with its request metadata, not inferred from
+HTTP 200 alone. The node logged the test requests' character counts, stream
+flags, message counts and generation limits. Do not assume every successful
+consumer call in this run reached this node: other pool nodes and cloud
+fallback remained available throughout.
+
+#### P1: cancellation continues generating and delays the next request
+
+Owners: QuickSilver gateway/edge owner and Vector; Harbor owns the acceptance
+rerun. This is an observed cross-service failure, not a localized code fix yet.
+
+Reproduction through the normal public chat-completions endpoint:
+
+1. Use model `qwen3.8-27b`, `temperature: 0`, `stream: true`, and
+   `stream_options.include_usage: true`.
+2. Establish a conversation with the opening text
+   `Acceptance run qs0161-initial-1. Reply with only the number 4. ` followed
+   by one extra space. The node received this 64-character prompt.
+3. Preserve that first message, append assistant text `4`, then ask for a
+   numbered list of 200 animals with `max_tokens: 512`.
+4. Close the HTTP response immediately after the first generated content.
+5. In the same conversation, issue a short follow-up requesting `4` again
+   with `max_tokens: 32`.
+
+The canceled request reached the test node with three messages, 125 content
+characters and the 512-token limit. Node logs continued reporting
+`disconnected=False` through 20 seconds and recorded a normal completion of
+**512 tokens in 23.06 seconds**. The follow-up, also confirmed in the node
+log, took **22.686 seconds** at the public client and approximately 22.2
+seconds in the node. It generated only two native-model tokens. This shows
+wasted generation and delayed useful work; the precise contribution of
+batch scheduling to the delay remains to be isolated.
+
+An independent client reproduced the continued generation after restart:
+`curl --no-buffer --max-time 3` received 5,372 SSE bytes, exited 28 at 3.018
+seconds without DONE, but the matching 143-character, three-message request
+on the node completed **all 512 tokens in 20.12 seconds**. The result is not
+specific to Python's HTTP-response close behavior.
+
+The first mixed-routing run also had a 38.269-second short request after a
+cancel; that sample was not traced to this test node and is not used to
+localize the failure. Existing unit tests cover abort frames at the relay/node
+boundary. They do not establish propagation of a real public customer's
+disconnect through every intermediary. Investigate edge-to-gateway and
+gateway-to-relay cancellation before attributing this to the Mac tunnel alone.
+
+Acceptance for the repair: repeat both Python-close and curl-timeout cases;
+prove node generation stops well before its token cap, in-flight capacity is
+released, and the short follow-up does not wait for the abandoned generation.
+Use a controlled baseline rather than claiming a general latency SLO from
+these few samples.
+
+#### Privacy, accounting, and cleanup boundaries
+
+Credential byte scans found neither the provider key nor node share key in
+the provider/serve logs. Existing unrelated prefix-cache files were preserved.
+Only eight transaction-lock files changed during the test; no prompt snapshot
+artifacts were written. This checks accidental persistence, not protection
+against a malicious machine owner.
+
+The ledger API accepted the provider credential, so an additional read-only
+key was unnecessary for this diagnostic. The test-node ledger had no settled
+windows when queried. Settlement runs asynchronously with a lag; a zero-entry
+response is not proof of a payout failure. The provider's masked account
+matches the consumer's mask, and independent account ownership has not been
+confirmed. If they are the same account, exclusion from contributor earnings
+is expected. Do not claim the earnings acceptance step has passed.
+
+Stopping the task provider also stopped its server and removed the listener.
+The worker's remote task credentials, task-created model copy and staged app
+are cleaned before releasing the machine. Its server-side registration may
+remain as an offline entry in the owner's dashboard; stopping does not delete
+that record. No other pool node was stopped to force a whole-pool outage.
 
 ### Follow-up: signed artifact on a community-class Mac
 
