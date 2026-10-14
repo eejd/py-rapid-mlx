@@ -952,9 +952,14 @@ struct ContentView: View {
         if WorkAgent.fullAccess {
             section = .work
             WorkAgent.shared.beginNewChat()
+            let revision = WorkAgent.shared.conversationRevision
             Task {
                 do { try await WorkAgent.shared.newSession() }
-                catch { WorkAgent.shared.error = error.localizedDescription }
+                catch {
+                    if WorkAgent.shared.conversationRevision == revision {
+                        WorkAgent.shared.error = error.localizedDescription
+                    }
+                }
             }
         } else {
             chat.newConversation()
