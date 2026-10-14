@@ -30,7 +30,7 @@ from rapid_mlx.local_search.extraction import (
     validate_folder,
 )
 from rapid_mlx.local_search.search import fuse, snippet
-from rapid_mlx.local_search.service import LocalSearch, local_model_path
+from rapid_mlx.local_search.service import LocalSearch, ModelLoadError, local_model_path
 from rapid_mlx.local_search.store import Store
 from rapid_mlx.middleware.exception_handlers import install_exception_handlers
 
@@ -1626,6 +1626,85 @@ def test_loaded_embedder_recovers_after_worker_replacement(tmp_path, monkeypatch
             assert "a" in calls and calls[-1] == "b"
             assert search._owner_worker == worker_b
         finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_worker_refresh_defensive_paths(tmp_path, monkeypatch):
+    async def old_worker(work):
+        return work()
+
+    async def new_worker(work):
+        return work()
+
+    async def scenario():
+        search = engine(tmp_path)
+        try:
+            search.engine = FakeEmbedder()
+            search._owner_worker = old_worker
+            workers = iter((new_worker, old_worker))
+            monkeypatch.setattr(search, "_worker", lambda: next(workers))
+            assert await search._refresh_worker() is old_worker
+
+            search._owner_worker = None
+            monkeypatch.setattr(search, "_worker", lambda: new_worker)
+            assert await search._refresh_worker() is None
+            assert search.worker_error == "Model worker changed before teardown"
+
+            async def broken_worker(_):
+                raise RuntimeError("dispatch unavailable")
+
+            search._owner_worker = broken_worker
+            assert await search._refresh_worker() is None
+            assert search.worker_error == "dispatch unavailable"
+        finally:
+            search.engine = None
+            search._owner_worker = None
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_missing_worker_releases_resident_engine_on_owner(tmp_path, monkeypatch):
+    owner_calls = []
+
+    async def owner(work):
+        owner_calls.append(work)
+        return work()
+
+    async def scenario():
+        search = engine(tmp_path)
+        search.engine = FakeEmbedder()
+        search._owner_worker = owner
+        monkeypatch.setattr(search, "_worker", lambda: None)
+        try:
+            with pytest.raises(ModelLoadError, match="no sanctioned model worker"):
+                await search._model_call_owned(lambda: None)
+            assert search.engine is None
+            assert len(owner_calls) == 1
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_release_after_model_error_is_best_effort(tmp_path, monkeypatch):
+    async def scenario():
+        search = engine(tmp_path)
+        try:
+            monkeypatch.setattr(
+                search,
+                "_model_call",
+                AsyncMock(side_effect=ModelLoadError("teardown unavailable")),
+            )
+            await search._release_after_model_error()
+            search.engine = FakeEmbedder()
+            await search._release_after_model_error()
+            assert search.engine is not None
+            assert search._model_call.await_count == 1
+        finally:
+            search.engine = None
             await search.close()
 
     asyncio.run(scenario())
@@ -7880,6 +7959,135 @@ def test_index_acl_non_darwin_unchanged(tmp_path, monkeypatch):
     )
     store = Store(tmp_path / "index.sqlite3", "test")
     store.close()
+
+
+def test_index_acl_probe_is_disabled_off_darwin(monkeypatch):
+    from rapid_mlx.local_search import store as module
+
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    assert not module._acl_present(-1)
+
+
+class _FakeCFunction:
+    def __init__(self, implementation):
+        self.implementation = implementation
+
+    def __call__(self, *args):
+        return self.implementation(*args)
+
+
+@pytest.mark.parametrize(
+    "pointer,error,free_result,expected",
+    [
+        (None, "missing", 0, False),
+        (None, "denied", 0, PermissionError),
+        (1, None, 0, True),
+        (1, None, 1, PermissionError),
+    ],
+)
+def test_index_acl_fd_probe_outcomes(
+    tmp_path, monkeypatch, pointer, error, free_result, expected
+):
+    import ctypes
+    import errno
+
+    from rapid_mlx.local_search import store as module
+
+    def get_acl(_):
+        ctypes.set_errno(errno.ENOENT if error == "missing" else errno.EACCES)
+        return pointer
+
+    class LibC:
+        acl_get_fd = _FakeCFunction(get_acl)
+        acl_free = _FakeCFunction(lambda _: free_result)
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(ctypes, "CDLL", lambda *args, **kwargs: LibC())
+    fd = os.open(tmp_path, os.O_RDONLY)
+    try:
+        if isinstance(expected, type) and issubclass(expected, Exception):
+            with pytest.raises(expected, match="inspect local-search index ACL"):
+                module._acl_present(fd)
+        else:
+            assert module._acl_present(fd) is expected
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.parametrize(
+    "init_result,set_result,still_present,message",
+    [
+        (None, 0, False, "secure local-search index ACL"),
+        (1, 1, False, "secure local-search index ACL"),
+        (1, 0, True, "remove local-search index ACL"),
+        (1, 0, False, None),
+    ],
+)
+def test_index_acl_fd_removal_outcomes(
+    tmp_path, monkeypatch, init_result, set_result, still_present, message
+):
+    import ctypes
+
+    from rapid_mlx.local_search import store as module
+
+    probes = iter((True, still_present))
+    freed = []
+
+    class LibC:
+        acl_init = _FakeCFunction(lambda _: init_result)
+        acl_set_fd = _FakeCFunction(lambda *_: set_result)
+        acl_free = _FakeCFunction(lambda acl: freed.append(acl) or 0)
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module, "_acl_present", lambda _: next(probes))
+    monkeypatch.setattr(ctypes, "CDLL", lambda *args, **kwargs: LibC())
+    fd = os.open(tmp_path, os.O_RDONLY)
+    try:
+        if message:
+            with pytest.raises(PermissionError, match=message):
+                module._remove_acl(fd)
+        else:
+            module._remove_acl(fd)
+        assert freed == ([] if init_result is None else [init_result])
+    finally:
+        os.close(fd)
+
+
+def test_index_acl_absent_needs_no_removal(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import store as module
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module, "_acl_present", lambda _: False)
+    fd = os.open(tmp_path, os.O_RDONLY)
+    try:
+        module._remove_acl(fd)
+    finally:
+        os.close(fd)
+
+
+def test_index_refuses_acl_on_ancestor(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import store as module
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(module, "_acl_present", lambda _: True)
+    with pytest.raises(PermissionError, match="replaced by another account"):
+        Store(tmp_path / "index" / "index.sqlite3", "test")
+
+
+def test_index_refuses_acl_remaining_on_file(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import store as module
+
+    path = tmp_path / "index" / "index.sqlite3"
+    path.parent.mkdir(mode=0o700)
+    path.touch(mode=0o600)
+    target = path.stat().st_ino
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        module, "_acl_present", lambda fd: os.fstat(fd).st_ino == target
+    )
+    monkeypatch.setattr(module, "_remove_acl", lambda _: None)
+    with pytest.raises(PermissionError, match="Could not remove"):
+        Store(path, "test")
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="real macOS extended ACLs")
