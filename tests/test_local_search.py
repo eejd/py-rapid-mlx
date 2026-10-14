@@ -1368,6 +1368,11 @@ def test_missing_model_keyword_and_resume(tmp_path):
         status = search.status()
         assert status["folders"][0]["state"] == "waiting_for_model"
         assert status["model"]["downloaded"] is False and not fake.calls
+        settled_task = search.task
+        for _ in range(10):
+            await search.status_async()
+            await search.wait_idle()
+            assert search.task is settled_task
         result = await search.search("中文", 20, None)
         assert result["mode"] == "keyword" and result["results"][0]["matched"] == [
             "keyword"
@@ -1377,6 +1382,163 @@ def test_missing_model_keyword_and_resume(tmp_path):
         await search.wait_idle()
         assert search.store.folder(fid)["state"] == "idle" and fake.calls
         await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["factory", "embedding"])
+@pytest.mark.parametrize(
+    "change",
+    ["path", "directory_mtime", "file_mtime", "replacement", "blob", "absent_present"],
+)
+def test_failed_checkpoint_polls_wait_for_change(
+    tmp_path, monkeypatch, failure, change
+):
+    from rapid_mlx.local_search import service as module
+
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "apple.txt").write_text("An apple orchard grows delicious fruit.")
+        model = folder(tmp_path, "model")
+        weights = model / "model.safetensors"
+        blob = tmp_path / "blob"
+        blob.write_bytes(b"broken checkpoint")
+        if change == "blob":
+            weights.symlink_to(blob)
+        else:
+            weights.write_bytes(b"broken checkpoint")
+        model_path = [str(model)]
+        broken = [True]
+        fake = FakeEmbedder()
+        original_embed = fake.embed
+
+        def embed(texts):
+            if broken[0] and failure == "embedding":
+                raise ValueError("incompatible checkpoint")
+            return original_embed(texts)
+
+        fake.embed = embed
+
+        def factory(_):
+            if broken[0] and failure == "factory":
+                raise ValueError("incompatible checkpoint")
+            return fake
+
+        search = LocalSearch(
+            tmp_path / "index",
+            resolve_model=lambda _: model_path[0],
+            embedder_factory=factory,
+            yield_seconds=0,
+        )
+        index = AsyncMock(wraps=search._index)
+        monkeypatch.setattr(search, "_index", index)
+        walks = []
+        scan = module.scan_batches
+
+        def counted_scan(*args):
+            walks.append(args[0])
+            return scan(*args)
+
+        monkeypatch.setattr(module, "scan_batches", counted_scan)
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            for _ in range(10):
+                status = await search.status_async()
+                await search.wait_idle()
+                assert status["folders"][0]["state"] == "waiting_for_model"
+                assert status["folders"][0]["error"] == "incompatible checkpoint"
+                assert (
+                    status["semantic_unavailable_reason"] == "incompatible checkpoint"
+                )
+                assert index.await_count == len(walks) == 1
+
+            if change == "path":
+                model_path[0] = str(folder(tmp_path, "new-model"))
+            elif change == "absent_present":
+                model_path[0] = None
+                status = await search.status_async()
+                await search.wait_idle()
+                assert status["folders"][0]["error"] == "incompatible checkpoint"
+                assert index.await_count == len(walks) == 1
+                model_path[0] = str(model)
+            elif change in {"directory_mtime", "file_mtime", "blob"}:
+                target = (
+                    model
+                    if change == "directory_mtime"
+                    else blob
+                    if change == "blob"
+                    else weights
+                )
+                info = target.stat()
+                os.utime(
+                    target, ns=(info.st_atime_ns, info.st_mtime_ns + 1_000_000_000)
+                )
+            else:
+                replacement = tmp_path / "replacement"
+                replacement.write_bytes(weights.read_bytes())
+                replacement.replace(weights)
+            broken[0] = False
+            await search.status_async()
+            await search.wait_idle()
+            assert search.store.folder(fid)["state"] == "idle"
+            assert search.store.folder(fid)["error"] is None
+            assert fake.calls
+            for _ in range(10):
+                status = await search.status_async()
+                await search.wait_idle()
+                assert status["semantic_unavailable_reason"] is None
+                assert index.await_count == len(walks) == 2
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("action", ["reindex", "add"])
+def test_failed_checkpoint_explicit_action_retries(tmp_path, monkeypatch, action):
+    from rapid_mlx.routes.local_search import router
+
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "apple.txt").write_text("An apple orchard grows delicious fruit.")
+        search = engine(tmp_path)
+
+        def fail(_):
+            raise ValueError("corrupt checkpoint")
+
+        search.embedder_factory = fail
+        index = AsyncMock(wraps=search._index)
+        monkeypatch.setattr(search, "_index", index)
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            await search.status_async()
+            await search.wait_idle()
+            assert index.await_count == 1
+            if action == "add":
+                registered, created = await search.add_folder(str(root))
+                assert registered["id"] == fid and not created
+            else:
+                app = FastAPI()
+                app.include_router(router)
+                app.state.local_search = search
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+                ) as client:
+                    response = await client.post(
+                        "/v1/local-search/reindex", json={"folder_id": fid}
+                    )
+                assert response.status_code == 202
+            await search.wait_idle()
+            assert index.await_count == 2
+            status = await search.status_async()
+            await search.wait_idle()
+            assert index.await_count == 2
+            assert status["folders"][0]["state"] == "waiting_for_model"
+            assert status["folders"][0]["error"] == "corrupt checkpoint"
+        finally:
+            await search.close()
 
     asyncio.run(scenario())
 

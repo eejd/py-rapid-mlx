@@ -129,6 +129,25 @@ def make_embedder(path: str) -> Embedder:
     )
 
 
+def _checkpoint_identity(path: str | None) -> tuple | None:
+    """Cheap metadata probe, including in-place updates and HF blob targets."""
+    if path is None:
+        return None
+    root = Path(path)
+    try:
+        entries = [root, *sorted(root.iterdir())]
+        metadata = []
+        for entry in entries:
+            info = entry.stat()
+            metadata.append(
+                (entry.name, info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+            )
+        return path, tuple(metadata)
+    except OSError:
+        # A disappearing/unreadable checkpoint still has a stable identity.
+        return path, ()
+
+
 class LocalSearch:
     def __init__(
         self,
@@ -151,6 +170,7 @@ class LocalSearch:
         self._coordination = asyncio.Lock()
         self._owner_worker = None
         self.worker_error = None
+        self._attempted_checkpoints: dict[str, tuple | None] = {}
         self.batch_size = max(1, min(4, batch_size))
         self.yield_seconds = yield_seconds
         self.pending: list[str] = []
@@ -202,6 +222,9 @@ class LocalSearch:
 
     async def status_async(self) -> dict:
         model_path = await asyncio.to_thread(self.resolve_model, self.model_id)
+        checkpoint = await asyncio.to_thread(_checkpoint_identity, model_path)
+        if model_path is None:
+            self._attempted_checkpoints.clear()
         folders = await self.store.call("folders")
         totals = await self.store.call("totals")
         vision = await asyncio.to_thread(self._vision_available, model_path)
@@ -212,6 +235,7 @@ class LocalSearch:
                 model_path is not None
                 and callable(self._worker())
                 and folder["state"] == "waiting_for_model"
+                and self._attempted_checkpoints.get(folder["id"]) != checkpoint
                 and self.progress["folder_id"] != folder["id"]
             ):
                 await self.queue(folder["id"])
@@ -277,6 +301,7 @@ class LocalSearch:
                 await self._cancel_worker()
             self.pending = [i for i in self.pending if i != folder_id]
             await self.store.call("delete_folder", folder_id)
+            self._attempted_checkpoints.pop(folder_id, None)
             self._start_worker()
 
     async def _cancel_worker(self):
@@ -559,9 +584,9 @@ class LocalSearch:
 
             # Zero means discovery is ongoing; committed files are already searchable.
             self.progress["files_total"] = 0
-            available = (
-                await asyncio.to_thread(self.resolve_model, self.model_id) is not None
-            )
+            model_path = await asyncio.to_thread(self.resolve_model, self.model_id)
+            checkpoint = await asyncio.to_thread(_checkpoint_identity, model_path)
+            available = model_path is not None
             model_error = None
             if not callable(self._worker()):
                 available = False
@@ -762,6 +787,10 @@ class LocalSearch:
             for path, row in old.items():
                 if path not in existing:
                     await self.store.call("remove_file", row["id"])
+            # Polling may resume a missing/replaced model, but must not walk the
+            # user's tree again for an unchanged checkpoint that already failed.
+            # Explicit queue requests (reindex/add) intentionally bypass this.
+            self._attempted_checkpoints[folder["id"]] = checkpoint
             await self.store.call(
                 "set_folder",
                 folder["id"],
