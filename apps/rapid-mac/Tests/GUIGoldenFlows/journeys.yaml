@@ -88,22 +88,6 @@ journeys:
     fixtures: [fake-sidecar, isolated-home]
     source_paths: [apps/rapid-mac/Sources/Rapid/Chat/]
     owns_baseline: false
-  - name: restored-tools
-    group: chat
-    risk: medium
-    driver: swift
-    ci_tier: pr
-    fixtures: [fake-sidecar, isolated-home]
-    source_paths: [apps/rapid-mac/Sources/Rapid/Chat/, apps/rapid-mac/Sources/Rapid/Tools/]
-    owns_baseline: false
-  - name: tool-loop-budget
-    group: chat
-    risk: medium
-    driver: swift
-    ci_tier: pr
-    fixtures: [fake-sidecar, isolated-home]
-    source_paths: [apps/rapid-mac/Sources/Rapid/Chat/, apps/rapid-mac/Sources/Rapid/Tools/]
-    owns_baseline: false
   - name: chat-depth
     group: chat
     risk: low

@@ -30,10 +30,6 @@ private nonisolated(unsafe) var nextFakePort = 52_100
 /// * **Lifecycle events** — the analog of `FAKE_EVENT_LOG`: an app that
 ///   looks stopped must be backed by a server that observed the
 ///   cancellation, not one that quietly finished.
-/// * **The runaway tool loop** — `shape:tool-loop` answers every
-///   tools-carrying request with one more `web_search` call and answers the
-///   final tool-less request with a synthesis, so the app's bounded budget
-///   is what ends the loop.
 ///
 /// Each instance owns a unique fake port, and the `URLProtocol` routes by
 /// port, so concurrently running suites never observe each other's traffic.
@@ -42,9 +38,6 @@ final class GoldenChatFake: @unchecked Sendable {
     enum Event: Equatable, Sendable {
         case chatFinished(chunks: Int)
         case chatCancelled(chunks: Int)
-        case toolLoopCall(id: String)
-        case toolLoopSynthesis(toolResults: Int)
-        case nativeWebSearchCall(id: String)
     }
 
     // MARK: - Fixtures (ported from fake-rapid-mlx.sh)
@@ -59,9 +52,6 @@ final class GoldenChatFake: @unchecked Sendable {
 
     /// `REASONING_CHUNKS`.
     static let reasoningChunks = ["Let", " me", " think", " about", " the", " prompt", "."]
-
-    static let toolLoopSynthesisText = "Golden tool-loop synthesis from existing evidence."
-
     /// `RESPONSE_SHAPES`, in the bash fake's marker-matching order. The one
     /// divergence is `shape:long`: the bash fake repeats `CONTENT_CHUNKS`,
     /// while the in-process scroll journeys need a unique tail sentinel to
@@ -138,14 +128,6 @@ final class GoldenChatFake: @unchecked Sendable {
     /// (`FAKE_CONTENT_REPEAT`). Stop journeys set this high enough that a
     /// stream can never outrun the press racing to cancel it.
     var contentRepeat: Int = 1
-
-    /// The in-process `RAPID_GUI_WEB_SEARCH_FIXTURE`: when enabled and the
-    /// request advertises `web_search`, the fake "model" natively chooses
-    /// that tool once per user turn, then synthesizes normally after the app
-    /// appends the call's result. Deliberately not keyed to prompt keywords:
-    /// product routing belongs to the model's tool choice, never to
-    /// app-side regexes.
-    var nativeWebSearchFixture = false
 
     // MARK: - Recorded evidence
 
@@ -263,31 +245,6 @@ final class GoldenChatFake: @unchecked Sendable {
         return ["choices": [["delta": delta, "finish_reason": finishValue]]]
     }
 
-    fileprivate static func toolCallDelta(id: String) -> [String: Any] {
-        let arguments = try! JSONSerialization.data(
-            withJSONObject: ["query": "golden tool loop evidence"]
-        )
-        return [
-            "choices": [
-                [
-                    "delta": [
-                        "tool_calls": [
-                            [
-                                "index": 0,
-                                "id": id,
-                                "type": "function",
-                                "function": [
-                                    "name": "web_search",
-                                    "arguments": String(decoding: arguments, as: UTF8.self),
-                                ],
-                            ]
-                        ]
-                    ],
-                    "finish_reason": "tool_calls",
-                ]
-            ]
-        ]
-    }
 
     // MARK: - The URLProtocol
 
@@ -396,80 +353,6 @@ final class GoldenChatFake: @unchecked Sendable {
             let lastUser = GoldenChatFake.lastUserText(in: body) ?? ""
             let delay = fake.interChunkDelay
 
-            // Deterministic runaway-model fixture: the app must execute only
-            // its bounded budget, then issue one final request with no tools;
-            // that request gets a synthesis rather than another tool call.
-            if lastUser.contains("shape:tool-loop") {
-                let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
-                let messages = (object?["messages"] as? [[String: Any]]) ?? []
-                let toolResults = messages.filter { ($0["role"] as? String) == "tool" }.count
-                let hasTools = ((object?["tools"] as? [Any]) ?? []).isEmpty == false
-                if hasTools {
-                    let callID = "golden_loop_\(toolResults + 1)"
-                    deliver {
-                        // Recorded before `[DONE]` becomes observable so a
-                        // consumer that stops reading at `[DONE]` never
-                        // races the event log.
-                        fake.record(event: .toolLoopCall(id: callID))
-                        $0.urlProtocol(
-                            self,
-                            didLoad: GoldenChatFake.sse(GoldenChatFake.toolCallDelta(id: callID))
-                        )
-                        $0.urlProtocol(self, didLoad: Data("data: [DONE]\n\n".utf8))
-                        $0.urlProtocolDidFinishLoading(self)
-                    }
-                } else {
-                    deliver {
-                        fake.record(event: .toolLoopSynthesis(toolResults: toolResults))
-                        $0.urlProtocol(
-                            self,
-                            didLoad: GoldenChatFake.sse(
-                                GoldenChatFake.delta(
-                                    content: GoldenChatFake.toolLoopSynthesisText,
-                                    finish: "stop"
-                                )
-                            )
-                        )
-                        $0.urlProtocol(self, didLoad: Data("data: [DONE]\n\n".utf8))
-                        $0.urlProtocolDidFinishLoading(self)
-                    }
-                }
-                return
-            }
-
-            // Native web-tool fixture (`RAPID_GUI_WEB_SEARCH_FIXTURE`): on
-            // each new user turn the fake model chooses the advertised
-            // `web_search` tool, then synthesizes normally once the app has
-            // appended that call's result.
-            if fake.nativeWebSearchFixture {
-                let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
-                let messages = (object?["messages"] as? [[String: Any]]) ?? []
-                let advertisesWebSearch = ((object?["tools"] as? [[String: Any]]) ?? [])
-                    .contains {
-                        (($0["function"] as? [String: Any])?["name"] as? String) == "web_search"
-                    }
-                let lastUserIndex = messages.lastIndex { ($0["role"] as? String) == "user" }
-                if advertisesWebSearch, let lastUserIndex {
-                    let hasResultForTurn = messages[(lastUserIndex + 1)...]
-                        .contains { ($0["role"] as? String) == "tool" }
-                    if !hasResultForTurn {
-                        let callID = "golden_search_\(lastUserIndex)"
-                        deliver {
-                            fake.record(event: .nativeWebSearchCall(id: callID))
-                            $0.urlProtocol(
-                                self,
-                                didLoad: GoldenChatFake.sse(
-                                    GoldenChatFake.toolCallDelta(id: callID)
-                                )
-                            )
-                            $0.urlProtocol(self, didLoad: Data("data: [DONE]\n\n".utf8))
-                            $0.urlProtocolDidFinishLoading(self)
-                        }
-                        return
-                    }
-                }
-            }
-
             var contentEmitted = 0
             for reasoning in GoldenChatFake.reasoningChunks {
                 guard deliver({
@@ -531,10 +414,9 @@ struct GoldenChatSurface {
     let fake: GoldenChatFake
 
     static func mount(
-        fake: GoldenChatFake = GoldenChatFake(),
-        tools: (any ToolRegistry)? = nil
+        fake: GoldenChatFake = GoldenChatFake()
     ) -> GoldenChatSurface {
-        let (server, chat) = assemble(fake: fake, tools: tools, conversationStoreURL: nil)
+        let (server, chat) = assemble(fake: fake, conversationStoreURL: nil)
         let view = ChatView(
             viewModel: chat,
             server: server,
@@ -557,12 +439,10 @@ struct GoldenChatSurface {
     /// analog of the bash harness's `relaunch_persona`.
     static func mountWithSidebar(
         fake: GoldenChatFake = GoldenChatFake(),
-        tools: (any ToolRegistry)? = nil,
         conversationStoreURL: URL
     ) -> GoldenChatSurface {
         let (server, chat) = assemble(
             fake: fake,
-            tools: tools,
             conversationStoreURL: conversationStoreURL
         )
         let view = SidebarChatHarnessView(chat: chat, server: server)
@@ -575,7 +455,6 @@ struct GoldenChatSurface {
 
     private static func assemble(
         fake: GoldenChatFake,
-        tools: (any ToolRegistry)?,
         conversationStoreURL: URL?
     ) -> (ServerManager, ChatViewModel) {
         // The server publishes the fake's port so ChatViewModel's
@@ -587,10 +466,6 @@ struct GoldenChatSurface {
         )
         let chat = ChatViewModel(
             client: ChatStreamClient(baseURL: fake.baseURL, session: fake.session()),
-            tools: tools ?? EmptyToolRegistry(),
-            // A fresh, never-written suite: tools stay at their built-in
-            // enabled default regardless of this machine's real settings.
-            toolDefaults: UserDefaults(suiteName: "golden-surface-\(UUID().uuidString)")!,
             server: server,
             persistsConversations: conversationStoreURL != nil,
             conversationStoreURL: conversationStoreURL

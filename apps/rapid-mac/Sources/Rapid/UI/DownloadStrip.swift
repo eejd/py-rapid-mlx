@@ -187,7 +187,7 @@ struct DownloadStrip: View {
                 alias: job.alias,
                 source: job.source == .mirror ? .huggingFace : .mirror
             )
-        case .openModelManagement, .openWebSearchSettings:
+        case .openModelManagement:
             // A download job only ever produces ``.retry`` /
             // ``.switchDownloadSource`` today, so these are latent. Wiring
             // them anyway costs two lines and keeps the strip from growing the

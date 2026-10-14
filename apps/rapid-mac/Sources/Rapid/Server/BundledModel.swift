@@ -49,11 +49,7 @@ import Foundation
 /// controlled repro. Both numbers describe the same result, so quote
 /// the 16/16 -- it is the whole sample, not a subset of it. 170 tok/s
 /// with no reasoning
-/// phase. It is a text-first pick: unlike Bonsai it is not currently
-/// listed in ``ToolUseCapability``, so the empty-state capability
-/// chips stay hidden until someone measures its tool calls. That is
-/// the intended fail-closed posture — do not add it to the known
-/// list on the strength of the engine's ``lfm`` parser alone.
+/// phase. It is a text-first pick for ordinary chat.
 ///
 /// ## Why this lives in ``Server/`` not ``UI/``
 ///

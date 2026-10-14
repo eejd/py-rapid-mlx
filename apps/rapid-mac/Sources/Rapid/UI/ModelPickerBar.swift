@@ -1238,21 +1238,6 @@ struct ModelPickerBar: View {
     /// hyphenated alias rename. Lifted out so tests can pin the
     /// per-bucket output without standing up a SwiftUI host.
     ///
-    /// #133: when the alias is non-``.known`` per
-    /// ``ToolUseCapability`` (broken or unknown), a second badge is
-    /// appended after the quality sticker. The two stickers compose:
-    /// a 1-3B model that is ``.broken`` reads
-    /// ``"<alias> · small · no tools"`` (the ``.tiny`` sub-1B band
-    /// would read ``"<alias> · tiny · no tools"`` — #348 split the
-    /// suffix per bucket); a sub-3B model that is ``.unknown`` reads
-    /// ``"<alias> · small · tools unverified"`` (or "· tiny" for
-    /// sub-1B) (FU-9 — softer copy for the unbenched case so we
-    /// don't declare an untested alias broken). NSMenuItem honours only
-    /// the first ``Text`` inside a SwiftUI ``Menu`` button label so
-    /// the badge has to ride in the title string itself (the same
-    /// trade-off the quality sticker made in cycle-10). Order is
-    /// quality → tools so the size cue stays adjacent to the alias
-    /// name; both badges share the leading " · " separator.
     static func aliasButtonTitle(alias: String, bucket: ModelPickerVisibility.QualityBucket) -> String {
         var title = alias
         if let suffix = ModelPickerVisibility.qualityStickerSuffix(for: bucket) {
@@ -1268,30 +1253,10 @@ struct ModelPickerBar: View {
     /// warning AND no cache info — SwiftUI ``.help("")`` is a no-op
     /// which is the desired "nothing to surface" outcome.
     ///
-    /// #133: when the alias is badged for no-tools, the tooltip
-    /// surfaces the WHY ("Tool calls are unverified / unreliable on
-    /// this model.") so a sighted user hovering the row understands
-    /// the badge before they click. Composed onto a separate line
-    /// after the quality-tooltip + cache hint so all three signals
-    /// stack without crowding.
     static func aliasRowHelpText(bucket: ModelPickerVisibility.QualityBucket, cached: Bool) -> String {
         return aliasRowHelpText(alias: "", bucket: bucket, cached: cached)
     }
 
-    /// #133 overload — same shape as the original two-arg helper but
-    /// adds the tools-badge tooltip when ``alias`` is non-``.known``.
-    /// Kept as an overload so existing callers (and the existing
-    /// ``ModelPickerBarTests`` suite) still resolve against the
-    /// two-arg form without churn.
-    ///
-    /// FU-9: the appended line now varies by ``ToolUseConfidence``
-    /// so the hover tooltip mirrors the per-state badge wording.
-    /// ``.broken`` reads as "ignores tool calls" (empirical evidence
-    /// earned the strong copy); ``.unknown`` reads as "tools are
-    /// unverified" (we don't have a signal either way; don't
-    /// declare the alias broken). Both states still suppress the
-    /// empty-state chip row — the tooltip just stops conflating
-    /// "tested and bad" with "untested".
     static func aliasRowHelpText(
         alias: String,
         bucket: ModelPickerVisibility.QualityBucket,
@@ -1299,26 +1264,7 @@ struct ModelPickerBar: View {
     ) -> String {
         let cacheHint = cached ? String(localized: "Already downloaded") : String(localized: "Will download on Start")
         let base = ModelPickerVisibility.qualityRowHelpText(for: bucket, cacheHint: cacheHint)
-        let confidence = ToolUseCapability.confidence(for: alias)
-        let toolsLine: String
-        switch confidence {
-        case .known:
-            return base
-        case .broken:
-            toolsLine = String(localized: "Tools are off on this model — empirical bench shows it ignores tool calls and hallucinates the answer. Chips that promise tools are hidden on the empty-state hero.")
-        case .unknown:
-            toolsLine = String(localized: "Tool calls are unverified on this model — we have no bench signal yet. Chips that promise tools are hidden on the empty-state hero until verified.")
-        }
-        // Empty alias resolves to .unknown above, but
-        // ``shouldBadgeAliasForToolUse`` defensively suppresses for
-        // the picker placeholder row; mirror that here so the
-        // two-arg overload (alias="") never inherits the FU-9
-        // tooltip when no model is selected.
-        guard !alias.isEmpty else { return base }
-        if base.isEmpty {
-            return toolsLine
-        }
-        return "\(base)\n\(toolsLine)"
+        return base
     }
 
     /// Pure helper — compose the VoiceOver label for one alias row
@@ -1327,15 +1273,6 @@ struct ModelPickerBar: View {
     /// <quality cue>"`` — comma-separated tokens are how AppKit /
     /// VoiceOver consumes a composed accessibility label.
     ///
-    /// #133: when the alias has a non-``nil`` badge per
-    /// ``ToolUseCapability.badgeLabel(forAlias:)``, the composed
-    /// label appends the per-state copy so blind users get the same
-    /// signal sighted users see in the alias-row suffix.
-    ///
-    /// FU-9: the appended token now varies by ``ToolUseConfidence``
-    /// (", no tools" for ``.broken``; ", tools unverified" for
-    /// ``.unknown``) so VoiceOver mirrors the visible-label split
-    /// instead of pinning both states to "no tools".
     static func aliasRowAccessibilityLabel(
         alias: String,
         cached: Bool,

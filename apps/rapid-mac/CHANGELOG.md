@@ -17,6 +17,11 @@ can actually understand.
 
 ## [Unreleased]
 
+### Changed
+
+- Removed Personal Intelligence and the built-in chat tool controls. Chat now
+  sends plain model requests; Work handles agent tasks in its own session.
+
 ### Fixed
 
 - Invalid image settings report the model’s validation message as HTTP 400. Asset-independent parameter checks (steps, dimensions, guidance, negative prompt, character limits, and input-image rules) reject requests before any download or load. HiDream’s token limit is only evaluated once the model’s assets are available and also returns HTTP 400; a cold request downloads and loads the model first.

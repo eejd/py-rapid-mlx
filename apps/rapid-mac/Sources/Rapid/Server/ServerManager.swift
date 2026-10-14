@@ -831,9 +831,7 @@ final class ServerManager {
     /// inherits that choice; the chat surface derives its default from
     /// ``PortSweep.defaultPort`` via ``ChatStreamClient.loopbackURL(port:)``
     /// and re-targets onto ``activePort`` at first request.
-    /// Loopback only. ``internal`` (was private) so ``MCPCatalog`` can build
-    /// its own requests against the same address the chat stream uses rather
-    /// than hardcoding a second copy of the literal.
+    /// Loopback only. Shared with local clients that connect to the engine.
     let host: String = "127.0.0.1"
 
     /// The port the most recent ``start()`` actually bound rapid-mlx
@@ -879,22 +877,10 @@ final class ServerManager {
     /// the Keychain—not in UserDefaults or this struct.
     private(set) var embeddedBearerStatus = EmbeddedBearerStatus.notMaterialized
 
-    /// Supplies the `--mcp-config` path for the next spawn, or `nil` to launch
-    /// with the MCP subsystem entirely absent.
-    ///
-    /// Issue #1716. A closure rather than a stored path because the answer
-    /// changes while the app is running (the user adds a connector, or turns
-    /// the master switch off) and is owned by ``MCPConfigStore``, which lives
-    /// in the SwiftUI environment. ``RapidApp`` installs it at construction;
-    /// tests and the dev-snapshot harness leave it nil and get the pre-#1716
-    /// argv verbatim.
-    var mcpConfigPathProvider: (() -> String?)?
-
     /// Supplies the user's per-model performance flags for the alias about to
     /// be spawned, or an empty array when they have no opinion about it.
     ///
-    /// Issue #1717. Same closure shape and rationale as
-    /// ``mcpConfigPathProvider``: the answer is owned by
+    /// Issue #1717. The answer is owned by
     /// ``ModelPerfConfigStore`` in the SwiftUI environment and changes while
     /// the app runs, and every start path (cold start, crash recovery,
     /// auto-respawn) funnels through ``start(alias:)`` without threading
@@ -3035,7 +3021,6 @@ final class ServerManager {
             // can add their first connector long after the app launched, and
             // a path captured in ``init`` would still be nil on the next
             // start. Nil whenever connectors are off or empty.
-            mcpConfigPath: mcpConfigPathProvider?(),
             videoOutputDirectory: videoOutputDirectory,
             capabilities: runtimeCapabilities,
             localSearchEnabled: LocalSearchFeatureConfig.isEnabled()
@@ -4899,7 +4884,6 @@ final class ServerManager {
         host: String,
         port: Int,
         extraFlags: [String] = [],
-        mcpConfigPath: String? = nil,
         videoOutputDirectory: String? = nil,
         capabilities: ServerRuntimeCapabilities = .conservative,
         localSearchEnabled: Bool = LocalSearchFeatureConfig.defaultEnabled,
@@ -4948,17 +4932,6 @@ final class ServerManager {
         }
         if let videoOutputDirectory, !videoOutputDirectory.isEmpty {
             args.append(contentsOf: ["--video-output-dir", videoOutputDirectory])
-        }
-        // Issue #1716: point the child at the connector config the app owns
-        // (``MCPConfigStore``). Only non-nil when the user has turned
-        // connectors on AND has at least one enabled server — MCP spawns
-        // arbitrary local processes, so the subsystem stays entirely absent
-        // until it is asked for.
-        //
-        // Safe after ``--cors-origins`` for the same reason ``extraFlags`` is:
-        // the leading ``--`` terminates that flag's ``nargs="+"`` collection.
-        if let mcpConfigPath, !mcpConfigPath.isEmpty {
-            args.append(contentsOf: ["--mcp-config", mcpConfigPath])
         }
         return args
     }

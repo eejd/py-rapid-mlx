@@ -337,7 +337,6 @@ struct SettingsDeepLinkRoutingTests {
     /// action cannot ship without someone stating where it goes.
     private static let expected: [FailureDiagnosis.Action: SettingsView.Category?] = [
         .openModelManagement: .modelManagement,
-        .openWebSearchSettings: .tools,
         // Handled in place by the view that owns the failed operation; opening
         // Settings for these would be a non-sequitur.
         .retry: nil,
@@ -385,13 +384,9 @@ struct SettingsDeepLinkRoutingTests {
         #expect(SettingsRouter.settingsCategory(for: action) == .modelManagement)
     }
 
-    @Test("a throttled web search lands the user on Tools")
+    @Test("a legacy throttled web search has no dead Settings link")
     func rateLimitedSearchRoutesToTools() throws {
-        let action = try #require(
-            FailureDiagnoser.diagnosis(for: .webSearchRateLimited).action
-        )
-        #expect(action == .openWebSearchSettings)
-        #expect(SettingsRouter.settingsCategory(for: action) == .tools)
+        #expect(FailureDiagnoser.diagnosis(for: .webSearchRateLimited).action == nil)
     }
 
     /// No diagnosis may offer a button that opens nothing. This is the whole
@@ -434,18 +429,6 @@ struct SettingsDeepLinkRoutingTests {
         #expect(diagnosis.severity == .error)
     }
 
-    @Test("a legacy permission-denied row renders no inline tool-card button")
-    func permissionKindsRenderNoInlineButton() {
-        for kind in [FailureDiagnosis.Kind.commandPermissionDenied, .filePermissionDenied] {
-            #expect(
-                FailureDiagnosis.inlineToolCardAction(
-                    for: FailureDiagnoser.diagnosis(for: kind),
-                    canRouteToSettings: true
-                ) == nil
-            )
-        }
-    }
-
     // MARK: - Ordering
 
     /// ``SettingsView`` consumes ``SettingsRouter/requestedCategory`` from
@@ -462,7 +445,6 @@ struct SettingsDeepLinkRoutingTests {
         "route stages the tab before the window opens",
         arguments: [
             (FailureDiagnosis.Action.openModelManagement, SettingsView.Category.modelManagement),
-            (FailureDiagnosis.Action.openWebSearchSettings, SettingsView.Category.tools),
         ]
     )
     func routeStagesBeforeOpening(

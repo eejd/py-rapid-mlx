@@ -182,7 +182,6 @@ enum CommandPalette {
         case launch
         case settings
         case modelManagement
-        case connectors
         case serverLogs
         case exportDiagnostics
         case checkUpdates
@@ -198,7 +197,6 @@ enum CommandPalette {
             case .launch: return "Open Agent"
             case .settings: return "Open Settings"
             case .modelManagement: return "Open Model Management"
-            case .connectors: return "Open MCP Connectors"
             case .serverLogs: return "Show or hide server logs"
             case .exportDiagnostics: return "Export diagnostics…"
             case .checkUpdates: return "Check for updates"
@@ -214,7 +212,6 @@ enum CommandPalette {
             case .launch: return "network"
             case .settings: return "gearshape"
             case .modelManagement: return "externaldrive.fill"
-            case .connectors: return "powerplug.fill"
             case .serverLogs: return "terminal"
             case .exportDiagnostics: return "stethoscope"
             case .checkUpdates: return "arrow.triangle.2.circlepath"
@@ -230,7 +227,6 @@ enum CommandPalette {
             case .launch: return "connect agents tools launch"
             case .settings: return "preferences configuration settings"
             case .modelManagement: return "models download cache storage"
-            case .connectors: return "mcp tools integrations connectors"
             case .serverLogs: return "diagnostics output terminal logs"
             case .exportDiagnostics: return "support report troubleshoot diagnostics"
             case .checkUpdates: return "upgrade version software update"
@@ -246,7 +242,6 @@ enum CommandPalette {
             case .launch: return String(localized: String.LocalizationValue("Open Agent"))
             case .settings: return String(localized: String.LocalizationValue("Open Settings"))
             case .modelManagement: return String(localized: String.LocalizationValue("Open Model Management"))
-            case .connectors: return String(localized: String.LocalizationValue("Open MCP Connectors"))
             case .serverLogs: return String(localized: String.LocalizationValue("Show or hide server logs"))
             case .exportDiagnostics: return String(localized: String.LocalizationValue("Export diagnostics…"))
             case .checkUpdates: return String(localized: String.LocalizationValue("Check for updates"))

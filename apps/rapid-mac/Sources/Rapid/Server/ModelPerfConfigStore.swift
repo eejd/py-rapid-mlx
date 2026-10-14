@@ -17,11 +17,9 @@ import Observation
 /// default that changes in a later release reaches every user who never
 /// expressed an opinion.
 ///
-/// Storage is a single `UserDefaults` JSON blob rather than a file under
-/// `~/.config`, unlike ``MCPConfigStore``. The engine does not read this — it
-/// is desktop-side state that becomes argv — so there is no interop shape to
-/// honour, and `UserDefaults` keeps it inside the app sandbox with the rest of
-/// the app's settings.
+/// Storage is a single `UserDefaults` JSON blob. The engine does not read
+/// this directly; desktop state becomes argv. `UserDefaults` keeps it inside
+/// the app sandbox with the rest of the app's settings.
 @MainActor
 @Observable
 final class ModelPerfConfigStore {

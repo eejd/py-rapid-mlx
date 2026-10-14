@@ -129,22 +129,6 @@ struct RapidApp: App {
     /// Same defaults key ContentView's footer toggle and drawer close button
     /// write, so all three stay in lockstep.
     @AppStorage(ContentView.showLogsKey) private var showLogs: Bool = false
-    /// Web-search backend + API key, shared by the tool runner and Settings.
-    @State private var webSearch: WebSearchConfig
-    /// Per-fetch approval gate for the ``browse`` tool, shared by the tool
-    /// runner (which suspends on it) and the SwiftUI approval sheet.
-    @State private var browseApproval: BrowseApprovalStore
-    /// Consent gate for built-in local workspace reads and actions.
-    @State private var localToolApproval: LocalToolApprovalStore
-    /// MCP connectors (issue #1716) — the config file the engine reads, the
-    /// live state it reports back, the per-tool consent gate, and the registry
-    /// that ties them into the chat loop.
-    @State private var mcpConfig: MCPConfigStore
-    @State private var mcpCatalog: MCPCatalog
-    @State private var mcpApproval: MCPToolApprovalStore
-    @State private var mcpTools: MCPToolRegistry
-    /// Per-model performance overrides (issue #1717) — the KV-cache and
-    /// prefix-cache flags the app hands the engine at spawn.
     @State private var perfConfig: ModelPerfConfigStore
 
     /// AppKit delegate — installs the menu-bar tray + tears down the
@@ -223,64 +207,6 @@ struct RapidApp: App {
         // Apply the persisted theme override before the first window
         // renders so the user doesn't see a flash of the wrong mode.
         appearanceConfig.apply()
-        // Built-in tools. The registry owns the two stores the tools consult
-        // at dispatch time, and the app re-publishes them into the environment
-        // so Settings + the approval sheet bind to the same instances.
-        let webSearchConfig = WebSearchConfig()
-        let browseApprovalStore = BrowseApprovalStore()
-        let localToolApprovalStore = LocalToolApprovalStore()
-        let builtinRegistry = BuiltinToolRegistry(
-            browseApproval: browseApprovalStore,
-            webSearch: webSearchConfig,
-            localApproval: localToolApprovalStore
-        )
-        _webSearch = State(initialValue: webSearchConfig)
-        _browseApproval = State(initialValue: browseApprovalStore)
-        _localToolApproval = State(initialValue: localToolApprovalStore)
-
-        // Issue #1716: MCP connectors. The config store owns the file the
-        // engine child reads; the catalog reads back what that child actually
-        // connected to; the approval store gates every call the model makes.
-        // All three are republished into the environment so Settings and the
-        // approval dialog bind to the same instances the tool runner consults.
-        let mcpConfigStore = MCPConfigStore()
-        let mcpApprovalStore = MCPToolApprovalStore()
-        let mcpCatalog = MCPCatalog { [weak manager] in
-            // Only report an endpoint once the child answered /healthz —
-            // polling a starting server just logs connection refusals, and a
-            // stopped one has no bearer to authenticate with.
-            guard let manager, manager.servingAlias != nil,
-                  let bearer = manager.activeBearer else { return nil }
-            return (host: manager.host, port: manager.activePort, bearer: bearer)
-        }
-        let mcpRegistry = MCPToolRegistry(catalog: mcpCatalog, approval: mcpApprovalStore)
-        let toolRegistry = CompositeToolRegistry(builtin: builtinRegistry, mcp: mcpRegistry)
-        // Resolved at each spawn rather than captured now — see
-        // ``ServerManager/mcpConfigPathProvider``.
-        manager.mcpConfigPathProvider = { [weak mcpConfigStore] in
-            MainActor.assumeIsolated { mcpConfigStore?.launchConfigPath }
-        }
-        // Editing what a connector runs (or removing it) drops any "always
-        // allow" remembered against it, so consent can't transfer to code the
-        // user never approved.
-        mcpConfigStore.onServerReconfigured = { [weak mcpApprovalStore] serverName in
-            mcpApprovalStore?.revokeGrants(forServer: serverName)
-        }
-        // The config file is hand-editable, and an edit made while the app was
-        // closed never hits the hook above. Reconcile once at launch against
-        // the loaded connectors' fingerprints so a hand-swapped command drops
-        // its grant before any tool can run.
-        mcpApprovalStore.reconcileGrants(
-            against: Dictionary(
-                mcpConfigStore.servers.map { ($0.name, $0.executionFingerprint) },
-                uniquingKeysWith: { first, _ in first }
-            )
-        )
-        _mcpConfig = State(initialValue: mcpConfigStore)
-        _mcpCatalog = State(initialValue: mcpCatalog)
-        _mcpApproval = State(initialValue: mcpApprovalStore)
-        _mcpTools = State(initialValue: mcpRegistry)
-
         // Issue #1717: per-model performance overrides. Resolved at each spawn
         // for the alias being started — see ``ServerManager/
         // perfLaunchFlagsProvider``. Empty for every alias the user has not
@@ -307,7 +233,6 @@ struct RapidApp: App {
         _perfConfig = State(initialValue: perfConfigStore)
 
         let chat = ChatViewModel(
-            tools: toolRegistry,
             sampling: samplingConfig,
             customInstructions: customInstructionsConfig,
             memoryStore: memoryStore,
@@ -446,13 +371,6 @@ struct RapidApp: App {
                 .environment(installTracker)
                 .environment(quickstart)
                 .environment(dockPromptStore)
-                .environment(webSearch)
-                .environment(browseApproval)
-                .environment(localToolApproval)
-                .environment(mcpConfig)
-                .environment(mcpCatalog)
-                .environment(mcpApproval)
-                .environment(mcpTools)
                 .environment(perfConfig)
                 .task {
                     // DEV-ONLY: render real screens to PNG when
@@ -664,13 +582,6 @@ struct RapidApp: App {
                 .environment(updater)
                 .environment(sparkleUpdater)
                 .environment(dockPromptStore)
-                .environment(webSearch)
-                .environment(browseApproval)
-                .environment(localToolApproval)
-                .environment(mcpConfig)
-                .environment(mcpCatalog)
-                .environment(mcpApproval)
-                .environment(mcpTools)
                 .environment(perfConfig)
         }
         .windowResizability(.contentMinSize)

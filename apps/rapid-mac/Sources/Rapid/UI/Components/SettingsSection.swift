@@ -6,8 +6,7 @@ import SwiftUI
 ///
 /// Before this, four panels each carried a private copy of the same two
 /// helpers — `SettingsView.settingsCard`/`sectionHeader`,
-/// `SettingsToolsPanel.card`/`header`,
-/// `SettingsConnectorsPanel.card`/`header`, plus six inline repetitions
+/// plus six inline repetitions
 /// of the same `RoundedRectangle` recipe in
 /// `SettingsModelManagementPanel`. Four copies meant four radii to keep
 /// in sync, four heading sizes, and four sets of padding, and they had

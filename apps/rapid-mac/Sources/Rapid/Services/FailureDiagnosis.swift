@@ -143,38 +143,18 @@ struct FailureDiagnosis: Equatable, Sendable {
     /// (``SettingsRouter/settingsCategory(for:)``) be pinned exhaustively by a
     /// test, so a new case cannot be added without a stated destination.
     ///
-    /// **Removed:** `openPermissions`. It titled a button "Open Permissions"
-    /// and had nowhere to send it — this app's ``SettingsView/Category`` set
-    /// is `models, modelManagement, tools, appearance, privacy, app`, and none
-    /// of those holds a folder-grant or file-access control (Settings →
-    /// Privacy is telemetry consent). Nor were the conditions that produced it
-    /// reachable: it was emitted only for ``Kind/commandPermissionDenied`` and
-    /// ``Kind/filePermissionDenied``, which ``FailureDiagnoser/toolFailureKind``
-    /// derives only for the tool names `run_command`, `read_file`,
-    /// `list_directory`, `write_file`, and `edit_file` — none of which this
-    /// build ships (see ``BuiltinToolRegistry``: filesystem and shell tools are
-    /// deliberately absent because there is no sandbox manager to gate them).
-    /// Routing it to the "closest" tab would only have moved the dead end and
-    /// kept a label that lies about what the user will find there, so the two
-    /// kinds now carry no action at all. The ``Kind`` cases stay — they are
-    /// persisted in transcripts and must keep decoding.
+    /// Actions remain for active model, download, and chat failures.
     enum Action: String, CaseIterable, Equatable, Sendable {
         case retry
         case restart
         case openModelManagement
         case switchDownloadSource
-        /// Deep-link to Settings → Tools, where the web-search backend is
-        /// chosen and its key is pasted. Routed through ``SettingsRouter``
-        /// like the other "open Settings on THIS tab" actions.
-        case openWebSearchSettings
-
         var title: String {
             switch self {
             case .retry: return "Retry"
             case .restart: return "Restart"
             case .openModelManagement: return "Open Model Management"
             case .switchDownloadSource: return "Switch source"
-            case .openWebSearchSettings: return "Open Web Search Settings"
             }
         }
 
@@ -183,7 +163,6 @@ struct FailureDiagnosis: Equatable, Sendable {
             case .retry, .restart: return "arrow.clockwise"
             case .openModelManagement: return "square.stack.3d.up"
             case .switchDownloadSource: return "arrow.triangle.2.circlepath"
-            case .openWebSearchSettings: return "magnifyingglass"
             }
         }
     }
@@ -194,43 +173,7 @@ struct FailureDiagnosis: Equatable, Sendable {
 
     var severity: Severity { kind.severity }
 
-    /// The recovery action a tool card may render inline, or nil for "render
-    /// no button". Three gates, all load-bearing:
-    ///
-    ///   * **Errors only.** A ``Severity/notice`` is an outcome the USER chose
-    ///     (they answered "no" to a permission prompt), so there is nothing for
-    ///     the app to recover and no button to offer. Gating on severity rather
-    ///     than on `action == nil` keeps the card's rule in one place: a notice
-    ///     that ever gains an action still must not sprout a button here.
-    ///   * **Settings deep-links only.** ``.retry`` would have to rewind the
-    ///     whole chat turn; the assistant row above the card already owns that
-    ///     affordance. "Open Settings on the right tab" has nowhere else to
-    ///     live, so it is the one action the card offers.
-    ///   * **Only when the deep-link can actually run.** The card resolves
-    ///     ``SettingsRouter`` optionally so it still renders in a host that
-    ///     never injected one (previews, the snapshot harness). Those hosts
-    ///     have no Settings window to open either — and a visible button that
-    ///     does nothing is precisely the failure this diagnosis exists to
-    ///     remove, so the button must be absent rather than inert.
-    ///
-    /// The action switch is exhaustive with no `default` for the same reason
-    /// ``Kind/severity`` is: a newly added action must state whether the tool
-    /// card offers it, rather than being silently swallowed.
-    ///
-    /// Pure + static because the view that calls it is `private` inside
-    /// ChatView and a SwiftUI body can't be exercised from the test suite.
-    static func inlineToolCardAction(
-        for diagnosis: FailureDiagnosis?,
-        canRouteToSettings: Bool
-    ) -> Action? {
-        guard canRouteToSettings, let diagnosis, diagnosis.severity == .error else { return nil }
-        switch diagnosis.action {
-        case .openWebSearchSettings:
-            return .openWebSearchSettings
-        case .retry, .restart, .openModelManagement, .switchDownloadSource, .none:
-            return nil
-        }
-    }
+
 }
 
 extension FailureDiagnosis.Kind {
@@ -293,20 +236,20 @@ enum FailureDiagnoser {
             message = "The local engine isn't running. Restart it, then try again."
             action = .restart
         case .webSearchOffline:
-            message = "Web search couldn't connect. Turn on network access, then try again."
+            message = "A web search in this older conversation could not connect."
             action = .retry
         case .webSearchUnavailable:
-            message = "Web search couldn't finish. Check its settings, then try again."
+            message = "A web search in this older conversation could not finish."
             action = .retry
         case .webSearchKeyRejected:
-            message = "Keenable rejected this API key. Re-paste it in Settings → Tools, or clear it to use keyless search."
-            action = .openWebSearchSettings
+            message = "A web search in this older conversation failed because its API key was rejected."
+            action = nil
         case .webSearchKeyQuotaExceeded:
-            message = "This Keenable key has used its monthly credits. Check its plan, or clear the key in Settings → Tools to use keyless search."
-            action = .openWebSearchSettings
+            message = "A web search in this older conversation exceeded its API key quota."
+            action = nil
         case .webSearchKeyRateLimited:
-            message = "This Keenable key is rate-limited. Wait a moment, check its plan, or clear the key in Settings → Tools to use keyless search."
-            action = .openWebSearchSettings
+            message = "A web search in this older conversation was rate-limited."
+            action = nil
         case .webSearchRateLimited:
             // Deliberately NOT "check its settings": everything in Settings is
             // already correct when this fires. DuckDuckGo rate-limits the free
@@ -316,8 +259,8 @@ enum FailureDiagnoser {
             // remedy so it still reads inside the tool card. Not Brave any
             // more (#2043): Brave requires a card on file now, so pitching it
             // as the free fix would steer the user into surprise billing.
-            message = "DuckDuckGo is rate-limiting web searches from this Mac. Switch to Keenable (no key) or add a free Parallel or Tavily key in Settings → Tools."
-            action = .openWebSearchSettings
+            message = "A web search in this older conversation was rate-limited."
+            action = nil
         case .browsePageTooLarge:
             message = "This page is too large for Rapid to read at once. Search it or open a smaller page instead."
             action = nil
@@ -398,81 +341,6 @@ enum FailureDiagnoser {
             action = .retry
         }
         return FailureDiagnosis(kind: kind, message: message, action: action)
-    }
-
-    /// Classifies a completed tool result. A non-nil return means the result
-    /// should be styled as failed even if the tool itself returned structured
-    /// output with `isError == false` (notably `run_command` exit failures).
-    ///
-    /// This is a FALLBACK for tools that report nothing but text. A tool that
-    /// knows what happened says so directly by setting
-    /// ``ToolCallResult/failureKind``, and the dispatch boundary
-    /// (``BuiltinToolRegistry/run``) prefers that over anything inferred here.
-    /// ``FailureDiagnosis/Kind/userDeclined`` in particular is ONLY ever
-    /// producer-set: "the user said no" is a fact the approval gate holds, not
-    /// something to re-derive by pattern-matching an English sentence that any
-    /// tool could word differently tomorrow (or that a fetched page could
-    /// contain verbatim).
-    nonisolated static func toolFailureKind(
-        toolName: String,
-        content: String,
-        isError: Bool
-    ) -> FailureDiagnosis.Kind? {
-        let raw = content.lowercased()
-
-        if toolName == "run_command", let command = commandResult(from: content), command.exitCode != 0 {
-            if containsAny(command.stderr.lowercased(), permissionSignals) {
-                return .commandPermissionDenied
-            }
-            if containsAny(command.stderr.lowercased(), missingFileSignals) {
-                return .fileNotFound
-            }
-            return .commandFailed
-        }
-
-        guard isError else { return nil }
-
-        if toolName == "browse",
-           raw.contains("page exceeded"),
-           raw.contains("mb cap") {
-            return .browsePageTooLarge
-        }
-
-        if toolName == "web_search" {
-            // Keenable deliberately returns account failures as errors instead
-            // of silently falling back to the shared keyless pool. Preserve
-            // that precise cause at the UI boundary; collapsing all three to
-            // ``webSearchUnavailable`` hid the only useful recovery action.
-            if raw.contains("keenable rejected the api key") {
-                return .webSearchKeyRejected
-            }
-            if raw.contains("keenable key's monthly credit allowance is used up") {
-                return .webSearchKeyQuotaExceeded
-            }
-            if raw.contains("keenable rate limit hit for this api key") {
-                return .webSearchKeyRateLimited
-            }
-            // ``WebSearchTool`` stamps ``.webSearchRateLimited`` on the result
-            // directly, so this branch only matters for rows restored from an
-            // older transcript (no stored kind) — hence the narrow, DDG-anchored
-            // signals. A Brave/Tavily quota error must NOT land here: telling a
-            // Brave user to "switch to Brave" is the same dead end this fix is
-            // removing.
-            if raw.contains("duckduckgo"), containsAny(raw, duckDuckGoThrottleSignals) {
-                return .webSearchRateLimited
-            }
-            return containsAny(raw, offlineSignals) ? .webSearchOffline : .webSearchUnavailable
-        }
-        if ["read_file", "list_directory", "write_file", "edit_file"].contains(toolName) {
-            if containsAny(raw, missingFileSignals) { return .fileNotFound }
-            if containsAny(raw, permissionSignals) { return .filePermissionDenied }
-        }
-        if toolName == "run_command" {
-            if containsAny(raw, permissionSignals) { return .commandPermissionDenied }
-            if containsAny(raw, missingFileSignals) { return .fileNotFound }
-            return .commandFailed
-        }
-        return .toolFailed
     }
 
     nonisolated static func downloadFailureKind(
@@ -606,20 +474,6 @@ enum FailureDiagnoser {
         return .requestFailed
     }
 
-    private struct CommandResult {
-        let exitCode: Int
-        let stderr: String
-    }
-
-    nonisolated private static func commandResult(from content: String) -> CommandResult? {
-        guard let data = content.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let exitCode = object["exit_code"] as? Int else {
-            return nil
-        }
-        return CommandResult(exitCode: exitCode, stderr: object["stderr"] as? String ?? "")
-    }
-
     nonisolated private static func containsAny(_ value: String, _ signals: [String]) -> Bool {
         signals.contains(where: value.contains)
     }
@@ -628,22 +482,6 @@ enum FailureDiagnoser {
         "not connected to the internet", "network is unreachable", "network connection was lost",
         "could not resolve host", "cannot find host", "cannot connect", "connection refused",
         "connection reset", "dns", "offline", "timed out", "timeout",
-    ]
-
-    /// Throttle wording DuckDuckGo results have carried across releases.
-    /// Only consulted together with a ``duckduckgo`` mention (see
-    /// ``toolFailureKind``).
-    nonisolated private static let duckDuckGoThrottleSignals = [
-        "throttl", "rate limit", "rate-limit", "anti-bot", "blocked this request",
-    ]
-
-    nonisolated private static let missingFileSignals = [
-        "no such file", "file not found", "does not exist", "is missing", "missing or not a directory",
-    ]
-
-    nonisolated private static let permissionSignals = [
-        "operation not permitted", "permission denied", "access is blocked", "access denied",
-        "user denied", "sandbox denial", "deny file-write", "read-only file system",
     ]
 
     nonisolated private static let memorySignals = [

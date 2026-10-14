@@ -375,7 +375,7 @@ enum ModelReadiness: Equatable {
             return alias.map(Action.restart)
         case .retry:
             return alias.map(Action.retry)
-        case .switchDownloadSource, .openWebSearchSettings, .none:
+        case .switchDownloadSource, .none:
             // These actions belong to their originating surfaces, not the
             // readiness banner. Preserve its legacy Retry contract.
             return alias.map(Action.retry)
