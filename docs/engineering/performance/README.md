@@ -6,7 +6,7 @@ summary statistics, and limitations.
 
 ## Reports
 
-- [Frequent-workload inference speed audit (2026-10-14)](2026-10-14-frequent-workload-speed-audit.md): active study; ordinary Gemma first-token work and delayed-arrival prototypes, independent-worker replication, and rejected candidates.
+- [Frequent-workload inference speed audit (2026-10-14)](2026-10-14-frequent-workload-speed-audit.md): completed screening; ordinary Gemma first-token work, delayed-arrival prototypes, independent-worker replication, and rejected candidates.
 
 - [First-token prefill contention benchmark and findings (2026-10-12)](2026-10-12-first-token-prefill.md)
 

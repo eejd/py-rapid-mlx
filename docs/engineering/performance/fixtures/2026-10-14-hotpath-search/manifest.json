@@ -1,8 +1,8 @@
 {
   "baseline": "6d617f51cea61f9fa1cdd07a4dea11f66e04c355",
   "archive": "evidence.tar.gz",
-  "bytes": 52647,
-  "sha256": "a5633264dd8bd199d93bf00c71b2ba656cdbf423372aaa4b5a9adeaa5f186513",
+  "bytes": 64221,
+  "sha256": "c33b20ff08ebd6049996f148576f30acd75e26509df891269fb1ef9ca46ac24c",
   "members": {
     "sampler-helper-tests.txt": {
       "bytes": 69,
@@ -52,6 +52,10 @@
       "bytes": 6489,
       "sha256": "4692d534858eeb775f747bcf25f776077c9aeaf458682993c838f70966b7f170"
     },
+    "scripts/run_prepared.py": {
+      "bytes": 5845,
+      "sha256": "54fa2d21b1b39ef898caf957918f34d77824196f3d1934eee1405f6abde78099"
+    },
     "scripts/run_sampled.py": {
       "bytes": 5866,
       "sha256": "b628b3211916c9ae39a19d2267cb9a373bd0677e50b29ebc7cba93a6e7ca3dc2"
@@ -76,6 +80,10 @@
       "bytes": 2253,
       "sha256": "d4047150d13e2c9bd5ced220a73989439e6ef47dbda2a296bbe42a0a8a4c6d18"
     },
+    "scripts/serve_prepared.py": {
+      "bytes": 4695,
+      "sha256": "3d2d26e7970c19a0eca0fe2da7f94944e822d53a76dfc3167e0d3acc5fdd832f"
+    },
     "scripts/serve_probe.py": {
       "bytes": 3473,
       "sha256": "6066f1025403fd27fa5080d09fb9099a50f39d86cfe6ade341ac33035eabb6d0"
@@ -83,6 +91,10 @@
     "scripts/serve_sampled.py": {
       "bytes": 2082,
       "sha256": "4e74a6003049e09cd8406dd3ae7d665253317e8a9156e897bfa37cfbc57a79c5"
+    },
+    "scripts/validate_evidence.py": {
+      "bytes": 10233,
+      "sha256": "c34a1f53a4d01fa31ffd12d10f7fbce0f9af306a5fb7bd4048e7196b00ac8825"
     },
     "worker-a/compiled-contract.json": {
       "bytes": 317,
@@ -95,6 +107,10 @@
     "worker-a/dense-projection-results.json": {
       "bytes": 8558,
       "sha256": "fbce05918f43f534b5afb9d56a3cf03596b38175f3eb7d639efa0a7500a28259"
+    },
+    "worker-a/dependency-provenance.json": {
+      "bytes": 4652,
+      "sha256": "dc84306222c791317f4c03775814be06893ebd02ec18ea46523f27f3af52bce9"
     },
     "worker-a/e4b-last-logits-host-0.json": {
       "bytes": 1398,
@@ -339,6 +355,10 @@
     "worker-a/official-model-digests.json": {
       "bytes": 1973,
       "sha256": "fc74c9024a681da99725044e401a9ce8781a469c70508f1975e4ad6ac9ca3ed9"
+    },
+    "worker-a/prepared-trials.json": {
+      "bytes": 45663,
+      "sha256": "578f39bc2c87864ead16a437cc5a16098a1aa1d4aa0dedf42b8cdc5e72c2d59d"
     },
     "worker-a/probe-0.json": {
       "bytes": 472,

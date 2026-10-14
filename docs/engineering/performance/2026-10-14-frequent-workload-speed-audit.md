@@ -1,6 +1,6 @@
 # Frequent-workload inference speed audit
 
-Date: 2026-10-14. Owner: Vector. Tracking: #4646. Status: active research.
+Date: 2026-10-14. Owner: Vector. Tracking: #4646. Status: completed screening.
 Serving source and defaults are unchanged; the experiments use isolated process
 prototypes. This report separates actual HTTP results from component probes.
 
@@ -12,6 +12,9 @@ and macOS 26.5.1. Python 3.12.13, MLX 0.32.3, text runtime 0.31.3,
 vision runtime 0.7.2, Transformers 5.15.1, NumPy 2.4.4, HTTPX 0.28.1 and
 psutil 7.2.2. Both use the same seven source-file hashes and identical target
 weight/config/tokenizer hashes. Official large-file digests were checked.
+Both dependency installations were also compared with their official wheels:
+all 1,450 vision-runtime and 166 text-runtime Python source files match on both
+workers. The output option does not rely on a locally patched dependency.
 These are two physical machines of the **same chip generation**, not
 cross-generation qualification.
 
@@ -21,8 +24,9 @@ Models in the completed campaigns:
 - `mlx-community/gemma-4-e2b-it-4bit@238767527555cb75a05732a84dff5d6ba0dd6809`
 - `mlx-community/gemma-4-e4b-it-4bit@475b9088d29754a3379866cf5aeb6b41acd313c2`
 
-The source runs through `PYTHONPATH` over read-only borrowed dependency
-environments. Inherited Rapid distribution metadata says 0.15.7; the recorded
+The source runs through `PYTHONPATH` with task-local environments reusing
+existing dependency packages; installs went only into the task-local environment.
+Inherited Rapid distribution metadata says 0.15.7; the recorded
 source hashes, rather than that installation banner, identify the serving
 implementation. This is not acceptance of a packaged release.
 
@@ -136,6 +140,14 @@ Returned logprob values can differ between cache paths; numerical probability
 identity and comprehensive quality qualification are not claimed. This
 prototype also requires broader model/hardware enrollment work before shipping.
 
+The two opportunities are not additive. Native text prefill already evaluates
+prefix state separately from the final sampled position, so a later routing
+change can subsume the ordinary-text portion of the forward-option saving.
+The media-capable path still needs its own efficient output contract. Any
+combined implementation must be benchmarked as a whole; do not multiply the
+percentages in this report. No experiment here loads a TensorFold provider or
+Nemotron, and Qwen 4B host-work results are not evidence for Qwen 27B.
+
 ## Candidates that did not justify a general speed patch
 
 | Candidate | Executed evidence | Disposition |
@@ -167,17 +179,56 @@ or throughput claim. The subsequent load-only contract probe reproduces the
 missing prerequisites without sending a completion request or opening a server.
 The later forward-option correctness run overlapped memory retained by that
 failed process before cleanup; its 56 checks are not quiet-host performance
-evidence. All performance campaigns reported above preceded the failed attempt.
+evidence. The earlier performance campaigns preceded the failed attempt; the
+host-preparation study below began after explicit cleanup.
 
-Source inspection confirms existing implementations for continuous text
-batching, shared-weight dense Qwen routing, cooperative prefill, adaptive
-prefill budgets, exact prompt rendering/tokenization caches, hybrid prefix
-checkpoints, incremental detokenization/history references, per-step executor
-coalescing, native sampler fusion, selected expert/GDN fusion, and image-feature
-reuse. These should be reused and their enrollment boundaries understood before
-adding parallel mechanisms. Existing whole-step replay has explicit numerical,
-cache-layout and wrapper-state restrictions; dense native replay was checked
-separately rather than assumed safe.
+## Growing conversations: useful CPU cleanup, small end-to-end effect
+
+The remaining host-work hypothesis was tested on ordinary Qwen 4B with prefix
+caching enabled. Its boundary probe already encodes the prompt through the
+native host cache, then the singleton multimodal processor encodes it again.
+The prototype passes the already-computed IDs through the existing internal
+pre-tokenized contract and preserves the original all-valid attention mask.
+It does not guess tokenization of a new suffix or introduce cross-turn token
+splicing. Enrollment is restricted to the observed no-BOS/ByteLevel processing
+contract and the existing shared-native dense bridge.
+
+Four fresh order-balanced servers each populate three conversations, then
+append three assistant/user turns to each. All 48 streams finish correctly;
+all matching input-ID hashes, attention-mask hashes, usage and cached-token
+counts are identical across arms. The warm rows are:
+
+| Prompt token range | Existing → reuse median TTFT | Processor thread CPU |
+| --- | ---: | ---: |
+| 1,757–1,815 | 155.03 → 154.98 ms | 1.329 → 0.096 ms |
+| 7,133–7,191 | 195.15 → 193.01 ms | 4.776 → 0.246 ms |
+| 29,686–29,744 | 371.05 → 354.18 ms | 20.056 → 1.328 ms |
+
+There are six warm observations per arm per size. These are instrumented
+exploratory HTTP measurements, with additional equal hash-observation work and
+without a separate host sampler. The largest median TTFT difference is about
+4.5%, versus approximately 0–1.1% at the smaller sizes. This identifies bounded
+redundant CPU work, not a large general speedup or an immediately qualified
+serving patch. It ranks below the two larger opportunities above.
+
+The ten executable hypotheses now have either positive HTTP evidence, a small
+or negative effect, or a concrete failed enrollment/correctness disposition.
+The source audit also checked the common mechanisms below, so existing work is
+not mistaken for a new generic optimization:
+
+| Mechanism | Existing integration boundary / disposition |
+| --- | --- |
+| Continuous batching and dense text routing | `engine/batched.py`, `scheduler.py`: qualified dense Qwen already has shared native text scheduling; Gemma enrollment was measured separately. |
+| Prefill fairness and adaptive budgets | `mllm_batch_generator.py`, `scheduler.py`: qualified cooperative continuation and token budgets already exist; they are not automatically applicable to every wrapper. |
+| KV and recurrent prefix reuse | `memory_cache.py`, `mllm_cache.py`, `prefix_cache.py`: reuse requires real state and valid checkpoint boundaries. |
+| Prompt host work | `prompt_host_cache.py`, `prompt_token_reuse.py`: exact renders/encodes and boundary variants already reuse work; the remaining duplicate pass was measured above. |
+| Incremental output processing | `mllm_scheduler.py`, `scheduler.py`, `service/postprocessor.py`: existing incremental detokenizers and live histories avoid the obvious repeated-history work. |
+| CPU/GPU overlap and dispatch amortization | `mllm_batch_generator.py`, `engine_core.py`: compute-ahead and native step coalescing are present; broader layer submission was tested and did not help. |
+| Sampling and selected kernel fusion | `_sampler_fast_path.py`, `moe_fusion.py`, `gdn_in_proj_fusion.py`, `qwen35_fused_gdn_decode.py`: existing qualified patterns were reused before testing wider enrollment. |
+| Image-feature reuse | `vision_embedding_cache.py`, `mllm_batch_generator.py`: existing content-keyed processor/feature reuse remains independent of the output-row optimization. |
+| KV precision choices | `quantized_batch_cache.py`, `kv_cache_dtype.py`: supported layouts already expose precision choices; changing model/cache fidelity is not a missing execution mechanism. |
+| Shared prefix memory | `singleton_cache_fastpath.py`, `paged_cache.py`: copy-on-admit protects retained state. An [earlier controlled study](2026-09-13-apcv2-host-prompt-plane.md) rejected naïve broadcast; segmented attention needs a separate native implementation. |
+| Graph replay / device-specific execution | `compiled_decode.py`, `compiled_precision.py`, native kernels: numerical, cache-layout and wrapper-state contracts matter. A kernel for a different device API is not a drop-in Metal implementation. |
 
 The initial routing hypothesis came from inspecting the older conversation
 worktree instead of the pinned research worktree. Rechecking main found the
@@ -185,11 +236,27 @@ existing dense routing. That no-op routing pilot was stopped and its timing
 data are excluded from the evidence archive and all benefit claims. All serving
 campaigns themselves used the correct archived baseline.
 
-The search remains active: check the remaining long-conversation host-work
-candidate, validate archive/receipt consistency, then consolidate the candidate
-inventory. This report does not claim that all possible
-future inference optimization has been exhausted. Neither promising prototype
-is a production patch or a queued PR.
+The direct-adoption candidate set is now screened for frequent single-worker
+chat, code and image requests at the same model precision. The immediate
+shortlist is the existing last-position forward contract, followed by Gemma
+text scheduling. Remaining broad alternatives need new numerical/kernel
+contracts, different deployment topology, or separate fidelity qualification.
+This is a documented stopping point for this audit, not proof that all future
+inference optimization is impossible. Neither prototype is a production patch
+or a queued PR.
+
+Implementation handoff: Vector should first turn the existing last-position
+contract into a small capability-gated ordinary-prefill change, with unknown
+layouts and speculative/hidden-state consumers keeping their qualified paths.
+Treat native Gemma text enrollment as a separate, larger compatibility change.
+Both need production regression gates and model/runtime enrollment review;
+different chip generations are required before advertising cross-generation
+percentages. Atlas owns sequencing and compatibility disposition; Harbor owns
+the later PR validation window. Pixel needs no UI or public API change for the
+first candidate.
+
+All task-owned worker inference processes, scratch and environments were cleaned,
+and all task leases released. Standard model snapshots were retained for reuse.
 
 ## Reproduction and receipts
 
@@ -198,6 +265,13 @@ selected raw JSON, model/source identities and standalone experiment scripts;
 the [manifest](fixtures/2026-10-14-hotpath-search/manifest.json) binds every member
 and the archive by SHA-256. Raw private server logs and the invalid routing
 pilot are deliberately excluded.
+The [independently recomputed summary](fixtures/2026-10-14-hotpath-search/summary.json)
+is generated by the archived offline validator. It checks all member hashes,
+seven source hashes, six official large-file digests, response/input equality,
+activation shapes, peer progress, and the 38 host-monitor files (821 samples).
+Existing swap is constant per worker: 195,493,888 bytes on A and 512,032,768 on B;
+these are not zero-swap claims. No monitored performance sample records a foreign
+Python process above 512 MiB. The host-work exploratory run has no such sampler.
 
 Use the exact baseline/dependency versions and immutable model revisions above.
 Prepare a fresh scratch workspace on a leased quiet worker, with `src` pointing
@@ -223,3 +297,12 @@ experiment_root=/private/tmp/rapid-mlx-hotpath-search
 their own explicit workload and activation settings. Never overlap independent
 inference campaigns on the same worker or infer a live throughput gain from a
 CPU/component replay alone.
+
+`run_last_logits_e4b.py` uses `gemma-e4b-model-path`; `check_last_logits.py`
+checks this option for both sizes. `run_prepared.py` reproduces the bounded
+growing-conversation CPU study. To verify the published archive without model
+inference, extract `scripts/validate_evidence.py` and run:
+
+```bash
+python validate_evidence.py evidence.tar.gz manifest.json --source-dir /path/to/baseline
+```
