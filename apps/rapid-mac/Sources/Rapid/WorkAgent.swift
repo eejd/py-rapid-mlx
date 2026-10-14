@@ -282,6 +282,7 @@ final class WorkAgent {
     func prompt(_ message: String) async {
         guard let sessionID else { return }
         let promptGeneration = generation
+        let previousTextCount = text.count
         isBusy = true
         error = nil
         do {
@@ -289,10 +290,18 @@ final class WorkAgent {
                 "Read PDF with pypdf, CSV with csv.DictReader, XLSX with openpyxl. " +
                 "Use Decimal for money, verify totals, format currency with thousands separators and two decimal places, and write results in the folder. Put every total label and its amount on the same line. " +
                 "Do not install packages, use the network, or start background or detached processes. User request: " + message
-            _ = try await call(method: "session/prompt", params: [
+            let result = try await call(method: "session/prompt", params: [
                 "sessionId": sessionID,
                 "prompt": [["type": "text", "text": instruction]],
             ], session: sessionID, timeout: 900)
+            if Self.fullAccess, generation == promptGeneration,
+               Self.needsContinuation(result: result, newText: String(text.dropFirst(previousTextCount))) {
+                _ = try await call(method: "session/prompt", params: [
+                    "sessionId": sessionID,
+                    "prompt": [["type": "text", "text":
+                        "Continue the unfinished request from the existing files. Complete the remaining checks or tests without repeating finished work."]],
+                ], session: sessionID, timeout: 900)
+            }
         } catch {
             if generation == promptGeneration { self.error = error.localizedDescription }
         }
@@ -517,6 +526,11 @@ final class WorkAgent {
               let limit = entry["context_window"] as? Int,
               limit > 0 else { return nil }
         return limit
+    }
+
+    static func needsContinuation(result: [String: Any], newText: String) -> Bool {
+        result["stopReason"] as? String == "max_tokens" ||
+            newText.contains("Response stopped because the model reached its output-token limit.")
     }
 
     private static func contextLimit(rapidPort: Int, model: String, bearer: String) async -> Int {
