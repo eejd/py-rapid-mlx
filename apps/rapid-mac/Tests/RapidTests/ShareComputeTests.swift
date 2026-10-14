@@ -83,6 +83,7 @@ struct ShareComputeTests {
         )
         #expect(request.arguments.contains("--provider-key-stdin"))
         #expect(request.arguments.contains("--reregister"))
+        #expect(Array(request.arguments.prefix(2)) == ["share", "qwen3.8-27b-tensorfold"])
         #expect(!request.arguments.contains(where: { $0.contains(secret) }))
         #expect(!request.arguments.contains("--provider-key"))
         #expect(!request.environment.contains(where: { key, value in
@@ -193,6 +194,11 @@ struct ShareComputeTests {
         )
         try Data("opaque credential cache".utf8).write(to: credentialURL)
         try Data(#"{"schema_version":1,"model":"qwen3.8-27b","alias":"qwen3.8-27b-4bit","worker":"Miniwest"}"#.utf8)
+            .write(to: url)
+        #expect(!ShareComputeManager.registrationMatches(
+            model: model, worker: "Mini / west", home: home
+        ))
+        try Data(#"{"schema_version":1,"model":"qwen3.8-27b","alias":"qwen3.8-27b-tensorfold","worker":"Miniwest"}"#.utf8)
             .write(to: url)
 
         #expect(ShareComputeManager.registrationMatches(

@@ -401,6 +401,17 @@ fi
 # OpenCV), image (mflux) and video (mlx-video + imageio) runtimes, and the
 # Desktop ships them unchanged: the same dependency graph as
 # ``pip install rapid-mlx``, made deterministic by sidecar-constraints.txt.
+# Compute / Earn's Qwen27 default needs the immutable, qualified runtime.
+# Derive its source pin from the adapter policy rather than duplicating it.
+TENSORFOLD_RUNTIME_SPEC="$(python3 - "$RAPID_MLX_SOURCE" <<'PY'
+import pathlib
+import runpy
+import sys
+
+policy = runpy.run_path(str(pathlib.Path(sys.argv[1]) / "rapid_mlx/speculative/tensorfold_runtime.py"))
+print(f"tensorfold @ git+{policy['SUPPORTED_RUNTIME_URL']}@{policy['SUPPORTED_REVISION']}")
+PY
+)"
 "$STAGE/python/bin/python3.12" -m pip install \
     --target "$STAGE/site-packages" \
     --no-warn-script-location \
@@ -408,6 +419,7 @@ fi
     --upgrade \
     --constraint "$SIDECAR_CONSTRAINTS" \
     "${RAPID_MLX_INSTALL_TARGET}[audio-desktop,computer-use]" \
+    "$TENSORFOLD_RUNTIME_SPEC" \
     'mlx' \
     'transformers'
 
@@ -983,6 +995,13 @@ else
 fi
 
 # ----- step 4: shim entrypoint -----------------------------------------
+
+# Verify the actual post-trim runtime even on local builds that skip the
+# expensive multimodal smoke. Missing provenance or a wrong MLX pin must
+# fail assembly before Compute / Earn can offer the TensorFold default.
+PYTHONPATH="$STAGE/site-packages" PYTHONNOUSERSITE=1 \
+    PYTHONDONTWRITEBYTECODE=1 "$STAGE/python/bin/python3.12" -s -c \
+    'from rapid_mlx.speculative.tensorfold_qwen27 import require_runtime, require_environment; require_runtime(); require_environment(); from tensorfold.engine.lane_engine import LaneEngine; from tensorfold.engine.prefill_plan import PrefillPlan, message_markers; from tensorfold.server.app import ChatApp; print("==> bundled Qwen27 TensorFold runtime: OK")'
 
 cp "${REPO_ROOT}/scripts/sidecar-shim.sh" "$STAGE/bin/rapid-mlx"
 chmod +x "$STAGE/bin/rapid-mlx"
