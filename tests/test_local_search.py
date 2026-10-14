@@ -8573,8 +8573,10 @@ def test_search_query_evidence_skip_path(
 
 
 @pytest.mark.parametrize("version", ["1", "2", None])
-def test_file_signature_migration_preserves_stored_text(tmp_path, version):
-    from rapid_mlx.local_search.store import SCHEMA_VERSION
+def test_file_signature_migration_requires_version_and_preserves_stored_text(
+    tmp_path, version
+):
+    from rapid_mlx.local_search.store import SCHEMA_VERSION, SchemaVersionError
 
     root = folder(tmp_path)
     path = root / "old.txt"
@@ -8603,6 +8605,12 @@ def test_file_signature_migration_preserves_stored_text(tmp_path, version):
     store.db.commit()
     store.close()
     path.unlink()  # Signatures must be derived from stored text, not sources.
+    if version is None:
+        before_bytes = db.read_bytes()
+        with pytest.raises(SchemaVersionError, match="newer or incompatible version"):
+            Store(db, "model")
+        assert db.read_bytes() == before_bytes
+        return
     store = Store(db, "model")
     if version == "1":
         # Keep main's existing media/chunking upgrade for legacy schema 1.
@@ -8758,6 +8766,66 @@ def test_store_initializes_empty_database(tmp_path):
             ).fetchone()[0]
             == SCHEMA_VERSION
         )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("table", ["folders", "files", "chunks"])
+def test_store_rejects_missing_schema_version_with_data(tmp_path, table):
+    from rapid_mlx.local_search.store import SchemaVersionError
+
+    path = tmp_path / "index.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
+        connection.execute(f"INSERT INTO {table} VALUES (1)")
+    connection.close()
+    before = path.read_bytes()
+    with pytest.raises(SchemaVersionError) as error:
+        Store(path, "model")
+    assert str(error.value) == (
+        "Local Search index was created by a newer or incompatible "
+        "version. Update Rapid-MLX to open this index, or choose a "
+        "new index directory."
+    )
+    assert path.read_bytes() == before
+    assert not Path(str(path) + "-wal").exists()
+
+
+@pytest.mark.parametrize("last_table", ["meta", "folders", "files", "chunks"])
+def test_store_recovers_interrupted_first_initialization(tmp_path, last_table):
+    from rapid_mlx.local_search.store import SCHEMA_VERSION
+
+    # Reproduce the DDL prefix a crash can leave before the metadata transaction.
+    reference = Store(tmp_path / "reference.sqlite3", "model")
+    try:
+        schemas = {
+            row["name"]: row["sql"]
+            for row in reference.db.execute(
+                "SELECT name,sql FROM sqlite_master WHERE type='table'"
+            )
+        }
+    finally:
+        reference.close()
+    path = tmp_path / "interrupted.sqlite3"
+    with sqlite3.connect(path) as connection:
+        for table in ("meta", "folders", "files", "chunks"):
+            connection.execute(schemas[table])
+            if table == last_table:
+                break
+    connection.close()
+    store = Store(path, "model")
+    try:
+        assert (
+            store.db.execute(
+                "SELECT value FROM meta WHERE key='schema_version'"
+            ).fetchone()[0]
+            == SCHEMA_VERSION
+        )
+        for table in ("folders", "files", "chunks"):
+            assert store.db.execute(f"SELECT 1 FROM {table}").fetchone() is None
     finally:
         store.close()
 

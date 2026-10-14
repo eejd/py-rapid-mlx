@@ -207,6 +207,11 @@ class Store:
             if self.db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table'"
             ).fetchone():
+                incompatible_message = (
+                    "Local Search index was created by a newer or incompatible "
+                    "version. Update Rapid-MLX to open this index, or choose a "
+                    "new index directory."
+                )
                 try:
                     version = self.db.execute(
                         "SELECT value FROM meta WHERE key='schema_version'"
@@ -214,11 +219,19 @@ class Store:
                 except sqlite3.OperationalError as exc:
                     if not str(exc).startswith(("no such table:", "no such column:")):
                         raise
-                    raise SchemaVersionError(
-                        "Local Search index was created by a newer or incompatible "
-                        "version. Update Rapid-MLX to open this index, or choose a "
-                        "new index directory."
-                    ) from exc
+                    raise SchemaVersionError(incompatible_message) from exc
+                if version is None:
+                    # Released stores commit the version before accepting data.
+                    # DDL is separate, so a crashed first init may leave empty tables.
+                    tables = self.db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name IN ('folders','files','chunks')"
+                    ).fetchall()
+                    if any(
+                        self.db.execute(f"SELECT 1 FROM {table[0]} LIMIT 1").fetchone()
+                        for table in tables
+                    ):
+                        raise SchemaVersionError(incompatible_message)
                 if version and version[0] not in ("1", "2", SCHEMA_VERSION):
                     raise SchemaVersionError(
                         f"Local Search index schema version {version[0]} is unsupported "
