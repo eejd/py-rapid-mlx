@@ -13,6 +13,8 @@ MoE pure text uses the native scheduler already; ordinary models outside this
 bridge also bypass the changed continuation. No model eligibility or route was
 changed to create a favorable benchmark.
 
+Additional [Gemma 4 and Nemotron architecture controls](2026-10-13-prefill-architecture-controls.md) confirm that the acceleration path is disabled for both; they establish no speedup.
+
 ## Frozen experiment
 
 Baseline `bec47abba980d48432c8b5917ca682dd0a5758de`; candidate

@@ -63,6 +63,7 @@ summary statistics, and limitations.
 - [Qwen4 prompt-lookup qualification](qwen4-prompt-lookup-qualification.md)
 
 - [Prefill continuation across hardware and models (2026-10-13)](2026-10-13-prefill-hardware-model-matrix.md): M4 Pro/M5 Max, dense 4B/9B/27B, native control, per-cell passes and failed gates; draft.
+- [Gemma 4 and Nemotron prefill controls (2026-10-13)](2026-10-13-prefill-architecture-controls.md): both acceleration paths disabled; no speedup established.
 - [Default-route shared-executor prefill continuation (2026-10-12)](2026-10-12-default-prefill-yield.md): initial shared-host campaign; see the cross-hardware follow-up for current qualification.
 
 Keep qualification reports for enabled defaults and published performance
