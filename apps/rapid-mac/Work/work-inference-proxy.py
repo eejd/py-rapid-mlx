@@ -5,6 +5,7 @@ The helper is sandboxed away from Rapid's real port. This gate rejects media
 parts before forwarding a chat request, so Rapid cannot fetch a remote URL on
 the helper's behalf through its multimodal input handlers.
 """
+
 import hmac
 import json
 import os
@@ -13,10 +14,10 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-
 LISTEN_PORT = int(sys.argv[1])
 RAPID_PORT = int(sys.argv[2])
 MODEL = sys.argv[3]
+FULL_ACCESS = len(sys.argv) > 4 and sys.argv[4] == "--full-access"
 BEARER = os.environ["WORK_PROXY_BEARER"]
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -34,18 +35,31 @@ def text_only(body):
     for message in messages:
         if not isinstance(message, dict):
             return False
-        if message.get("role") not in ("system", "developer", "user", "assistant", "tool"):
+        if message.get("role") not in (
+            "system",
+            "developer",
+            "user",
+            "assistant",
+            "tool",
+        ):
             return False
-        if any(key in message for key in ("image_url", "audio_url", "video_url", "file_url")):
+        if any(
+            key in message
+            for key in ("image_url", "audio_url", "video_url", "file_url")
+        ):
             return False
         content = message.get("content")
         if content is None or isinstance(content, str):
             continue
         if not isinstance(content, list):
             return False
-        if any(not isinstance(part, dict) or part.get("type") != "text" or
-               not isinstance(part.get("text"), str) or set(part) != {"type", "text"}
-               for part in content):
+        if any(
+            not isinstance(part, dict)
+            or part.get("type") != "text"
+            or not isinstance(part.get("text"), str)
+            or set(part) != {"type", "text"}
+            for part in content
+        ):
             return False
     return True
 
@@ -69,7 +83,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/v1/chat/completions":
             self.send_error(404)
             return
-        if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + BEARER):
+        if not hmac.compare_digest(
+            self.headers.get("Authorization", ""), "Bearer " + BEARER
+        ):
             self.send_error(401)
             return
         try:
@@ -77,7 +93,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_error(400)
             return
-        if not 0 < length <= 8_000_000:
+        if not 0 < length <= (100_000_000 if FULL_ACCESS else 8_000_000):
             self.send_error(413)
             return
         try:
@@ -86,13 +102,17 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             self.send_error(400)
             return
-        if not text_only(body):
+        if not FULL_ACCESS and not text_only(body):
             self.send_error(403, "Work allows text-only inference")
             return
         request = urllib.request.Request(
-            f"http://127.0.0.1:{RAPID_PORT}/v1/chat/completions", raw,
-            {"Authorization": "Bearer " + BEARER,
-             "Content-Type": "application/json", "Accept": "text/event-stream"},
+            f"http://127.0.0.1:{RAPID_PORT}/v1/chat/completions",
+            raw,
+            {
+                "Authorization": "Bearer " + BEARER,
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
             method="POST",
         )
         try:
@@ -104,7 +124,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         with response:
             self.send_response(response.status)
-            self.send_header("Content-Type", response.headers.get("Content-Type", "application/json"))
+            self.send_header(
+                "Content-Type", response.headers.get("Content-Type", "application/json")
+            )
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             try:

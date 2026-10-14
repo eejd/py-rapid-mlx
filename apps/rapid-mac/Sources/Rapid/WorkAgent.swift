@@ -21,6 +21,7 @@ struct WorkPermission: Identifiable {
 @MainActor @Observable
 final class WorkAgent {
     static let shared = WorkAgent()
+    static var fullAccess: Bool { Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" }
     private(set) var text = ""
     private(set) var steps: [WorkStep] = []
     private(set) var isRunning = false
@@ -73,7 +74,7 @@ final class WorkAgent {
         let python = resources.appendingPathComponent("rapid-mlx/python/bin")
         let pythonExecutable = python.appendingPathComponent("python3")
         let rootSupport = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Rapid/agent", isDirectory: true)
+            .appendingPathComponent(Self.fullAccess ? "Library/Application Support/Rapid/agent-full" : "Library/Application Support/Rapid/agent", isDirectory: true)
         let folderHash = SHA256.hash(data: Data(folder.path.utf8))
             .map { String(format: "%02x", $0) }.joined()
         let support = rootSupport.appendingPathComponent("workspaces/\(folderHash)", isDirectory: true)
@@ -109,18 +110,20 @@ final class WorkAgent {
         try fileManager.copyItem(at: skillSource, to: skillDirectory.appendingPathComponent("SKILL.md"))
         let gooseProfileURL = temporary.appendingPathComponent("work-\(UUID().uuidString).sb")
         let proxyProfileURL = temporary.appendingPathComponent("proxy-\(UUID().uuidString).sb")
-        try Self.profile(folder: folder, support: support, temporary: temporary,
-                         resources: resources, outboundPorts: [proxyPort, port])
-            .write(to: gooseProfileURL, atomically: true, encoding: .utf8)
-        sandboxProfileURLs.append(gooseProfileURL)
-        try Self.profile(folder: folder, support: support, temporary: temporary,
-                         resources: resources, outboundPorts: [rapidPort])
-            .write(to: proxyProfileURL, atomically: true, encoding: .utf8)
-        sandboxProfileURLs.append(proxyProfileURL)
+        if !Self.fullAccess {
+            try Self.profile(folder: folder, support: support, temporary: temporary,
+                             resources: resources, outboundPorts: [proxyPort, port])
+                .write(to: gooseProfileURL, atomically: true, encoding: .utf8)
+            sandboxProfileURLs.append(gooseProfileURL)
+            try Self.profile(folder: folder, support: support, temporary: temporary,
+                             resources: resources, outboundPorts: [rapidPort])
+                .write(to: proxyProfileURL, atomically: true, encoding: .utf8)
+            sandboxProfileURLs.append(proxyProfileURL)
+        }
         // Start from an allowlist: the shell tool must not inherit the app's
         // unrelated credentials or proxy configuration.
         var env: [String: String] = [
-            "HOME": support.path,
+            "HOME": Self.fullAccess ? fileManager.homeDirectoryForCurrentUser.path : support.path,
             "USER": NSUserName(),
             "LOGNAME": NSUserName(),
             "LANG": "en_US.UTF-8",
@@ -133,30 +136,60 @@ final class WorkAgent {
         env["GOOSE_DISABLE_KEYRING"] = "1"
         env["GOOSE_PROVIDER"] = "custom_rapid_local"
         env["GOOSE_MODEL"] = model
-        env["GOOSE_MODE"] = "approve"
+        env["GOOSE_MODE"] = Self.fullAccess ? "auto" : "approve"
         env["RAPID_LOCAL_WORK_KEY"] = bearer
         env["PATH"] = python.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         env["PYTHONPATH"] = resources.appendingPathComponent("rapid-mlx/site-packages").path
-        env["PIP_NO_INDEX"] = "1"
+        if Self.fullAccess {
+            let venv = rootSupport.appendingPathComponent("venv")
+            let pipMarker = venv.appendingPathComponent(".rapid-pip-ready")
+            if !fileManager.fileExists(atPath: pipMarker.path) {
+                let setup = Process()
+                setup.executableURL = pythonExecutable
+                setup.arguments = ["-m", "venv", "--without-pip", venv.path]
+                try setup.run()
+                setup.waitUntilExit()
+                guard setup.terminationStatus == 0 else { throw WorkError.message("Could not create Work Python venv.") }
+                let bootstrap = Process()
+                bootstrap.executableURL = venv.appendingPathComponent("bin/python3")
+                bootstrap.arguments = ["-c", "import pathlib,sysconfig,zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sysconfig.get_path('purelib'))",
+                                       resources.appendingPathComponent("Helpers/pip.whl").path]
+                try bootstrap.run()
+                bootstrap.waitUntilExit()
+                guard bootstrap.terminationStatus == 0 else { throw WorkError.message("Could not install Work venv pip.") }
+                let pipCommand = venv.appendingPathComponent("bin/pip")
+                try "#!/bin/sh\nexec \"$(dirname \"$0\")/python3\" -m pip \"$@\"\n"
+                    .write(to: pipCommand, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pipCommand.path)
+                try Data().write(to: pipMarker)
+            }
+            env["PATH"] = venv.appendingPathComponent("bin").path + ":" + env["PATH", default: ""]
+            env["VIRTUAL_ENV"] = venv.path
+        } else {
+            env["PIP_NO_INDEX"] = "1"
+        }
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["TMPDIR"] = temporary.path
         var proxyEnv = env
         proxyEnv.removeValue(forKey: "GOOSE_SERVER__SECRET_KEY")
         proxyEnv.removeValue(forKey: "RAPID_LOCAL_WORK_KEY")
         proxyEnv["WORK_PROXY_BEARER"] = bearer
-        proxyProcess = try Self.launchSandboxed(
-            profile: proxyProfileURL,
+        proxyProcess = try Self.launchHelper(
+            profile: Self.fullAccess ? nil : proxyProfileURL, python: pythonExecutable,
             executable: pythonExecutable,
-            arguments: ["-I", "-S", proxy.path, String(proxyPort), String(rapidPort), model],
+            arguments: ["-I", "-S", proxy.path, String(proxyPort), String(rapidPort), model]
+                + (Self.fullAccess ? ["--full-access"] : []),
             directory: support, environment: proxyEnv)
         guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
             throw WorkError.message("The local Work inference gate did not start.")
         }
-        process = try Self.launchSandboxed(
-            profile: gooseProfileURL,
+        process = try Self.launchHelper(
+            profile: Self.fullAccess ? nil : gooseProfileURL, python: pythonExecutable,
             executable: goose,
             arguments: ["serve", "--host", "127.0.0.1", "--port", String(port),
-                        "--platform", "desktop", "--with-builtin", "developer"],
+                        "--platform", "desktop", "--with-builtin", Self.fullAccess
+                            ? "developer,computercontroller,memory,autovisualiser,tutorial"
+                            : "developer"],
             directory: folder, environment: env)
         guard await Self.waitForHealth(process: process!, port: port) else {
             throw WorkError.message("The Work helper did not start under the privacy sandbox.")
@@ -206,7 +239,7 @@ final class WorkAgent {
         isBusy = true
         error = nil
         do {
-            let instruction = "Use the local-documents skill. Stay inside the selected folder. " +
+            let instruction = Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
                 "Read PDF with pypdf, CSV with csv.DictReader, XLSX with openpyxl. " +
                 "Use Decimal for money, verify totals, format currency with thousands separators and two decimal places, and write results in the folder. Put every total label and its amount on the same line. " +
                 "Do not install packages, use the network, or start background or detached processes. User request: " + message
@@ -323,7 +356,7 @@ final class WorkAgent {
             let request = WorkPermission(id: String(describing: id), sessionID: sid,
                 command: input?["command"] as? String ?? tool["title"] as? String ?? "Unknown command",
                 options: params["options"] as? [[String: Any]] ?? [])
-            if syntheticTestAutoApproval {
+            if syntheticTestAutoApproval || Self.fullAccess {
                 answerPermission(request, allow: true)
             } else if permission == nil {
                 permission = request
@@ -450,16 +483,24 @@ final class WorkAgent {
         return Int(UInt16(bigEndian: address.sin_port))
     }
 
-    private static func launchSandboxed(profile: URL, executable: URL,
+    private static func launchHelper(profile: URL?, python: URL, executable: URL,
                                         arguments: [String], directory: URL,
                                         environment: [String: String]) throws -> Process {
         let child = Process()
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-        child.arguments = ["-f", profile.path, executable.path] + arguments
+        child.executableURL = python
+        child.arguments = [Bundle.main.resourceURL!.appendingPathComponent("Helpers/work-helper-watchdog.py").path,
+                           String(getpid())] + (profile.map { ["/usr/bin/sandbox-exec", "-f", $0.path] } ?? [])
+                           + [executable.path] + arguments
         child.currentDirectoryURL = directory
         child.environment = environment
         child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
+        if ProcessInfo.processInfo.arguments.contains("--work-mvp-synthetic-test") {
+            let log = directory.appendingPathComponent("work-\(executable.lastPathComponent).log")
+            FileManager.default.createFile(atPath: log.path, contents: nil)
+            child.standardError = try FileHandle(forWritingTo: log)
+        } else {
+            child.standardError = FileHandle.nullDevice
+        }
         try child.run()
         for _ in 0..<100 {
             if getpgid(child.processIdentifier) == child.processIdentifier { return child }
