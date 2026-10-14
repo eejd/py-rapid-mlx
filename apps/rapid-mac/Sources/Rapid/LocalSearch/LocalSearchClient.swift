@@ -71,8 +71,10 @@ struct LocalSearchStatus: Decodable, Sendable, Equatable {
 struct LocalSearchResult: Decodable, Identifiable, Sendable, Equatable {
     var id: String {
         let documentID = "\(folderId):\(path):\(page ?? -1):\(line ?? -1):\(snippet)"
-        return kind == .text ? documentID : "\(documentID):\(kind.rawValue):\(timestamp ?? -1)"
+        let baseID = kind == .text ? documentID : "\(documentID):\(kind.rawValue):\(timestamp ?? -1)"
+        return duplicateOrdinal == 0 ? baseID : "\(baseID):duplicate:\(duplicateOrdinal)"
     }
+    var duplicateOrdinal: Int = 0
     let path: String
     let folderId: String
     let title: String
@@ -126,6 +128,53 @@ struct LocalSearchResponse: Decodable, Sendable, Equatable {
     let tookMs: Double
     let mode: String
     var groups: [LocalSearchGroup]? = nil
+}
+
+/// Chunk IDs are internal to the engine. Preserve existing identities and
+/// disambiguate repeated rows within each decoded result list.
+private struct LocalSearchResultList: Decodable {
+    let results: [LocalSearchResult]
+
+    init(from decoder: Decoder) throws {
+        let decoded = try decoder.singleValueContainer().decode([LocalSearchResult].self)
+        var reserved = Set(decoded.map(\.id))
+        var occurrences: [String: Int] = [:]
+        results = decoded.map { result in
+            var result = result
+            let baseID = result.id
+            var ordinal = occurrences[baseID, default: 0]
+            if ordinal > 0 {
+                repeat {
+                    result.duplicateOrdinal = ordinal
+                    ordinal += 1
+                } while reserved.contains(result.id)
+                reserved.insert(result.id)
+            }
+            occurrences[baseID] = max(1, ordinal)
+            return result
+        }
+    }
+}
+
+extension LocalSearchGroup {
+    enum CodingKeys: String, CodingKey { case kind, results, total }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(LocalSearchKind.self, forKey: .kind)
+        results = try c.decode(LocalSearchResultList.self, forKey: .results).results
+        total = try c.decode(Int.self, forKey: .total)
+    }
+}
+
+extension LocalSearchResponse {
+    enum CodingKeys: String, CodingKey { case results, tookMs, mode, groups }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        results = try c.decode(LocalSearchResultList.self, forKey: .results).results
+        tookMs = try c.decode(Double.self, forKey: .tookMs)
+        mode = try c.decode(String.self, forKey: .mode)
+        groups = try c.decodeIfPresent([LocalSearchGroup].self, forKey: .groups)
+    }
 }
 
 /// Same ephemeral loopback session, per-call port/bearer, and Desktop header

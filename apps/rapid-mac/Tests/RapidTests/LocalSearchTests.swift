@@ -394,6 +394,40 @@ private final class LocalSearchURLProtocol: URLProtocol {
 }
 
 @Suite(.serialized) struct LocalSearchClientTests {
+    private func identityResponse(paths: [String]) throws -> Data {
+        let results = paths.map { path -> [String: Any] in
+            ["path": path, "folder_id": "f", "title": "file", "snippet": "match",
+             "highlights": [], "score": 0.5, "matched": ["keyword"], "modified_at": 0, "size": 12]
+        }
+        return try JSONSerialization.data(withJSONObject: [
+            "results": results, "took_ms": 1, "mode": "keyword",
+            "groups": [["kind": "text", "results": results, "total": results.count]]
+        ])
+    }
+
+    @Test func identicalResultsDecodeWithDistinctIDs() throws {
+        let data = try identityResponse(paths: ["/file.txt", "/file.txt", "/file.txt"])
+        let response = try LocalSearchClient.decode(LocalSearchResponse.self, from: data)
+        #expect(response.results.count == 3)
+        #expect(Set(response.results.map(\.id)).count == 3)
+        let grouped = try #require(response.groups?.first?.results)
+        #expect(Set(grouped.map(\.id)).count == 3)
+        #expect(grouped.map(\.id) == response.results.map(\.id))
+        #expect(try LocalSearchClient.decode(LocalSearchResponse.self, from: data).results.map(\.id)
+            == response.results.map(\.id))
+    }
+
+    @Test func uniqueResultsKeepExistingIDsAcrossRefreshes() throws {
+        let paths = ["/first.txt", "/second.txt"]
+        let response = try LocalSearchClient.decode(LocalSearchResponse.self, from: identityResponse(paths: paths))
+        let expected = paths.map { "f:\($0):-1:-1:match" }
+        #expect(response.results.map(\.id) == expected)
+        #expect(response.groups?.first?.results.map(\.id) == expected)
+        let refreshed = try LocalSearchClient.decode(LocalSearchResponse.self,
+            from: identityResponse(paths: Array(paths.reversed())))
+        #expect(refreshed.results.map(\.id) == Array(expected.reversed()))
+    }
+
     private func client() -> LocalSearchClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [LocalSearchURLProtocol.self]

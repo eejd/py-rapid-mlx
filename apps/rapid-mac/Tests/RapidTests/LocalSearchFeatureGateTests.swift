@@ -57,17 +57,41 @@ struct LocalSearchFeatureGateTests {
         }
     }
 
-    @Test("The stored gate guards Search detail, recovery, and production spawn")
-    func liveWiring() throws {
-        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/Rapid")
-        let content = try String(contentsOf: sources.appendingPathComponent("UI/ContentView.swift"), encoding: .utf8)
-        #expect(content.contains("@AppStorage(LocalSearchFeatureConfig.enabledKey)"))
-        #expect(content.contains("sectionAfterLocalSearchGateChange(current: section, enabled: state.localSearchEnabled)"))
-        #expect(content.contains("if !state.localSearchEnabled { localSearch.disappear() }"))
-        #expect(content.contains("case .search:\n            if localSearchEnabled {"))
-        let server = try String(contentsOf: sources.appendingPathComponent("Server/ServerManager.swift"), encoding: .utf8)
-        #expect(server.contains("localSearchEnabled: LocalSearchFeatureConfig.isEnabled()"))
+    @Test("Production spawn requires both the stored opt-in and runtime capability")
+    func spawnGate() throws {
+        let suite = "rapid.local-search-spawn-tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for enabled in [false, true] {
+            defaults.set(enabled, forKey: LocalSearchFeatureConfig.enabledKey)
+            for supported in [false, true] {
+                let capabilities = ServerRuntimeCapabilities.parse(serveHelp:
+                    supported ? "--enable-local-search --local-search-dir" : "")
+                let args = ServerManager.serveArguments(
+                    alias: "qwen3.5-9b-4bit", host: "127.0.0.1", port: 8000,
+                    capabilities: capabilities,
+                    localSearchEnabled: LocalSearchFeatureConfig.isEnabled(in: defaults),
+                    localSearchDirectory: "/tmp/Search Index")
+                #expect(args.contains("--enable-local-search") == (enabled && supported))
+                #expect(args.contains("--local-search-dir") == (enabled && supported))
+                #expect(args.contains("/tmp/Search Index") == (enabled && supported))
+                if enabled && supported {
+                    #expect(args.suffix(3) == ["--enable-local-search", "--local-search-dir", "/tmp/Search Index"])
+                }
+            }
+        }
     }
 
+    @Test("Enabling Search restarts only a starting or ready model; disabling never restarts")
+    func restartGate() {
+        let alias = "qwen3.5-9b-4bit"
+        for state: ServerState in [.starting(alias: alias), .ready(alias: alias)] {
+            #expect(LocalSearchFeatureConfig.restartAlias(enabling: true, state: state) == alias)
+            #expect(LocalSearchFeatureConfig.restartAlias(enabling: false, state: state) == nil)
+        }
+        for state: ServerState in [.missing, .idle, .stopped, .crashed(alias: alias, message: "Exited")] {
+            #expect(LocalSearchFeatureConfig.restartAlias(enabling: true, state: state) == nil)
+            #expect(LocalSearchFeatureConfig.restartAlias(enabling: false, state: state) == nil)
+        }
+    }
 }
