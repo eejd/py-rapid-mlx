@@ -556,6 +556,7 @@ struct SettingsView: View {
                         }
                     }.accessibilityIdentifier("Settings.Experimental.LocalSearch.Restart")
                     Button(String(localized: "Cancel"), role: .cancel) { localSearchEnabled = false }
+                        .accessibilityIdentifier("Settings.Experimental.LocalSearch.Cancel")
                 } message: {
                     Text(String(localized: "The running model will restart. Other resident models will unload. Your conversations and files stay untouched."))
                 }

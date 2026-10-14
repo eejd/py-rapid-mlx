@@ -318,10 +318,13 @@ final class LocalSearchViewModel {
     func add(paths: [String]) async {
         guard visible, let endpoint else { return }
         let token = sessionGeneration
+        var nextIndex = 0
         await mutate { [self, client] in
-            for path in paths {
+            // The retained retry resumes at the first unsuccessful folder.
+            while nextIndex < paths.count {
                 try validateMutation(token)
-                try await client.add(path: path, endpoint: endpoint)
+                try await client.add(path: paths[nextIndex], endpoint: endpoint)
+                nextIndex += 1
             }
         }
     }

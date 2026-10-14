@@ -143,7 +143,9 @@ struct LocalSearchView: View {
             Button(String(localized: "Restart and enable Search")) {
                 if let alias = server.servingAlias { Task { _ = await server.restartForSpawnSettings(alias: alias) } }
             }
+            .accessibilityIdentifier("LocalSearch.Restart.Confirm")
             Button(String(localized: "Cancel"), role: .cancel) {}
+                .accessibilityIdentifier("LocalSearch.Restart.Cancel")
         } message: {
             Text(String(localized: "The running model will restart. Other resident models will unload. Your conversations and files stay untouched."))
         }
@@ -503,8 +505,11 @@ struct LocalSearchView: View {
 
     @ViewBuilder private func resultMenu(_ result: LocalSearchResult) -> some View {
         Button(String(localized: "Open")) { open(result) }.accessibilityLabel(String(localized: "Open file"))
+            .accessibilityIdentifier("LocalSearch.Result.Open")
         Button(String(localized: "Quick Look")) { togglePreview(result) }.accessibilityLabel(String(localized: "Preview file with Quick Look"))
+            .accessibilityIdentifier("LocalSearch.Result.QuickLook")
         Button(String(localized: "Reveal in Finder")) { reveal(result) }.accessibilityLabel(String(localized: "Reveal file in Finder"))
+            .accessibilityIdentifier("LocalSearch.Result.Reveal")
         Button(String(localized: "Copy Path")) { copyPath(result) }
             .accessibilityIdentifier("LocalSearch.Result.CopyPath")
         if result.kind == .video, let timestamp = result.timestamp {
@@ -512,6 +517,7 @@ struct LocalSearchView: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(LocalSearchTimestamp.formatted(timestamp), forType: .string)
             }
+            .accessibilityIdentifier("LocalSearch.Result.CopyTimestamp")
         }
     }
 
@@ -650,6 +656,7 @@ struct LocalSearchView: View {
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
+        .accessibilityIdentifier("LocalSearch.AddFolder.Menu")
     }
 
     private func folderShortcut(_ shortcut: LocalSearchFolderShortcut) -> some View {
@@ -680,10 +687,12 @@ struct LocalSearchView: View {
     private func abbreviated(_ path: String) -> String { LocalSearchPath.abbreviated(path) }
     private func open(_ result: LocalSearchResult) {
         let url = URL(fileURLWithPath: result.path)
-        switch LocalSearchFileAction.action(for: url) {
-        case .open: if !NSWorkspace.shared.open(url) { model.fileOpenFailed() }
-        case .reveal: reveal(result)
-        case .unavailable: model.fileOpenFailed()
+        let classified = LocalSearchFileAction.classification(for: url)
+        let action = LocalSearchFileAction.perform(for: url, classified: classified,
+            open: { NSWorkspace.shared.open($0) },
+            reveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) })
+        if action == .unavailable {
+            model.fileOpenFailed()
         }
     }
     private func reveal(_ result: LocalSearchResult) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.path)]) }

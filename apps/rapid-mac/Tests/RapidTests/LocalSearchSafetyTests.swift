@@ -5,6 +5,99 @@ import UniformTypeIdentifiers
 @testable import Rapid
 
 @Suite struct LocalSearchFileActionTests {
+    // Launch Services is unavailable in restricted test processes. Supply its
+    // document decision while exercising real lstat and permission checks.
+    private func documentAction(_ url: URL) -> LocalSearchFileAction.Action {
+        LocalSearchFileAction.classify(type: .plainText)
+    }
+
+    private func withDocument(_ test: (URL) throws -> Void) throws {
+        let directory = URL(fileURLWithPath: "/private/tmp/local-search-desktop-file-actions")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = directory.appendingPathComponent("ordinary.txt")
+        try Data("A document".utf8).write(to: document)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: document.path)
+        try test(document)
+    }
+
+    private func expectAction(_ expected: LocalSearchFileAction.Action, for url: URL,
+                              classified: LocalSearchFileAction.Classification) {
+        var opens = 0, reveals = 0
+        let action = LocalSearchFileAction.perform(for: url, classified: classified, classifyDocument: documentAction,
+            open: { #expect($0 == url); opens += 1; return true },
+            reveal: { #expect($0 == url); reveals += 1 })
+        #expect(action == expected)
+        #expect(opens == (expected == .open ? 1 : 0))
+        #expect(reveals == (expected == .reveal ? 1 : 0))
+    }
+
+    @Test func unchangedFileOpensAfterRevalidation() throws {
+        try withDocument { url in
+            let classified = LocalSearchFileAction.classification(for: url, classifyDocument: documentAction)
+            #expect(classified.action == .open)
+            expectAction(.open, for: url, classified: classified)
+        }
+    }
+
+    @Test func replacedExecutableRevealsInsteadOfOpening() throws {
+        try withDocument { url in
+            let classified = LocalSearchFileAction.classification(for: url, classifyDocument: documentAction)
+            #expect(classified.action == .open)
+            let replacement = url.deletingLastPathComponent().appendingPathComponent("replacement.txt")
+            try Data("#!/bin/sh\necho replaced\n".utf8).write(to: replacement)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: replacement.path)
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.moveItem(at: replacement, to: url)
+            expectAction(.reveal, for: url, classified: classified)
+        }
+    }
+
+    @Test func replacedSymlinkRevealsInsteadOfOpening() throws {
+        try withDocument { url in
+            let classified = LocalSearchFileAction.classification(for: url, classifyDocument: documentAction)
+            #expect(classified.action == .open)
+            let target = url.deletingLastPathComponent().appendingPathComponent("target.txt")
+            try FileManager.default.moveItem(at: url, to: target)
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: target)
+            expectAction(.reveal, for: url, classified: classified)
+        }
+    }
+
+    @Test func deletedFileIsUnavailableWithoutOpening() throws {
+        try withDocument { url in
+            let classified = LocalSearchFileAction.classification(for: url, classifyDocument: documentAction)
+            #expect(classified.action == .open)
+            try FileManager.default.removeItem(at: url)
+            expectAction(.unavailable, for: url, classified: classified)
+        }
+    }
+
+    @Test func replacedDocumentRevealsDespiteSafeType() throws {
+        try withDocument { url in
+            let classified = LocalSearchFileAction.classification(for: url, classifyDocument: documentAction)
+            #expect(classified.action == .open)
+            let replacement = url.deletingLastPathComponent().appendingPathComponent("replacement.txt")
+            try Data("Another document".utf8).write(to: replacement)
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: replacement.path)
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.moveItem(at: replacement, to: url)
+            #expect(LocalSearchFileAction.classification(for: url, classifyDocument: documentAction).action == .open)
+            expectAction(.reveal, for: url, classified: classified)
+        }
+    }
+
+    @Test func executablePermissionChangeRevealsDespiteSameIdentity() throws {
+        try withDocument { url in
+            let classified = LocalSearchFileAction.classification(for: url, classifyDocument: documentAction)
+            #expect(classified.action == .open)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+            #expect(LocalSearchFileAction.classification(for: url, classifyDocument: documentAction).identity == classified.identity)
+            expectAction(.reveal, for: url, classified: classified)
+        }
+    }
+
     @Test func launchableTypesReveal() {
         for type: UTType in [.application, .applicationBundle, .executable, .script, .shellScript,
                              .diskImage, .aliasFile, .symbolicLink, .bundle] {
@@ -59,14 +152,18 @@ private final class LocalSearchGateTransport: URLProtocol {
         var held: LocalSearchGateTransport?
         var holdFolder = false
         var failure = false
+        var failFolderAt: Int?
+        var folderPaths: [String] = []
         var canceled = 0
-        func reset(hold: Bool = false, fail: Bool = false) {
+        func reset(hold: Bool = false, fail: Bool = false, failFolderAt: Int? = nil) {
             lock.lock(); defer { lock.unlock() }
             requests = []; held = nil; holdFolder = hold; failure = fail; canceled = 0
+            self.failFolderAt = failFolderAt; folderPaths = []
         }
         var captured: [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
         var hasHeld: Bool { lock.lock(); defer { lock.unlock() }; return held != nil }
         var cancelCount: Int { lock.lock(); defer { lock.unlock() }; return canceled }
+        var submittedFolders: [String] { lock.lock(); defer { lock.unlock() }; return folderPaths }
         func setFailure(_ value: Bool) { lock.lock(); failure = value; lock.unlock() }
         func release() {
             lock.lock(); let pending = held; held = nil; lock.unlock()
@@ -77,16 +174,34 @@ private final class LocalSearchGateTransport: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        let path = folderPath()
         Self.log.lock.lock()
         Self.log.requests.append(request)
+        if let path { Self.log.folderPaths.append(path) }
         let hold = Self.log.holdFolder && request.url?.lastPathComponent == "folders"
         if hold { Self.log.holdFolder = false; Self.log.held = self }
         Self.log.lock.unlock()
         if !hold { respond() }
     }
+    private func folderPath() -> String? {
+        guard request.url?.lastPathComponent == "folders", request.httpMethod == "POST" else { return nil }
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["path"] as? String
+    }
     func respond() {
         Self.log.lock.lock()
-        let canceled = stopped, failed = Self.log.failure
+        let canceled = stopped
+        let failed = Self.log.failure || (request.url?.lastPathComponent == "folders"
+            && Self.log.failFolderAt == Self.log.folderPaths.count)
         Self.log.lock.unlock()
         guard !canceled else { return }
         let route = request.url!.lastPathComponent
@@ -118,6 +233,25 @@ private final class LocalSearchGateTransport: URLProtocol {
             try await Task.sleep(for: .milliseconds(10))
         }
         Issue.record("Timed out waiting for request")
+    }
+    @Test func batchRetryResumesAtFailedFolderAndSuccessClearsRetry() async {
+        let log = LocalSearchGateTransport.log
+        log.reset(failFolderAt: 2)
+        let model = model()
+        await model.appear(endpoint: endpoint)
+        await model.add(paths: ["/A", "/B", "/C"])
+        #expect(log.submittedFolders == ["/A", "/B"])
+        #expect(model.state == .error("Operation failed"))
+        await model.retry()
+        #expect(log.submittedFolders == ["/A", "/B", "/B", "/C"])
+        #expect(model.state == .indexing)
+        let requestCount = log.captured.count
+        await model.retry()
+        // A cleared retry refreshes status rather than retaining the mutation.
+        #expect(log.captured.count == requestCount + 1)
+        #expect(log.captured.last?.url?.lastPathComponent == "status")
+        #expect(log.submittedFolders == ["/A", "/B", "/B", "/C"])
+        model.disappear()
     }
     @Test("Disabled Search cancels client activity even if a stale action fires")
     func disabledClientIsInert() async throws {
