@@ -203,7 +203,7 @@ final class MenuBarController: NSObject {
             bringMainWindowForward()
         case .newChat:
             if WorkAgent.fullAccess {
-                if WorkAgent.shared.isBusy { WorkAgent.shared.stop() }
+                WorkAgent.shared.beginNewChat()
                 Task { try? await WorkAgent.shared.newSession() }
                 NotificationCenter.default.post(name: .newWorkChat, object: nil)
             } else {
