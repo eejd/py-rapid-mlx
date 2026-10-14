@@ -1,0 +1,42 @@
+{
+  "archive_sha256": "9ae4105fec12a17186f5c92312e247f2b882f35db881ae388477e168167af417",
+  "source_revision": "6d617f51cea61f9fa1cdd07a4dea11f66e04c355",
+  "members": {
+    "capture_server.py": {
+      "bytes": 1704,
+      "sha256": "4b5a8e5449398bd3df9d13f723cde37edc86a01251109e3255aede1e82fa73d0"
+    },
+    "collect_metadata.py": {
+      "bytes": 1357,
+      "sha256": "1acf3fe860ef6cabe2275435f425b23a273d2eca3596545b973bd119c18c45ac"
+    },
+    "metadata.json": {
+      "bytes": 2351,
+      "sha256": "bd06d43c88287bb34588dd519a069f1bd294801d71715f3f96b2b9be566e453f"
+    },
+    "native-events.jsonl": {
+      "bytes": 68986,
+      "sha256": "a810f7f794424ebf2b4975f855ec53ce84af16fb38373e779596b67d11b85fdf"
+    },
+    "native-results.json": {
+      "bytes": 29346,
+      "sha256": "4fe4cb20c97b55822684f358989c057817d22c09b6d8b23c8e6735c632a08205"
+    },
+    "replay-results.json": {
+      "bytes": 19559,
+      "sha256": "7f06bd0a71b1f9d1cb7fe54f6579925d824193b7f214f17a906eead090e84ca5"
+    },
+    "replay_adapter.py": {
+      "bytes": 3806,
+      "sha256": "cc340daee2fe83509c8e84aa5fc082e04fdc681e9464442e8783f2a8394716e3"
+    },
+    "run_native.py": {
+      "bytes": 4379,
+      "sha256": "d4268403aebf98e35db13e05caae1ef230e26692d2163f1052748a9895ef4253"
+    },
+    "run_replay.py": {
+      "bytes": 1013,
+      "sha256": "7b19698d40ecc3615f030603306c71dae1c42e82c81643d6c1fd838af4601bb3"
+    }
+  }
+}

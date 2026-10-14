@@ -75,3 +75,4 @@ links to the report. When new evidence supersedes a report, retain or replace it
 with an explicit pointer to the newer qualification. Abandoned experiments with
 no live product contract may be removed after their durable conclusions move to
 current documentation or tests.
+- [Long-answer output overhead on M4 Pro (2026-10-14)](2026-10-14-long-answer-output-overhead.md)
