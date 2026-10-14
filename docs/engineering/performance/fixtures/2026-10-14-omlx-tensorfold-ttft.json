@@ -1,0 +1,831 @@
+{
+  "date_utc": "2026-10-14",
+  "hardware": {
+    "chip": "Apple M4 Pro",
+    "memory_bytes": 51539607552,
+    "macos": "26.5.1",
+    "gpu": [
+      {
+        "spdisplays_vendor": "sppci_vendor_Apple",
+        "sppci_cores": "16",
+        "sppci_model": "Apple M4 Pro"
+      }
+    ]
+  },
+  "target": {
+    "repository": "Vontra/Qwen3.8-27B-MLX-4bit",
+    "revision": "70ae7fac63274ff2eac54152031433374cb80f2f"
+  },
+  "rapid": {
+    "version": "0.16.1",
+    "commit": "df1f4db1fc0548ec97c6376739a76f6330e9b000",
+    "tensorfold": "0.6.6",
+    "tensorfold_revision": "cb2ebf0540f42604e2759b2ddef497861e928248",
+    "mlx": "0.32.3"
+  },
+  "omlx": {
+    "version": "0.7.1.dev1",
+    "release_tag_commit": "c0b1056b41ebde9422af316cf5038a423eb8f24c",
+    "build": "261009233110-macos26-27",
+    "dmg_sha256": "04fbff0b54bd8656a6684e3051879d7039cb5f4514777527614c54d6d00e0ca2",
+    "mlx": "0.32.3",
+    "mlx_lm": "0.31.4.dev132+g94cdcae13",
+    "mlx_lm_revision": "94cdcae13b266c337bcaca09b97b9c5a9c0e2cde",
+    "transformers": "5.17.0",
+    "qwen35_prefill_native_kernel_available": true
+  },
+  "samples": [
+    {
+      "config": "omlx-no-cache",
+      "name": "short-0",
+      "ttft": 0.4476,
+      "elapsed": 0.5218,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 1,
+        "total_tokens": 29,
+        "input_tokens": 28,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 0.44,
+        "time_to_first_visible_token": 0.44,
+        "total_time": 0.52,
+        "prompt_eval_duration": 0.44,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 63.09,
+        "generation_tokens_per_second": 13.1
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "prefill-cold-0",
+      "ttft": 7.3025,
+      "elapsed": 7.3764,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.3,
+        "time_to_first_visible_token": 7.3,
+        "total_time": 7.37,
+        "prompt_eval_duration": 7.3,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 103.45,
+        "generation_tokens_per_second": 13.14
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "prefill-repeat-0",
+      "ttft": 7.3004,
+      "elapsed": 7.375,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.3,
+        "time_to_first_visible_token": 7.3,
+        "total_time": 7.37,
+        "prompt_eval_duration": 7.3,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 103.48,
+        "generation_tokens_per_second": 13.03
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "continuation-0",
+      "ttft": 7.596,
+      "elapsed": 7.67,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 1,
+        "total_tokens": 780,
+        "input_tokens": 779,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.59,
+        "time_to_first_visible_token": 7.59,
+        "total_time": 7.67,
+        "prompt_eval_duration": 7.59,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 102.61,
+        "generation_tokens_per_second": 13.12
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "short-1",
+      "ttft": 0.4487,
+      "elapsed": 0.5233,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 1,
+        "total_tokens": 29,
+        "input_tokens": 28,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 0.44,
+        "time_to_first_visible_token": 0.45,
+        "total_time": 0.52,
+        "prompt_eval_duration": 0.44,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 62.92,
+        "generation_tokens_per_second": 13.03
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "prefill-cold-1",
+      "ttft": 7.3258,
+      "elapsed": 7.3997,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.32,
+        "time_to_first_visible_token": 7.32,
+        "total_time": 7.4,
+        "prompt_eval_duration": 7.32,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 103.12,
+        "generation_tokens_per_second": 13.13
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "prefill-repeat-1",
+      "ttft": 7.3,
+      "elapsed": 7.3746,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.3,
+        "time_to_first_visible_token": 7.3,
+        "total_time": 7.37,
+        "prompt_eval_duration": 7.3,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 103.49,
+        "generation_tokens_per_second": 13.0
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "continuation-1",
+      "ttft": 7.5962,
+      "elapsed": 7.6705,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 1,
+        "total_tokens": 780,
+        "input_tokens": 779,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.59,
+        "time_to_first_visible_token": 7.59,
+        "total_time": 7.67,
+        "prompt_eval_duration": 7.59,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 102.61,
+        "generation_tokens_per_second": 13.06
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "short-2",
+      "ttft": 0.4474,
+      "elapsed": 0.5214,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 1,
+        "total_tokens": 29,
+        "input_tokens": 28,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 0.44,
+        "time_to_first_visible_token": 0.44,
+        "total_time": 0.52,
+        "prompt_eval_duration": 0.44,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 63.13,
+        "generation_tokens_per_second": 13.1
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "prefill-cold-2",
+      "ttft": 7.3015,
+      "elapsed": 7.3754,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.3,
+        "time_to_first_visible_token": 7.3,
+        "total_time": 7.37,
+        "prompt_eval_duration": 7.3,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 103.47,
+        "generation_tokens_per_second": 13.11
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "prefill-repeat-2",
+      "ttft": 7.3028,
+      "elapsed": 7.3774,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.3,
+        "time_to_first_visible_token": 7.3,
+        "total_time": 7.38,
+        "prompt_eval_duration": 7.3,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 103.45,
+        "generation_tokens_per_second": 13.0
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-no-cache",
+      "name": "continuation-2",
+      "ttft": 7.597,
+      "elapsed": 7.6709,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 1,
+        "total_tokens": 780,
+        "input_tokens": 779,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 7.59,
+        "time_to_first_visible_token": 7.59,
+        "total_time": 7.67,
+        "prompt_eval_duration": 7.59,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 102.6,
+        "generation_tokens_per_second": 13.12
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "short-0",
+      "ttft": 0.6765,
+      "elapsed": 0.757,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 1,
+        "total_tokens": 29,
+        "input_tokens": 28,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 0.67,
+        "time_to_first_visible_token": 0.67,
+        "total_time": 0.76,
+        "prompt_eval_duration": 0.67,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 41.66,
+        "generation_tokens_per_second": 12.07
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "prefill-cold-0",
+      "ttft": 7.245,
+      "elapsed": 7.3252,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 21
+        },
+        "time_to_first_token": 7.24,
+        "time_to_first_visible_token": 7.24,
+        "total_time": 7.32,
+        "prompt_eval_duration": 7.24,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 101.38,
+        "generation_tokens_per_second": 12.11
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "prefill-repeat-0",
+      "ttft": 0.3632,
+      "elapsed": 0.4381,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 748
+        },
+        "time_to_first_token": 0.36,
+        "time_to_first_visible_token": 0.36,
+        "total_time": 0.44,
+        "prompt_eval_duration": 0.36,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 19.53,
+        "generation_tokens_per_second": 12.96
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "continuation-0",
+      "ttft": 0.6359,
+      "elapsed": 0.716,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 1,
+        "total_tokens": 780,
+        "input_tokens": 779,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 748
+        },
+        "time_to_first_token": 0.63,
+        "time_to_first_visible_token": 0.63,
+        "total_time": 0.71,
+        "prompt_eval_duration": 0.63,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 49.12,
+        "generation_tokens_per_second": 12.13
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "short-1",
+      "ttft": 0.6756,
+      "elapsed": 0.7566,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 1,
+        "total_tokens": 29,
+        "input_tokens": 28,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 0.67,
+        "time_to_first_visible_token": 0.67,
+        "total_time": 0.75,
+        "prompt_eval_duration": 0.67,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 41.71,
+        "generation_tokens_per_second": 12.01
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "prefill-cold-1",
+      "ttft": 7.244,
+      "elapsed": 7.3237,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 21
+        },
+        "time_to_first_token": 7.24,
+        "time_to_first_visible_token": 7.24,
+        "total_time": 7.32,
+        "prompt_eval_duration": 7.24,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 101.39,
+        "generation_tokens_per_second": 12.19
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "prefill-repeat-1",
+      "ttft": 0.3618,
+      "elapsed": 0.4365,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 748
+        },
+        "time_to_first_token": 0.36,
+        "time_to_first_visible_token": 0.36,
+        "total_time": 0.43,
+        "prompt_eval_duration": 0.36,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 19.6,
+        "generation_tokens_per_second": 12.98
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "continuation-1",
+      "ttft": 0.6376,
+      "elapsed": 0.7181,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 1,
+        "total_tokens": 780,
+        "input_tokens": 779,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 748
+        },
+        "time_to_first_token": 0.63,
+        "time_to_first_visible_token": 0.63,
+        "total_time": 0.72,
+        "prompt_eval_duration": 0.63,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 48.97,
+        "generation_tokens_per_second": 12.08
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "short-2",
+      "ttft": 0.6755,
+      "elapsed": 0.7555,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 1,
+        "total_tokens": 29,
+        "input_tokens": 28,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "time_to_first_token": 0.67,
+        "time_to_first_visible_token": 0.67,
+        "total_time": 0.75,
+        "prompt_eval_duration": 0.67,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 41.71,
+        "generation_tokens_per_second": 12.16
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "prefill-cold-2",
+      "ttft": 7.2446,
+      "elapsed": 7.325,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 21
+        },
+        "time_to_first_token": 7.24,
+        "time_to_first_visible_token": 7.24,
+        "total_time": 7.32,
+        "prompt_eval_duration": 7.24,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 101.38,
+        "generation_tokens_per_second": 12.09
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "prefill-repeat-2",
+      "ttft": 0.3624,
+      "elapsed": 0.4371,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 1,
+        "total_tokens": 756,
+        "input_tokens": 755,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 748
+        },
+        "time_to_first_token": 0.36,
+        "time_to_first_visible_token": 0.36,
+        "total_time": 0.43,
+        "prompt_eval_duration": 0.36,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 19.57,
+        "generation_tokens_per_second": 12.99
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "omlx-tiered-cache",
+      "name": "continuation-2",
+      "ttft": 0.6358,
+      "elapsed": 0.7166,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 1,
+        "total_tokens": 780,
+        "input_tokens": 779,
+        "output_tokens": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 748
+        },
+        "time_to_first_token": 0.63,
+        "time_to_first_visible_token": 0.63,
+        "total_time": 0.71,
+        "prompt_eval_duration": 0.63,
+        "generation_duration": 0.08,
+        "prompt_tokens_per_second": 49.12,
+        "generation_tokens_per_second": 12.02
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "short-0",
+      "ttft": 0.3465,
+      "elapsed": 0.4602,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 2,
+        "total_tokens": 30
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "prefill-cold-0",
+      "ttft": 7.4145,
+      "elapsed": 7.6944,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 2,
+        "total_tokens": 757
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "prefill-repeat-0",
+      "ttft": 7.4151,
+      "elapsed": 7.6914,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 2,
+        "total_tokens": 757
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "continuation-0",
+      "ttft": 7.7307,
+      "elapsed": 8.0231,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 2,
+        "total_tokens": 781
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "short-1",
+      "ttft": 0.3464,
+      "elapsed": 0.4598,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 2,
+        "total_tokens": 30
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "prefill-cold-1",
+      "ttft": 7.53,
+      "elapsed": 7.8117,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 2,
+        "total_tokens": 757
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "prefill-repeat-1",
+      "ttft": 7.298,
+      "elapsed": 7.5742,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 2,
+        "total_tokens": 757
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "continuation-1",
+      "ttft": 7.6034,
+      "elapsed": 7.8835,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 2,
+        "total_tokens": 781
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "short-2",
+      "ttft": 0.3454,
+      "elapsed": 0.4586,
+      "usage": {
+        "prompt_tokens": 28,
+        "completion_tokens": 2,
+        "total_tokens": 30
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "prefill-cold-2",
+      "ttft": 7.2866,
+      "elapsed": 7.5639,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 2,
+        "total_tokens": 757
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "prefill-repeat-2",
+      "ttft": 7.293,
+      "elapsed": 7.5672,
+      "usage": {
+        "prompt_tokens": 755,
+        "completion_tokens": 2,
+        "total_tokens": 757
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    },
+    {
+      "config": "rapid-tensorfold",
+      "name": "continuation-2",
+      "ttft": 7.5968,
+      "elapsed": 7.8725,
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 2,
+        "total_tokens": 781
+      },
+      "done": true,
+      "answer_ok": true,
+      "finish_reason": "stop"
+    }
+  ]
+}
