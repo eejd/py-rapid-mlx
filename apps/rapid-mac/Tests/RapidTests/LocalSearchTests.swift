@@ -677,7 +677,9 @@ extension LocalSearchViewModelTests {
         }
         try stage.setValue("old AX query", for: "LocalSearch.QueryField")
         try stage.setValue("files via AX", for: "LocalSearch.QueryField")
-        try await stage.wait(for: "AX debounced response") { model.results.count == 1 }
+        try await stage.wait(for: "AX debounced response rendered") {
+            model.results.count == 1 && stage.identifiers().contains("LocalSearch.Result.0")
+        }
         #expect(model.query == "files via AX")
         #expect(queries == ["files via AX"])
         #expect(stage.identifiers().contains("LocalSearch.ResultsList"))
