@@ -58,6 +58,9 @@ final class WorkAgent {
         conversationRevision += 1
         if isPreparing || isBusy || isOpeningSession { stop() }
         else if isRunning { isOpeningSession = true }
+        text = ""
+        steps = []
+        error = nil
     }
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
@@ -239,9 +242,9 @@ final class WorkAgent {
         }
         guard let folder else { return }
         guard !isBusy else { throw WorkError.message("Stop the current task before starting a new session.") }
-        isOpeningSession = true
-        defer { isOpeningSession = false }
         let sessionGeneration = generation
+        isOpeningSession = true
+        defer { if generation == sessionGeneration { isOpeningSession = false } }
         if let old = sessionID {
             try? await notify(method: "session/cancel", params: ["sessionId": old], session: old)
             guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
@@ -249,6 +252,7 @@ final class WorkAgent {
         }
         text = ""
         steps = []
+        error = nil
         permission = nil
         pendingPermissions = []
         let result = try await call(method: "session/new", params: [
