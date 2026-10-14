@@ -8869,7 +8869,16 @@ def test_store_preserves_metadata_probe_io_error(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "damage", ["corrupt", "over_cap", "truncated", "invalid_utf8", "trailing_data"]
+    "damage",
+    [
+        "missing",
+        "overflow",
+        "corrupt",
+        "over_cap",
+        "truncated",
+        "invalid_utf8",
+        "trailing_data",
+    ],
 )
 def test_search_damaged_file_signature_is_neutral(tmp_path, monkeypatch, damage):
     import zlib
@@ -8878,6 +8887,7 @@ def test_search_damaged_file_signature_is_neutral(tmp_path, monkeypatch, damage)
     from rapid_mlx.local_search.store import MAX_FILE_SIGNATURE_BYTES
 
     blobs = {
+        "overflow": None,
         "corrupt": b"invalid zlib data",
         "over_cap": zlib.compress(b"apple " * MAX_FILE_SIGNATURE_BYTES),
         "truncated": zlib.compress(b"apple")[:-1],
@@ -8895,8 +8905,12 @@ def test_search_damaged_file_signature_is_neutral(tmp_path, monkeypatch, damage)
     async def scenario():
         search = engine(tmp_path)
         root = folder(tmp_path)
-        for name in ("damaged.txt", "valid.txt"):
-            (root / name).write_text("apple orchard")
+        for name, text in (
+            ("damaged.txt", "apple orchard"),
+            ("valid.txt", "apple orchard"),
+            ("other.txt", "orchard pear"),
+        ):
+            (root / name).write_text(text)
         try:
             await search.add_folder(str(root))
             await search.wait_idle()
@@ -8906,21 +8920,28 @@ def test_search_damaged_file_signature_is_neutral(tmp_path, monkeypatch, damage)
                 for row in rows.values()
                 if row["path"].endswith("damaged.txt")
             )
-            await search.store.call(
-                "sql",
-                "UPDATE file_signatures SET vocabulary=? WHERE file_id=?",
-                (blobs[damage], damaged_id),
-            )
-            support = await search.store.call(
-                "query_evidence", list(rows), rows, ["apple"]
-            )
-            assert support == {
-                i: float(row["path"].endswith("valid.txt")) for i, row in rows.items()
-            }
+            if damage == "missing":
+                await search.store.call(
+                    "sql", "DELETE FROM file_signatures WHERE file_id=?", (damaged_id,)
+                )
+            else:
+                await search.store.call(
+                    "sql",
+                    "UPDATE file_signatures SET vocabulary=? WHERE file_id=?",
+                    (blobs[damage], damaged_id),
+                )
+            valid = [i for i, row in rows.items() if row["file_id"] != damaged_id]
+            terms = ["apple", "orchard", "pear"]
+            baseline = await search.store.call("query_evidence", valid, rows, terms)
+            assert baseline == dict.fromkeys(valid, 0.5)
+            support = await search.store.call("query_evidence", list(rows), rows, terms)
+            assert {i: support[i] for i in valid} == baseline
+            assert all(support[i] == 0.0 for i in rows if i not in valid)
             result = await search.search("apple", 10, None)
             assert {Path(hit["path"]).name for hit in result["results"]} == {
                 "damaged.txt",
                 "valid.txt",
+                "other.txt",
             }
         finally:
             await search.close()

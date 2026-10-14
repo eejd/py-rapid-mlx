@@ -662,7 +662,8 @@ class Store:
         """Bounded primary-key reads, independent of corpus postings/chunk count.
 
         Match substrings inside whitespace tokens, preserving identifiers,
-        morphology and CJK runs. Overflow/missing signatures contribute zero.
+        morphology and CJK runs. Unavailable signatures get neutral support
+        without contributing to the file-evidence population.
         """
         import zlib
 
@@ -679,7 +680,7 @@ class Store:
             row = self.db.execute(
                 "SELECT vocabulary FROM file_signatures WHERE file_id=?", (file_id,)
             ).fetchone()
-            vocabulary = ""
+            vocabulary = None
             if row and row[0]:
                 try:
                     decoder = zlib.decompressobj()
@@ -693,7 +694,8 @@ class Store:
                         vocabulary = raw.decode("utf-8")
                 except (zlib.error, UnicodeDecodeError):
                     pass
-            coverage[file_id] = {term for term in wanted if term in vocabulary}
+            if vocabulary is not None:
+                coverage[file_id] = {term for term in wanted if term in vocabulary}
         support = file_evidence(coverage, wanted)
         return {i: support.get(rows[i]["file_id"], 0.0) for i in candidates}
 
