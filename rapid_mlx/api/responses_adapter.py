@@ -1026,7 +1026,8 @@ def openai_to_responses(
                 _build_tool_call_output_item(tc, uses_computer_use, namespace_by_tool)
             )
 
-    status = _convert_status(choice.finish_reason if choice else None)
+    choice_finish_reason = choice.finish_reason if choice else None
+    status = _convert_status(choice_finish_reason)
 
     usage = _build_responses_usage(response)
 
@@ -1041,7 +1042,7 @@ def openai_to_responses(
         incomplete_details = {
             "reason": (
                 "repetition"
-                if choice.finish_reason == "repetition"
+                if choice_finish_reason == "repetition"
                 else "max_output_tokens"
             )
         }
