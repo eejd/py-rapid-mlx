@@ -169,6 +169,41 @@ missing-file failure was resolved by the fresh exact-release checkout.
 
 ## Rollout and rollback handoff
 
+### Follow-up: signed artifact on a community-class Mac
+
+At the owner's request, Machine Control assigned an available M4 Pro Mac mini
+with 48 GiB RAM. The released DMG's SHA-256 matched the release asset:
+`91374263df64e4a7e1c62b0f905dfa3214ac55812eb26f6f85222d7f318cacee`.
+Deep/strict code-signature verification passed. Both the app version and its
+bundled engine reported 0.16.1. The installed app and resident provider were
+left untouched; the signed app was staged in task scratch space.
+
+Weights were copied from the internal hub, SHA-256 checked by the hub client,
+into the worker's canonical HF cache, with no external model download:
+`rapid-mlx/Qwen3.8-27B-4bit-MTP-MLX` at
+`1784d09391ee8affa203f58f5103e2a5f139135c`.
+
+The bundled engine, using the ordinary `qwen3.8-27b-4bit` alias, offline mode,
+two sequence slots and disabled disk caches, passed seven local checks:
+readiness/catalog identity; missing-key rejection (401); nonstreaming answer
+and positive usage; SSE content/usage/DONE; two concurrent requests; a new
+request after closing a stream; and a forced `get_weather` tool call.
+Readiness took approximately 16 seconds in this small diagnostic. This is not
+a throughput benchmark or proof of GPU memory behavior under production load.
+
+The existing resident QuickSilver provider reported version 0.15.7. Its
+processes were preserved; no credentials were inspected or reused and no
+upgrade was performed. This confirms that old-client disposition concerns an
+actual resident node, not only a hypothetical migration case. Its cache
+retention behavior was not tested, so the version observation alone does not
+establish that it persisted any customer prompts.
+
+The task server stopped successfully, only the task-created model copy was
+removed, remote task credentials and staged app/DMG were cleaned, and the
+machine was returned. Real production registration, routed consumer requests,
+and earnings verification remain pending owner-provided test credentials.
+Local checks do not close that end-to-end requirement or Desktop UI restoration.
+
 Atlas recommends Qwen-only, default-off beta once the items above have explicit
 dispositions. Harbor verifies production upgrade enforcement, signed-artifact
 acceptance, monitored cloud fallback, settlement alerts and rollback ownership.
