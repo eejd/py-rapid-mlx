@@ -57,7 +57,7 @@ struct WorkView: View {
                 }
                 Spacer()
                 Button("Choose Folder") { chooseFolder() }
-                    .disabled(submitting || agent.isBusy || agent.isPreparing)
+                    .disabled(submitting || agent.isBusy || agent.isPreparing || agent.isOpeningSession)
                 Button("New Session") {
                     Task { try? await agent.newSession() }
                 }.disabled(!agent.isRunning || submitting || agent.isBusy || agent.isPreparing || agent.isOpeningSession)

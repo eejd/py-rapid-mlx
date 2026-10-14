@@ -51,6 +51,7 @@ final class WorkAgent {
     private var sandboxProfileURLs: [URL] = []
     private var pendingPermissions: [WorkPermission] = []
     private var generation = 0
+    var lifecycleGeneration: Int { generation }
 
     private init() {}
 
