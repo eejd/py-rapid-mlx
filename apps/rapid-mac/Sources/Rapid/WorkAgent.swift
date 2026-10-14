@@ -488,7 +488,7 @@ final class WorkAgent {
                                         environment: [String: String]) throws -> Process {
         let child = Process()
         child.executableURL = python
-        child.arguments = [Bundle.main.resourceURL!.appendingPathComponent("Helpers/work-helper-watchdog.py").path,
+        child.arguments = ["-I", "-S", Bundle.main.resourceURL!.appendingPathComponent("Helpers/work-helper-watchdog.py").path,
                            String(getpid())] + (profile.map { ["/usr/bin/sandbox-exec", "-f", $0.path] } ?? [])
                            + [executable.path] + arguments
         child.currentDirectoryURL = directory
