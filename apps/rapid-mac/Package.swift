@@ -1,5 +1,11 @@
 // swift-tools-version:6.0
 import PackageDescription
+import Foundation
+
+// The experimental Work bundle can be assembled on a Command Line Tools host.
+// CLT lacks xcstringstool; build.sh stages the source catalog for that lane.
+let workMVP = ProcessInfo.processInfo.environment["WORK_MVP"] == "1"
+let workMVPResources: [Resource] = workMVP ? [] : [.process("Resources/Localizable.xcstrings")]
 
 // Minimal menu-bar app ("Rapid-MLX" v1.0). Source-level target is
 // macOS 14 (the MLX floor). Two SPM dependencies remain — block-level
@@ -68,14 +74,13 @@ let package = Package(
             // The release assembler compiles the app icon catalog with
             // actool. SwiftPM does not consume it, so exclude it from target
             // discovery while leaving it available to scripts/build.sh.
-            exclude: ["Resources/Assets.xcassets"],
+            exclude: ["Resources/Assets.xcassets"] + (workMVP ? ["Resources/Localizable.xcstrings"] : []),
             // Brand cheetah PNGs + the per-alias benchmark scores + the
             // localizable strings table. Loaded at runtime via
             // ``Bundle.main`` (flat files in the production .app).
             resources: [
                 .process("Resources/cheetah.png"),
                 .process("Resources/cheetah-sm.png"),
-                .process("Resources/Localizable.xcstrings"),
                 .process("Resources/benchmark-scores.json"),
                 // Community Benchmark identity artwork, vendored unmodified
                 // from rapidmlx.com (`landing/public/leaderboard/`). The 18
@@ -107,7 +112,7 @@ let package = Package(
                 // benchmark in progress.
                 .copy("Resources/cheetah-invite-wave.png"),
                 .copy("Resources/cheetah-run.png")
-            ]
+            ] + workMVPResources
         ),
         .testTarget(
             name: "RapidTests",

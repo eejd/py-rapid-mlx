@@ -203,18 +203,34 @@ if [[ "$PARALLEL_SIDECAR_BUILD" == "1" \
 fi
 
 cd "$ROOT"
-echo "==> swift build -c $CONFIG"
-SWIFT_BUILD_STARTED=$SECONDS
-swift build -c "$CONFIG"
-SWIFT_BUILD_SECONDS=$((SECONDS - SWIFT_BUILD_STARTED))
-echo "==> Swift compilation completed in ${SWIFT_BUILD_SECONDS}s"
+if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PREBUILT_RAPID:-}" ]]; then
+    [[ -x "$WORK_MVP_PREBUILT_RAPID" ]] || { echo "ERR: Work MVP executable missing" >&2; exit 1; }
+    echo "==> using prebuilt Work MVP Swift executable"
+    SWIFT_BUILD_SECONDS=0
+else
+    echo "==> swift build -c $CONFIG"
+    SWIFT_BUILD_STARTED=$SECONDS
+    SWIFT_BUILD_EXTRA=()
+    if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PLUGIN_PATH:-}" ]]; then
+        SWIFT_BUILD_EXTRA=(-Xswiftc -plugin-path -Xswiftc "$WORK_MVP_PLUGIN_PATH")
+    fi
+    swift build -c "$CONFIG" "${SWIFT_BUILD_EXTRA[@]}"
+    SWIFT_BUILD_SECONDS=$((SECONDS - SWIFT_BUILD_STARTED))
+    echo "==> Swift compilation completed in ${SWIFT_BUILD_SECONDS}s"
+fi
 join_parallel_sidecar
 
 echo "==> assembling Rapid-MLX Desktop.app"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$CONTENTS/Frameworks"
-cp "$ROOT/.build/$CONFIG/Rapid" "$CONTENTS/MacOS/Rapid"
+cp "${WORK_MVP_PREBUILT_RAPID:-$ROOT/.build/$CONFIG/Rapid}" "$CONTENTS/MacOS/Rapid"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
+if [[ "${WORK_MVP:-0}" == "1" ]]; then
+    plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-mvp' "$CONTENTS/Info.plist"
+    # Finder launches this experimental bundle with the existing global
+    # opt-out honored by Desktop update checks and both telemetry gates.
+    plutil -insert LSEnvironment -json '{"DO_NOT_TRACK":"1"}' "$CONTENTS/Info.plist"
+fi
 
 # Browser domain enforcement reads only the selected browser's trusted active
 # tab API. Without the privacy purpose string macOS refuses the Apple Event
@@ -371,12 +387,16 @@ if [[ -f "$ROOT/Sources/Rapid/Resources/Localizable.xcstrings" ]]; then
     LOCALIZABLE_CATALOG="$ROOT/Sources/Rapid/Resources/Localizable.xcstrings"
     XCSTRINGSTOOL="$(xcrun --find xcstringstool 2>/dev/null || true)"
     if [[ -z "$XCSTRINGSTOOL" ]]; then
-        echo "ERR: xcstringstool is required to compile Desktop localizations" >&2
-        exit 1
+        if [[ "${WORK_MVP:-0}" != "1" ]]; then
+            echo "ERR: xcstringstool is required to compile Desktop localizations" >&2
+            exit 1
+        fi
+        echo "warning: Work MVP CLT build keeps English source strings only"
+    else
+        "$XCSTRINGSTOOL" compile "$LOCALIZABLE_CATALOG" \
+            --output-directory "$CONTENTS/Resources" \
+            --serialization-format binary
     fi
-    "$XCSTRINGSTOOL" compile "$LOCALIZABLE_CATALOG" \
-        --output-directory "$CONTENTS/Resources" \
-        --serialization-format binary
     cp "$LOCALIZABLE_CATALOG" "$CONTENTS/Resources/Localizable.xcstrings"
 else
     echo "ERR: Localizable.xcstrings missing — refusing to ship an English-only app" >&2
@@ -593,6 +613,14 @@ else
             SIDECAR_CACHE_HIT=0
         fi
     fi
+    # A one-night source snapshot on the leased build host has no Git
+    # metadata. Its already smoke-tested stage is still usable for this
+    # experimental bundle; keep the override explicit and MVP-only.
+    if [[ "${WORK_MVP:-0}" == "1" && "${WORK_MVP_REUSE_SIDECAR:-0}" == "1" \
+        && -x "$SIDECAR_STAGE/rapid-mlx/python/bin/python3.12" \
+        && -d "$SIDECAR_STAGE/rapid-mlx/site-packages/rapid_mlx" ]]; then
+        SIDECAR_CACHE_HIT=1
+    fi
 
     SIDECAR_ARGS=(--out "$SIDECAR_STAGE")
     if [[ "${CODESIGN_IDENTITY:--}" != "-" ]]; then
@@ -794,6 +822,11 @@ except Exception as e:
     BUNDLED_SIZE="$(du -sh "$MODEL_CACHE_ROOT/hub/$BUNDLED_MODEL_DIRNAME" | cut -f1)"
     echo "==> bundled model staged ($BUNDLED_SIZE) at"
     echo "    $MODEL_CACHE_ROOT/hub/$BUNDLED_MODEL_DIRNAME"
+fi
+
+# Signing: ad-hoc by default (local dev), real Developer ID when
+if [[ "${WORK_MVP:-0}" == "1" ]]; then
+    bash "$ROOT/scripts/build-work-helper.sh" "$CONTENTS"
 fi
 
 # Signing: ad-hoc by default (local dev), real Developer ID when
