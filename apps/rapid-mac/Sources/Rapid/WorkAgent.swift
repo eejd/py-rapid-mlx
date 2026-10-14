@@ -283,6 +283,7 @@ final class WorkAgent {
         guard let sessionID else { return }
         let promptGeneration = generation
         let previousTextCount = text.count
+        let previousStepCount = steps.count
         isBusy = true
         error = nil
         do {
@@ -295,11 +296,12 @@ final class WorkAgent {
                 "prompt": [["type": "text", "text": instruction]],
             ], session: sessionID, timeout: 900)
             if Self.fullAccess, generation == promptGeneration,
-               Self.needsContinuation(result: result, newText: String(text.dropFirst(previousTextCount))) {
+               Self.needsFollowUp(result: result, newText: String(text.dropFirst(previousTextCount)),
+                                  newSteps: Array(steps.dropFirst(previousStepCount))) {
                 _ = try await call(method: "session/prompt", params: [
                     "sessionId": sessionID,
                     "prompt": [["type": "text", "text":
-                        "Continue the unfinished request from the existing files. Complete the remaining checks or tests without repeating finished work."]],
+                        "Continue from the existing files. Review failed tool calls and verify every requested input was processed. Repair incomplete outputs and finish the remaining checks or tests without repeating completed work."]],
                 ], session: sessionID, timeout: 900)
             }
         } catch {
@@ -531,6 +533,11 @@ final class WorkAgent {
     static func needsContinuation(result: [String: Any], newText: String) -> Bool {
         result["stopReason"] as? String == "max_tokens" ||
             newText.contains("Response stopped because the model reached its output-token limit.")
+    }
+
+    static func needsFollowUp(result: [String: Any], newText: String, newSteps: [WorkStep]) -> Bool {
+        needsContinuation(result: result, newText: newText) ||
+            newSteps.contains { $0.status.lowercased() == "failed" }
     }
 
     private static func contextLimit(rapidPort: Int, model: String, bearer: String) async -> Int {

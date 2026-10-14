@@ -21,4 +21,15 @@ struct WorkProviderParityTests {
                                             newText: "Response stopped because the model reached its output-token limit."))
         #expect(!WorkAgent.needsContinuation(result: ["stopReason": "end_turn"], newText: "Done."))
     }
+
+    @Test("checks unfinished work after a failed tool call")
+    func failedToolFollowUp() {
+        let missingSource = WorkStep(id: "1", command: "cat expenses.csv", status: "failed",
+                                     output: "No such file or directory")
+        let finished = WorkStep(id: "2", command: "write summary.md", status: "completed")
+        #expect(WorkAgent.needsFollowUp(result: ["stopReason": "end_turn"], newText: "Done.",
+                                        newSteps: [missingSource, finished]))
+        #expect(!WorkAgent.needsFollowUp(result: ["stopReason": "end_turn"], newText: "Done.",
+                                         newSteps: [finished]))
+    }
 }
