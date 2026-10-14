@@ -6,7 +6,7 @@ summary statistics, and limitations.
 
 ## Reports
 
-- [Gemma cross-chip validation](2026-10-14-gemma-cross-chip-validation.md): M2 prefill and M2/E4B routing replication, including active-request cost and untested hardware boundaries.
+- [Gemma cross-chip validation](2026-10-14-gemma-cross-chip-validation.md): M2/M4/M5 evidence, smaller 26B-A4B gains, active-request cost, and an unresolved baseline repeatability control.
 
 - [Frequent-workload inference speed audit (2026-10-14)](2026-10-14-frequent-workload-speed-audit.md): completed screening; ordinary Gemma first-token work, delayed-arrival prototypes, independent-worker replication, and rejected candidates.
 

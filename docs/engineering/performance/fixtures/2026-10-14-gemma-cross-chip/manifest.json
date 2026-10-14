@@ -1,7 +1,15 @@
 {
   "source": "6d617f51cea61f9fa1cdd07a4dea11f66e04c355",
-  "archive_bytes": 35774,
-  "archive_sha256": "2c5f9f8397ae3291f6f31e4729a5c58565137c019fdb01da46f9fd1a43b02fca",
+  "performance_streams": 272,
+  "excluded_observer_failure_streams": 84,
+  "http_checks": {
+    "passed": 195,
+    "failed": 1
+  },
+  "unqualified_control": "M5 26B-A4B baseline seeded-repeat; native compatibility incomplete",
+  "not_run": "M3 Ultra",
+  "archive_bytes": 70700,
+  "archive_sha256": "31b58980200cde33af5cbcf6a72f8179b4cc3f570a4ea7fe54941ad91e4e8c8f",
   "members": {
     "audit.py": {
       "bytes": 1525,
@@ -18,6 +26,26 @@
     "collect_metadata.py": {
       "bytes": 2187,
       "sha256": "f3c822786bc90c659a1e046105e813820fa7afbbd3af4ab2f94d7db4c77344c8"
+    },
+    "dispositions/m3-not-run.json": {
+      "bytes": 317,
+      "sha256": "794eb86826308b50af87b4808756fc880586f6d45932716383ff0ac3fcfd9af0"
+    },
+    "dispositions/m5-26b-baseline-seed-control.json": {
+      "bytes": 663,
+      "sha256": "3e5a9dee42e5868d8a4b6c3e1220cd83a4fedfe85e10312c19f51b9f6a710e2c"
+    },
+    "dispositions/m5-observer-rerun.json": {
+      "bytes": 517,
+      "sha256": "cf48116bf92b368f42136f260f358bbdccbb1c04acdd5162f38b884f34f5139b"
+    },
+    "model-family-contracts.json": {
+      "bytes": 268,
+      "sha256": "b5e59fbc8309cbbd74aa229d003333df34f2e4e0dfd883a52b05e3b0568abf07"
+    },
+    "model-provenance-26b.json": {
+      "bytes": 615,
+      "sha256": "6080f431f83bf4b4e2d4f49f75bd242a230c6572ad98b83269f7a5f8987673a8"
     },
     "receipts/m2-e2b/audit.json": {
       "bytes": 1936,
@@ -143,6 +171,10 @@
       "bytes": 1,
       "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
     },
+    "receipts/m3-preflight/audit.json": {
+      "bytes": 2071,
+      "sha256": "c09ed551291283e3857f901b71f3001bc6301a0a4f3e11b9b844b1f23d3dcd01"
+    },
     "receipts/m4-e4b/audit.json": {
       "bytes": 1937,
       "sha256": "ddac71a09c7964bb4e798925aed63031b6bfaf86b7ba1da2a330f03fa07aed5b"
@@ -211,6 +243,238 @@
       "bytes": 1,
       "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
     },
+    "receipts/m5-26b/audit.json": {
+      "bytes": 2271,
+      "sha256": "d3eb44355e2f1a1eef6a44c28f1558cb569e91016b81dd3ac0b4a259b7cef955"
+    },
+    "receipts/m5-26b/check_gemma.py.exit": {
+      "bytes": 1,
+      "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    "receipts/m5-26b/check_last_logits.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-26b/collect_metadata.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-26b/gemma-balanced.json": {
+      "bytes": 11338,
+      "sha256": "340900ec25a6c564e65624a9e19883154d4cd79b1d6d1f8d220264eaee538972"
+    },
+    "receipts/m5-26b/gemma-host-0.json": {
+      "bytes": 1741,
+      "sha256": "3f98c9aaab79145b2aac554af42a94e9875bdae795f0d8cfd14113c66806e4e6"
+    },
+    "receipts/m5-26b/gemma-host-1.json": {
+      "bytes": 1741,
+      "sha256": "2a4002b30bfcdffda256f2fd09981b6b99fa192c0c7e7b1e0e8c338f901ff4e0"
+    },
+    "receipts/m5-26b/gemma-host-2.json": {
+      "bytes": 1741,
+      "sha256": "c90f0cca519695f8344466db6d9ad536872b2c38ec8177073eedbeedc329f731"
+    },
+    "receipts/m5-26b/gemma-host-3.json": {
+      "bytes": 1741,
+      "sha256": "5a8e33162e9de3ac37dec3c45bbb0779d57f468db5f1114437c232b9d8aa67c1"
+    },
+    "receipts/m5-26b/gemma-probe-baseline-balanced-0.json": {
+      "bytes": 562,
+      "sha256": "9f5d5b37c61df9cd3cf35e2da86121766d1b5d3941a37243410debaab7639a16"
+    },
+    "receipts/m5-26b/gemma-probe-baseline-balanced-3.json": {
+      "bytes": 562,
+      "sha256": "4ac9caa64be66022d8f2c849dbac7f4c8b488c22d54586d4e0ca42b7e86e9615"
+    },
+    "receipts/m5-26b/gemma-probe-baseline-quality-0.json": {
+      "bytes": 1457,
+      "sha256": "f74bc99b86b49079f7af57228e8d5a4568bc60ebe77fcb01cea75803fdaa4af0"
+    },
+    "receipts/m5-26b/gemma-probe-native_prototype-balanced-1.json": {
+      "bytes": 2114,
+      "sha256": "00cae195d44ed26975916f2080f7418cf583d017db471c1642270a51e1bddd29"
+    },
+    "receipts/m5-26b/gemma-probe-native_prototype-balanced-2.json": {
+      "bytes": 2114,
+      "sha256": "0012c4e2f3b6e4998b9f4e153de4ccb8a10f71b428d9bd44061b9786d16120b7"
+    },
+    "receipts/m5-26b/gemma-probe-native_prototype-quality-1.json": {
+      "bytes": 3008,
+      "sha256": "25e60e9c2938c264eeb3facb109974d3db0df9f9613377af8414e1b69594bf06"
+    },
+    "receipts/m5-26b/gemma-quality.json": {
+      "bytes": 12475,
+      "sha256": "ca5edb8b8aab32207fd0c7aa4bc85639889e8febb13718d8233318755c9ae568"
+    },
+    "receipts/m5-26b/last-logits-host-0.json": {
+      "bytes": 748,
+      "sha256": "405b5cc1726588e68ed418758b96d0dfd319aa68c883827497854c517ef1f463"
+    },
+    "receipts/m5-26b/last-logits-host-1.json": {
+      "bytes": 747,
+      "sha256": "31ac23f0f041b8530d824e3a1043cbf49b1ed868c634f5ae0346c4b78189368c"
+    },
+    "receipts/m5-26b/last-logits-host-2.json": {
+      "bytes": 747,
+      "sha256": "3c1fdf721f8ee3b1a76afc307c168a7479c46e7f1e8772cb4343f81681fa0d5e"
+    },
+    "receipts/m5-26b/last-logits-host-3.json": {
+      "bytes": 747,
+      "sha256": "21d943ae37f452821127cb593ad03bac0ab6f3e94adb329234f0bf544e0e7812"
+    },
+    "receipts/m5-26b/last-logits-probe-0.json": {
+      "bytes": 7441,
+      "sha256": "f0d5f83068d45a3f7ef4f26e7fdd6256e3c36eda27e6a89dac5a74f83d784cb6"
+    },
+    "receipts/m5-26b/last-logits-probe-1.json": {
+      "bytes": 7396,
+      "sha256": "aef17b842869554ab000a764a65d35151bcfa59ba7962409972bbba293b2fdd2"
+    },
+    "receipts/m5-26b/last-logits-probe-2.json": {
+      "bytes": 7396,
+      "sha256": "69b51da1224e057b37be1589a2e1bae907ed211165cab4384ae294fdc2f13fec"
+    },
+    "receipts/m5-26b/last-logits-probe-3.json": {
+      "bytes": 7441,
+      "sha256": "c2e893bcefb96cac55fd8fb0a5082f01aaa21a9cf8a37047fbc8032cb85c25de"
+    },
+    "receipts/m5-26b/last-logits-probe-quality-0.json": {
+      "bytes": 5573,
+      "sha256": "e3134bf557bd74ab8446b07ae67c6b6716e894cac42e45bbf68ffe931c92d2ee"
+    },
+    "receipts/m5-26b/last-logits-probe-quality-1.json": {
+      "bytes": 5551,
+      "sha256": "471a95054781346173ade3ea42ec27d896fd0ae9502674f4f8a7992678512cf0"
+    },
+    "receipts/m5-26b/last-logits-quality.json": {
+      "bytes": 12812,
+      "sha256": "19fd19b3d260fbfc06402ae02a50d075149bdcfa0c7832e203221957cd5154ed"
+    },
+    "receipts/m5-26b/last-logits-trials.json": {
+      "bytes": 23660,
+      "sha256": "eb24db99397bfd750f5774f9d937cdaa4e5edb5589b316e7074316d45237507b"
+    },
+    "receipts/m5-26b/metadata.json": {
+      "bytes": 4971,
+      "sha256": "6720670ed7d64dda460681adf3d4edc901fcf2a901107f8332f3a3c1e633add7"
+    },
+    "receipts/m5-26b/run_gemma_balanced.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-26b/run_last_logits.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-e2b/audit.json": {
+      "bytes": 1937,
+      "sha256": "388b7db211f5e421147c5a392e20ca0d6c2fb9026db1158e75393669a45ae39f"
+    },
+    "receipts/m5-e2b/check_gemma.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-e2b/check_last_logits.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-e2b/collect_metadata.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-e2b/gemma-balanced.json": {
+      "bytes": 11337,
+      "sha256": "1334369fe37eca754d2bc7a557b13ed88e72ce5a3c59bc7faf10f6940bf7373d"
+    },
+    "receipts/m5-e2b/gemma-host-0.json": {
+      "bytes": 1075,
+      "sha256": "d58e795b5c57f04274d950f5cfb246cebaa8c16db60c7b06136c4447cbc51dd1"
+    },
+    "receipts/m5-e2b/gemma-host-1.json": {
+      "bytes": 1075,
+      "sha256": "5afd27ef38f93185db428c2dbfe18382a23438d46c27139db5bb75aeee1f2057"
+    },
+    "receipts/m5-e2b/gemma-host-2.json": {
+      "bytes": 1075,
+      "sha256": "479dc8a4c0c082b8a2b48504802555d85ca60b87828562dc08f8f039f74e9c04"
+    },
+    "receipts/m5-e2b/gemma-host-3.json": {
+      "bytes": 1075,
+      "sha256": "85dd836784e70340bf34c840a8f3a5bb93b6505ddf1cf301c3f1552a43d6343c"
+    },
+    "receipts/m5-e2b/gemma-probe-baseline-balanced-0.json": {
+      "bytes": 562,
+      "sha256": "3068f0d40eefb014ee63854097393bb075fd4610da57da709c99be4233aec51b"
+    },
+    "receipts/m5-e2b/gemma-probe-baseline-balanced-3.json": {
+      "bytes": 562,
+      "sha256": "06e2ca9eae5cf0467f1cc41152e25698786cd2b5ec201bf7bc0d0a9a2168ce40"
+    },
+    "receipts/m5-e2b/gemma-probe-native_prototype-balanced-1.json": {
+      "bytes": 1438,
+      "sha256": "6f2bd31a81f6b7ccd1aa78586d74f942ea8150f3a1005cb20db76514167d78e6"
+    },
+    "receipts/m5-e2b/gemma-probe-native_prototype-balanced-2.json": {
+      "bytes": 1438,
+      "sha256": "23e9642141ac18d2f673148d2f51eb76437b1083ac6ed32aea93665b1a573da6"
+    },
+    "receipts/m5-e2b/gemma-quality.json": {
+      "bytes": 11939,
+      "sha256": "93401a7852afcb245c4af9242261e5bf4d0857eccbb9a5521e05737b80c20f02"
+    },
+    "receipts/m5-e2b/last-logits-host-0.json": {
+      "bytes": 462,
+      "sha256": "18aa31513510e44f05f00cb4a37daceac10079775dfd24346c71a33963803b3b"
+    },
+    "receipts/m5-e2b/last-logits-host-1.json": {
+      "bytes": 407,
+      "sha256": "fde6e4ee1fa90dcd41a8ed4ccf25804bb6fd257dbef8727c2be3116e92e38006"
+    },
+    "receipts/m5-e2b/last-logits-host-2.json": {
+      "bytes": 407,
+      "sha256": "0d8c59c9134ab15ac2e71461f4e6f34624e16c300f789b55dd33292dfb9891de"
+    },
+    "receipts/m5-e2b/last-logits-host-3.json": {
+      "bytes": 407,
+      "sha256": "20edcde8fe1857a1230bf39cfbe270721d96940be87c580c82b0ddb3f04aa771"
+    },
+    "receipts/m5-e2b/last-logits-probe-0.json": {
+      "bytes": 7405,
+      "sha256": "3908bebda14eb4840a653a4163d740143e276b8bea790f227095eaac3d749c62"
+    },
+    "receipts/m5-e2b/last-logits-probe-1.json": {
+      "bytes": 7360,
+      "sha256": "3f5b11428c0043f3212a1241a5f6b220dab55a0f42cd42080026f9e505be1580"
+    },
+    "receipts/m5-e2b/last-logits-probe-2.json": {
+      "bytes": 7360,
+      "sha256": "3e3004331f76bb8351667d5569844a0de79309da5f785fbd64d9422a5223c2ea"
+    },
+    "receipts/m5-e2b/last-logits-probe-3.json": {
+      "bytes": 7405,
+      "sha256": "4ea8fb9afff766856c1e3c1e728c3307c4060019f84b3514549f95f17751e7c0"
+    },
+    "receipts/m5-e2b/last-logits-quality.json": {
+      "bytes": 12214,
+      "sha256": "22d1ef085dc1ac67cfc05b460dcb4a229d0938519b3a91fbb3c14e01954295b0"
+    },
+    "receipts/m5-e2b/last-logits-trials.json": {
+      "bytes": 23678,
+      "sha256": "df66c9c30fb3276f3cc12d71ac1ee4d0032631943355f0a2561ce78da6b5e6f4"
+    },
+    "receipts/m5-e2b/metadata.json": {
+      "bytes": 4971,
+      "sha256": "6720670ed7d64dda460681adf3d4edc901fcf2a901107f8332f3a3c1e633add7"
+    },
+    "receipts/m5-e2b/run_gemma_balanced.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "receipts/m5-e2b/run_last_logits.py.exit": {
+      "bytes": 1,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
     "run_gemma_balanced.py": {
       "bytes": 6469,
       "sha256": "e57ef032ee2503476007ef5aec72e070b4c397df96757892d32fc806cb1904db"
@@ -218,6 +482,30 @@
     "run_last_logits.py": {
       "bytes": 6643,
       "sha256": "f520ea180da7722c8158afd6675c625352c67b67cf5adcd29b6530e4cdc6187c"
+    },
+    "scripts/m5/26b/check_last_logits.py": {
+      "bytes": 7992,
+      "sha256": "42c5638e5c024aa087138521e8934f5168a2dc55cb1c98aad7fee20264f0face"
+    },
+    "scripts/m5/begin_26b.py": {
+      "bytes": 1063,
+      "sha256": "906039ca91842a1720173ea4e1010eafcb7e82286e8693e904bf21ee94275927"
+    },
+    "scripts/m5/fetch_26b.py": {
+      "bytes": 593,
+      "sha256": "2644709fae0b67a680f5d553cf37f942a3856d4d30313dedf79face39c033ac5"
+    },
+    "scripts/m5/rerun_perf.py": {
+      "bytes": 809,
+      "sha256": "60eab89280689ceffbe6dde2fbd696d9803ebd2da98a3a7aca0cb9c8f6b6fea2"
+    },
+    "scripts/m5/run_gemma_balanced.py": {
+      "bytes": 6505,
+      "sha256": "8ef4d27975f22fd940210cbe8178af7b9942fcd367adb2ae4a054d5c129de829"
+    },
+    "scripts/m5/run_last_logits.py": {
+      "bytes": 6676,
+      "sha256": "3876e3f14960ab449fde6a1c78e647e55e9370373883ab09f041acdf803e9ef5"
     },
     "serve_gemma.py": {
       "bytes": 2930,
@@ -228,12 +516,12 @@
       "sha256": "6aa4eb68b6f400b1c9cc7ae6539476c91aed3564ce4ab1b9567e904038e438b1"
     },
     "summarize.py": {
-      "bytes": 7162,
-      "sha256": "d9a19f87894bf42fb59fac81404baec57b0930e7ff86bec6dde843d5ea3f7e0c"
+      "bytes": 8772,
+      "sha256": "54f4165a1cdf8a1653655f5c5cd2687e8bcef31ae99a12a40d27d52ae9a7e891"
     },
     "summary.json": {
-      "bytes": 3660,
-      "sha256": "5d60849129396963f2714d60f388db76b3c109978593cc8313730e83460ad807"
+      "bytes": 8542,
+      "sha256": "8b831776c61d0aaa3f995bb5ed1080bbcee30e9a8cc66ea40a0c1116d92c7c3f"
     }
   }
 }

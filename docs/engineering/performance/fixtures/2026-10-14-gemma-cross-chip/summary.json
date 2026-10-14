@@ -1,21 +1,25 @@
 {
   "m2-e2b": {
     "16": {
+      "prompt_tokens": 220,
       "baseline_ttft_s": 0.381784396,
       "candidate_ttft_s": 0.1228413745,
       "reduction_pct": 67.82441194898914
     },
     "64": {
+      "prompt_tokens": 796,
       "baseline_ttft_s": 1.308454604,
       "candidate_ttft_s": 0.36875820800000003,
       "reduction_pct": 71.81727154517314
     },
     "192": {
+      "prompt_tokens": 2424,
       "baseline_ttft_s": 1.0958878545,
       "candidate_ttft_s": 1.0945286875,
       "reduction_pct": 0.1240242780699563
     },
     "image": {
+      "prompt_tokens": 280,
       "baseline_ttft_s": 0.8226132085,
       "candidate_ttft_s": 0.49589720800000003,
       "reduction_pct": 39.71684348416342
@@ -71,10 +75,12 @@
       }
     },
     "last-logits-quality": {
-      "passed": 28
+      "passed": 28,
+      "failed": 0
     },
     "gemma-quality": {
-      "passed": 28
+      "passed": 28,
+      "failed": 0
     },
     "host_samples": {
       "count": 190,
@@ -136,12 +142,197 @@
       }
     },
     "gemma-quality": {
-      "passed": 28
+      "passed": 28,
+      "failed": 0
     },
     "host_samples": {
       "count": 107,
       "swap_values": [
         195493888
+      ],
+      "foreign_large_python_count": 0
+    }
+  },
+  "m5-e2b": {
+    "16": {
+      "prompt_tokens": 220,
+      "baseline_ttft_s": 0.050318249999999995,
+      "candidate_ttft_s": 0.026582708500000003,
+      "reduction_pct": 47.17084059958364
+    },
+    "64": {
+      "prompt_tokens": 796,
+      "baseline_ttft_s": 0.12268281249999999,
+      "candidate_ttft_s": 0.047261978999999996,
+      "reduction_pct": 61.476283403594124
+    },
+    "192": {
+      "prompt_tokens": 2424,
+      "baseline_ttft_s": 0.119047667,
+      "candidate_ttft_s": 0.11776539550000001,
+      "reduction_pct": 1.0771076261410384
+    },
+    "image": {
+      "prompt_tokens": 280,
+      "baseline_ttft_s": 0.11503208349999999,
+      "candidate_ttft_s": 0.08513675000000001,
+      "reduction_pct": 25.988691667920616
+    },
+    "routing": {
+      "solo_before": {
+        "baseline": {
+          "ttft_s": 0.0254871665,
+          "decode_s": 2.760918167,
+          "total_s": 2.7864053335000003
+        },
+        "native_prototype": {
+          "ttft_s": 0.0276661665,
+          "decode_s": 2.7692261670000002,
+          "total_s": 2.7968923334999998
+        }
+      },
+      "solo_after": {
+        "baseline": {
+          "ttft_s": 0.0237233125,
+          "decode_s": 2.762881354,
+          "total_s": 2.7866046664999997
+        },
+        "native_prototype": {
+          "ttft_s": 0.0254257295,
+          "decode_s": 2.7702134165,
+          "total_s": 2.795639146
+        }
+      },
+      "active": {
+        "baseline": {
+          "ttft_s": 0.024835083,
+          "decode_s": 2.7620294585,
+          "total_s": 2.7868645415
+        },
+        "native_prototype": {
+          "ttft_s": 0.0255198955,
+          "decode_s": 2.7980075835,
+          "total_s": 2.823527479
+        }
+      },
+      "waiter": {
+        "baseline": {
+          "ttft_s": 2.7102007500000003,
+          "decode_s": 0.327028042,
+          "total_s": 3.037228792
+        },
+        "native_prototype": {
+          "ttft_s": 0.0299400415,
+          "decode_s": 0.341401896,
+          "total_s": 0.3713419375
+        }
+      }
+    },
+    "last-logits-quality": {
+      "passed": 28,
+      "failed": 0
+    },
+    "gemma-quality": {
+      "passed": 28,
+      "failed": 0
+    },
+    "host_samples": {
+      "count": 81,
+      "swap_values": [
+        562626560
+      ],
+      "foreign_large_python_count": 0
+    }
+  },
+  "m5-26b": {
+    "16": {
+      "prompt_tokens": 224,
+      "baseline_ttft_s": 0.10911352099999999,
+      "candidate_ttft_s": 0.1012768755,
+      "reduction_pct": 7.1821030319422885
+    },
+    "64": {
+      "prompt_tokens": 800,
+      "baseline_ttft_s": 0.251205979,
+      "candidate_ttft_s": 0.223337916,
+      "reduction_pct": 11.093710074472396
+    },
+    "192": {
+      "prompt_tokens": 2428,
+      "baseline_ttft_s": 0.6029656045,
+      "candidate_ttft_s": 0.602778896,
+      "reduction_pct": 0.030965033263352648
+    },
+    "image": {
+      "prompt_tokens": 284,
+      "baseline_ttft_s": 0.304108396,
+      "candidate_ttft_s": 0.293257437,
+      "reduction_pct": 3.5681221376077987
+    },
+    "routing": {
+      "solo_before": {
+        "baseline": {
+          "ttft_s": 0.0535280625,
+          "decode_s": 4.509050167,
+          "total_s": 4.5625782295
+        },
+        "native_prototype": {
+          "ttft_s": 0.038896,
+          "decode_s": 4.543655041499999,
+          "total_s": 4.5825510415
+        }
+      },
+      "solo_after": {
+        "baseline": {
+          "ttft_s": 0.052070938,
+          "decode_s": 4.506647479,
+          "total_s": 4.558718417
+        },
+        "native_prototype": {
+          "ttft_s": 0.037037562499999996,
+          "decode_s": 4.5478124375,
+          "total_s": 4.584849999999999
+        }
+      },
+      "active": {
+        "baseline": {
+          "ttft_s": 0.0534060835,
+          "decode_s": 4.511117625,
+          "total_s": 4.564523708499999
+        },
+        "native_prototype": {
+          "ttft_s": 0.037231229,
+          "decode_s": 4.6885393539999995,
+          "total_s": 4.725770583
+        }
+      },
+      "waiter": {
+        "baseline": {
+          "ttft_s": 4.4343848335,
+          "decode_s": 0.5418926665,
+          "total_s": 4.9762775
+        },
+        "native_prototype": {
+          "ttft_s": 0.0507047915,
+          "decode_s": 0.6620830415,
+          "total_s": 0.7127878329999999
+        }
+      }
+    },
+    "last-logits-quality": {
+      "passed": 28,
+      "failed": 0
+    },
+    "gemma-quality": {
+      "passed": 27,
+      "failed": 1,
+      "failed_control": "baseline_seeded_repeat"
+    },
+    "routing_qualification": "not_fully_qualified_baseline_repeatability_control_failed",
+    "host_samples": {
+      "count": 136,
+      "swap_values": [
+        562626560
       ],
       "foreign_large_python_count": 0
     }
