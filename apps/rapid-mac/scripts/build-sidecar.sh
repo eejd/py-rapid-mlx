@@ -967,10 +967,12 @@ if [[ "${SKIP_SOURCE_DROP:-0}" != "1" ]]; then
     # `mv` the .pyc up to <parent>/<name>.pyc and delete the .py.
     # Skip __init__ so packages stay regular packages.
     #
-    # EXCLUSION: transformers/models/ is left in source form (see
-    # comment block above for why).
+    # EXCLUSIONS: transformers/models/ needs its source registry. TensorFold
+    # also loads its vendored drafter by an explicit model_mlx.py path and
+    # fingerprints Python kernel sources; a .pyc-only package cannot load.
     find "$STAGE/site-packages" -type d -name __pycache__ \
         -not -path "*/transformers/models/*" \
+        -not -path "*/site-packages/tensorfold/*" \
         -not -path "*/site-packages/torch/*" \
         -not -path "*/site-packages/torchvision/*" \
         -not -path "*/site-packages/cv2/*" -print | \
@@ -1001,7 +1003,7 @@ fi
 # fail assembly before Compute / Earn can offer the TensorFold default.
 PYTHONPATH="$STAGE/site-packages" PYTHONNOUSERSITE=1 \
     PYTHONDONTWRITEBYTECODE=1 "$STAGE/python/bin/python3.12" -s -c \
-    'from rapid_mlx.speculative.tensorfold_qwen27 import require_runtime, require_environment; require_runtime(); require_environment(); from tensorfold.engine.lane_engine import LaneEngine; from tensorfold.engine.prefill_plan import PrefillPlan, message_markers; from tensorfold.server.app import ChatApp; print("==> bundled Qwen27 TensorFold runtime: OK")'
+    'from rapid_mlx.speculative.tensorfold_qwen27 import require_runtime, require_environment; require_runtime(); require_environment(); from tensorfold.engine.lane_engine import LaneEngine; from tensorfold.engine.prefill_plan import PrefillPlan, message_markers; from tensorfold.server.app import ChatApp; from tensorfold.drafters.dflash_drafter import _vendor; _vendor(); print("==> bundled Qwen27 TensorFold runtime: OK")'
 
 cp "${REPO_ROOT}/scripts/sidecar-shim.sh" "$STAGE/bin/rapid-mlx"
 chmod +x "$STAGE/bin/rapid-mlx"
