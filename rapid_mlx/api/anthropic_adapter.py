@@ -544,7 +544,7 @@ def _thinking_block_content(
     # followed by ``\n\n`` and more text) is NOT a rescue artifact.
     # The shape gate alone would still false-positive in that case
     # and silently drop a legit thinking block.
-    is_length_cut = finish_reason == "length"
+    is_length_cut = finish_reason in ("length", "repetition")
     if is_length_cut and is_rescue_payload(text):
         stripped = strip_reasoning_channel_markup(reasoning_text.rstrip())
         prefix = (
@@ -1106,6 +1106,7 @@ def _convert_stop_reason(openai_reason: str | None) -> str:
         "stop": "end_turn",
         "tool_calls": "tool_use",
         "length": "max_tokens",
+        "repetition": "pause_turn",
         "content_filter": "end_turn",
     }
     return mapping.get(openai_reason, "end_turn")

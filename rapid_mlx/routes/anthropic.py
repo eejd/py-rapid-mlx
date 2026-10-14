@@ -26,7 +26,11 @@ from ..api.models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
 )
-from ..api.protocol_mapping import cancellation_error, is_cancellation_finish_reason
+from ..api.protocol_mapping import (
+    cancellation_error,
+    is_cancellation_finish_reason,
+    public_finish_reason,
+)
 from ..api.tool_calling import (
     convert_tools_for_template,
     extract_json_schema_for_guided,
@@ -1267,6 +1271,7 @@ async def create_anthropic_message(
             tool_calls,
             finish_reason,
             include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
+            error_kind=getattr(output, "error_kind", None),
         )
 
         openai_response = ChatCompletionResponse(
@@ -1278,7 +1283,9 @@ async def create_anthropic_message(
                         reasoning_content=reasoning_text,
                         tool_calls=tool_calls,
                     ),
-                    finish_reason=finish_reason,
+                    finish_reason=public_finish_reason(
+                        finish_reason, getattr(output, "error_kind", None)
+                    ),
                 )
             ],
             usage=_build_usage(output, reasoning_text),
@@ -2164,6 +2171,7 @@ async def _stream_anthropic_messages(
     # keep prompt-injected ``max_tokens`` truncations in reasoning
     # instead of leaking them into ``content``.
     stream_finish_reason: str | None = None
+    stream_error_kind: str | None = None
 
     current_block_type = None
     block_index = 0
@@ -2354,6 +2362,7 @@ async def _stream_anthropic_messages(
         _chunk_finish_reason = getattr(output, "finish_reason", None)
         if _chunk_finish_reason:
             stream_finish_reason = _chunk_finish_reason
+            stream_error_kind = getattr(output, "error_kind", None)
 
         # Capture engine-surfaced structured tool calls (HarmonyStreamingRouter
         # via openai-harmony's StreamableParser). The delta_text on these
@@ -3280,7 +3289,9 @@ async def _stream_anthropic_messages(
     # the engine becomes ``max_tokens`` for spec-compliant
     # continuation; the ``stop_sequence`` ladder below preserves H-03
     # behaviour for user-supplied ``stop_sequences`` matches.
-    if tool_calls:
+    if stream_finish_reason == "length" and stream_error_kind == "repetition":
+        stop_reason = "pause_turn"
+    elif tool_calls:
         stop_reason = "tool_use"
     elif stream_finish_reason == "length":
         stop_reason = "max_tokens"

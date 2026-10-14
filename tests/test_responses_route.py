@@ -135,6 +135,27 @@ class _Engine:
         return "\n".join(parts)
 
 
+def _install_repetition_stop(engine):
+    original_chat = engine.chat
+    original_stream_chat = engine.stream_chat
+
+    async def chat(messages, **kwargs):
+        output = await original_chat(messages, **kwargs)
+        output.finish_reason = "length"
+        output.error_kind = "repetition"
+        return output
+
+    async def stream_chat(messages, **kwargs):
+        async for output in original_stream_chat(messages, **kwargs):
+            if output.finish_reason:
+                output.finish_reason = "length"
+                output.error_kind = "repetition"
+            yield output
+
+    engine.chat = chat
+    engine.stream_chat = stream_chat
+
+
 def _install_lightweight_engine_modules(monkeypatch):
     engine_pkg = types.ModuleType("rapid_mlx.engine")
     engine_pkg.BaseEngine = _BaseEngine
@@ -2590,3 +2611,55 @@ def test_responses_terminal_carries_request_timing(responses_client, stream):
     else:
         payload = response.json()
     assert payload["metrics"] == {"time_to_first_token_ms": 250.0, "mean_itl_ms": 20.0}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_repetition_stop_is_incomplete_with_its_own_reason(responses_client, stream):
+    _install_repetition_stop(responses_client.engine)
+    response = responses_client.client.post(
+        "/v1/responses",
+        json=_payload(stream=stream),
+        headers={"Authorization": "Bearer test-secret"},
+    )
+    assert response.status_code == 200
+    if stream:
+        events = _parse_sse(response.text)
+        payload = next(
+            data["response"] for name, data in events if name == "response.completed"
+        )
+    else:
+        payload = response.json()
+    assert payload["status"] == "incomplete"
+    assert payload["incomplete_details"] == {"reason": "repetition"}
+
+
+def test_buffered_responses_replay_preserves_repetition_cause(monkeypatch):
+    from rapid_mlx.routes import responses as route
+
+    observed = []
+
+    async def fake_stream(engine, *_args, **_kwargs):
+        async for output in engine.stream_chat():
+            observed.append(output)
+        yield "data: [DONE]\\n\\n"
+
+    monkeypatch.setattr(route, "_stream_responses", fake_stream)
+
+    async def collect():
+        body = json.dumps(
+            {
+                "model": "test-model",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "repetition"},
+                "output": [],
+            }
+        ).encode()
+        return [
+            chunk async for chunk in route._stream_buffered_responses_response(body)
+        ]
+
+    import asyncio
+
+    assert asyncio.run(collect()) == ["data: [DONE]\\n\\n"]
+    assert observed[-1].finish_reason == "length"
+    assert observed[-1].error_kind == "repetition"

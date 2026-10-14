@@ -158,7 +158,8 @@ async def test_stream_chat_routed_outputs_preserve_cached_tokens():
             new_text="ing<|start|><|channel|>final<|message|>Answer",
             tokens=[3, 200006, 200005, 17196, 200008, 4],
             finished=True,
-            finish_reason="stop",
+            finish_reason="length",
+            error_kind="repetition",
             cached_tokens=128,
         )
 
@@ -176,6 +177,7 @@ async def test_stream_chat_routed_outputs_preserve_cached_tokens():
     assert cached == [128] * len(outputs), (
         f"cached_tokens must propagate to every routed output; got {cached!r}"
     )
+    assert [o.error_kind for o in outputs if o.finished] == ["repetition"]
 
 
 @pytest.mark.asyncio
@@ -667,6 +669,7 @@ async def test_routed_stream_carries_timing_only_on_terminal(terminal_tokens):
             tokens=terminal_tokens,
             finished=True,
             timing_metrics=timing,
+            error_kind="repetition",
         )
 
     engine.stream_generate = source
@@ -675,3 +678,4 @@ async def test_routed_stream_carries_timing_only_on_terminal(terminal_tokens):
     )
     assert [o.timing_metrics for o in outputs if o.finished] == [timing]
     assert all(o.timing_metrics is None for o in outputs if not o.finished)
+    assert [o.error_kind for o in outputs if o.finished] == ["repetition"]

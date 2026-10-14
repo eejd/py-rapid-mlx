@@ -1483,6 +1483,20 @@ def _bare_request() -> ResponsesRequest:
 
 
 class TestOpenaiToResponses:
+    def test_repetition_stop_keeps_reasoning_incomplete(self):
+        chat_resp = _chat_response(
+            text="[truncated — generation stopped after repetition]\n\npartial",
+            reasoning_content="partial",
+            finish_reason="repetition",
+        )
+        resp = openai_to_responses(
+            chat_resp, model="test-model", request=_bare_request(), created_at=0
+        )
+        assert resp.status == "incomplete"
+        assert resp.incomplete_details == {"reason": "repetition"}
+        assert resp.output[0].type == "reasoning"
+        assert resp.output[0].status == "incomplete"
+
     def test_text_only_output(self):
         chat_resp = _chat_response(text="Hello!")
         resp = openai_to_responses(

@@ -32,6 +32,8 @@ run in unit-test CI without an Apple Silicon GPU.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -109,6 +111,34 @@ class _StubMLLMEngine:
 class _StubTextFallbackEngine(_StubMLLMEngine):
     is_mllm = False
     serving_lane_reason = "vision_hybrid_runtime_unsupported"
+
+
+class _StubRepetitionEngine(_StubMLLMEngine):
+    async def chat(self, *, messages, **kwargs):
+        output = await super().chat(messages=messages, **kwargs)
+        output.finish_reason = "length"
+        output.error_kind = "repetition"
+        return output
+
+    async def stream_chat(self, messages, **kwargs):
+        async for output in super().stream_chat(messages, **kwargs):
+            output.finish_reason = "length"
+            output.error_kind = "repetition"
+            yield output
+
+
+class _StubRepetitionToolEngine(_StubMLLMEngine):
+    async def stream_chat(self, messages, **kwargs):
+        yield GenerationOutput(
+            text="",
+            new_text="",
+            prompt_tokens=20,
+            completion_tokens=80,
+            finished=True,
+            finish_reason="length",
+            error_kind="repetition",
+            tool_calls=[{"id": "call_test", "name": "ping", "arguments": "{}"}],
+        )
 
 
 class _StubRetryableFailureEngine(_StubMLLMEngine):
@@ -492,6 +522,67 @@ def test_chat_route_maps_image_fetch_error_to_http_400_still_works():
     assert stream_resp.headers["content-type"].startswith("application/json")
     assert "Failed to process image" in stream_resp.json()["detail"]
     assert "data:" not in stream_resp.text
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_repetition_stop_reports_its_cause_after_partial_output(stream):
+    client = _make_client(_StubRepetitionEngine())
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3-vl-8b-4bit",
+            "messages": [{"role": "user", "content": "Describe this."}],
+            "stream": stream,
+        },
+    )
+    assert response.status_code == 200
+    if stream:
+        chunks = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: {")
+        ]
+        choice = next(
+            chunk["choices"][0]
+            for chunk in chunks
+            if chunk.get("choices") and chunk["choices"][0].get("finish_reason")
+        )
+        assert choice["finish_reason"] == "repetition"
+    else:
+        choice = response.json()["choices"][0]
+        assert choice["finish_reason"] == "repetition"
+        assert choice["message"]["content"] == "A blue background."
+
+
+def test_repetition_stop_with_inline_tool_call_reports_repetition():
+    client = _make_client(_StubRepetitionToolEngine())
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3-vl-8b-4bit",
+            "messages": [{"role": "user", "content": "Call ping."}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "ping", "parameters": {"type": "object"}},
+                }
+            ],
+            "stream": True,
+        },
+    )
+    assert response.status_code == 200
+    chunks = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: {")
+    ]
+    finishes = [
+        choice["finish_reason"]
+        for chunk in chunks
+        for choice in chunk.get("choices", [])
+        if choice.get("finish_reason")
+    ]
+    assert finishes == ["repetition"]
 
 
 if __name__ == "__main__":

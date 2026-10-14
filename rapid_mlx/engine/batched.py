@@ -3122,6 +3122,7 @@ class BatchedEngine(BaseEngine):
                 completion_tokens=output.completion_tokens,
                 cached_tokens=getattr(output, "cached_tokens", 0),
                 finish_reason=output.finish_reason,
+                error_kind=getattr(output, "error_kind", None),
                 # H-03: MLLM non-stream parity — propagate the matched
                 # stop string for the Anthropic adapter.
                 matched_stop=getattr(output, "matched_stop", None),
@@ -3241,6 +3242,7 @@ class BatchedEngine(BaseEngine):
             prompt_tokens=output.prompt_tokens,
             completion_tokens=output.completion_tokens,
             finish_reason=output.finish_reason,
+            error_kind=getattr(output, "error_kind", None),
             tool_calls=structured_tool_calls,
             cached_tokens=output.cached_tokens,
             # H-03: propagate the scheduler-pinned stop string so the
@@ -3401,6 +3403,7 @@ class BatchedEngine(BaseEngine):
                     cached_tokens=getattr(output, "cached_tokens", 0),
                     finished=output.finished,
                     finish_reason=output.finish_reason,
+                    error_kind=getattr(output, "error_kind", None),
                     logprobs=output.logprobs,
                     # H-03: MLLM stream parity — propagate the matched
                     # stop string for the Anthropic adapter.
@@ -3505,6 +3508,7 @@ class BatchedEngine(BaseEngine):
                     completion_tokens=output.completion_tokens,
                     finished=output.finished,
                     finish_reason=output.finish_reason,
+                    error_kind=getattr(output, "error_kind", None),
                     logprobs=output.logprobs,
                     cached_tokens=output.cached_tokens,
                     # H-03: text stream parity — propagate the matched
@@ -4198,6 +4202,7 @@ class BatchedEngine(BaseEngine):
             completion_tokens=source.completion_tokens,
             finished=finished,
             finish_reason=finish_reason,
+            error_kind=source.error_kind,
             logprobs=logprobs,
             channel=_channel_name(event.channel),
             tool_calls=tool_calls,
@@ -4220,6 +4225,7 @@ class BatchedEngine(BaseEngine):
             completion_tokens=source.completion_tokens,
             finished=True,
             finish_reason=source.finish_reason,
+            error_kind=source.error_kind,
             logprobs=source.logprobs,
             channel=None,
             cached_tokens=source.cached_tokens,

@@ -20,7 +20,7 @@ from ..api.models import (
     PromptTokensDetails,
     Usage,
 )
-from ..api.protocol_mapping import is_cancellation_finish_reason
+from ..api.protocol_mapping import is_cancellation_finish_reason, public_finish_reason
 from ..api.utils import extract_json_from_response
 from ..config import get_config
 from ..middleware.auth import check_rate_limit, verify_api_key
@@ -707,7 +707,9 @@ async def create_completion(request: CompletionRequest, raw_request: Request):
                 CompletionChoice(
                     index=i,
                     text=final_text,
-                    finish_reason=output.finish_reason,
+                    finish_reason=public_finish_reason(
+                        output.finish_reason, getattr(output, "error_kind", None)
+                    ),
                     logprobs=choice_logprobs,
                 )
             )
@@ -928,14 +930,22 @@ async def stream_completion(
             if output.finished:
                 _final_usage = get_usage(output)
                 _final_metrics = _build_response_metrics(output)
-                _buffered_finish_reason = output.finish_reason
+                _buffered_finish_reason = public_finish_reason(
+                    output.finish_reason, getattr(output, "error_kind", None)
+                )
             continue
         if output.finished and is_cancellation_finish_reason(output.finish_reason):
             return
         choice = {
             "index": 0,
             "text": output.new_text,
-            "finish_reason": output.finish_reason if output.finished else None,
+            "finish_reason": (
+                public_finish_reason(
+                    output.finish_reason, getattr(output, "error_kind", None)
+                )
+                if output.finished
+                else None
+            ),
         }
         if want_logprobs:
             entries = _extract_streaming_token_logprobs(

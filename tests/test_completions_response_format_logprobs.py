@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -81,9 +82,23 @@ class _FencedCompletionEngine:
         )
 
 
-def _make_client() -> TestClient:
+class _RepetitionCompletionEngine(_FencedCompletionEngine):
+    async def generate(self, prompt, **kwargs):
+        output = await super().generate(prompt, **kwargs)
+        output.finish_reason = "length"
+        output.error_kind = "repetition"
+        return output
+
+    async def stream_generate(self, prompt, **kwargs):
+        async for output in super().stream_generate(prompt, **kwargs):
+            output.finish_reason = "length"
+            output.error_kind = "repetition"
+            yield output
+
+
+def _make_client(engine=None) -> TestClient:
     cfg = reset_config()
-    cfg.engine = _FencedCompletionEngine()
+    cfg.engine = engine or _FencedCompletionEngine()
     cfg.model_name = "test-model"
     cfg.model_registry = None
     cfg.no_thinking = True
@@ -246,3 +261,32 @@ def test_stream_response_format_without_logprobs_strips_fences_in_buffered_chunk
     assert final["choices"][0]["text"] == _CLEAN_TEXT
     # Finish reason is on the same buffered chunk in json-mode.
     assert final["choices"][0]["finish_reason"] == "stop"
+
+
+@pytest.mark.parametrize(
+    ("stream", "json_mode"),
+    [(False, False), (True, False), (True, True)],
+)
+def test_repetition_stop_has_truthful_completion_reason(stream, json_mode):
+    client = _make_client(_RepetitionCompletionEngine())
+    payload = {
+        "model": "test-model",
+        "prompt": "hi",
+        "stream": stream,
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    response = client.post("/v1/completions", json=payload)
+    assert response.status_code == 200
+    if stream:
+        choices = [
+            chunk["choices"][0]
+            for chunk in _parse_sse_events(response.text)
+            if chunk.get("choices")
+        ]
+        finish_reason = next(
+            choice["finish_reason"] for choice in choices if choice["finish_reason"]
+        )
+    else:
+        finish_reason = response.json()["choices"][0]["finish_reason"]
+    assert finish_reason == "repetition"

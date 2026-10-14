@@ -249,8 +249,17 @@ async def test_engine_stream_generate_mllm_forwards_penalty_kwargs():
         return "rid"
 
     async def _empty_stream(*_a, **_kw):
-        if False:
-            yield None  # pragma: no cover
+        yield SimpleNamespace(
+            output_text="ok",
+            new_text="ok",
+            new_token_ids=[1],
+            prompt_tokens=1,
+            completion_tokens=1,
+            finished=True,
+            finish_reason="length",
+            error_kind="repetition",
+            logprobs=None,
+        )
 
     engine._mllm_scheduler.add_request_async = _fake_add
     engine._mllm_scheduler.stream_outputs = _empty_stream
@@ -258,22 +267,25 @@ async def test_engine_stream_generate_mllm_forwards_penalty_kwargs():
     budget = object()
     suppression = object()
 
-    async for _ in engine.stream_generate(
-        prompt="hi",
-        max_tokens=8,
-        prefix_boundary=5,
-        repetition_penalty=1.7,
-        presence_penalty=0.3,
-        frequency_penalty=0.4,
-        ignore_eos=True,
-        top_k=12,
-        min_p=0.08,
-        seed=17,
-        grammar_logits_processor=grammar,
-        reasoning_budget_logits_processor=budget,
-        suppressed_tokens_logits_processor=suppression,
-    ):
-        pass
+    streamed = [
+        output
+        async for output in engine.stream_generate(
+            prompt="hi",
+            max_tokens=8,
+            prefix_boundary=5,
+            repetition_penalty=1.7,
+            presence_penalty=0.3,
+            frequency_penalty=0.4,
+            ignore_eos=True,
+            top_k=12,
+            min_p=0.08,
+            seed=17,
+            grammar_logits_processor=grammar,
+            reasoning_budget_logits_processor=budget,
+            suppressed_tokens_logits_processor=suppression,
+        )
+    ]
+    assert streamed[-1].error_kind == "repetition"
 
     assert captured["repetition_penalty"] == 1.7
     assert captured["presence_penalty"] == 0.3
@@ -298,11 +310,12 @@ async def test_engine_stream_generate_mllm_forwards_penalty_kwargs():
             prompt_tokens=1,
             completion_tokens=1,
             finish_reason="stop",
+            error_kind="repetition",
             cached_tokens=0,
         )
 
     engine._mllm_scheduler.generate = _fake_generate
-    await engine.generate(
+    result = await engine.generate(
         prompt="hi",
         max_tokens=8,
         prefix_boundary=5,
@@ -310,5 +323,6 @@ async def test_engine_stream_generate_mllm_forwards_penalty_kwargs():
         reasoning_budget_logits_processor=budget,
         suppressed_tokens_logits_processor=suppression,
     )
+    assert result.error_kind == "repetition"
     assert captured["logits_processors"] == [grammar, budget, suppression]
     assert captured["prefix_boundary"] == 5

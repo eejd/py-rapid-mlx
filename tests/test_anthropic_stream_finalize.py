@@ -119,8 +119,9 @@ class _ThinkingTruncatedEngine:
     preserve_native_tool_format = False
     tokenizer = _Tokenizer()
 
-    def __init__(self, deltas: list[str]):
+    def __init__(self, deltas: list[str], *, error_kind: str | None = None):
         self._deltas = deltas
+        self._error_kind = error_kind
 
     async def stream_chat(self, messages, **kwargs):
         for i, t in enumerate(self._deltas, start=1):
@@ -136,6 +137,7 @@ class _ThinkingTruncatedEngine:
             completion_tokens=len(self._deltas),
             finish_reason="length",
             finished=True,
+            error_kind=self._error_kind,
         )
 
 
@@ -178,9 +180,15 @@ class _ToolCallEngine:
     preserve_native_tool_format = False
     tokenizer = _PlainTokenizer()
 
-    def __init__(self, tool_input: dict, finish_reason: str = "tool_calls"):
+    def __init__(
+        self,
+        tool_input: dict,
+        finish_reason: str = "tool_calls",
+        error_kind: str | None = None,
+    ):
         self._args = json.dumps(tool_input)
         self._finish_reason = finish_reason
+        self._error_kind = error_kind
 
     async def stream_chat(self, messages, **kwargs):
         yield SimpleNamespace(
@@ -202,6 +210,7 @@ class _ToolCallEngine:
             prompt_tokens=20,
             completion_tokens=8,
             finish_reason=self._finish_reason,
+            error_kind=self._error_kind,
             finished=True,
             tool_calls=None,
         )
@@ -586,6 +595,61 @@ def test_r06_stop_reason_max_tokens_on_length_finish():
     events = _parse_sse(r.text)
     message_delta = next(d for _, d in events if d.get("type") == "message_delta")
     assert message_delta["delta"]["stop_reason"] == "max_tokens", message_delta
+
+
+def test_repetition_stop_pauses_turn_without_exposing_mid_thought_text():
+    engine = _ThinkingTruncatedEngine(["Still", " thinking"], error_kind="repetition")
+    response = _make_client(engine, reasoning_parser_name="qwen3").post(
+        "/v1/messages",
+        json={
+            "model": "test-model",
+            "max_tokens": 128,
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+    assert response.status_code == 200
+    events = _parse_sse(response.text)
+    delta = next(data for _, data in events if data.get("type") == "message_delta")
+    assert delta["delta"]["stop_reason"] == "pause_turn"
+    assert not any(
+        data.get("content_block", {}).get("type") == "text"
+        and "thinking" in data["content_block"].get("text", "")
+        for _, data in events
+    )
+
+
+def test_repetition_stop_with_parsed_tool_call_pauses_turn():
+    engine = _ToolCallEngine(
+        {"x": 500, "y": 300}, finish_reason="length", error_kind="repetition"
+    )
+    response = _make_client(engine).post(
+        "/v1/messages",
+        json={
+            "model": "test-model",
+            "max_tokens": 64,
+            "stream": True,
+            "tools": [
+                {
+                    "name": "computer",
+                    "description": "Click",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "integer"},
+                            "y": {"type": "integer"},
+                        },
+                        "required": ["x", "y"],
+                    },
+                }
+            ],
+            "messages": [{"role": "user", "content": "Click 500,300"}],
+        },
+    )
+    assert response.status_code == 200
+    events = _parse_sse(response.text)
+    delta = next(data for _, data in events if data.get("type") == "message_delta")
+    assert delta["delta"]["stop_reason"] == "pause_turn"
 
 
 def test_r06_stop_reason_end_turn_on_natural_finish():

@@ -1268,6 +1268,7 @@ class TestGenerationOutputFieldOrder:
             "prompt_compression",
             # #4087 appended request timing after prompt compression.
             "timing_metrics",
+            "error_kind",
         ], (
             f"new GenerationOutput fields must be APPENDED in order "
             f"(raw_text → reasoning_text → tool_calls → cached_tokens "

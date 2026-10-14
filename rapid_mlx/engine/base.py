@@ -108,6 +108,8 @@ class GenerationOutput:
     # Frozen scheduler timings for a successful terminal text generation.
     # Appended after prompt_compression to preserve its positional index.
     timing_metrics: dict[str, float] | None = None
+    # Internal scheduler stop classification for accurate public termination.
+    error_kind: str | None = None
 
 
 def _callable_accepts_kwarg(func: Any, name: str, inspect_mod: Any) -> bool:

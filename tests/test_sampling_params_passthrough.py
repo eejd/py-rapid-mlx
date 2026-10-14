@@ -75,6 +75,7 @@ async def test_text_engine_preserves_ignore_eos(streaming, hybrid, ignore_eos):
         new_text="ok",
         finished=True,
         finish_reason="length",
+        error_kind="repetition",
         prompt_tokens=1,
         completion_tokens=1,
     )
@@ -100,8 +101,10 @@ async def test_text_engine_preserves_ignore_eos(streaming, hybrid, ignore_eos):
     if streaming:
         results = [out async for out in engine.stream_generate([1], **kwargs)]
         assert results[-1].finished
+        assert results[-1].error_kind == "repetition"
     else:
-        await engine.generate([1], **kwargs)
+        result = await engine.generate([1], **kwargs)
+        assert result.error_kind == "repetition"
 
     assert len(captured) == 1
     assert captured[0].ignore_eos is (ignore_eos is True)

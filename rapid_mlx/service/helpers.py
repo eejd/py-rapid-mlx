@@ -41,6 +41,7 @@ from .._env import env_falsey
 # to work unchanged.
 from ..api.constants import (  # noqa: F401
     REASONING_CUTOFF_SENTINEL,
+    REPETITION_CUTOFF_SENTINEL,
     RESCUE_TAIL_LENGTH,
 )
 from ..api.models import (
@@ -1373,7 +1374,9 @@ def _cutoff_notice_enabled() -> bool:
     )
 
 
-def _build_reasoning_rescue_payload(reasoning_text: str) -> str:
+def _build_reasoning_rescue_payload(
+    reasoning_text: str, *, error_kind: str | None = None
+) -> str:
     """Build the rescue ``content`` string for R12-8.
 
     Layout: ``"<sentinel>\\n\\n<tail-of-reasoning>"``. The sentinel
@@ -1424,9 +1427,14 @@ def _build_reasoning_rescue_payload(reasoning_text: str) -> str:
     # copy of the reasoning trace (see docstring above), so bare wire
     # markers in it are parser artifacts rather than requested text.
     sanitized = sanitize_reasoning_content(tail)
+    sentinel = (
+        REPETITION_CUTOFF_SENTINEL
+        if error_kind == "repetition"
+        else REASONING_CUTOFF_SENTINEL
+    )
     if not sanitized:
-        return REASONING_CUTOFF_SENTINEL
-    return f"{REASONING_CUTOFF_SENTINEL}\n\n{sanitized}"
+        return sentinel
+    return f"{sentinel}\n\n{sanitized}"
 
 
 def _apply_reasoning_cutoff_notice(
@@ -1436,6 +1444,7 @@ def _apply_reasoning_cutoff_notice(
     finish_reason: str | None,
     *,
     include_reasoning_tail: bool = True,
+    error_kind: str | None = None,
 ) -> str | None:
     """R12-8 / H-01: rescue ``content`` when generation was cut short
     mid-think and the strict rescue path left it empty.
@@ -1507,8 +1516,12 @@ def _apply_reasoning_cutoff_notice(
     if not reasoning_text or not reasoning_text.strip():
         return final_content
     if not include_reasoning_tail:
-        return REASONING_CUTOFF_SENTINEL
-    return _build_reasoning_rescue_payload(reasoning_text)
+        return (
+            REPETITION_CUTOFF_SENTINEL
+            if error_kind == "repetition"
+            else REASONING_CUTOFF_SENTINEL
+        )
+    return _build_reasoning_rescue_payload(reasoning_text, error_kind=error_kind)
 
 
 def _uses_deepseek_v4_reasoning(cfg, parser=None) -> bool:
