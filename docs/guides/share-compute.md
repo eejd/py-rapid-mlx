@@ -47,8 +47,11 @@ python -m pip install 'mlx==0.32.3' \
   'tensorfold @ git+https://github.com/ashhart/TensorFold.git@cb2ebf0540f42604e2759b2ddef497861e928248'
 ```
 
-An unavailable or incompatible runtime prevents joining; it never silently
-falls back to ordinary inference. Reuse is local to the node: a new prefix,
+An unavailable or incompatible runtime prevents joining. The local TensorFold
+backend serves text; requests requiring unsupported tools, media, grammar, or
+sampling features return a retryable capacity refusal in pool mode, allowing
+QuickSilver to use a compatible provider. Standalone TensorFold serving retains
+its explicit 400 refusal for unsupported features. Reuse is local to the node: a new prefix,
 restart, cache eviction, or node switch can still require cold prefill.
 The qualified 27B backend advertises one concurrent request, matching its
 single inference lane; `--max-num-seqs` values above one are rejected before

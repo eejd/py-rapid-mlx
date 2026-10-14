@@ -1792,6 +1792,7 @@ def test_qwen_pool_registers_and_serves_one_tensorfold_lane():
     assert json.loads(registration.data)["max_concurrency"] == 1
     assert spawned["extra_args"][:3] == ["--disable-disk-caches", "--max-num-seqs", "1"]
     assert spawned["alias"] == "qwen3.8-27b-tensorfold"
+    assert spawned["quicksilver_pool"] is True
 
 
 def test_qwen_pool_rejects_more_than_one_lane_before_registration(capsys):

@@ -2047,6 +2047,7 @@ def _run_share(
             api_key=api_key,
             log_path=serve_log,
             extra_args=extra,
+            quicksilver_pool=True,
         )
         if not _wait_for_healthz(port, serve_proc, progress=download_progress):
             print(
