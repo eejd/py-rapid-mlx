@@ -70,8 +70,12 @@ enum ApplicationSupportLocator {
     /// mutating the real process environment (which Swift Testing
     /// can't isolate per-test).
     static func applicationSupportRoot(environment: [String: String]) -> URL {
-        applicationSupportBase(environment: environment)
+        let root = applicationSupportBase(environment: environment)
             .appendingPathComponent(folderName, isDirectory: true)
+        if Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" {
+            return root.appendingPathComponent("work-full-desktop", isDirectory: true)
+        }
+        return root
     }
 
     static func localSearchDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {

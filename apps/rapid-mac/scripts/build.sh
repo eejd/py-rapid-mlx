@@ -26,6 +26,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/.build/release"
 APP="$ROOT/build/Rapid-MLX Desktop.app"
+if [[ "${WORK_FULL:-0}" == "1" ]]; then
+    [[ "${WORK_MVP:-0}" == "1" ]] || { echo "ERR: WORK_FULL requires WORK_MVP=1" >&2; exit 1; }
+    APP="$ROOT/build/Rapid-MLX Work Full.app"
+fi
 CONTENTS="$APP/Contents"
 CUA_HELPER="$CONTENTS/Helpers/Rapid Computer Use.app"
 CUA_HELPER_EXECUTABLE="$CUA_HELPER/Contents/MacOS/RapidComputerUse"
@@ -220,7 +224,7 @@ else
 fi
 join_parallel_sidecar
 
-echo "==> assembling Rapid-MLX Desktop.app"
+echo "==> assembling $(basename "$APP")"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$CONTENTS/Frameworks"
 RAPID_EXECUTABLE="$ROOT/.build/$CONFIG/Rapid"
@@ -230,7 +234,13 @@ fi
 cp "$RAPID_EXECUTABLE" "$CONTENTS/MacOS/Rapid"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 if [[ "${WORK_MVP:-0}" == "1" ]]; then
-    plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-mvp' "$CONTENTS/Info.plist"
+    if [[ "${WORK_FULL:-0}" == "1" ]]; then
+        plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-full' "$CONTENTS/Info.plist"
+        plutil -replace CFBundleDisplayName -string 'Rapid-MLX Work Full' "$CONTENTS/Info.plist"
+        plutil -replace CFBundleName -string 'Rapid-MLX Work Full' "$CONTENTS/Info.plist"
+    else
+        plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-mvp' "$CONTENTS/Info.plist"
+    fi
     # Finder launches this experimental bundle with the existing global
     # opt-out honored by Desktop update checks and both telemetry gates.
     plutil -insert LSEnvironment -json '{"DO_NOT_TRACK":"1"}' "$CONTENTS/Info.plist"
@@ -950,5 +960,5 @@ if [[ "$SKIP_SIDECAR" != "1" ]]; then
 fi
 
 echo
-echo "Rapid-MLX Desktop.app ready at: $APP"
+echo "$(basename "$APP") ready at: $APP"
 echo "Launch with: open '$APP'"

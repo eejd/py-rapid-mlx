@@ -9,7 +9,15 @@ struct WorkView: View {
     @State private var folder: URL?
     @State private var expanded: Set<String> = []
     @State private var submitting = false
-    @AppStorage("Rapid.Work.lastFolder") private var lastFolder = ""
+    @AppStorage("Rapid.Work.lastFolder") private var privateLastFolder = ""
+    @AppStorage("Rapid.WorkFull.lastFolder") private var fullLastFolder = ""
+    private var lastFolder: String {
+        get { WorkAgent.fullAccess ? fullLastFolder : privateLastFolder }
+        nonmutating set {
+            if WorkAgent.fullAccess { fullLastFolder = newValue }
+            else { privateLastFolder = newValue }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +35,13 @@ struct WorkView: View {
                 }.disabled(!agent.isRunning || submitting || agent.isBusy || agent.isPreparing)
             }
             .padding()
+            if WorkAgent.fullAccess {
+                Text("Full access mode: internet on, commands run without asking. Don't use private documents here.")
+                    .font(.callout.bold())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(.orange.opacity(0.25))
+            }
             Divider()
             if server.servingAlias == nil || server.activeBearer == nil {
                 ContentUnavailableView {
@@ -99,10 +114,19 @@ struct WorkView: View {
             }
             if folder == nil, !lastFolder.isEmpty, FileManager.default.fileExists(atPath: lastFolder) {
                 folder = URL(fileURLWithPath: lastFolder)
+            } else if folder == nil, WorkAgent.fullAccess {
+                let playground = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Desktop/Goose-Playground", isDirectory: true)
+                try? FileManager.default.createDirectory(at: playground, withIntermediateDirectories: true)
+                folder = playground
             }
         }
-        .onChange(of: server.activePort) { _, _ in agent.stop() }
-        .onChange(of: server.activeBearer) { _, _ in agent.stop() }
+        .onChange(of: server.activePort) { _, _ in
+            if !ProcessInfo.processInfo.arguments.contains("--work-mvp-synthetic-test") { agent.stop() }
+        }
+        .onChange(of: server.activeBearer) { _, _ in
+            if !ProcessInfo.processInfo.arguments.contains("--work-mvp-synthetic-test") { agent.stop() }
+        }
         .sheet(item: $agent.permission) { request in
             VStack(alignment: .leading, spacing: 14) {
                 Label("Approve this action?", systemImage: "hand.raised")
@@ -168,7 +192,7 @@ struct WorkView: View {
         agent.syntheticTestAutoApproval = true
         do {
             try await agent.prepare(folder: selected, rapidPort: port, model: model, bearer: bearer)
-            await agent.prompt("Read fake_w2.pdf, expenses.csv and expenses.xlsx. Write summary.md with W-2 wages and withholding, combined category totals, total expenses and the bookkeeping/tax caveat. Verify every amount with Decimal.")
+            await agent.prompt(env["WORK_MVP_TEST_PROMPT"] ?? "Read fake_w2.pdf, expenses.csv and expenses.xlsx. Write summary.md with W-2 wages and withholding, combined category totals, total expenses and the bookkeeping/tax caveat. Verify every amount with Decimal.")
         } catch {
             agent.error = error.localizedDescription
         }
