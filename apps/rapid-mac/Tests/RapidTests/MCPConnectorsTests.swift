@@ -610,7 +610,7 @@ final class MCPConnectorsTests {
 
     // MARK: - Composite registry
 
-    private func makeComposite() -> CompositeToolRegistry {
+    private func makeComposite(includeBuiltin: Bool = true) -> CompositeToolRegistry {
         CompositeToolRegistry(
             builtin: BuiltinToolRegistry(
                 browseApproval: BrowseApprovalStore(defaults: freshDefaults()),
@@ -620,8 +620,18 @@ final class MCPConnectorsTests {
                 catalog: makeCatalog(),
                 approval: makeApproval(),
                 defaults: freshDefaults()
-            )
+            ),
+            includeBuiltin: includeBuiltin
         )
+    }
+
+    @Test("Full Work omits legacy built-in chat tools")
+    func fullWorkOmitsBuiltinTools() async {
+        let registry = makeComposite(includeBuiltin: false)
+        #expect(registry.definitions.isEmpty)
+        let result = await registry.run(ToolCall(id: "c1", name: "local_search", arguments: "{}"))
+        #expect(result.isError)
+        #expect(!result.executed)
     }
 
     @Test("With no connectors up the composite is exactly the built-in surface")
