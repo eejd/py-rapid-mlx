@@ -143,6 +143,11 @@ class ContinuousMTPRouterInstallDecision:
     fallback: ContinuousMTPIntegrationRoute
     reasons: tuple[str, ...] = ()
     live_token_delivery: bool = False
+    # Operator-requested cohort depth and the depth the planner actually
+    # installed (clamped to the attested ``recursive_draft_depth``).  Both are
+    # ``None`` when the router was refused.
+    requested_draft_tokens: int | None = None
+    draft_tokens: int | None = None
 
 
 class ContinuousMTPIntegrationRouter:
@@ -286,9 +291,16 @@ def plan_router_install(
     """Feature-detect a model and return an install plan without mutation.
 
     ``max_draft_tokens`` is the operator's requested cohort depth
-    (``num_speculative_tokens``); ``plan_admission`` may still lower it per
-    cycle under memory pressure, never raise it.
+    (``num_speculative_tokens``).  The planner is authoritative for the
+    installed depth: it clamps the request to the ``recursive_draft_depth``
+    the capability descriptor attests (``draft_tokens`` on the decision says
+    what was installed), and rejects a non-positive request.  ``plan_admission``
+    may still lower the depth per cycle under memory pressure, never raise it.
     """
+    if isinstance(max_draft_tokens, bool) or not isinstance(max_draft_tokens, int):
+        raise ValueError("max_draft_tokens must be a positive integer")
+    if max_draft_tokens < 1:
+        raise ValueError("max_draft_tokens must be positive")
     candidate = getattr(model, "language_model", model)
     descriptor = getattr(candidate, "batched_mtp_capability", None)
     descriptor_map = descriptor if isinstance(descriptor, Mapping) else {}
@@ -359,6 +371,19 @@ def plan_router_install(
             ),
         )
 
+    # The injected batched forward recurses exactly ``recursive_draft_depth``
+    # times per cycle, so that is the deepest draft any lane can be planned
+    # at; a deeper request is clamped here rather than refused later by the
+    # backend's ``prepare``.
+    attested_depth = descriptor_map.get("recursive_draft_depth")
+    depth_ceiling = (
+        attested_depth
+        if isinstance(attested_depth, int)
+        and not isinstance(attested_depth, bool)
+        and attested_depth >= 1
+        else 1
+    )
+    draft_tokens = min(max_draft_tokens, depth_ceiling)
     router = ContinuousMTPIntegrationRouter(
         config=BatchedMTPConfig(
             enabled=enabled,
@@ -366,7 +391,7 @@ def plan_router_install(
             min_batch_lanes=min_batch_lanes,
             hard_reserve_bytes=hard_reserve_bytes,
             allow_dynamic_membership=allow_dynamic_membership,
-            max_draft_tokens=max_draft_tokens,
+            max_draft_tokens=draft_tokens,
         ),
         runtime=runtime,
     )
@@ -385,6 +410,8 @@ def plan_router_install(
         admitted=True,
         router=router,
         fallback=ContinuousMTPIntegrationRoute.LEGACY_MTP,
+        requested_draft_tokens=max_draft_tokens,
+        draft_tokens=draft_tokens,
     )
 
 

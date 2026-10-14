@@ -170,6 +170,10 @@ from .utils.mamba_cache import ensure_mamba_support
 
 logger = logging.getLogger(__name__)
 
+# One clamp warning per server process (the batch generator, and with it the
+# continuous-MTP router install, is recreated during the server's life).
+_CONTINUOUS_MTP_DEPTH_CLAMP_WARNED = False
+
 # Functional hybrid cache updates retain their prior lazy graph until an eval
 # barrier. Eight steps bounds that graph to a few hundred live Metal handles on
 # current 40-layer families while amortizing the synchronization cost.
@@ -1002,7 +1006,6 @@ def _install_continuous_mtp_router(
     from .spec_decode.mtp.continuous_runtime import (
         assemble_continuous_self_mtp_runtime,
     )
-    from .spec_decode.mtp.mlx_backend import RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS
 
     # The next-level diversion depends on mlx-lm 0.31's explicit prompt queue.
     # Older generators retain the vendored/plain path without partial mutation.
@@ -1032,27 +1035,18 @@ def _install_continuous_mtp_router(
         return False
     # ``num_speculative_tokens`` reaches the singleton verifier as
     # ``mtp_max_k``; the cohort planner used to ignore it and always start from
-    # the policy default of 2.  Honour it here, clamped to what the injected
-    # batched forward can draft, so K=1 is reachable on hosts where the
-    # verify forward is cheap per position but the per-cycle overhead is not.
+    # the policy default of 2.  Hand the request to the planner, which clamps
+    # it to the attested recursive draft depth, so K=1 is reachable on hosts
+    # where the verify forward is cheap per position but the per-cycle
+    # overhead is not.
     requested_depth = max(1, int(getattr(config, "mtp_max_k", 2)))
-    cohort_depth = min(requested_depth, RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS)
-    if cohort_depth != requested_depth:
-        logger.warning(
-            "[MTP-continuous] num_speculative_tokens=%d exceeds the continuous "
-            "backend ceiling; the cohort drafts %d per lane (the singleton "
-            "verifier keeps max_k=%d)",
-            requested_depth,
-            cohort_depth,
-            requested_depth,
-        )
     decision = plan_router_install(
         model,
         enabled=getattr(config, "mtp_continuous_batching", False),
         cache_quantized=cache_quantized,
         cache_windowed=bool(getattr(config, "use_paged_cache", False)),
         max_lanes=max_lanes,
-        max_draft_tokens=cohort_depth,
+        max_draft_tokens=requested_depth,
         # Preserve the mature singleton verifier for one-user traffic.  The
         # continuous coordinator pays for ragged bookkeeping even at B=1 and
         # is admitted only when there is real batching work to amortize it.
@@ -1096,6 +1090,28 @@ def _install_continuous_mtp_router(
             "retaining vendored MTP/plain decode"
         )
         return False
+    # Only now is a cohort going to run, so only now is a clamped depth worth
+    # a warning.  The generator is recreated during the server's life, so
+    # say it once per process and keep later installs at debug level.
+    global _CONTINUOUS_MTP_DEPTH_CLAMP_WARNED
+    if (
+        decision.draft_tokens is not None
+        and decision.requested_draft_tokens is not None
+        and decision.draft_tokens != decision.requested_draft_tokens
+    ):
+        _level = (
+            logging.DEBUG if _CONTINUOUS_MTP_DEPTH_CLAMP_WARNED else logging.WARNING
+        )
+        _CONTINUOUS_MTP_DEPTH_CLAMP_WARNED = True
+        logger.log(
+            _level,
+            "[MTP-continuous] num_speculative_tokens=%d exceeds the attested "
+            "recursive draft depth; the cohort drafts %d per lane (the "
+            "singleton verifier keeps max_k=%d)",
+            decision.requested_draft_tokens,
+            decision.draft_tokens,
+            decision.requested_draft_tokens,
+        )
 
     def _response_factory(**kwargs):
         # Response fields vary across mlx-lm 0.31 patch levels. Build exactly
