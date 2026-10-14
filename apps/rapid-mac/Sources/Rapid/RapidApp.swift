@@ -1177,6 +1177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// and orphaned in-flight downloads / lost the last chat edit, #1973).
     @MainActor
     static func runStandardTermination() {
+        WorkAgent.shared.stop()
         runTerminationSequence(
             stopDictation: {
                 // Strong app-lifetime ownership makes this teardown

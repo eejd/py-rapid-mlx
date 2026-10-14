@@ -16,6 +16,12 @@ so this document and the shipped bundle cannot silently disagree (#1596).
 This is the document the app's **Settings → Privacy → "Open-source
 credits"** link opens.
 
+* **goose** — Block, Inc. and contributors — Apache License 2.0.
+  The experimental Work build includes the pinned v1.54.0 CLI in
+  `Contents/Resources/Helpers/goose`. Its license text ships in
+  `Contents/Resources/Licenses/goose-APACHE-2.0.txt`.
+  https://github.com/aaif-goose/goose
+
 * **MTPLX** — Youssof Altoukhi — Apache License 2.0
   Rapid's prompt-lookup speculative decoding adapts MTPLX's context-copy
   design. The required in-product attribution appears in Settings → Privacy.
