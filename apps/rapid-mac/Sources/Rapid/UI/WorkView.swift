@@ -60,7 +60,7 @@ struct WorkView: View {
                     .disabled(submitting || agent.isBusy || agent.isPreparing)
                 Button("New Session") {
                     Task { try? await agent.newSession() }
-                }.disabled(!agent.isRunning || submitting || agent.isBusy || agent.isPreparing)
+                }.disabled(!agent.isRunning || submitting || agent.isBusy || agent.isPreparing || agent.isOpeningSession)
             }
             .padding()
             if WorkAgent.fullAccess {
@@ -142,7 +142,7 @@ struct WorkView: View {
                         .onSubmit(send)
                     if agent.isBusy {
                         Button("Stop") { agent.cancel() }
-                    } else if submitting || agent.isPreparing {
+                    } else if submitting || agent.isPreparing || agent.isOpeningSession {
                         ProgressView("Starting…")
                     } else {
                         Button("Send", action: send)
@@ -219,7 +219,8 @@ struct WorkView: View {
 
     private func send() {
         guard let folder, let model = server.servingAlias,
-              let bearer = server.activeBearer, !agent.isBusy, !agent.isPreparing, !submitting else { return }
+              let bearer = server.activeBearer, !agent.isBusy, !agent.isPreparing,
+              !agent.isOpeningSession, !submitting else { return }
         let prompt = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
         submitting = true

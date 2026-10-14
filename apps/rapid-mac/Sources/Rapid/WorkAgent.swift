@@ -31,6 +31,7 @@ final class WorkAgent {
     private(set) var isRunning = false
     private(set) var isBusy = false
     private(set) var isPreparing = false
+    private(set) var isOpeningSession = false
     private(set) var conversationRevision = 0
     var error: String?
     var permission: WorkPermission?
@@ -55,7 +56,8 @@ final class WorkAgent {
 
     func beginNewChat() {
         conversationRevision += 1
-        if isPreparing || isBusy { stop() }
+        if isPreparing || isBusy || isOpeningSession { stop() }
+        else if isRunning { isOpeningSession = true }
     }
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
@@ -229,6 +231,7 @@ final class WorkAgent {
 
     func newSession() async throws {
         if !isRunning {
+            isOpeningSession = false
             text = ""
             steps = []
             error = nil
@@ -236,8 +239,12 @@ final class WorkAgent {
         }
         guard let folder else { return }
         guard !isBusy else { throw WorkError.message("Stop the current task before starting a new session.") }
+        isOpeningSession = true
+        defer { isOpeningSession = false }
+        let sessionGeneration = generation
         if let old = sessionID {
             try? await notify(method: "session/cancel", params: ["sessionId": old], session: old)
+            guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
             streams.last?.cancel()
         }
         text = ""
@@ -248,12 +255,14 @@ final class WorkAgent {
             "cwd": folder.path, "mcpServers": [],
             "_meta": ["client": "Rapid Work"],
         ])
+        guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
         guard let sid = result["sessionId"] as? String else {
             throw WorkError.message("The Work session could not be created.")
         }
         sessionID = sid
         openStream(session: sid)
         try await Task.sleep(for: .milliseconds(300))
+        guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
     }
 
     func prompt(_ message: String) async {
@@ -318,6 +327,7 @@ final class WorkAgent {
         sandboxProfileURLs = []
         isRunning = false
         isBusy = false
+        isOpeningSession = false
         permission = nil
         pendingPermissions = []
         connection = nil
