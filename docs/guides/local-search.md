@@ -150,7 +150,9 @@ upgrades schemas 1 and 2 in place: derive file signatures from stored chunk text
 transaction. Schema 2 preserves chunk IDs, vectors, locators, and file statuses
 without source reads or re-embedding. Schema 1 retains the existing media/chunking
 upgrade, preserving keyword text and locators while queuing a vector rebuild. A newer or unrecognized schema is
-refused before database mutations; routes return HTTP 503 with the structured
+refused before any SQL schema, data, or WAL change (the owner-only permission
+and ACL hardening of the index files, which never changes their contents, still
+runs first); routes return HTTP 503 with the structured
 `unsupported_index_schema` error and instructions to update Rapid-MLX or choose
 a new index directory. Discovery and indexing proceed in bounded batches, with
 documents preferred within each directory. Each file becomes searchable when

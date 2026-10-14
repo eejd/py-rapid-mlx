@@ -202,7 +202,8 @@ class Store:
         # companions are repaired above before SQLite can recover their content.
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
-        # Refuse future indexes before executing any schema/WAL mutations.
+        # Refuse future indexes before any SQL schema/data/WAL change. The
+        # permission/ACL hardening above runs first and never alters contents.
         try:
             if self.db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table'"
