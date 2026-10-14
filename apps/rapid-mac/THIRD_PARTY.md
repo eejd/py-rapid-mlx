@@ -19,7 +19,8 @@ credits"** link opens.
 * **goose** — Block, Inc. and contributors — Apache License 2.0.
   The experimental Work build includes the pinned v1.54.0 CLI in
   `Contents/Resources/Helpers/goose`. Its license text ships in
-  `Contents/Resources/Licenses/goose-APACHE-2.0.txt`.
+  `Contents/Resources/Licenses/goose-APACHE-2.0.txt`. The Rust crate license
+  inventory is in `Resources/Licenses/goose-third-party-licenses.txt`.
   https://github.com/aaif-goose/goose
 
 * **MTPLX** — Youssof Altoukhi — Apache License 2.0
