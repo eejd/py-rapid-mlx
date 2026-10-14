@@ -1423,6 +1423,8 @@ class MLLMBatchGenerator:
         self.uid_counter = 0
         # Enabled only when a qualified native text peer shares our executor.
         self.cooperative_prefill = False
+        self._prefill_step_lock = threading.RLock()
+        self._prefill_close_requested = threading.Event()
         self._pending_prefill: (
             tuple[MLLMBatchRequest, Generator[None, None, MLLMBatch]] | None
         ) = None
@@ -3066,6 +3068,22 @@ class MLLMBatchGenerator:
 
     def close(self) -> None:
         """Release resources and reset wired limit."""
+        close_requested = getattr(self, "_prefill_close_requested", None)
+        if close_requested is not None:
+            close_requested.set()
+        lock = getattr(self, "_prefill_step_lock", None)
+        if lock is not None and not lock.acquire(blocking=False):
+            # Cancelling an asyncio waiter does not stop its executor worker.
+            # Let that worker close the continuation after the current chunk,
+            # without blocking shutdown or closing an executing generator.
+            return
+        try:
+            self._close_resources()
+        finally:
+            if lock is not None:
+                lock.release()
+
+    def _close_resources(self) -> None:
         self._close_pending_prefill()
         if self._old_wired_limit is not None:
             # mlx-lm 0.31.3+ streams are thread-local. On shutdown the
@@ -4314,6 +4332,18 @@ class MLLMBatchGenerator:
         return sampled, list(logprobs)
 
     def _next(self) -> list[MLLMBatchResponse]:
+        if not getattr(self, "cooperative_prefill", False):
+            return self._next_unlocked()
+        with self._prefill_step_lock:
+            if self._prefill_close_requested.is_set():
+                return []
+            try:
+                return self._next_unlocked()
+            finally:
+                if self._prefill_close_requested.is_set():
+                    self.close()
+
+    def _next_unlocked(self) -> list[MLLMBatchResponse]:
         """
         Internal next() implementation.
 

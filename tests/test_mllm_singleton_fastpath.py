@@ -17,6 +17,7 @@ detachment transaction (handoff §7) for the serialized MLLM lane:
 """
 
 import builtins
+import threading
 
 import pytest
 
@@ -109,6 +110,8 @@ def _stub_generator(leaves, singleton_fastpath: str = "auto"):
     from types import SimpleNamespace
 
     gen = MLLMBatchGenerator.__new__(MLLMBatchGenerator)
+    gen._prefill_step_lock = threading.RLock()
+    gen._prefill_close_requested = threading.Event()
     gen.model = SimpleNamespace(args=SimpleNamespace(max_position_embeddings=8192))
     gen.processor = SimpleNamespace(tokenizer=object())
     gen._stats = MLLMBatchStats()

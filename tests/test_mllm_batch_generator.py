@@ -3217,6 +3217,8 @@ def _suspended_generator():
     gen.active_batch = None
     gen.completion_batch_size = 1
     gen.cooperative_prefill = True
+    gen._prefill_step_lock = threading.RLock()
+    gen._prefill_close_requested = threading.Event()
     from rapid_mlx.mllm_batch_generator import MLLMBatchStats
 
     gen._stats = MLLMBatchStats()
@@ -3285,6 +3287,76 @@ def test_close_releases_suspended_prefill():
     gen.close()
     assert gen._pending_prefill is None
     assert released == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_chunk", [False, True])
+async def test_stop_defers_executing_prefill_cleanup_on_borrowed_executor(
+    monkeypatch, fail_chunk
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from rapid_mlx.mllm_scheduler import MLLMScheduler
+
+    started, release, cleaned = threading.Event(), threading.Event(), threading.Event()
+    gen = _suspended_generator()
+    gen._old_wired_limit = 1234
+    gen._stream = object()
+    resets, worker_threads = [], []
+    monkeypatch.setattr(mx, "synchronize", lambda stream: None)
+    monkeypatch.setattr(
+        mx,
+        "set_wired_limit",
+        lambda value: resets.append((value, threading.get_ident())),
+    )
+
+    def held_prefill(requests, cooperative):
+        try:
+            worker_threads.append(threading.get_ident())
+            started.set()
+            assert release.wait(timeout=5)
+            if fail_chunk:
+                raise RuntimeError("held chunk failed")
+            yield
+        finally:
+            cleaned.set()
+
+    gen._process_prompt_steps = held_prefill
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        scheduler = MLLMScheduler(
+            SimpleNamespace(config=SimpleNamespace(eos_token_id=2)),
+            SimpleNamespace(tokenizer=SimpleNamespace(eos_token_id=2)),
+            step_executor=executor,
+        )
+        scheduler.batch_generator = gen
+        scheduler.has_requests = lambda: True
+        scheduler._step_no_queue = gen._next
+        try:
+            await scheduler.start()
+            assert await asyncio.to_thread(started.wait, 2)
+            # The worker stays blocked: stop must neither wait for it nor
+            # close an executing generator/reset its wired limit.
+            await asyncio.wait_for(scheduler.stop(), timeout=1)
+            assert scheduler.batch_generator is None
+            assert gen._pending_prefill is not None
+            assert not cleaned.is_set()
+            assert resets == []
+        finally:
+            release.set()
+            await scheduler.stop()
+        # A barrier on the borrowed executor proves cleanup completed on its
+        # owner thread before subsequent work, including when the chunk raises.
+        assert (
+            executor.submit(lambda: "still usable").result(timeout=2) == "still usable"
+        )
+    assert cleaned.is_set()
+    assert gen._pending_prefill is None
+    assert gen._old_wired_limit is None
+    assert resets == [(1234, worker_threads[0])]
+    gen.close()
+    assert gen._next() == []
+    assert resets == [(1234, worker_threads[0])]
 
 
 def test_short_cache_boundary_split_does_not_yield_executor():
