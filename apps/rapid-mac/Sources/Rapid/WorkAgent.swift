@@ -25,6 +25,7 @@ final class WorkAgent {
     private(set) var steps: [WorkStep] = []
     private(set) var isRunning = false
     private(set) var isBusy = false
+    private(set) var isPreparing = false
     var error: String?
     var permission: WorkPermission?
     var syntheticTestAutoApproval = false
@@ -47,9 +48,12 @@ final class WorkAgent {
     private init() {}
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
+        guard !isPreparing else { throw WorkError.message("Work is already starting.") }
         let folder = folder.resolvingSymlinksInPath()
         let identity = "\(rapidPort):\(model):\(bearer)"
         if isRunning, sessionID != nil, self.folder == folder, serverIdentity == identity { return }
+        isPreparing = true
+        defer { isPreparing = false }
         stop()
         var completed = false
         defer { if !completed { stop() } }
@@ -62,10 +66,8 @@ final class WorkAgent {
         let resources = Bundle.main.resourceURL!
         let goose = resources.appendingPathComponent("Helpers/goose")
         let proxy = resources.appendingPathComponent("Helpers/work-inference-proxy.py")
-        let launcher = resources.appendingPathComponent("Helpers/launch-sandboxed.py")
         guard fileManager.isExecutableFile(atPath: goose.path),
-              fileManager.fileExists(atPath: proxy.path),
-              fileManager.fileExists(atPath: launcher.path) else {
+              fileManager.fileExists(atPath: proxy.path) else {
             throw WorkError.message("Work helper is missing from this build.")
         }
         let python = resources.appendingPathComponent("rapid-mlx/python/bin")
@@ -143,15 +145,15 @@ final class WorkAgent {
         proxyEnv.removeValue(forKey: "RAPID_LOCAL_WORK_KEY")
         proxyEnv["WORK_PROXY_BEARER"] = bearer
         proxyProcess = try Self.launchSandboxed(
-            python: pythonExecutable, launcher: launcher, profile: proxyProfileURL,
+            profile: proxyProfileURL,
             executable: pythonExecutable,
-            arguments: [proxy.path, String(proxyPort), String(rapidPort), model],
+            arguments: ["-I", "-S", proxy.path, String(proxyPort), String(rapidPort), model],
             directory: support, environment: proxyEnv)
         guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
             throw WorkError.message("The local Work inference gate did not start.")
         }
         process = try Self.launchSandboxed(
-            python: pythonExecutable, launcher: launcher, profile: gooseProfileURL,
+            profile: gooseProfileURL,
             executable: goose,
             arguments: ["serve", "--host", "127.0.0.1", "--port", String(port),
                         "--platform", "desktop", "--with-builtin", "developer"],
@@ -206,8 +208,8 @@ final class WorkAgent {
         do {
             let instruction = "Use the local-documents skill. Stay inside the selected folder. " +
                 "Read PDF with pypdf, CSV with csv.DictReader, XLSX with openpyxl. " +
-                "Use Decimal for money, verify totals, format currency with thousands separators and two decimal places, and write results in the folder. " +
-                "Do not install packages or use the network. User request: " + message
+                "Use Decimal for money, verify totals, format currency with thousands separators and two decimal places, and write results in the folder. Put every total label and its amount on the same line. " +
+                "Do not install packages, use the network, or start background or detached processes. User request: " + message
             _ = try await call(method: "session/prompt", params: [
                 "sessionId": sessionID,
                 "prompt": [["type": "text", "text": instruction]],
@@ -448,12 +450,12 @@ final class WorkAgent {
         return Int(UInt16(bigEndian: address.sin_port))
     }
 
-    private static func launchSandboxed(python: URL, launcher: URL, profile: URL,
-                                        executable: URL, arguments: [String], directory: URL,
+    private static func launchSandboxed(profile: URL, executable: URL,
+                                        arguments: [String], directory: URL,
                                         environment: [String: String]) throws -> Process {
         let child = Process()
-        child.executableURL = python
-        child.arguments = [launcher.path, "-f", profile.path, executable.path] + arguments
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        child.arguments = ["-f", profile.path, executable.path] + arguments
         child.currentDirectoryURL = directory
         child.environment = environment
         child.standardOutput = FileHandle.nullDevice
