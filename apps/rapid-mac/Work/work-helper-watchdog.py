@@ -17,6 +17,8 @@ except PermissionError:
 group = os.getpgrp()
 if os.fork() == 0:
     # The fork stays alive when exec replaces the helper launcher.
+    # Stay alive for the SIGKILL escalation after signalling our own group.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     while True:
         time.sleep(0.2)
         try:
