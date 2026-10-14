@@ -34,11 +34,8 @@ struct SettingsVisualFoundationTests {
     /// Every Settings source this phase migrated.
     private static let settingsSources = [
         "Sources/Rapid/UI/SettingsView.swift",
-        "Sources/Rapid/UI/SettingsToolsPanel.swift",
-        "Sources/Rapid/UI/SettingsConnectorsPanel.swift",
         "Sources/Rapid/UI/SettingsModelManagementPanel.swift",
         "Sources/Rapid/UI/SettingsPerformancePanel.swift",
-        "Sources/Rapid/UI/MCPServerEditorSheet.swift",
     ]
 
     /// Canonical form of each source, computed once per process.
@@ -82,7 +79,7 @@ struct SettingsVisualFoundationTests {
         // change deliberate and reviewed, not to freeze the list forever —
         // update this literal alongside the enum when a feature adds one.
         var expected: Set<String> = [
-            "modelManagement", "instructions", "memory", "tools", "performance",
+            "modelManagement", "instructions", "memory", "performance",
             "experimentalFeatures", "appearance", "privacy", "app",
         ]
         // `swift test` builds debug, so the debug-only category is present
@@ -109,7 +106,7 @@ struct SettingsVisualFoundationTests {
     @Test("Category order is deliberate, so arrow-key navigation stays stable")
     func categoryOrderIsStable() {
         var expectedOrder = [
-            "modelManagement", "instructions", "memory", "tools", "performance",
+            "modelManagement", "instructions", "memory", "performance",
             "experimentalFeatures", "appearance", "privacy", "app",
         ]
         #if DEBUG
@@ -118,7 +115,6 @@ struct SettingsVisualFoundationTests {
         #expect(SettingsView.Category.allCases.map(\.rawValue) == expectedOrder)
         // #1717: ``performance`` remains ahead of experimental and app-level
         // sections; connectors are configured inside Experimental.
-        #expect(SettingsView.category(.tools, movedBy: 1) == .performance)
         #expect(SettingsView.category(.performance, movedBy: 1) == .experimentalFeatures)
         #expect(SettingsView.category(.experimentalFeatures, movedBy: 1) == .appearance)
         // The rail's ↑/↓ handler walks this order and clamps at the ends.
@@ -150,23 +146,9 @@ struct SettingsVisualFoundationTests {
                 "@Environment(CustomInstructionsConfig.self)",
                 "@Environment(SettingsRouter.self)",
                 "@Environment(ServerManager.self)",
-                "@Environment(MCPConfigStore.self)",
-                "@Environment(MCPCatalog.self)",
                 "@Environment(UpdateChecker.self)",
                 "@Environment(SparkleUpdateController.self)",
                 "@Environment(DockVisibilityPromptStore.self)",
-            ]),
-            ("Sources/Rapid/UI/SettingsToolsPanel.swift", [
-                "@Environment(ChatViewModel.self)",
-                "@Environment(WebSearchConfig.self)",
-                "@Environment(BrowseApprovalStore.self)",
-            ]),
-            ("Sources/Rapid/UI/SettingsConnectorsPanel.swift", [
-                "@Environment(MCPConfigStore.self)",
-                "@Environment(MCPCatalog.self)",
-                "@Environment(MCPToolApprovalStore.self)",
-                "@Environment(MCPToolRegistry.self)",
-                "@Environment(ServerManager.self)",
             ]),
             ("Sources/Rapid/UI/SettingsMemoryPanel.swift", [
                 "@Environment(MemoryStore.self)",
@@ -196,25 +178,11 @@ struct SettingsVisualFoundationTests {
         #expect(panel.contains("@AppStorage(AutoStartPreference.storageKey)"))
     }
 
-    @Test("MCP connectors are an experimental opt-in, not a top-level category")
-    func connectorsLiveUnderExperimental() throws {
-        let settings = try strippedSource("Sources/Rapid/UI/SettingsView.swift")
-        let snapshots = try strippedSource("Sources/Rapid/DevSnapshot.swift")
-        #expect(!SettingsView.Category.allCases.map(\.rawValue).contains("connectors"))
-        #expect(settings.contains("title:String(localized:\"EnableMCPConnectors\")"))
-        #expect(settings.contains("SettingsConnectorsPanel()"))
-        #expect(settings.contains("$mcpConfig.isEnabled"))
-        #expect(
-            snapshots.components(separatedBy: ".environment(snapshotShareCompute)").count - 1 == 2,
-            "both ContentView and SettingsView snapshots must inject Share Compute state"
-        )
-    }
-
     // MARK: - Shared components are actually used
 
     @Test("Every Settings panel is built from the shared section components")
     func panelsUseSharedComponents() throws {
-        for path in Self.settingsSources where !path.hasSuffix("MCPServerEditorSheet.swift") {
+        for path in Self.settingsSources {
             let source = try strippedSource(path)
             #expect(
                 source.contains("SettingsSection(")
@@ -223,12 +191,6 @@ struct SettingsVisualFoundationTests {
                 "\(path) draws no shared Settings section — it is still hand-rolling a card."
             )
         }
-        // The editor sheet keeps its native grouped Form, but must still
-        // use the shared header + button tiers.
-        let sheet = try strippedSource("Sources/Rapid/UI/MCPServerEditorSheet.swift")
-        #expect(sheet.contains("SectionHeader("))
-        #expect(sheet.contains("buttonStyle(.rapidPrimary)"))
-        #expect(sheet.contains("buttonStyle(.rapidSecondary)"))
     }
 
     @Test("Settings uses the shared button tiers, not the native ones")
@@ -407,36 +369,6 @@ struct SettingsVisualFoundationTests {
         #expect(SettingsCardMetrics.compactInset >= 20)
         #expect(SettingsCardMetrics.inset(isCompact: false) == SettingsCardMetrics.regularInset)
         #expect(SettingsCardMetrics.inset(isCompact: true) == SettingsCardMetrics.compactInset)
-    }
-
-    /// Tool rows lead with a human name; the wire identifier stays the
-    /// key for state, dispatch and accessibility.
-    @Test("Built-in tools present human names without losing their identifiers")
-    func toolDisplayNames() {
-        #expect(SettingsToolsPanel.displayName(for: "web_search") == "Web Search")
-        #expect(SettingsToolsPanel.displayName(for: "browse") == "Browse Web Page")
-        #expect(SettingsToolsPanel.displayName(for: "weather") == "Weather")
-        // An unmapped tool degrades to its identifier rather than to
-        // nothing, so a newly registered tool is never nameless.
-        #expect(SettingsToolsPanel.displayName(for: "future_tool") == "future_tool")
-
-        // Summaries are short enough to sit inside the three-line cap.
-        for tool in ["web_search", "browse", "weather"] {
-            let summary = SettingsToolsPanel.summary(for: tool, fallback: "")
-            #expect(!summary.isEmpty)
-            #expect(summary.count < 110, "\(tool) summary is long enough to wrap past three lines")
-        }
-        // An unmapped tool falls back to the engine's own description.
-        #expect(SettingsToolsPanel.summary(for: "future_tool", fallback: "raw") == "raw")
-    }
-
-    @Test("Tool rows still key their state on the wire identifier")
-    func toolRowsKeyOnWireIdentifier() throws {
-        let source = try strippedSource("Sources/Rapid/UI/SettingsToolsPanel.swift")
-        // The toggle binding and the AX identifier must both use the raw
-        // name, not the display name.
-        #expect(source.contains("toolBinding(name)"))
-        #expect(source.contains(#"accessibilityIdentifier("Settings.Tools.Toggle.\(def.function.name)")"#))
     }
 
     // MARK: - Removed tokens have no consumers

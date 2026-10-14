@@ -7,15 +7,7 @@ import UniformTypeIdentifiers
 /// Desktop's settings shape — a left sidebar with category
 /// titles, a right detail panel scoped to the active category.
 ///
-/// v0.4.1 ships a single "Tools" category. The structure is
-/// already a sidebar so v0.5 can extend it with categories like
-/// "Appearance", "Sampling", "Privacy" without redesigning the
-/// shell.
-///
-/// The category list is hard-coded rather than driven from
-/// ``ToolDefinition`` registries so a future category that
-/// isn't tool-shaped (e.g. "Default model alias") slots in
-/// without inverting the dependency.
+/// The sidebar groups model, performance, privacy, and app settings.
 struct SettingsView: View {
     // #547 §4/§14: category switches and the save-status banner animate via
     // the shared spring and drop to instant under Reduce Motion.
@@ -30,8 +22,6 @@ struct SettingsView: View {
     /// new binary; the toggle copy already calls that out.
     @Environment(ServerManager.self) private var server
     @Environment(ShareComputeManager.self) private var shareCompute
-    @Environment(MCPConfigStore.self) private var mcpConfig
-    @Environment(MCPCatalog.self) private var mcpCatalog
     /// #191: Settings → App panel binds the desktop self-update
     /// poller. ``RapidApp`` injects it into the Settings scene's
     /// environment chain so the panel can render the same
@@ -86,9 +76,6 @@ struct SettingsView: View {
         case instructions
         /// Persistent memory entries learned from conversations.
         case memory
-        /// Built-in tools the model can call: on/off per tool, the
-        /// web-search backend + key, and the browse approval mode.
-        case tools
         /// Issue #1717 — per-model engine performance: KV-cache precision,
         /// prefix caching, cache budget. Deliberately NOT folded into
         /// ``modelManagement``'s sampling controls: those shape what the model
@@ -119,7 +106,6 @@ struct SettingsView: View {
             case .modelManagement: return String(localized: "Model Management")
             case .instructions: return String(localized: "System Prompt")
             case .memory: return String(localized: "Memory")
-            case .tools: return String(localized: "Tools")
             case .performance: return String(localized: "Performance")
             case .experimentalFeatures: return String(localized: "Experimental")
             case .appearance: return String(localized: "Appearance")
@@ -135,7 +121,6 @@ struct SettingsView: View {
             case .modelManagement: return "externaldrive.fill"
             case .instructions: return "text.bubble.fill"
             case .memory: return "brain"
-            case .tools: return "wrench.and.screwdriver.fill"
             case .performance: return "speedometer"
             case .experimentalFeatures: return "flask.fill"
             case .appearance: return "paintpalette.fill"
@@ -498,8 +483,6 @@ struct SettingsView: View {
             instructionsPanel
         case .memory:
             SettingsMemoryPanel()
-        case .tools:
-            SettingsToolsPanel()
         case .performance:
             SettingsPerformancePanel()
         case .experimentalFeatures:
@@ -518,7 +501,6 @@ struct SettingsView: View {
     }
 
     private var experimentalFeaturesPanel: some View {
-        @Bindable var mcpConfig = mcpConfig
         return VStack(alignment: .leading, spacing: RapidTheme.Space.xl) {
             SectionHeader(
                 String(localized: "Experimental"),
@@ -590,21 +572,6 @@ struct SettingsView: View {
                 .onChange(of: shareComputeEnabled) { _, enabled in
                     if !enabled { shareCompute.leave() }
                 }
-                SettingsRowDivider()
-                Toggle(isOn: $mcpConfig.isEnabled) {
-                    SettingsRowLabel(
-                        title: String(localized: "Enable MCP Connectors"),
-                        description: String(localized: "Adds tools and data from MCP servers you configure. Useful for tasks that need external context or actions; it does not improve the model itself and may add latency. Off by default—connector tools ask for approval unless you explicitly allow them.")
-                    )
-                }
-                .toggleStyle(TrailingSettingsToggleStyle())
-                .accessibilityIdentifier("Settings.Connectors.MasterToggle")
-                .onChange(of: mcpConfig.isEnabled) { _, enabled in
-                    if !enabled { mcpCatalog.clear() }
-                }
-            }
-            if mcpConfig.isEnabled {
-                SettingsConnectorsPanel()
             }
         }
     }
@@ -1325,9 +1292,6 @@ struct SettingsView: View {
     //   * ``sectionHeader(_:_:)`` and ``settingsCard(padding:_:)`` — one
     //     of four copies of the same two helpers across the Settings
     //     panels. Both are now ``SectionHeader`` + ``SettingsSection``.
-    //   * ``glyph(for:)`` — dead since the tools list moved to
-    //     ``SettingsToolsPanel`` (which has its own, live copy). It
-    //     mapped eight tool names, five of which no longer exist.
 }
 
 /// AppKit-backed because AXPress on a SwiftUI button in a secondary Window can

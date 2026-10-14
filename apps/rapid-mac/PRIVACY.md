@@ -1,22 +1,18 @@
 # Rapid-MLX Desktop — Privacy Policy
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-14.
 
 Rapid-MLX Desktop ("the App") is a local-first SwiftUI Mac client for the
 `rapid-mlx` inference server. We designed it so that your prompts,
-attachments, and model responses **never leave your Mac** unless you
-explicitly send them somewhere (e.g. via the web-search tool, which
-sends the search query to a third-party search provider — Keenable's
-keyless endpoint by default; you can switch the backend or add your
-own key in Settings → Tools).
+attachments, and model responses stay on your Mac during plain chat. Work
+uses its own permission mode and may access files, run commands, or use the
+network when you start a task there.
 
 ## What stays on your Mac
 
 * Chat history (conversations, messages, attachments, folders) — stored
   under `~/Library/Application Support/Rapid/conversations.json` and
   never transmitted off-device.
-* API keys for tools (Keenable / Parallel / Tavily / Brave) — stored
-  in macOS Keychain.
 * Server settings, picker state, window layout — stored in
   UserDefaults under `com.rapidmlx.rapid`.
 * The engine's **prompt prefix cache** — the embedded `rapid-mlx` server
@@ -359,16 +355,9 @@ distributions are out of scope but we will help triage.
   download the DMG from the
   [GitHub Releases page](https://github.com/raullenchai/Rapid-MLX/releases/latest)
   and verify its origin yourself before installing.
-* **Search and tool providers** — when the model calls the
-  web-search tool, the search query (never your whole conversation)
-  is sent to the configured provider per their own privacy policy.
-  The default backend is Keenable's keyless endpoint
-  (`api.keenable.ai`) — no account, no API key; the request carries
-  the query plus standard connection metadata (such as your IP
-  address), nothing more. You can switch to Parallel, Tavily,
-  Brave, or the DuckDuckGo scrape — or add your own key — in
-  Settings → Tools. When Keenable is unreachable the tool retries the
-  query against DuckDuckGo. Rapid-MLX Desktop is a passthrough.
+* **Work** — a Work task follows the permission mode shown in its workspace.
+  Its tools may read selected files or contact network services as the task
+  requires. Plain chat does not invoke those tools.
 
 ## Contact
 

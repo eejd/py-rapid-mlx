@@ -257,7 +257,7 @@ final class QuickstartCoordinator {
         displayName: "Qwen 3.5 · 4B",
         hfRepo: "mlx-community/Qwen3.5-4B-MLX-4bit",
         downloadBytes: 3_061_121_321,
-        blurb: "Strong everyday chat and tools, chosen for a reliable first conversation.",
+        blurb: "Strong everyday chat, chosen for a reliable first conversation.",
         tier: .starter
     )
 
@@ -281,7 +281,7 @@ final class QuickstartCoordinator {
         displayName: "LFM2.5 · 1.2B",
         hfRepo: "mlx-community/LFM2.5-1.2B-Instruct-4bit",
         downloadBytes: 663_397_140,
-        blurb: "For basic chat only; less accurate and not recommended for tools.",
+        blurb: "For basic chat only; less accurate than larger models.",
         tier: .lowMemory
     )
 
@@ -311,7 +311,7 @@ final class QuickstartCoordinator {
             displayName: "NeoHorse 1 · 9B",
             hfRepo: "rapid-mlx/NeoHorse-1-9B-MLX-4bit",
             downloadBytes: 5_058_235_254,
-            blurb: "Experimental 9B chat and tools for comparing model behavior.",
+            blurb: "Experimental 9B chat for comparing model behavior.",
             tier: .tradeUp,
             minRAMGB: 18
         ),
@@ -4778,7 +4778,7 @@ struct QuickstartView: View {
                     catalogEntryHint: catalogEntryHint
                 )
             }
-        case .openModelManagement, .openWebSearchSettings:
+        case .openModelManagement:
             // One path for every Settings deep-link. ``route`` stages the
             // target tab and only then runs the open — ``SettingsView`` reads
             // the router from ``.onAppear``, so the assignment has to land
@@ -4799,7 +4799,6 @@ struct QuickstartView: View {
         case .restart: return "Quickstart.Restart"
         case .openModelManagement: return "Quickstart.OpenModelManagement"
         case .switchDownloadSource: return "Quickstart.SwitchSource"
-        case .openWebSearchSettings: return "Quickstart.OpenWebSearchSettings"
         case nil: return nil
         }
     }

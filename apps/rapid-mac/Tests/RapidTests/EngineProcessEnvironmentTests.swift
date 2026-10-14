@@ -91,14 +91,13 @@ struct EngineProcessEnvironmentTests {
 
         // Every low-level spawn in Sources is classified. These are the only
         // non-engine sites: PortSweep's netstat/ps probes, re-onboarding's
-        // /bin/sh cleanup, the `gh` star prompt, sandbox-exec, and the
+        // /bin/sh cleanup, the `gh` star prompt, and the
         // DownloadManager test-only completion helper, and Work's Python venv
         // setup and watchdog-wrapped Goose helper.
         let allowedNonEngineSites: [String: Int] = [
             "Server/PortSweep.swift": 2,
             "Services/ReonboardingReset.swift": 1,
             "UI/GitHubStarPromptCoordinator.swift": 1,
-            "Tools/LocalWorkspaceTools.swift": 1,
             "Server/DownloadManager.swift": 1,
             "WorkAgent.swift": 3,
         ]
@@ -118,7 +117,6 @@ struct EngineProcessEnvironmentTests {
             "Server/PortSweep.swift": "/usr/sbin/netstat",
             "Services/ReonboardingReset.swift": "/bin/sh",
             "UI/GitHubStarPromptCoordinator.swift": "GitHubStarChild.spawn(",
-            "Tools/LocalWorkspaceTools.swift": "/usr/bin/sandbox-exec",
             "Server/DownloadManager.swift": "internal func _testingFinish(",
             "WorkAgent.swift": "work-helper-watchdog.py",
         ]

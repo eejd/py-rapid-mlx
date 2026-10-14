@@ -3260,7 +3260,7 @@ flow_no_dead_controls() {
     see_main "$OUT/dead-before.json"
 
     local category
-    local settings_categories=(modelManagement instructions tools performance experimentalFeatures appearance privacy app)
+    local settings_categories=(modelManagement instructions memory performance experimentalFeatures appearance privacy app)
     if jq -e '.data.ui_elements[]?
               | select(.identifier == "Settings.Category.developer")' \
         "$OUT/dead-before.json" >/dev/null; then
@@ -3342,10 +3342,6 @@ flow_no_dead_controls() {
         || die "About does not expose the enabled Powered by MTPLX attribution"
 
     local ax_contracts=(
-        "dead-panel-tools.json|Settings.Tools.Toggle.web_search|Web search"
-        "dead-panel-tools.json|Settings.Tools.Toggle.browse|Browse pages"
-        "dead-panel-tools.json|Settings.Tools.Toggle.weather|Weather"
-        "dead-panel-tools.json|Settings.Tools.Browse.AutoApproveToggle|Approve every page automatically"
         "dead-panel-app.json|Settings.App.HideDockOnCloseToggle|Hide Dock icon when closing window"
     )
     local contract file identifier label
@@ -3392,56 +3388,7 @@ flow_no_dead_controls() {
     [[ "$favorite_restored" == "$favorite_before" ]] \
         || die "favorite button did not restore its original Pin/Unpin state"
 
-    press "$OUT/dead-actions-models-favorite-restored.json" Settings.Category.tools \
-        "$OUT/dead-actions-tools-open.json"
-    # The selected backend owns the visible key row. Opening Tools must resolve
-    # its cached Keychain state on its own; making users re-select the already
-    # selected radio or focus the secret field is the regression from #2462.
-    local key_status=""
-    for _ in {1..40}; do
-        see_main "$OUT/dead-actions-tools-key-status.json"
-        key_status="$(element_field \
-            "$OUT/dead-actions-tools-key-status.json" \
-            Settings.Tools.WebSearch.KeyStatus.keenable value)"
-        [[ -n "$key_status" && "$key_status" != "Checking saved key…" ]] && break
-        sleep 0.1
-    done
-    [[ -n "$key_status" && "$key_status" != "Checking saved key…" ]] \
-        || die "Tools left the active backend's saved-key status unresolved"
-    log "  active web-search backend resolves its saved-key status on appearance"
-    local tool_name
-    for tool_name in web_search browse weather; do
-        round_trip_toggle "Settings.Tools.Toggle.$tool_name" "dead-actions-tool-$tool_name"
-        see_main "$OUT/dead-actions-details-$tool_name-before.json"
-        press "$OUT/dead-actions-details-$tool_name-before.json" \
-            "Settings.Tools.Details.$tool_name" \
-            "$OUT/dead-actions-details-$tool_name-press.json"
-        see_main "$OUT/dead-actions-details-$tool_name-open.json"
-        jq -e --arg identifier "Settings.Tools.DetailsBody.$tool_name" \
-            '.data.ui_elements[]? | select(.identifier == $identifier)' \
-            "$OUT/dead-actions-details-$tool_name-open.json" >/dev/null \
-            || die "Details for $tool_name pressed but revealed no body"
-        press "$OUT/dead-actions-details-$tool_name-open.json" \
-            "Settings.Tools.Details.$tool_name" \
-            "$OUT/dead-actions-details-$tool_name-close-press.json"
-        see_main "$OUT/dead-actions-details-$tool_name-closed.json"
-        jq -e --arg identifier "Settings.Tools.DetailsBody.$tool_name" \
-            '[.data.ui_elements[]? | select(.identifier == $identifier)] | length == 0' \
-            "$OUT/dead-actions-details-$tool_name-closed.json" >/dev/null \
-            || die "Details for $tool_name did not collapse"
-    done
-    round_trip_toggle Settings.Tools.Browse.AutoApproveToggle dead-actions-auto-approve
-    press_and_require_selected Settings.Tools.WebSearch.Backend.brave dead-actions-backend-brave
-    press_and_require_selected Settings.Tools.WebSearch.Backend.tavily dead-actions-backend-tavily
-    press_and_require_selected Settings.Tools.WebSearch.Backend.duckduckgo dead-actions-backend-restore
-
-    see_main "$OUT/dead-actions-tools-done.json"
-    press "$OUT/dead-actions-tools-done.json" Settings.Category.experimentalFeatures \
-        "$OUT/dead-actions-experimental-open.json"
-    round_trip_toggle Settings.Connectors.MasterToggle dead-actions-connectors-master
-
-    see_main "$OUT/dead-actions-connectors-done.json"
-    press "$OUT/dead-actions-connectors-done.json" Settings.Category.performance \
+    press "$OUT/dead-actions-models-favorite-restored.json" Settings.Category.performance \
         "$OUT/dead-actions-performance-open.json"
     press_and_require_selected Settings.Performance.Prefix.On dead-actions-prefix-on
     press_and_require_selected Settings.Performance.Prefix.Off dead-actions-prefix-off

@@ -35,48 +35,10 @@ enum DevSnapshot {
         try? FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true)
 
-        // ``ContentView`` reads this from the environment (the browse
-        // tool's per-fetch approval dialog). Without it every capture
-        // below traps with "No Observable object of type
-        // BrowseApprovalStore found" before the first PNG is written —
-        // the harness had been dead since that dependency landed. A
-        // throwaway instance is right here: the snapshot never approves
-        // anything, it only needs the object to exist.
-        let browseApproval = BrowseApprovalStore()
-        // ``ContentView`` also owns the built-in local-file/code approval
-        // sheet. Keep the snapshot environment in lockstep with RapidApp's
-        // dependency chain; otherwise adding that production dependency makes
-        // every visual capture trap before the first frame is rendered.
-        let localToolApproval = LocalToolApprovalStore()
-        // ``ContentView`` also reads ``ImageGenViewModel`` from the
-        // environment (the Images tab). Same rule as ``browseApproval``: a
-        // throwaway instance so the view can be evaluated without trapping.
         let imageGen = ImageGenViewModel(server: server)
         let audio = AudioViewModel(server: server)
         let video = VideoGenViewModel(server: server)
         let dictation = DictationController(server: server, testingEnabled: false)
-        // Same rule again, for the connectors stack (issue #1716).
-        // ``ContentView`` reads ``MCPCatalog`` and ``MCPToolApprovalStore``
-        // for its tool-approval sheet, and ``SettingsConnectorsPanel``
-        // additionally reads ``MCPConfigStore`` and ``MCPToolRegistry``.
-        // Without these the harness trapped on the FIRST capture with
-        // "No Observable object of type MCPCatalog found" and wrote zero
-        // PNGs — it had been dead since connectors landed, the same way it
-        // was dead before ``browseApproval`` was added above.
-        //
-        // The config store is pointed at a scratch file inside the snapshot
-        // directory so a capture run can never read or write the real
-        // ``mcp.json``. The catalog is given a nil endpoint provider, so it
-        // never polls anything.
-        let snapshotMCPConfig = MCPConfigStore(
-            fileURL: URL(fileURLWithPath: dir).appendingPathComponent("snapshot-mcp.json")
-        )
-        let snapshotMCPCatalog = MCPCatalog { nil }
-        let snapshotMCPApproval = MCPToolApprovalStore()
-        let snapshotMCPTools = MCPToolRegistry(
-            catalog: snapshotMCPCatalog,
-            approval: snapshotMCPApproval
-        )
         let snapshotShareCompute = ShareComputeManager(server: server)
         let snapshotMemoryDefaults = UserDefaults(suiteName: "rapid.dev-snapshot.memory")!
         snapshotMemoryDefaults.removePersistentDomain(forName: "rapid.dev-snapshot.memory")
@@ -85,7 +47,6 @@ enum DevSnapshot {
             defaults: snapshotMemoryDefaults
         )
         let snapshotSparkleUpdater = SparkleUpdateController(infoDictionary: [:])
-        let snapshotWebSearch = WebSearchConfig()
         let snapshotPerfDefaults = UserDefaults(suiteName: "rapid.dev-snapshot.perf")!
         let snapshotStarDefaults = UserDefaults(suiteName: "rapid.dev-snapshot.github-star")!
         snapshotStarDefaults.removePersistentDomain(forName: "rapid.dev-snapshot.github-star")
@@ -357,14 +318,10 @@ enum DevSnapshot {
                     .environment(snapshotStarPrompt)
                     .environment(dockPromptStore)
                     .environment(snapshotShareCompute)
-                    .environment(browseApproval)
-                    .environment(localToolApproval)
                     .environment(imageGen)
                     .environment(audio)
                     .environment(video)
                     .environment(dictation)
-                    .environment(snapshotMCPCatalog)
-                    .environment(snapshotMCPApproval)
                     .frame(width: width, height: height)
             )
         }
@@ -405,7 +362,7 @@ enum DevSnapshot {
                     // ``ImagesView`` deep-links to Settings → Model
                     // Management from its readiness banner, so it reads the
                     // router. Missing it trapped the harness here, one
-                    // capture after the MCP fix above.
+                    // capture after the content captures above.
                     .environment(settingsRouter)
                     // ``ImagesView`` also reads ``DownloadManager`` (the
                     // per-model download state behind its readiness banner /
@@ -971,8 +928,6 @@ enum DevSnapshot {
         // The stores Settings binds that ``runIfRequested`` isn't handed
         // are built here rather than threaded through the call site — a
         // dev-only capture should not widen a production signature. The
-        // MCP config store is pointed at a scratch file inside the
-        // snapshot directory so a capture run cannot touch the real one.
         func settingsShell(category: SettingsView.Category, size: CGSize) -> AnyView {
             settingsRouter.requestedCategory = category
             return AnyView(
@@ -993,12 +948,6 @@ enum DevSnapshot {
                     .environment(updater)
                     .environment(snapshotSparkleUpdater)
                     .environment(dockPromptStore)
-                    .environment(snapshotWebSearch)
-                    .environment(browseApproval)
-                    .environment(snapshotMCPConfig)
-                    .environment(snapshotMCPCatalog)
-                    .environment(snapshotMCPApproval)
-                    .environment(snapshotMCPTools)
                     .environment(snapshotPerfConfig)
                     .frame(width: size.width, height: size.height)
                     .tint(RapidTheme.brandAmber)
@@ -1037,68 +986,6 @@ enum DevSnapshot {
         // button, each web-search backend. These render those states
         // side by side, the same way ``headingStates()`` above renders
         // every filter heading at once.
-
-        func toolsPanel(expanded: Set<String>, width: CGFloat) -> AnyView {
-            AnyView(
-                SettingsToolsPanel(initiallyExpanded: expanded)
-                    .environment(chat)
-                    .environment(server)
-                    .environment(snapshotWebSearch)
-                    .environment(browseApproval)
-                    .frame(width: width, alignment: .top)
-                    .padding(RapidTheme.Space.xl)
-                    .background(RapidTheme.surfaceCanvas)
-                    .tint(RapidTheme.brandAmber)
-            )
-        }
-        for (mode, name) in [("light", NSAppearance.Name.aqua),
-                             ("dark", NSAppearance.Name.darkAqua)] {
-            renderHosted(toolsPanel(expanded: [], width: 620),
-                         size: CGSize(width: 660, height: 1000),
-                         appearance: name, to: "\(dir)/tools-collapsed-\(mode).png")
-            renderHosted(toolsPanel(expanded: ["web_search", "browse", "weather"], width: 620),
-                         size: CGSize(width: 660, height: 1500),
-                         appearance: name, to: "\(dir)/tools-expanded-\(mode).png")
-        }
-
-        // Each web-search backend, so the radio group and the key field
-        // that appears for the keyed backends are both reviewable.
-        for provider in WebSearchProvider.allCases {
-            snapshotWebSearch.provider = provider
-            renderHosted(toolsPanel(expanded: [], width: 620),
-                         size: CGSize(width: 660, height: 1000),
-                         appearance: .aqua,
-                         to: "\(dir)/tools-backend-\(provider.id).png")
-        }
-        snapshotWebSearch.provider = .duckduckgo
-
-        // Experimental with MCP Connectors ON — the state that reveals the
-        // servers list, empty hint, and approvals card in its shipping home.
-        snapshotMCPConfig.isEnabled = true
-        for (mode, name) in [("light", NSAppearance.Name.aqua),
-                             ("dark", NSAppearance.Name.darkAqua)] {
-            let size = CGSize(width: 900, height: 720)
-            renderHosted(
-                settingsShell(category: .experimentalFeatures, size: size),
-                size: size,
-                appearance: name,
-                to: "\(dir)/settings-experimental-connectors-enabled-\(mode).png"
-            )
-        }
-        snapshotMCPConfig.isEnabled = false
-
-        // The Add-connector sheet, both appearances.
-        func connectorSheet() -> AnyView {
-            AnyView(
-                MCPServerEditorSheet(original: nil, onSave: { _ in }, onCancel: {})
-                    .tint(RapidTheme.brandAmber)
-            )
-        }
-        for (mode, name) in [("light", NSAppearance.Name.aqua),
-                             ("dark", NSAppearance.Name.darkAqua)] {
-            renderHosted(connectorSheet(), size: CGSize(width: 520, height: 760),
-                         appearance: name, to: "\(dir)/connector-sheet-\(mode).png")
-        }
 
         // Buttons, toggles and segmented controls in every state the
         // review asks to see, on one sheet per appearance.

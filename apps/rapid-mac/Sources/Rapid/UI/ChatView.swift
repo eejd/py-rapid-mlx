@@ -262,18 +262,6 @@ struct ChatView: View {
     @Environment(DownloadManager.self) private var downloads
     @Environment(QuickstartCoordinator.self) private var quickstart
 
-    @AppStorage(PersonalIntelligenceConfig.introductionCompletedKey)
-    private var personalIntelligenceIntroductionCompleted = false
-    @AppStorage(PersonalIntelligenceConfig.preferredEnabledKey)
-    private var personalIntelligencePreferred =
-        PersonalIntelligenceConfig.defaultPreferredEnabled
-    @State private var agentSession = AgentSessionController()
-    @State private var personalIntelligenceStates =
-        PersonalIntelligenceConfig.loadConversationStates()
-    @State private var showsPersonalIntelligenceInfo = false
-    @State private var personalIntelligencePopoverShowsActions = false
-    @State private var personalIntelligencePopoverOpenedByHover = false
-    @State private var showsAgentApproval = false
     @State private var draft: String = ""
     @State private var attachmentDrafts = ChatAttachmentDraftStore()
     /// A rejected photo is a capability explanation, not an attachment
@@ -319,32 +307,6 @@ struct ChatView: View {
     private var attachmentDraft: ChatAttachmentDraft {
         get { attachmentDrafts[viewModel.activeConversationID] }
         nonmutating set { attachmentDrafts[viewModel.activeConversationID] = newValue }
-    }
-    private var personalIntelligenceSupportsModel: Bool {
-        PersonalIntelligenceConfig.supportsModel(
-            alias,
-            serverProfile: server.activeModelProfile
-        )
-    }
-
-    private var personalIntelligenceBinding: PersonalIntelligenceRunBinding {
-        let profile = server.activeModelProfile
-        return PersonalIntelligenceRunBinding(
-            conversationID: viewModel.activeConversationID,
-            selectedAlias: alias,
-            serverModelID: profile?.id,
-            parser: profile?.toolCallParser,
-            profile: profile?.personalIntelligenceProfile,
-            qualification: profile?.personalIntelligenceQualification
-        )
-    }
-    private var agentModeEnabled: Bool {
-        PersonalIntelligenceConfig.isEnabled(
-            conversationEnabled:
-                personalIntelligenceStates[viewModel.activeConversationID] ?? false,
-            alias: alias,
-            serverProfile: server.activeModelProfile
-        )
     }
     private var photoAvailability: PhotoCapabilityNotice.Availability {
         PhotoCapabilityNotice.Availability(
@@ -413,77 +375,15 @@ struct ChatView: View {
             composeFocusToken &+= 1
         }
         .onChange(of: viewModel.conversations.map(\.id)) { _, _ in pruneAttachmentDrafts() }
-        .onChange(of: viewModel.conversations.map(\.id)) { _, _ in
-            reconcilePersonalIntelligenceStates()
-        }
         .onChange(of: viewModel.activeConversationID) { _, _ in
             pruneAttachmentDrafts()
             photoCapabilityNotice.dismiss()
         }
-        .onChange(of: viewModel.activeConversationID) { _, _ in
-            let activeID = viewModel.activeConversationID
-            reconcilePersonalIntelligenceStates(
-                newlyCreatedConversationIDs:
-                    viewModel.locallyCreatedConversationID == activeID ? [activeID] : []
-            )
-        }
         .onChange(of: alias) { _, _ in photoCapabilityNotice.dismiss() }
-        .onChange(of: personalIntelligenceBinding) { oldBinding, newBinding in
-            if newBinding.invalidatesRun(boundTo: oldBinding) {
-                // The run belongs to its conversation and the entire exact
-                // model binding. One observer covers both kinds of ownership
-                // transition so neither cancellation path can drift.
-                stopAgentIfNeeded()
-            }
-        }
-        .onChange(of: personalIntelligenceSupportsModel) { _, supported in
-            if !supported {
-                stopAgentIfNeeded()
-            } else if attachmentDraft.hasAttachments,
-                      personalIntelligenceStates[viewModel.activeConversationID] == true {
-                // An unsupported model temporarily exposes ordinary Chat's
-                // attachment path. Returning to a qualified model must not
-                // silently reactivate Personal Intelligence around files the
-                // user staged in the meantime.
-                setPersonalIntelligence(false)
-                attachmentDraft.notice =
-                    String(localized: "Personal Intelligence stayed off because this conversation has attachments.")
-            }
-        }
         .onChange(of: photoAvailability) { _, availability in
             photoCapabilityNotice.reconcile(with: availability)
         }
         .onChange(of: draft) { _, _ in photoCapabilityNotice.dismiss() }
-        .onChange(of: showsPersonalIntelligenceInfo) { _, shown in
-            if !shown {
-                personalIntelligencePopoverShowsActions = false
-                personalIntelligencePopoverOpenedByHover = false
-            }
-        }
-        .onChange(of: agentSession.phase) { _, phase in
-            reconcileAgentPhase(phase)
-        }
-        .onDisappear {
-            stopAgentIfNeeded()
-        }
-        .onAppear {
-            reconcilePersonalIntelligenceStates()
-        }
-        .alert(
-            agentApprovalTitle,
-            isPresented: $showsAgentApproval
-        ) {
-            Button("Don't Allow", role: .cancel) {
-                agentSession.resolvePendingApproval(approved: false)
-            }
-            .accessibilityIdentifier("ChatView.AgentApprovalDeny")
-            Button("Allow") {
-                agentSession.resolvePendingApproval(approved: true)
-            }
-            .accessibilityIdentifier("ChatView.AgentApprovalAllow")
-        } message: {
-            Text(agentApprovalMessage)
-        }
     }
 
     // MARK: - Transcript
@@ -619,10 +519,6 @@ struct ChatView: View {
     /// ``ScrollView`` content to zero height).
     @ViewBuilder
     var transcriptRows: some View {
-        // Tool results are rendered INSIDE the assistant row that dispatched
-        // them (as an expandable chip), never as standalone transcript rows —
-        // a raw JSON blob in the scroll reads as debug output.
-        let toolResults = ChatView.toolResultsByCallID(messages)
         // `VStack`, not `LazyVStack`.
         //
         // Lazy row building is what made the transcript's own height a
@@ -659,7 +555,6 @@ struct ChatView: View {
                     MessageRow(
                         message: ChatView.transcriptPresentationMessage(message),
                         isStreaming: viewModel.isStreaming,
-                        toolResults: toolResults,
                         assistantHasContent: message.role == .assistant
                             ? !message.content.isEmpty
                             : nil,
@@ -757,16 +652,6 @@ struct ChatView: View {
         .onPreferenceChange(StreamingAnswerHeightKey.self) { height in
             streamingAnswerHeight = height
         }
-    }
-
-    /// Index every ``role: .tool`` row by the ``toolCallID`` it answers, so an
-    /// assistant row can pair each of its ``toolCalls`` with its result.
-    static func toolResultsByCallID(_ messages: [ChatMessage]) -> [String: ChatMessage] {
-        var out: [String: ChatMessage] = [:]
-        for m in messages where m.role == .tool {
-            if let id = m.toolCallID { out[id] = m }
-        }
-        return out
     }
 
     /// Keep transport deltas out of `MessageRow` while preserving all stable
@@ -873,12 +758,7 @@ struct ChatView: View {
             // the same fact twice. Once the model is ready the slot
             // reverts to turn-level errors (a 500 from a healthy server),
             // which readiness has no opinion about.
-            if agentSession.isActive, let progress = agentSession.progressText {
-                InlineNotice(message: progress, tone: .info)
-                    .frame(maxWidth: contentMaxWidth)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("ChatView.AgentProgress")
-            } else if !readiness.isReady && !showsLifecycleBand {
+            if !readiness.isReady && !showsLifecycleBand {
                 // Suppressed while the band is open. The band renders the
                 // same ``ModelReadiness`` — same headline, same detail,
                 // same fraction — so leaving the banner here as well
@@ -991,7 +871,7 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .disabled(
-                viewModel.isStreaming || attachmentDraft.isImportingFiles || agentModeEnabled
+                viewModel.isStreaming || attachmentDraft.isImportingFiles
             )
             .help("Add photos or files")
             .accessibilityLabel("Add attachments")
@@ -1078,65 +958,6 @@ struct ChatView: View {
                 )
                 .id(viewModel.activeConversationID)
             }
-            Button {
-                personalIntelligencePopoverOpenedByHover = false
-                if !personalIntelligenceSupportsModel {
-                    personalIntelligencePopoverShowsActions = false
-                    showsPersonalIntelligenceInfo = true
-                } else if !personalIntelligenceIntroductionCompleted {
-                    personalIntelligencePopoverShowsActions = true
-                    showsPersonalIntelligenceInfo = true
-                } else if !agentModeEnabled, attachmentDraft.hasAttachments {
-                    attachmentDraft.notice = String(localized: "Remove attachments before turning on Personal Intelligence.")
-                } else {
-                    setPersonalIntelligence(!agentModeEnabled, updatesPreference: true)
-                    attachmentDraft.notice = nil
-                }
-            } label: {
-                PersonalIntelligenceGlyph()
-                    .fill(
-                        agentModeEnabled
-                            ? RapidTheme.onBrandPrimary
-                            : Color.secondary
-                    )
-                    .frame(width: 15, height: 15)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        Circle().fill(
-                            agentModeEnabled
-                                ? RapidTheme.brandPrimary
-                                : Color.primary.opacity(0.06)
-                        )
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(viewModel.isStreaming || attachmentDraft.isImportingFiles)
-            .onHover { hovering in
-                if hovering {
-                    // Hover is explanation-only. It must never arm a consent
-                    // action that a later Return or Escape could commit.
-                    personalIntelligencePopoverShowsActions = false
-                    personalIntelligencePopoverOpenedByHover = true
-                    showsPersonalIntelligenceInfo = true
-                } else if personalIntelligencePopoverOpenedByHover,
-                          !personalIntelligencePopoverShowsActions {
-                    showsPersonalIntelligenceInfo = false
-                }
-            }
-            .popover(isPresented: $showsPersonalIntelligenceInfo, arrowEdge: .bottom) {
-                PersonalIntelligencePopover(
-                    modelAlias: alias,
-                    modelSupported: personalIntelligenceSupportsModel,
-                    showsIntroductionActions:
-                        personalIntelligencePopoverShowsActions
-                            && !personalIntelligenceIntroductionCompleted,
-                    onNotNow: declinePersonalIntelligenceIntroduction,
-                    onTurnOn: acceptPersonalIntelligenceIntroduction
-                )
-            }
-            .accessibilityLabel("Personal Intelligence")
-            .accessibilityValue(agentModeEnabled ? String(localized: "On") : String(localized: "Off"))
-            .accessibilityIdentifier("ChatView.PersonalIntelligence.Toggle")
             Spacer(minLength: 0)
             if let speculativeAvailability {
                 MetricChip(
@@ -1275,10 +1096,7 @@ struct ChatView: View {
         guard profile?.id.caseInsensitiveCompare(alias) == .orderedSame else {
             return nil
         }
-        let sendsTools = !ChatViewModel.wireDefinitions(
-            forAlias: alias,
-            enabled: viewModel.enabledDefinitions
-        ).isEmpty
+        let sendsTools = false
         return SpeculativeDecodingAvailability.resolve(
             profile: profile,
             sendsTools: sendsTools
@@ -1343,7 +1161,6 @@ struct ChatView: View {
     private var sendEnabled: Bool {
         hasDraft && readiness.sendAllowed && !attachmentDraft.isImportingFiles
             && (attachmentDraft.images.isEmpty || supportsImageInput)
-            && (!agentModeEnabled || !attachmentDraft.hasAttachments)
     }
 
     private var hasDraft: Bool {
@@ -1374,17 +1191,7 @@ struct ChatView: View {
         // flashes and VoiceOver speaks the same sentence the Send
         // tooltip carries.
         guard acknowledgeIfNotReady() else { return }
-        if agentModeEnabled, attachmentDraft.hasAttachments {
-            attachmentDraft.notice = String(localized: "Personal Intelligence currently supports text-only tasks. Remove the attachments or turn it off.")
-            return
-        }
         photoCapabilityNotice.dismiss()
-        if agentModeEnabled {
-            guard startAgentTurn(text) else { return }
-            draft = ""
-            composeFocusToken &+= 1
-            return
-        }
         draft = ""
         let submission = attachmentDraft.takeSubmission()
         composeFocusToken &+= 1
@@ -1395,137 +1202,6 @@ struct ChatView: View {
             imageAttachments: submission.images,
             fileAttachments: submission.files
         )
-    }
-
-    @discardableResult
-    private func startAgentTurn(_ text: String) -> Bool {
-        guard !attachmentDraft.hasAttachments else {
-            attachmentDraft.notice = String(localized: "Personal Intelligence currently supports text-only tasks. Remove the attachments or turn it off.")
-            return false
-        }
-        let goal = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !goal.isEmpty else { return false }
-        guard let harnessProfile = PersonalIntelligenceConfig.harnessProfile(
-            for: alias,
-            serverProfile: server.activeModelProfile
-        ), let qualification = server.activeModelProfile?
-            .personalIntelligenceQualification?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !qualification.isEmpty else {
-            return false
-        }
-        let session = agentSession
-        let agentTools = viewModel.personalIntelligenceDefinitions
-        let trustedInstructions = viewModel.personalIntelligenceTrustedInstructions()
-        let localContext = viewModel.personalIntelligenceLocalContext()
-        let recentUserMessages = viewModel.personalIntelligenceRecentUserMessages()
-        guard viewModel.beginAgentTurn(goal, alias: alias, onCancel: {
-            session.bindingDidChange()
-        }) else { return false }
-        session.start(
-            goal: goal,
-            model: alias,
-            expectedProfile: harnessProfile,
-            expectedQualification: qualification,
-            toolNames: agentTools.map { $0.function.name },
-            trustedInstructions: trustedInstructions,
-            localContext: localContext,
-            recentUserMessages: recentUserMessages,
-            clientToolExecutor: { action in
-                await viewModel.executePersonalIntelligenceTool(
-                    action,
-                    advertised: agentTools
-                )
-            },
-            baseURL: ChatStreamClient.loopbackURL(port: server.activePort),
-            bearerToken: server.activeBearer
-        )
-        return true
-    }
-
-    private func stopAgentIfNeeded() {
-        if viewModel.hasActiveAgentTurn {
-            // Preserve a terminal result that arrived just before SwiftUI's
-            // phase observer. Otherwise cancel the still-live server run and
-            // finalize Chat's placeholder through the shared Stop contract.
-            switch agentSession.phase {
-            case .completed, .failed, .cancelled:
-                reconcileAgentPhase(agentSession.phase)
-            case .idle, .starting, .running, .awaitingApproval:
-                viewModel.stop()
-            }
-        } else if agentSession.isActive {
-            // Defensive reconciliation for an observer that started before its
-            // transcript projection could be committed.
-            agentSession.bindingDidChange()
-        }
-    }
-
-    private func setPersonalIntelligence(
-        _ enabled: Bool,
-        updatesPreference: Bool = false
-    ) {
-        if updatesPreference {
-            personalIntelligencePreferred = enabled
-        }
-        personalIntelligenceStates[viewModel.activeConversationID] =
-            enabled && personalIntelligenceSupportsModel
-        PersonalIntelligenceConfig.saveConversationStates(personalIntelligenceStates)
-    }
-
-    private func acceptPersonalIntelligenceIntroduction() {
-        guard !attachmentDraft.hasAttachments else {
-            attachmentDraft.notice =
-                String(localized: "Remove attachments before turning on Personal Intelligence.")
-            showsPersonalIntelligenceInfo = false
-            personalIntelligencePopoverShowsActions = false
-            return
-        }
-        personalIntelligenceIntroductionCompleted = true
-        personalIntelligencePreferred = true
-        setPersonalIntelligence(true)
-        showsPersonalIntelligenceInfo = false
-        personalIntelligencePopoverShowsActions = false
-    }
-
-    private func declinePersonalIntelligenceIntroduction() {
-        personalIntelligenceIntroductionCompleted = true
-        personalIntelligencePreferred = false
-        setPersonalIntelligence(false)
-        showsPersonalIntelligenceInfo = false
-        personalIntelligencePopoverShowsActions = false
-    }
-
-    private var agentApprovalTitle: String {
-        guard let action = agentSession.pendingApproval else { return String(localized: "Allow agent action?") }
-        return AgentApprovalPresentation.title(for: action)
-    }
-
-    private var agentApprovalMessage: String {
-        guard let action = agentSession.pendingApproval else {
-            return String(localized: "Review this action before it runs.")
-        }
-        return AgentApprovalPresentation.message(for: action)
-    }
-
-    private func reconcileAgentPhase(_ phase: AgentSessionController.Phase) {
-        switch phase {
-        case .awaitingApproval:
-            showsAgentApproval = true
-        case .completed:
-            showsAgentApproval = false
-            viewModel.completeAgentTurn(agentSession.run?.output ?? "")
-        case .failed:
-            showsAgentApproval = false
-            viewModel.failAgentTurn(
-                agentSession.errorMessage ?? String(localized: "The agent task could not be completed.")
-            )
-        case .cancelled:
-            showsAgentApproval = false
-            viewModel.cancelAgentTurnFromServer()
-        case .idle, .starting, .running:
-            showsAgentApproval = false
-        }
     }
 
     /// Send a suggestion chip's question.
@@ -1545,11 +1221,7 @@ struct ChatView: View {
         guard acknowledgeIfNotReady() else { return }
         photoCapabilityNotice.dismiss()
         composeFocusToken &+= 1
-        if agentModeEnabled {
-            _ = startAgentTurn(text)
-        } else {
-            viewModel.send(text, alias: alias, supportsImageInput: supportsImageInput)
-        }
+        viewModel.send(text, alias: alias, supportsImageInput: supportsImageInput)
     }
 
     private var attachmentStrip: some View {
@@ -1650,10 +1322,6 @@ struct ChatView: View {
 
     @discardableResult
     private func addAttachmentURLs(_ urls: [URL]) -> Bool {
-        guard !agentModeEnabled else {
-            attachmentDraft.notice = String(localized: "Personal Intelligence currently supports text-only tasks. Turn it off to attach files or photos.")
-            return false
-        }
         guard !attachmentDraft.isImportingFiles else { return false }
         photoCapabilityNotice.dismiss()
         // Filter before splitting, so images and documents get the same
@@ -1807,21 +1475,6 @@ struct ChatView: View {
         DocumentContentCache.shared.remove(contentsOf: discarded)
     }
 
-    private func reconcilePersonalIntelligenceStates(
-        newlyCreatedConversationIDs: Set<UUID> = []
-    ) {
-        let stored = Set(viewModel.conversations.map(\.id))
-        personalIntelligenceStates = PersonalIntelligenceConfig.reconciledConversationStates(
-            personalIntelligenceStates,
-            activeConversationID: viewModel.activeConversationID,
-            storedConversationIDs: stored,
-            newlyCreatedConversationIDs: newlyCreatedConversationIDs,
-            introductionCompleted: personalIntelligenceIntroductionCompleted,
-            preferredEnabled: personalIntelligencePreferred
-        )
-        PersonalIntelligenceConfig.saveConversationStates(personalIntelligenceStates)
-    }
-
     /// Parse candidates without losing which source produced each attachment.
     /// Failed candidates may appear anywhere in the batch, so pairing a
     /// filtered attachments array with the original URL array by index would
@@ -1885,10 +1538,6 @@ struct ChatView: View {
         }
         let pastedImage = NSImage(pasteboard: pasteboard)
         guard !urls.isEmpty || pastedImage != nil else { return false }
-        guard !agentModeEnabled else {
-            attachmentDraft.notice = String(localized: "Personal Intelligence currently supports text-only tasks. Turn it off to attach files or photos.")
-            return true
-        }
         if !urls.isEmpty {
             _ = addAttachmentURLs(urls)
         } else if let image = pastedImage,
@@ -1956,9 +1605,6 @@ struct ChatView: View {
 private struct MessageRow: View {
     let message: ChatMessage
     let isStreaming: Bool
-    /// Tool-result rows keyed by the ``ToolCall.id`` they answer. Used to
-    /// pair each dispatched call with its outcome inside this row.
-    var toolResults: [String: ChatMessage] = [:]
     /// The authoritative body is deliberately not part of `message` while it
     /// streams. This one-bit projection changes only when content first lands.
     var assistantHasContent: Bool? = nil
@@ -2238,24 +1884,7 @@ private struct MessageRow: View {
             if !message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 reasoningDisclosure
             }
-            if message.toolCallArtifactSuppressed {
-                // The model tried to call a tool and the parser couldn't read
-                // the request. Show the quiet explainer instead of dumping the
-                // raw envelope syntax at the user.
-                //
-                // When the turn ANSWERED and then trailed off into an
-                // envelope, the answer is kept and only the tail is replaced:
-                // dropping 5 kB of real prose to show a one-line caption
-                // would be a worse outcome than the raw syntax was.
-                if let prose = ChatMessage.proseAboveSuppressedToolCallArtifact(
-                    content: message.content
-                ) {
-                    TextKitMarkdownView(content: prose)
-                }
-                Text(ChatMessage.toolCallArtifactSuppressedCaptionCopy)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else if hasAssistantContent {
+            if hasAssistantContent {
                 if let streamingMarkdown {
                     // The same child remains mounted when status changes from
                     // streaming to complete. Its final mutable tail is
@@ -2268,25 +1897,8 @@ private struct MessageRow: View {
                 } else {
                     TextKitMarkdownView(content: message.content)
                 }
-            } else if let caption = toolDispatchCaption {
-                Text(caption)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             } else if showTypingIndicator {
                 typingIndicator
-            }
-            if let calls = message.toolCalls, !calls.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(calls) { call in
-                        ToolCallChip(call: call, result: toolResults[call.id])
-                    }
-                }
-            }
-            if message.toolNotCalledFlagged {
-                Text(ChatMessage.toolNotCalledCaptionCopy)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(ChatMessage.toolNotCalledCaptionAccessibilityLabel)
             }
             if message.status == .failed {
                 failureCaption
@@ -2314,19 +1926,6 @@ private struct MessageRow: View {
 
     private var hasAssistantContent: Bool {
         assistantHasContent ?? !message.content.isEmpty
-    }
-
-    /// "Calling web_search…" filler for the window between a tool_calls
-    /// envelope landing with no preamble prose and the result coming back.
-    /// Clears itself once every dispatched call has a result — the chips then
-    /// tell the whole story.
-    private var toolDispatchCaption: String? {
-        ChatMessage.toolDispatchPlaceholderCaption(
-            content: message.content,
-            reasoning: message.reasoning,
-            toolCalls: message.toolCalls,
-            settledToolCallIDs: Set(toolResults.keys)
-        )
     }
 
     /// Remove this turn and everything under it.
@@ -2642,209 +2241,6 @@ private struct MessageRow: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .center)
-    }
-}
-
-/// One dispatched tool call, with its arguments and (once it lands) its
-/// result behind a disclosure. Expanded while the tool is still running so
-/// the user sees what is happening; auto-collapses on success so a long
-/// transcript stays skimmable, and stays expanded on failure because the
-/// error detail is the useful part.
-private struct ToolCallChip: View {
-    let call: ToolCall
-    let result: ChatMessage?
-
-    /// Deep-link channel into Settings. Optional so the chip still renders in
-    /// any host that hasn't injected the router (previews, snapshot harness) —
-    /// the non-optional form traps at lookup time. Absence also suppresses the
-    /// inline button entirely; see ``FailureDiagnosis.inlineToolCardAction``.
-    @Environment(SettingsRouter.self) private var settingsRouter: SettingsRouter?
-    /// ``openWindow(id: "settings")``, NOT ``@Environment(\.openSettings)``.
-    /// This app has no SwiftUI ``Settings`` scene — it declares a real
-    /// ``Window("Settings", id: "settings")`` so the tray item can reach it
-    /// (see ``RapidApp``), and ``OpenSettingsAction`` against a missing
-    /// ``Settings`` scene is a silent no-op. ⌘, and the tray's "Settings…"
-    /// item both go through ``openWindow`` for the same reason.
-    @Environment(\.openWindow) private var openWindow
-
-    /// Manual override. Tracks the user's last toggle so a click always wins
-    /// over the auto-collapse-on-success rule; without it, expanding a
-    /// completed chip would be silently re-collapsed on the next body pass.
-    @State private var userToggled: Bool = false
-    @State private var manualExpanded: Bool = false
-
-    private var expanded: Bool {
-        if userToggled { return manualExpanded }
-        guard let result else { return true }
-        return result.status == .failed
-    }
-
-    /// Pretty-printed if the model emitted real JSON, sanitised raw string if
-    /// not — smaller models occasionally drop unparseable junk in here.
-    private var prettyArguments: String {
-        let raw = call.function.arguments
-        guard !raw.isEmpty else { return String(localized: "(no arguments)") }
-        guard let data = raw.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data),
-              let pretty = try? JSONSerialization.data(
-                withJSONObject: obj,
-                options: [.prettyPrinted, .sortedKeys]
-              ),
-              let str = String(data: pretty, encoding: .utf8) else {
-            return ChatTextSanitizer.sanitizeForDisplay(raw)
-        }
-        return ChatTextSanitizer.sanitizeForDisplay(str)
-    }
-
-    /// Stable diagnosis for a failed result. ``nil`` while the tool is still
-    /// running or when it succeeded.
-    ///
-    /// A tool the USER declined lands here too — it produced nothing, so it is
-    /// still ``.failed`` for every purpose that asks "did this tool deliver a
-    /// result?" (notably ``ChatViewModel.turnHadSuccessfulTool``). What the
-    /// diagnosis's ``FailureDiagnosis/severity`` changes is only how the chip
-    /// PAINTS it, and whether it offers a button — see ``inlineAction``.
-    private var failureDiagnosis: FailureDiagnosis? {
-        guard let result, result.status == .failed else { return nil }
-        return result.toolFailureDiagnosis(toolName: call.function.name)
-    }
-
-    /// A failed result renders its stable diagnosis, never the raw tool
-    /// payload — that stays in the model's context, not on screen.
-    private var resultBody: String? {
-        guard let result else { return nil }
-        if let failureDiagnosis { return failureDiagnosis.message }
-        return ChatTextSanitizer.sanitizeForDisplay(result.content)
-    }
-
-    /// The one recovery action the chip offers inline, or nil for no button.
-    /// Policy lives in ``FailureDiagnosis`` so it can be pinned by a test —
-    /// this view is private and a SwiftUI body isn't reachable from the suite.
-    private var inlineAction: FailureDiagnosis.Action? {
-        FailureDiagnosis.inlineToolCardAction(
-            for: failureDiagnosis,
-            canRouteToSettings: settingsRouter != nil
-        )
-    }
-
-    private func perform(_ action: FailureDiagnosis.Action) {
-        switch action {
-        case .openWebSearchSettings:
-            // Order matters: the router field must be set BEFORE the window
-            // opens. ``SettingsView`` consumes it from ``.onAppear`` (first
-            // open of the session) and ``.onChange`` (already-open window
-            // being re-focused); setting it after the open would race the
-            // ``.onAppear`` read and land the user on the last-used tab.
-            // ``route`` owns that ordering and the tab choice; the same call
-            // ``QuickstartView`` uses for its deep-links.
-            settingsRouter?.route(action) { openWindow(id: "settings") }
-        case .retry, .restart, .openModelManagement, .switchDownloadSource:
-            break
-        }
-    }
-
-    private var statusIcon: String {
-        guard result != nil else { return "ellipsis.circle" }
-        guard let failureDiagnosis else { return "checkmark.circle.fill" }
-        if failureDiagnosis.severity == .notice { return "hand.raised" }
-        if failureDiagnosis.kind == .browsePageTooLarge { return "exclamationmark.triangle.fill" }
-        return "exclamationmark.octagon.fill"
-    }
-
-    private var statusColor: Color {
-        guard result != nil else { return .secondary }
-        guard let failureDiagnosis else { return .green }
-        if failureDiagnosis.severity == .notice { return .secondary }
-        if failureDiagnosis.kind == .browsePageTooLarge { return .orange }
-        return RapidTheme.statusError
-    }
-
-    /// Red is reserved for something that actually went wrong. A decline reads
-    /// in the same quiet secondary tone the transcript uses for its other
-    /// "this ended early, and that's fine" footers (e.g. "Stopped.").
-    private var resultBodyColor: Color {
-        guard let failureDiagnosis else { return .secondary }
-        if failureDiagnosis.severity == .notice { return .secondary }
-        if failureDiagnosis.kind == .browsePageTooLarge { return .orange }
-        return RapidTheme.statusError
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                userToggled = true
-                manualExpanded = !expanded
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "wrench.and.screwdriver.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(RapidTheme.brand)
-                    Text(ChatTextSanitizer.sanitizeForDisplay(call.function.name))
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    Spacer(minLength: 0)
-                    Image(systemName: statusIcon)
-                        .font(.system(size: 11))
-                        .foregroundStyle(statusColor)
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Tool call \(call.function.name)")
-            .accessibilityIdentifier("ToolCallChip.Toggle.\(call.id)")
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 6) {
-                    Divider()
-                    // Captioned, because an expanded failure chip shows the
-                    // model's own arguments — sometimes invented keys the app
-                    // has never heard of. Unlabelled monospaced JSON under a
-                    // red error reads as Rapid's output and sends the user
-                    // hunting for a setting to fix (0.14.1 mini dogfood).
-                    Text("Requested by the model")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                        .textCase(.uppercase)
-                    Text(prettyArguments)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let body = resultBody {
-                        Divider()
-                        Text(body)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(resultBodyColor)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if let action = inlineAction {
-                        Button {
-                            perform(action)
-                        } label: {
-                            Label(action.title, systemImage: action.systemImage)
-                        }
-                        .buttonStyle(.link)
-                        .font(.system(size: 11))
-                        .accessibilityIdentifier("ToolCallChip.\(action.rawValue)")
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: RapidTheme.Radius.input, style: .continuous)
-                .fill(RapidTheme.surfaceRaised)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: RapidTheme.Radius.input, style: .continuous)
-                .strokeBorder(RapidTheme.hairline, lineWidth: 1)
-        )
     }
 }
 

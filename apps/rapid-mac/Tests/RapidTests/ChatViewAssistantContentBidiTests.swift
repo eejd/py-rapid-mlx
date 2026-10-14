@@ -5,8 +5,7 @@ import Testing
 /// Pins that the main ``ChatView`` chat surface routes assistant
 /// content through ``ChatTextSanitizer`` before rendering — both the
 /// streaming hot path (``Text(memoisedSanitisedContent)``) and the
-/// finalised path (``LaTeXMarkdownView(content: ...)``), plus the
-/// tool-result body inside ``ToolCallChip``.
+/// finalised path (``LaTeXMarkdownView(content: ...)``).
 ///
 /// ## Why this file exists alongside ``QuickAskBidiSanitizationTests``
 ///
@@ -30,8 +29,6 @@ import Testing
 ///     wraps ``message.content`` in
 ///     ``ChatTextSanitizer.sanitizeForDisplay(...)`` inline.
 ///   * Error/system row (``systemRow``) wraps the same way.
-///   * Tool-result body (``ToolCallChip``) wraps ``r.content`` the
-///     same way.
 ///   * User bubble (``userBubble``) wraps user echoes too — defense
 ///     in depth so a model-edited user turn can't leak controls
 ///     when re-rendered.
@@ -74,8 +71,6 @@ struct ChatViewAssistantContentBidiTests {
 
     // MARK: - Complete-path render site
 
-    // MARK: - Tool-result render site (cycle-2 cross-confirm)
-
     // MARK: - Behavioural pins (cycle-10 F-10-4 payload)
 
     /// The exact payload cycle-10 F-10-4 documented: a hostile
@@ -91,18 +86,6 @@ struct ChatViewAssistantContentBidiTests {
         let echoed = "Click \u{202E}gpj.eraclip.com"
         let cleaned = ChatTextSanitizer.sanitizeForDisplay(echoed)
         #expect(cleaned == "Click gpj.eraclip.com")
-        #expect(!cleaned.unicodeScalars.contains { $0.value == 0x202E })
-    }
-
-    /// Tool-result variant of the same payload: a malicious tool
-    /// emits a result body containing ``U+202E`` followed by a
-    /// spoofed filename. The ``ToolCallChip`` result body Text(...)
-    /// call must neutralise it.
-    @Test("Cycle-10 F-10-4 tool-result variant: U+202E in r.content is neutralised")
-    func cycle10F104ToolResultVariantNeutralised() {
-        let toolResult = "Saved as report\u{202E}fdp.exe"
-        let cleaned = ChatTextSanitizer.sanitizeForDisplay(toolResult)
-        #expect(cleaned == "Saved as reportfdp.exe")
         #expect(!cleaned.unicodeScalars.contains { $0.value == 0x202E })
     }
 
@@ -363,159 +346,6 @@ struct ChatViewAssistantContentBidiTests {
         return String(rest[..<endIndex])
     }
 
-    /// Slice the ``ToolCallChip`` struct body out of ``ChatView.swift``.
-    /// ``ToolCallChip`` is a top-level (file-private) struct, so the
-    /// slice is bounded by the next top-level declaration after it.
-    ///
-    /// **Why we scope to the WHOLE struct, not just ``body``** (codex
-    /// PR-#329 round 1 MAJOR-3 + MAJOR-4): ``var body`` is the LAST
-    /// member of ``ToolCallChip`` today, so a "next sibling member"
-    /// end marker scans past the struct's closing brace into the
-    /// following top-level ``DestructivePatternBanner``. That makes
-    /// the slice both wrong-scoped AND fragile (any new member added
-    /// between ``body`` and the struct close shrinks the slice with
-    /// no test signal). Instead we anchor on the struct head and
-    /// stop at the next top-level declaration in the same file
-    /// (``private struct``, ``struct``, ``enum``, ``private final
-    /// class``, ``@MainActor``). Inside that slice the tool-result
-    /// render call sites — wherever they live inside the struct —
-    /// are visible to the walker.
-    ///
-    /// We also positively require ``ChatTextSanitizer
-    /// .sanitizeForDisplay`` to appear somewhere inside the slice
-    /// (codex MAJOR-4 — a refactor that swaps the call site to
-    /// ``Text(result?.content ?? "")`` would drop both the literal
-    /// ``r.content`` token and the safe-wrap; only a positive
-    /// "sanitizer is mentioned at all" check catches that shape).
-    static func toolCallChipBodySlice(_ source: String) throws -> String {
-        let structAnchor = "private struct ToolCallChip: View {"
-        let structStart = try #require(
-            source.range(of: structAnchor),
-            "ToolCallChip struct not found in ChatView.swift — has it been renamed or moved?"
-        )
-        // Find the matching close-brace for the struct head. We
-        // count braces from depth=1 (the struct head's ``{`` is
-        // already consumed by the anchor match) and stop at depth=0.
-        // To avoid miscounting braces inside string literals or
-        // comments, we run the slice through a tiny lexer that
-        // tracks block / line comments and string literals.
-        let afterStructHead = source[structStart.upperBound...]
-        let scalars = Array(afterStructHead.unicodeScalars)
-        var depth = 1
-        var i = 0
-        var inLineComment = false
-        var blockCommentDepth = 0
-        var inStringLit = false
-        var inMultilineStringLit = false
-        // Walk char by char.
-        while i < scalars.count && depth > 0 {
-            let c = scalars[i]
-            // Multi-line string literal: ``"""...\n...\n"""``.
-            if inMultilineStringLit {
-                if i + 2 < scalars.count
-                    && scalars[i].value == 0x22
-                    && scalars[i + 1].value == 0x22
-                    && scalars[i + 2].value == 0x22
-                {
-                    inMultilineStringLit = false
-                    i += 3
-                    continue
-                }
-                i += 1
-                continue
-            }
-            // Single-line string literal: ``"..."``.
-            if inStringLit {
-                if c.value == 0x5C /* '\' */ && i + 1 < scalars.count {
-                    i += 2  // skip escaped char
-                    continue
-                }
-                if c.value == 0x22 /* '"' */ {
-                    inStringLit = false
-                }
-                i += 1
-                continue
-            }
-            // Inside a line comment: skip to newline.
-            if inLineComment {
-                if c.value == 0x0A {
-                    inLineComment = false
-                }
-                i += 1
-                continue
-            }
-            // Inside a block comment (with nesting): track depth.
-            if blockCommentDepth > 0 {
-                if c.value == 0x2F /* '/' */
-                    && i + 1 < scalars.count
-                    && scalars[i + 1].value == 0x2A /* '*' */
-                {
-                    blockCommentDepth += 1
-                    i += 2
-                    continue
-                }
-                if c.value == 0x2A
-                    && i + 1 < scalars.count
-                    && scalars[i + 1].value == 0x2F
-                {
-                    blockCommentDepth -= 1
-                    i += 2
-                    continue
-                }
-                i += 1
-                continue
-            }
-            // Enter line comment.
-            if c.value == 0x2F && i + 1 < scalars.count && scalars[i + 1].value == 0x2F {
-                inLineComment = true
-                i += 2
-                continue
-            }
-            // Enter block comment.
-            if c.value == 0x2F && i + 1 < scalars.count && scalars[i + 1].value == 0x2A {
-                blockCommentDepth = 1
-                i += 2
-                continue
-            }
-            // Enter multi-line string literal.
-            if i + 2 < scalars.count
-                && c.value == 0x22
-                && scalars[i + 1].value == 0x22
-                && scalars[i + 2].value == 0x22
-            {
-                inMultilineStringLit = true
-                i += 3
-                continue
-            }
-            // Enter single-line string literal.
-            if c.value == 0x22 {
-                inStringLit = true
-                i += 1
-                continue
-            }
-            // Code-level brace counting.
-            if c.value == 0x7B /* '{' */ {
-                depth += 1
-            } else if c.value == 0x7D /* '}' */ {
-                depth -= 1
-                if depth == 0 {
-                    // ``i`` is the index of the closing brace; the
-                    // slice is everything up to and including it.
-                    let endScalarIdx = i + 1
-                    let endIdx = afterStructHead.unicodeScalars
-                        .index(afterStructHead.unicodeScalars.startIndex,
-                               offsetBy: endScalarIdx)
-                    return String(afterStructHead[..<endIdx])
-                }
-            }
-            i += 1
-        }
-        // Unbalanced — return everything we walked so the test
-        // surfaces a clear failure downstream rather than silently
-        // skipping checks.
-        return String(afterStructHead)
-    }
-
     /// Whitespace + comment stripper. Identical contract to
     /// ``QuickAskBidiSanitizationTests.stripCommentsAndWhitespace``;
     /// re-implemented here so this suite has no implicit dep on
@@ -616,24 +446,6 @@ struct ChatViewAssistantContentBidiTests {
             inCompactArg: compactArg,
             rawToken: "message.content",
             callIdx: callIdx,
-            callShape: callShape,
-            sourceLocation: sourceLocation
-        )
-    }
-
-    /// Sibling helper for the tool-result render site, which uses
-    /// the binding name ``r`` (``let r = result``). The whitelist of
-    /// length/identity probes is the same — the value-use vs probe
-    /// distinction is what matters, not the binding name.
-    static func assertEveryRContentUseIsSanitised(
-        inCompactArg compactArg: String,
-        callShape: String,
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) {
-        assertEveryRawValueUseIsSanitised(
-            inCompactArg: compactArg,
-            rawToken: "r.content",
-            callIdx: 0,
             callShape: callShape,
             sourceLocation: sourceLocation
         )

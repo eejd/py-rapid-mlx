@@ -1367,7 +1367,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ 已配置，但工具请求需要使用普通解码。请在“设置”→“工具”中关闭工具以使用它。"
+            "value" : "%@ 已配置，但此请求需要使用普通解码。"
           }
         }
       }
@@ -1512,16 +1512,6 @@
         }
       }
     },
-    "Open Connectors" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打开连接器"
-          }
-        }
-      }
-    },
     "Show or hide server logs" : {
       "localizations" : {
         "zh-Hans" : {
@@ -1648,16 +1638,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工具"
-          }
-        }
-      }
-    },
-    "Web Search" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "网页搜索"
           }
         }
       }
@@ -2650,16 +2630,6 @@
         }
       }
     },
-    "Adds tools and data from MCP servers you configure. Useful for tasks that need external context or actions; it does not improve the model itself and may add latency. Off by default—connector tools ask for approval unless you explicitly allow them." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添加你所配置的 MCP 服务器提供的工具和数据。适用于需要外部上下文或操作的任务；它不会提升模型本身的能力，并可能增加延迟。默认关闭，连接器工具在使用前会请求批准，除非你明确允许。"
-          }
-        }
-      }
-    },
     "Add…" : {
       "localizations" : {
         "zh-Hans" : {
@@ -2766,26 +2736,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "始终允许"
-          }
-        }
-      }
-    },
-    "Always allow applies to all future public web pages. You can turn it off in Settings → Tools." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "“始终允许”适用于今后所有公开网页。你可以在“设置”→“工具”中关闭。"
-          }
-        }
-      }
-    },
-    "An http:// or https:// endpoint speaking MCP over SSE." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通过 SSE 提供 MCP 服务的 http:// 或 https:// 端点。"
           }
         }
       }
@@ -3396,16 +3346,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "中断进行中的请求前先确认"
-          }
-        }
-      }
-    },
-    "Connector actions" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "连接器操作"
           }
         }
       }
@@ -4230,16 +4170,6 @@
         }
       }
     },
-    "Enable MCP Connectors" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "启用 MCP 连接器"
-          }
-        }
-      }
-    },
     "Enable Share Compute" : {
       "localizations" : {
         "zh-Hans" : {
@@ -4970,16 +4900,6 @@
         }
       }
     },
-    "Its tools stop being offered to the model. The program itself isn't uninstalled." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "它的工具将不再提供给模型。程序本身不会被卸载。"
-          }
-        }
-      }
-    },
     "Jump to latest" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5106,16 +5026,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "启动"
-          }
-        }
-      }
-    },
-    "Letters, numbers, dashes and underscores. Becomes the prefix on every tool this connector exposes." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "可使用字母、数字、连字符和下划线。它会成为此连接器所提供的每个工具的前缀。"
           }
         }
       }
@@ -5450,16 +5360,6 @@
         }
       }
     },
-    "No connectors yet. Add one to give the model tools beyond the built-ins." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "还没有连接器。添加一个，让模型获得内置工具之外的能力。"
-          }
-        }
-      }
-    },
     "No conversations yet" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5710,16 +5610,6 @@
         }
       }
     },
-    "Open MCP Connectors" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "打开 MCP 连接器"
-          }
-        }
-      }
-    },
     "Open Rapid-MLX" : {
       "localizations" : {
         "zh-Hans" : {
@@ -5850,66 +5740,6 @@
         }
       }
     },
-    "Personal Intelligence" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personal Intelligence"
-          }
-        }
-      }
-    },
-    "Personal Intelligence currently supports text-only tasks. Remove the attachments or turn it off." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personal Intelligence 目前仅支持纯文本任务。请移除附件或将其关闭。"
-          }
-        }
-      }
-    },
-    "Personal Intelligence currently supports text-only tasks. Turn it off to attach files or photos." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personal Intelligence 目前仅支持纯文本任务。关闭后才能附加文件或照片。"
-          }
-        }
-      }
-    },
-    "Personal Intelligence hasn’t been tuned for %@ yet. Regular chat is still available." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personal Intelligence 尚未针对 %@ 调优。仍可使用普通对话。"
-          }
-        }
-      }
-    },
-    "Personal Intelligence stayed off because this conversation has attachments." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "由于此对话包含附件，Personal Intelligence 保持关闭。"
-          }
-        }
-      }
-    },
-    "Personal Intelligence wants to use Rapid's local workspace on this Mac." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Personal Intelligence 想要使用 Rapid 在这台 Mac 上的本地工作区。"
-          }
-        }
-      }
-    },
     "Pick the folder where Rapid should keep downloaded models." : {
       "localizations" : {
         "zh-Hans" : {
@@ -5990,12 +5820,12 @@
         }
       }
     },
-    "Preview includes current automatic context. Each message you send carries the time you sent it. Tool and attachment context may be added when you send." : {
+    "Preview includes current automatic context. Each message you send carries the time you sent it. Attachment context may be added when you send." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预览包含当前的自动上下文。你发送的每条消息都会带上发送时间。发送时还可能加入工具和附件上下文。"
+            "value" : "预览包含当前的自动上下文。你发送的每条消息都会带上发送时间。发送时还可能加入附件上下文。"
           }
         }
       }
@@ -6380,16 +6210,6 @@
         }
       }
     },
-    "Remove attachments before turning on Personal Intelligence." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开启 Personal Intelligence 前请先移除附件。"
-          }
-        }
-      }
-    },
     "Remove from Folder" : {
       "localizations" : {
         "zh-Hans" : {
@@ -6556,16 +6376,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重新启动并进入设置向导"
-          }
-        }
-      }
-    },
-    "Restart the model to finish turning connectors on." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新启动模型以完成连接器的启用。"
           }
         }
       }
@@ -7710,26 +7520,6 @@
         }
       }
     },
-    "The model wants to run a tool from the “%@” connector." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "模型想要运行“%@”连接器中的一个工具。"
-          }
-        }
-      }
-    },
-    "The running model started before connectors were enabled, so it isn't loading them yet. Restarting takes a moment and keeps your conversation." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "当前运行的模型是在启用连接器之前启动的，因此尚未加载它们。重新启动只需片刻，并会保留你的对话。"
-          }
-        }
-      }
-    },
     "The setting could not be saved. Anonymous usage reporting may still be on. Check that your Mac has free disk space and try again, or set RAPID_MLX_TELEMETRY=0 before launching Rapid." : {
       "localizations" : {
         "zh-Hans" : {
@@ -7836,36 +7626,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "这些文件已附加。"
-          }
-        }
-      }
-    },
-    "Tool call %@" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "工具调用 %@"
-          }
-        }
-      }
-    },
-    "Tool calls are unverified on this model — we have no bench signal yet. Chips that promise tools are hidden on the empty-state hero until verified." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此模型的工具调用尚未验证，我们还没有基准测试数据。在验证之前，空状态首页不会显示依赖工具的建议。"
-          }
-        }
-      }
-    },
-    "Tools are off on this model — empirical bench shows it ignores tool calls and hallucinates the answer. Chips that promise tools are hidden on the empty-state hero." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此模型已关闭工具：实测表明它会忽略工具调用并编造答案。空状态首页不会显示依赖工具的建议。"
           }
         }
       }
@@ -8186,16 +7946,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用默认值"
-          }
-        }
-      }
-    },
-    "Use your Mac’s tools and local context to get things done." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 Mac 上的工具和本地上下文来完成任务。"
           }
         }
       }
@@ -8630,26 +8380,6 @@
         }
       }
     },
-    "Available tools" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "可用工具"
-          }
-        }
-      }
-    },
-    "Browse Web Page" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "浏览网页"
-          }
-        }
-      }
-    },
     "Browse pages" : {
       "localizations" : {
         "zh-Hans" : {
@@ -8910,16 +8640,6 @@
         }
       }
     },
-    "No key stored — searches fall back to Keenable until you save one." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未存储密钥：在你保存密钥之前，搜索会回退到 Keenable。"
-          }
-        }
-      }
-    },
     "No usable saved key was found, so this model started with a one-time key." : {
       "localizations" : {
         "zh-Hans" : {
@@ -8940,12 +8660,12 @@
         }
       }
     },
-    "Off by default. This qualified text-only mode uses a paired draft model and one request at a time. To use tools, turn acceleration off and restart the model." : {
+    "Off by default. This qualified text-only mode uses a paired draft model and one request at a time." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "默认关闭。这种经过验证的纯文本模式使用配对的草稿模型，且一次只处理一个请求。如需使用工具，请关闭加速并重新启动模型。"
+            "value" : "默认关闭。这种经过验证的纯文本模式使用配对的草稿模型，且一次只处理一个请求。"
           }
         }
       }
@@ -9320,16 +9040,6 @@
         }
       }
     },
-    "Tools the model can call during a chat. Turn one off and it is never offered — and never runs, even if the model asks for it by name." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "模型在对话中可以调用的工具。关闭某个工具后，它不会再提供给模型，即使模型点名请求也不会运行。"
-          }
-        }
-      }
-    },
     "Until I rotate" : {
       "localizations" : {
         "zh-Hans" : {
@@ -9376,16 +9086,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "网页搜索"
-          }
-        }
-      }
-    },
-    "Which backend `web_search` queries. Keenable works with no account; add a free key (Parallel recommended) for the best results. Keys stay in your Keychain." : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "`web_search` 查询所使用的后端。Keenable 无需账号即可使用；添加免费密钥（推荐 Parallel）可获得最佳结果。密钥保存在你的钥匙串中。"
           }
         }
       }

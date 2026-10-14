@@ -13,7 +13,7 @@ import Observation
 /// `openWindow(id: "settings")`.
 ///
 /// `openWindow` also takes no category, so it can only say "open
-/// Settings," not "open Settings on the Tools panel." Users
+/// Settings," not "open Settings on a specific panel." Users
 /// (2026-06-10) called this out: clicking the bottom-bar status pill
 /// landed them on the default tab and they had to hunt for the item
 /// they came for.
@@ -87,9 +87,6 @@ final class SettingsRouter {
             // out-of-memory or failed-load message is telling the user to go
             // act in.
             return .modelManagement
-        case .openWebSearchSettings:
-            // Settings → Tools owns the web-search backend picker and its key.
-            return .tools
         case .retry, .restart, .switchDownloadSource:
             // Handled by the view that owns the failed operation. Opening
             // Settings for these would be a non-sequitur.
