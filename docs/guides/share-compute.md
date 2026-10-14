@@ -37,7 +37,7 @@ rapid-mlx share qwen3.8-27b --quicksilver --worker "$(hostname -s)"
 
 Enter the `qsppk-` key when prompted. Later runs reuse the local node
 registration. Choose a different `--worker` on each Mac. Stop with Ctrl-C.
-The Qwen3.8 27B pool defaults to the qualified TensorFold runtime in both CLI
+The Qwen3.8 27B pool requires 48 GB+ unified memory and defaults to the qualified TensorFold runtime in both CLI
 and Desktop, including in-memory message-boundary prefix reuse. Desktop bundles
 that runtime. For a standalone Python install, install its qualified revision
 once in the same environment as Rapid:

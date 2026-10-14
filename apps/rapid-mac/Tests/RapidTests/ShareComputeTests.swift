@@ -42,6 +42,9 @@ struct ShareComputeTests {
         let glm = ShareComputeModel.supported.first { $0.catalogID == "glm-5.3-flash" }!
         #expect(!glm.fits(Self.hardware(memoryGB: 128), catalogEntry: nil))
         #expect(glm.fits(Self.hardware(memoryGB: 256), catalogEntry: nil))
+        let qwen = ShareComputeModel.supported[0]
+        #expect(!qwen.fits(Self.hardware(memoryGB: 32), catalogEntry: nil))
+        #expect(qwen.fits(Self.hardware(memoryGB: 48), catalogEntry: nil))
     }
 
     @Test("Worker labels match the provider's safe grammar")
