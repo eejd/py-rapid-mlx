@@ -2721,7 +2721,8 @@ flow_chat_restore() {
         if jq -e '[.data.ui_elements[]?
                    | select(.identifier == "Sidebar.Residency.Unload"
                             or .identifier == "ChatView.Residency.Unload")]
-                  | length > 0 and all(.enabled == true)' \
+                  | ([.[].identifier] | unique | length) == 2
+                    and all(.enabled == true)' \
                "$OUT/chat-settled.json" >/dev/null; then break; fi
         sleep 0.2
         see_main "$OUT/chat-settled.json"
