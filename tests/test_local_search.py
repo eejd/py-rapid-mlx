@@ -6,6 +6,7 @@ import io
 import os
 import sqlite3
 import stat
+import subprocess
 import sys
 import threading
 import zipfile
@@ -32,6 +33,16 @@ from rapid_mlx.local_search.search import fuse, snippet
 from rapid_mlx.local_search.service import LocalSearch, local_model_path
 from rapid_mlx.local_search.store import Store
 from rapid_mlx.middleware.exception_handlers import install_exception_handlers
+
+FIRST_ROUTES = [
+    ("GET", "/status", None),
+    ("POST", "/folders", "folder"),
+    ("DELETE", "/folders/unknown", None),
+    ("POST", "/reindex", {}),
+    ("POST", "/reindex", {"folder_id": "unknown"}),
+    ("POST", "/search", {"query": "apple"}),
+    ("POST", "/search", {"query": "apple", "folder_ids": ["unknown"]}),
+]
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -125,10 +136,14 @@ def test_private_index_directory_with_unrelated_files_needs_no_chmod(
         ("symlink_journal", "index.sqlite3-journal"),
         ("hardlink", "without hard links"),
         ("fifo", "regular files"),
+        ("acl_denied", "ACL repair denied"),
+        ("acl_ignored", "Could not remove"),
+        ("acl_probe_denied", "ACL probe denied"),
     ],
 )
+@pytest.mark.parametrize("method,route,body", FIRST_ROUTES)
 def test_unsafe_index_refused_with_readable_status(
-    tmp_path, monkeypatch, unsafe, message
+    tmp_path, monkeypatch, unsafe, message, method, route, body
 ):
     from rapid_mlx.routes.local_search import router
 
@@ -179,6 +194,23 @@ def test_unsafe_index_refused_with_readable_status(
             unsafe.removeprefix("symlink_")
         ]
         Path(str(path) + suffix).symlink_to(outside)
+    elif unsafe.startswith("acl_"):
+        from rapid_mlx.local_search import store as module
+
+        monkeypatch.setattr(module.sys, "platform", "darwin")
+
+        def probe(_):
+            if unsafe == "acl_probe_denied":
+                raise PermissionError("ACL probe denied")
+            return True
+
+        def strip(_):
+            if unsafe == "acl_denied":
+                raise PermissionError("ACL repair denied")
+            return ""
+
+        monkeypatch.setattr(module, "_acl_present", probe)
+        monkeypatch.setattr(module, "_acl_command", strip)
     elif unsafe == "hardlink":
         os.link(outside, path)
     else:
@@ -195,7 +227,11 @@ def test_unsafe_index_refused_with_readable_status(
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://localhost"
             ) as client:
-                response = await client.get("/v1/local-search/status")
+                payload = {"path": str(tmp_path)} if body == "folder" else body
+                response = await asyncio.wait_for(
+                    client.request(method, "/v1/local-search" + route, json=payload),
+                    timeout=5,
+                )
             assert response.status_code == 503
             error = response.json()["error"]
             assert error["code"] == "store_open_failed"
@@ -7492,3 +7528,333 @@ def test_video_decoded_byte_budget_accepts_4k_skips_8k(
         with pytest.raises(SkippedError, match="size cap"):
             list(media_frames(path, root))
         assert calls == ["release"]
+
+
+@pytest.mark.parametrize("precreated", [False, True])
+def test_index_acl_repair_precedes_file_creation(tmp_path, monkeypatch, precreated):
+    from rapid_mlx.local_search import store as module
+
+    path = tmp_path / "index" / "index.sqlite3"
+    path.parent.mkdir(mode=0o700)
+    files = [Path(str(path) + suffix) for suffix in ("", "-wal", "-shm", "-journal")]
+    if precreated:
+        for file in files:
+            file.touch(mode=0o600)
+    acls = {path.parent, *files}
+    probes, stripped = [], []
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+
+    def probe(target):
+        probes.append(target)
+        if target != path.parent:
+            assert path.parent not in acls, (
+                "directory inheritance must be removed first"
+            )
+        return target in acls
+
+    def strip(args):
+        assert args[:2] == ["/bin/chmod", "-N"]
+        target = Path(args[2])
+        stripped.append(target)
+        acls.remove(target)
+        return ""
+
+    monkeypatch.setattr(module, "_acl_present", probe)
+    monkeypatch.setattr(module, "_acl_command", strip)
+    connect = sqlite3.connect
+
+    def protected_connect(*args, **kwargs):
+        assert path.parent not in acls and path not in acls
+        if precreated:
+            assert not acls
+        return connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", protected_connect)
+    store = Store(path, "test")
+    try:
+        assert stripped[0] == path.parent
+        assert path in probes
+        expected = [path.parent, *sorted(files)] if precreated else [path.parent, path]
+        assert stripped == expected
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("target", ["directory", "file"])
+def test_index_acl_foreign_owner_is_not_modified(tmp_path, monkeypatch, target):
+    from rapid_mlx.local_search import store as module
+
+    path = tmp_path / "index" / "index.sqlite3"
+    path.parent.mkdir(mode=0o700)
+    path.touch(mode=0o600)
+    foreign = (path.parent if target == "directory" else path).stat().st_ino
+    fstat = os.fstat
+
+    def owner(fd):
+        info = fstat(fd)
+        if info.st_ino == foreign:
+            values = list(info)
+            values[4] = os.geteuid() + 1
+            return os.stat_result(values)
+        return info
+
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setattr(os, "fstat", owner)
+    probes = []
+    monkeypatch.setattr(
+        module, "_acl_present", lambda path: probes.append(path) or False
+    )
+    monkeypatch.setattr(
+        module, "_acl_command", lambda _: pytest.fail("foreign ACL modified")
+    )
+    with pytest.raises(PermissionError, match="owned by the current user"):
+        Store(path, "test")
+    assert probes == ([] if target == "directory" else [path.parent])
+
+
+@pytest.mark.parametrize(
+    "output,expected",
+    [("header\n", False), ("header\n 0: everyone allow read\n", True), ("", None)],
+)
+def test_index_acl_probe_output(tmp_path, monkeypatch, output, expected):
+    from rapid_mlx.local_search import store as module
+
+    def run(args, **kwargs):
+        assert args == ["/bin/ls", "-lde", str(tmp_path.absolute())]
+        assert kwargs == {
+            "check": True,
+            "capture_output": True,
+            "text": True,
+            "timeout": 5,
+        }
+        return subprocess.CompletedProcess(args, 0, stdout=output)
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    if expected is None:
+        with pytest.raises(PermissionError, match="Could not inspect"):
+            module._acl_present(tmp_path)
+    else:
+        assert module._acl_present(tmp_path) is expected
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FileNotFoundError("missing tool"),
+        subprocess.CalledProcessError(1, "/bin/ls"),
+        subprocess.TimeoutExpired("/bin/ls", 5),
+    ],
+)
+def test_index_acl_tool_failure_refuses_store(monkeypatch, failure):
+    from rapid_mlx.local_search import store as module
+
+    def run(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    with pytest.raises(PermissionError, match="Could not secure") as exc:
+        module._acl_command(["/bin/ls", "-lde", "/index"])
+    assert exc.value.__cause__ is failure
+
+
+def test_index_acl_non_darwin_unchanged(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import store as module
+
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    monkeypatch.setattr(
+        module, "_acl_present", lambda _: pytest.fail("ACL probe on Linux")
+    )
+    store = Store(tmp_path / "index.sqlite3", "test")
+    store.close()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="real macOS extended ACLs")
+@pytest.mark.parametrize("inherited", [False, True])
+def test_index_removes_real_darwin_acls(tmp_path, monkeypatch, inherited):
+    from rapid_mlx.local_search import store as module
+
+    path = tmp_path / "index" / "index.sqlite3"
+    path.parent.mkdir(mode=0o700)
+    if inherited:
+        # The index directory itself inherits from its parent. Its inheritable
+        # grant would propagate to both O_CREAT and SQLite's new WAL/SHM files.
+        path.parent.rmdir()
+        subprocess.run(
+            [
+                "/bin/chmod",
+                "+a",
+                "everyone allow read,file_inherit,directory_inherit",
+                str(tmp_path),
+            ],
+            check=True,
+        )
+        path.parent.mkdir(mode=0o700)
+    else:
+        path.touch(mode=0o600)
+        for target in (path.parent, path):
+            subprocess.run(
+                ["/bin/chmod", "+a", "everyone allow read", str(target)], check=True
+            )
+        assert module._acl_present(path)
+    assert module._acl_present(path.parent)
+    connect = sqlite3.connect
+
+    def protected_connect(*args, **kwargs):
+        assert not module._acl_present(path.parent)
+        assert not module._acl_present(path)
+        return connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", protected_connect)
+    store = Store(path, "test")
+    try:
+        for suffix in ("", "-wal", "-shm"):
+            file = Path(str(path) + suffix)
+            assert not module._acl_present(file)
+            assert stat.S_IMODE(file.stat().st_mode) == 0o600
+        store.db.execute("PRAGMA journal_mode=DELETE")
+        store.db.execute("INSERT INTO meta VALUES ('private_text', 'secret')")
+        assert not module._acl_present(Path(str(path) + "-journal"))
+        store.db.rollback()
+    finally:
+        store.close()
+        subprocess.run(["/bin/chmod", "-N", str(tmp_path)], check=True)
+
+
+@pytest.mark.parametrize("method,route,body", FIRST_ROUTES)
+def test_first_route_refuses_newer_schema(tmp_path, method, route, body):
+    from rapid_mlx.routes.local_search import router
+
+    directory = tmp_path / "index"
+    store = Store(directory / "index.sqlite3", "test")
+    with store.db:
+        store.db.execute("UPDATE meta SET value='999' WHERE key='schema_version'")
+    store.close()
+
+    async def scenario():
+        app = FastAPI()
+        install_exception_handlers(app)
+        app.include_router(router)
+        search = LocalSearch(directory, resolve_model=lambda _: None)
+        app.state.local_search = search
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+            ) as client:
+                payload = {"path": str(tmp_path)} if body == "folder" else body
+                response = await asyncio.wait_for(
+                    client.request(method, "/v1/local-search" + route, json=payload),
+                    timeout=5,
+                )
+            assert response.status_code == 503
+            assert response.json() == {
+                "error": {
+                    "message": "unsupported local-search schema version",
+                    "type": "invalid_request_error",
+                    "code": "store_open_failed",
+                    "param": "local_search_dir",
+                }
+            }
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "outage",
+    [
+        "missing",
+        "dispatch_error",
+        "changed_after_failure",
+        "temporarily_missing_after_failure",
+    ],
+)
+@pytest.mark.parametrize("media", [False, True])
+def test_waiting_model_recovers_when_worker_returns(
+    tmp_path, monkeypatch, outage, media
+):
+    from types import SimpleNamespace
+
+    from rapid_mlx.config import get_config
+
+    async def scenario():
+        root = folder(tmp_path)
+        if media:
+            from PIL import Image
+
+            Image.new("RGB", (4, 4)).save(root / "apple.png")
+        else:
+            (root / "apple.txt").write_text("An apple orchard grows delicious fruit.")
+        model = folder(tmp_path, "model")
+        (model / "model.safetensors").write_bytes(b"unchanged checkpoint")
+        cfg = get_config()
+        original_worker = cfg.engine.execute_on_model_worker
+        available = [False]
+        fake = FakeEmbedder()
+
+        def factory(_):
+            if not available[0]:
+                raise ValueError("persistent model failure")
+            return fake
+
+        async def dispatch_error(*args):
+            if not available[0]:
+                raise RuntimeError("model worker offline")
+            return await original_worker(*args)
+
+        if outage == "missing":
+            monkeypatch.setattr(cfg, "engine", SimpleNamespace())
+        elif outage == "dispatch_error":
+            monkeypatch.setattr(
+                cfg, "engine", SimpleNamespace(execute_on_model_worker=dispatch_error)
+            )
+        search = LocalSearch(
+            tmp_path / "index",
+            resolve_model=lambda _: str(model),
+            embedder_factory=factory,
+            yield_seconds=0,
+        )
+        index = AsyncMock(wraps=search._index)
+        monkeypatch.setattr(search, "_index", index)
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            assert search.store.folder(fid)["state"] == "waiting_for_model"
+            if outage in {"missing", "dispatch_error"}:
+                assert fid not in search._attempted_checkpoints
+            else:
+                assert fid in search._attempted_checkpoints
+                for _ in range(3):
+                    await search.status_async()
+                    await search.wait_idle()
+                assert index.await_count == 1
+                if outage == "temporarily_missing_after_failure":
+                    monkeypatch.setattr(cfg, "engine", SimpleNamespace())
+                    await search.status_async()
+                    assert fid not in search._attempted_checkpoints
+            available[0] = True
+
+            async def replacement_worker(*args, **kwargs):
+                return await original_worker(*args, **kwargs)
+
+            worker = (
+                replacement_worker
+                if outage == "changed_after_failure"
+                else dispatch_error
+                if outage == "dispatch_error"
+                else original_worker
+            )
+            monkeypatch.setattr(
+                cfg, "engine", SimpleNamespace(execute_on_model_worker=worker)
+            )
+            await search.status_async()
+            await search.wait_idle()
+            assert index.await_count == 2
+            assert search.store.folder(fid)["state"] == "idle"
+            assert search.store.folder(fid)["error"] is None
+            assert search.store.totals()["embedded_chunks"] > 0
+            assert not search._attempted_checkpoints
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())

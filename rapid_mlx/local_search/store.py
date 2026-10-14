@@ -7,6 +7,8 @@ import json
 import os
 import sqlite3
 import stat
+import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -49,6 +51,32 @@ def _owner_only(fd: int, mode: int) -> None:
             raise PermissionError("Could not make local-search index owner-only")
 
 
+def _acl_present(path: Path) -> bool:
+    # Darwin's supported tools avoid depending on private ACL struct layouts.
+    # -d inspects the directory itself; -e prints its extended ACL entries.
+    output = _acl_command(["/bin/ls", "-lde", str(path.absolute())])
+    lines = output.splitlines()
+    if not lines:
+        raise PermissionError("Could not inspect local-search index ACL")
+    return any(line.strip() for line in lines[1:])
+
+
+def _acl_command(args: list[str]) -> str:
+    try:
+        return subprocess.run(
+            args, check=True, capture_output=True, text=True, timeout=5
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PermissionError("Could not secure local-search index ACL") from exc
+
+
+def _remove_acl(path: Path) -> None:
+    if sys.platform == "darwin" and _acl_present(path):
+        _acl_command(["/bin/chmod", "-N", str(path.absolute())])
+        if _acl_present(path):
+            raise PermissionError("Could not remove local-search index ACL")
+
+
 def _prepare_index(path: Path) -> None:
     """Secure the index before SQLite can read, recover, or write any text."""
     names = {path.name + suffix for suffix in ("", "-wal", "-shm", "-journal")}
@@ -70,6 +98,8 @@ def _prepare_index(path: Path) -> None:
                     "choose a dedicated index directory"
                 )
         _owner_only(directory, 0o700)
+        # Strip inheritance before O_CREAT or SQLite can create companions.
+        _remove_acl(path.parent)
         for name in sorted(names):
             flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
             if name == path.name:
@@ -85,6 +115,7 @@ def _prepare_index(path: Path) -> None:
                         "Local-search index files must be regular files without hard links"
                     )
                 _owner_only(fd, 0o600)
+                _remove_acl(path.parent / name)
             finally:
                 os.close(fd)
     finally:
@@ -1143,6 +1174,12 @@ class StoreWorker:
             ).result()
         return value
 
+    async def ready(self) -> None:
+        """Await construction separately from input validation and store calls."""
+        import asyncio
+
+        await asyncio.wrap_future(self._ready)
+
     @overload
     async def call(self, name: Literal["folder"], folder_id: str) -> dict | None: ...
 
@@ -1157,7 +1194,7 @@ class StoreWorker:
         from functools import partial
 
         loop = asyncio.get_running_loop()
-        await asyncio.wrap_future(self._ready)
+        await self.ready()
 
         async def replace():
             room = await loop.run_in_executor(

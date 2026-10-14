@@ -55,6 +55,10 @@ from .store import StoreWorker, bounded_terms
 logger = logging.getLogger(__name__)
 
 
+class ModelLoadError(RuntimeError):
+    """The sanctioned worker ran model loading/embedding and it failed."""
+
+
 class Embedder(Protocol):
     @property
     def is_loaded(self) -> bool: ...
@@ -225,6 +229,9 @@ class LocalSearch:
         checkpoint = await asyncio.to_thread(_checkpoint_identity, model_path)
         if model_path is None:
             self._attempted_checkpoints.clear()
+        worker = self._worker()
+        if not callable(worker):
+            self._attempted_checkpoints.clear()
         folders = await self.store.call("folders")
         totals = await self.store.call("totals")
         vision = await asyncio.to_thread(self._vision_available, model_path)
@@ -233,9 +240,10 @@ class LocalSearch:
                 folder["state"] = "missing"
             elif (
                 model_path is not None
-                and callable(self._worker())
+                and callable(worker)
                 and folder["state"] == "waiting_for_model"
-                and self._attempted_checkpoints.get(folder["id"]) != checkpoint
+                and self._attempted_checkpoints.get(folder["id"])
+                != (checkpoint, worker)
                 and self.progress["folder_id"] != folder["id"]
             ):
                 await self.queue(folder["id"])
@@ -365,7 +373,7 @@ class LocalSearch:
             success, result = await asyncio.shield(task)
             if not success:
                 self.worker_error = result
-                raise RuntimeError(result)
+                raise ModelLoadError(result)
             self.worker_error = None
             return result
         except asyncio.CancelledError:
@@ -481,7 +489,7 @@ class LocalSearch:
                         if self.engine is not None:
                             await self._model_call(self._release_embedder)
                         available = False
-                        error = str(exc)
+                        error = exc
                 del batch
                 await asyncio.sleep(self.yield_seconds)
         finally:
@@ -586,9 +594,11 @@ class LocalSearch:
             self.progress["files_total"] = 0
             model_path = await asyncio.to_thread(self.resolve_model, self.model_id)
             checkpoint = await asyncio.to_thread(_checkpoint_identity, model_path)
+            worker = self._worker()
             available = model_path is not None
             model_error = None
-            if not callable(self._worker()):
+            load_failed = False
+            if not callable(worker):
                 available = False
                 model_error = "Engine has no sanctioned model worker; keyword-only"
                 self.worker_error = model_error
@@ -625,7 +635,8 @@ class LocalSearch:
                         chunks, vectors, media_ok, error = await self._index_media(
                             path, root, media_available, root_fd
                         )
-                        model_error = error or model_error
+                        model_error = str(error) if error else model_error
+                        load_failed |= isinstance(error, ModelLoadError)
                         if error:
                             available = False
                         after = await asyncio.to_thread(path.lstat)
@@ -717,6 +728,7 @@ class LocalSearch:
                                 await self._model_call(self._release_embedder)
                             available = False
                             model_error = str(exc)
+                            load_failed |= isinstance(exc, ModelLoadError)
                     await self.store.call(
                         "replace",
                         folder["id"],
@@ -787,10 +799,18 @@ class LocalSearch:
             for path, row in old.items():
                 if path not in existing:
                     await self.store.call("remove_file", row["id"])
-            # Polling may resume a missing/replaced model, but must not walk the
-            # user's tree again for an unchanged checkpoint that already failed.
-            # Explicit queue requests (reindex/add) intentionally bypass this.
-            self._attempted_checkpoints[folder["id"]] = checkpoint
+            # Only a real model failure on this checkpoint/worker suppresses
+            # polls. Missing models/workers and replacement workers can recover.
+            # Retain the callable itself: bound methods have stable equality.
+            if (
+                checkpoint is not None
+                and callable(worker)
+                and load_failed
+                and self._worker() == worker
+            ):
+                self._attempted_checkpoints[folder["id"]] = (checkpoint, worker)
+            else:
+                self._attempted_checkpoints.pop(folder["id"], None)
             await self.store.call(
                 "set_folder",
                 folder["id"],

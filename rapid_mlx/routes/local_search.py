@@ -10,11 +10,6 @@ from pydantic import BaseModel, Field
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..middleware.exception_handlers import register_request_model
 
-router = APIRouter(
-    prefix="/v1/local-search",
-    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
-)
-
 
 class FolderRequest(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
@@ -54,6 +49,23 @@ def get_service(request: Request):
     return request.app.state.local_search
 
 
+async def require_store(request: Request):
+    try:
+        await get_service(request).store.ready()
+    except Exception as exc:
+        error(str(exc), "store_open_failed", "local_search_dir", 503)
+
+
+router = APIRouter(
+    prefix="/v1/local-search",
+    dependencies=[
+        Depends(verify_api_key),
+        Depends(check_rate_limit),
+        Depends(require_store),
+    ],
+)
+
+
 async def require_folder(service, folder_id):
     if await service.folder(folder_id) is None:
         error("Folder not found", "folder_not_found", "folder_id", 404)
@@ -61,10 +73,7 @@ async def require_folder(service, folder_id):
 
 @router.get("/status")
 async def status(request: Request):
-    try:
-        return await get_service(request).status_async()
-    except OSError as exc:
-        error(str(exc), "store_open_failed", "local_search_dir", 503)
+    return await get_service(request).status_async()
 
 
 @router.post("/folders")
