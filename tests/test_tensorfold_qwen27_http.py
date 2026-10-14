@@ -1101,7 +1101,7 @@ def test_http_stream_and_nonstream_use_provider_and_reject_tools(pool_worker) ->
     )
     assert rejected.status_code == (503 if pool_worker else 400)
     multiple = client.post("/v1/chat/completions", json={**body, "n": 2})
-    assert multiple.status_code == (503 if pool_worker else 400)
+    assert multiple.status_code == 400
     invalid = client.post("/v1/chat/completions", json={**body, "messages": []})
     assert invalid.status_code == 400
     assert client.post("/v1/chat/completions", json=body).status_code == 200

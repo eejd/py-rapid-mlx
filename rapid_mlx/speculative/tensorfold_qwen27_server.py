@@ -379,8 +379,6 @@ def validate_http_request(
     # to omission and avoids rejecting an otherwise ordinary Desktop turn.
     # Any value that would change logits remains an explicit 400.
     unsupported = []
-    if getattr(request, "n", None) is not None and request.n > 1:
-        unsupported.append("n")
     neutral_penalties = {
         "repetition_penalty": 1.0,
         "presence_penalty": 0.0,
