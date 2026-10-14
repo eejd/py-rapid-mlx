@@ -3,6 +3,9 @@ import SwiftUI
 
 struct WorkView: View {
     let server: ServerManager
+    let selectedSection: SidebarSection
+    let cachedModels: [ModelEntry]
+    let startModel: (String) -> Void
     let startDefaultModel: () -> Void
     @State private var agent = WorkAgent.shared
     @State private var message = ""
@@ -17,6 +20,31 @@ struct WorkView: View {
             if WorkAgent.fullAccess { fullLastFolder = newValue }
             else { privateLastFolder = newValue }
         }
+    }
+
+    private var availableModels: [ModelEntry] {
+        Self.availableModels(in: cachedModels, on: MacHardware.detect())
+    }
+
+    static func availableModels(in catalog: [ModelEntry], on hardware: MacHardware) -> [ModelEntry] {
+        catalog.filter {
+            $0.cached && $0.kind == .chat
+                && ModelSizing.isAvailable(alias: $0.alias, on: hardware, catalogEntry: $0)
+        }
+    }
+
+    private var recommendedModel: ModelEntry? {
+        Self.recommendedModel(in: cachedModels, on: MacHardware.detect())
+    }
+
+    static func recommendedModel(in catalog: [ModelEntry], on hardware: MacHardware) -> ModelEntry? {
+        let availableModels = availableModels(in: catalog, on: hardware)
+        for alias in ["qwen3.6-35b-4bit", "qwen3.6-27b-4bit"] {
+            if let entry = availableModels.first(where: { $0.alias.lowercased() == alias }) {
+                return entry
+            }
+        }
+        return nil
     }
 
     var body: some View {
@@ -49,7 +77,24 @@ struct WorkView: View {
                 } description: {
                     Text("Work uses the model running in Rapid-MLX Desktop.")
                 } actions: {
-                    Button("Start Default Model", action: startDefaultModel)
+                    if WorkAgent.fullAccess {
+                        if let recommendedModel {
+                            Button("Start recommended: \(recommendedModel.alias)") {
+                                startModel(recommendedModel.alias)
+                            }
+                        }
+                        Menu("Choose a model") {
+                            if availableModels.isEmpty {
+                                Text("No cached chat model fits this Mac")
+                            } else {
+                                ForEach(availableModels, id: \.alias) { entry in
+                                    Button(entry.alias) { startModel(entry.alias) }
+                                }
+                            }
+                        }
+                    } else {
+                        Button("Start Default Model", action: startDefaultModel)
+                    }
                 }
             } else if folder == nil {
                 ContentUnavailableView {
@@ -112,13 +157,23 @@ struct WorkView: View {
                 await runSyntheticTest()
                 return
             }
-            if folder == nil, !lastFolder.isEmpty, FileManager.default.fileExists(atPath: lastFolder) {
-                folder = URL(fileURLWithPath: lastFolder)
-            } else if folder == nil, WorkAgent.fullAccess {
+            if folder == nil, WorkAgent.fullAccess {
                 let playground = FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent("Desktop/Goose-Playground", isDirectory: true)
                 try? FileManager.default.createDirectory(at: playground, withIntermediateDirectories: true)
                 folder = playground
+            } else if folder == nil, !lastFolder.isEmpty, FileManager.default.fileExists(atPath: lastFolder) {
+                folder = URL(fileURLWithPath: lastFolder)
+            }
+            if WorkAgent.fullAccess,
+               let probe = ProcessInfo.processInfo.environment["WORK_FULL_LANDING_PROBE"],
+               let folder {
+                let state = ["bundle": Bundle.main.bundleIdentifier ?? "",
+                             "section": String(describing: selectedSection), "folder": folder.path,
+                             "model": server.servingAlias ?? ""]
+                if let data = try? JSONSerialization.data(withJSONObject: state) {
+                    try? data.write(to: URL(fileURLWithPath: probe), options: .atomic)
+                }
             }
         }
         .onChange(of: server.activePort) { _, _ in

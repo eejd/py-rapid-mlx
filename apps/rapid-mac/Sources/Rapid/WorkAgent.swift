@@ -4,6 +4,10 @@ import Darwin
 import Foundation
 import Observation
 
+extension Notification.Name {
+    static let newWorkChat = Notification.Name("Rapid.NewWorkChat")
+}
+
 struct WorkStep: Identifiable {
     let id: String
     var command: String
@@ -211,6 +215,12 @@ final class WorkAgent {
     }
 
     func newSession() async throws {
+        if !isRunning {
+            text = ""
+            steps = []
+            error = nil
+            return
+        }
         guard let folder else { return }
         guard !isBusy else { throw WorkError.message("Stop the current task before starting a new session.") }
         if let old = sessionID {

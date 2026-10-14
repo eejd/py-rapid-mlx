@@ -15,6 +15,11 @@ enum SidebarSection: Hashable {
     case benchmark
     case shareCompute
 
+    static func initial(bundleIdentifier: String?, environment: [String: String]) -> SidebarSection {
+        if let requested = harnessRequested(environment: environment) { return requested }
+        return bundleIdentifier == "com.rapidmlx.rapid.work-full" ? .work : .chat
+    }
+
     /// The surface a GUI harness asked the app to open on.
     ///
     /// Screenshot and golden-flow runs need the window to come up on the
@@ -290,6 +295,9 @@ struct SidebarView: View {
     private var fullColumn: some View {
         VStack(alignment: .leading, spacing: 1) {
             brandLockup
+            if WorkAgent.fullAccess && workHelperAvailable {
+                workRow
+            }
             row(
                 title: String(localized: "New Chat"),
                 systemImage: "square.and.pencil",
@@ -318,15 +326,7 @@ struct SidebarView: View {
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
-            if workHelperAvailable {
-                row(
-                    title: "Work (beta)",
-                    systemImage: "folder.badge.gearshape",
-                    isSelected: selection == .work,
-                    action: { selection = .work }
-                )
-                .accessibilityIdentifier("Sidebar.Work")
-            }
+            if !WorkAgent.fullAccess && workHelperAvailable { workRow }
 
             if computerUseEnabled {
                 if let cuaViewModel {
@@ -400,7 +400,7 @@ struct SidebarView: View {
 
             // Folders can exist before any conversation does (create one, then
             // file into it), so an empty history no longer means an empty rail.
-            if !chat.conversations.isEmpty || !chat.folders.isEmpty {
+            if !WorkAgent.fullAccess && (!chat.conversations.isEmpty || !chat.folders.isEmpty) {
                 // Date-grouped history (#1470), titled with the shared
                 // SectionHeader so the groups match the refreshed visual
                 // system (#1460) instead of the PR's original inline caption.
@@ -437,6 +437,16 @@ struct SidebarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    private var workRow: some View {
+        row(
+            title: WorkAgent.fullAccess ? "Work" : "Work (beta)",
+            systemImage: "folder.badge.gearshape",
+            isSelected: selection == .work,
+            action: { selection = .work }
+        )
+        .accessibilityIdentifier("Sidebar.Work")
+    }
+
     var body: some View {
         Group {
             if isCompact {
@@ -448,14 +458,16 @@ struct SidebarView: View {
         // Column-scoped toolbar content renders beside the native sidebar
         // toggle instead of in the detail column's title group.
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: onSearchChats) {
-                    Image(systemName: "magnifyingglass")
+            if !WorkAgent.fullAccess {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: onSearchChats) {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .keyboardShortcut("k", modifiers: .command)
+                    .help("Search chats - Command-K")
+                    .accessibilityLabel("Search chats")
+                    .accessibilityIdentifier("Toolbar.SearchChats")
                 }
-                .keyboardShortcut("k", modifiers: .command)
-                .help("Search chats - Command-K")
-                .accessibilityLabel("Search chats")
-                .accessibilityIdentifier("Toolbar.SearchChats")
             }
         }
         .task { await dayBoundaryTicker() }
@@ -654,6 +666,8 @@ struct SidebarView: View {
                 .frame(width: 40, height: 1)
                 .accessibilityHidden(true)
 
+            if WorkAgent.fullAccess && workHelperAvailable { compactWorkItem }
+
             compactItem(
                 title: String(localized: "New Chat"),
                 systemImage: "square.and.pencil",
@@ -682,15 +696,7 @@ struct SidebarView: View {
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
-            if workHelperAvailable {
-                compactItem(
-                    title: "Work (beta)",
-                    systemImage: "folder.badge.gearshape",
-                    isSelected: selection == .work,
-                    action: { selection = .work }
-                )
-                .accessibilityIdentifier("Sidebar.Work")
-            }
+            if !WorkAgent.fullAccess && workHelperAvailable { compactWorkItem }
 
             if videoGenerationEnabled {
                 compactItem(
@@ -746,6 +752,16 @@ struct SidebarView: View {
         .padding(.vertical, 18)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var compactWorkItem: some View {
+        compactItem(
+            title: WorkAgent.fullAccess ? "Work" : "Work (beta)",
+            systemImage: "folder.badge.gearshape",
+            isSelected: selection == .work,
+            action: { selection = .work }
+        )
+        .accessibilityIdentifier("Sidebar.Work")
     }
 
     private var compactBrandTile: some View {
