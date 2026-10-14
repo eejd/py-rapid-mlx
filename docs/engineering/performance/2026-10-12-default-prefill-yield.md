@@ -1,6 +1,8 @@
 # Default-route shared-executor prefill continuation (2026-10-12)
 
-Status: production candidate, held in draft pending qualification on a quiet host.
+Status at this initial campaign: draft, with quiet-host qualification pending.
+See the [cross-hardware/model follow-up](2026-10-13-prefill-hardware-model-matrix.md)
+for subsequent evidence, failed gates and the current support boundary.
 Owner: Vector, Studio. Independent of the native scheduler contention candidate.
 
 A long text request using the serialized multimodal singleton lane previously ran
