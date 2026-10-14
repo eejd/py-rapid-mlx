@@ -30,7 +30,7 @@ struct CommandPaletteTests {
         #expect(imageTitleResults == [.images])
         #expect(updateTitleResults == [.checkUpdates])
         #expect(punctuationResults == [.exportDiagnostics])
-        #expect(connectorResults == [.connectors])
+        #expect(connectorResults.isEmpty)
     }
 
     @Test("Filtering is case-insensitive and ignores diacritics")
