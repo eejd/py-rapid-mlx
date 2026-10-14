@@ -953,10 +953,12 @@ struct ContentView: View {
             section = .work
             WorkAgent.shared.beginNewChat()
             let revision = WorkAgent.shared.conversationRevision
+            let lifecycle = WorkAgent.shared.lifecycleGeneration
             Task {
                 do { try await WorkAgent.shared.newSession() }
                 catch {
-                    if WorkAgent.shared.conversationRevision == revision {
+                    if WorkAgent.shared.conversationRevision == revision,
+                       WorkAgent.shared.lifecycleGeneration == lifecycle {
                         WorkAgent.shared.error = error.localizedDescription
                     }
                 }
