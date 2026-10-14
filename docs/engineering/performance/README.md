@@ -6,8 +6,6 @@ summary statistics, and limitations.
 
 ## Reports
 
-- [Prefill continuation across hardware and models (2026-10-13)](2026-10-13-prefill-hardware-model-matrix.md): M4 Pro/M5 Max, dense 4B/9B/27B, native control, per-cell passes and failed gates; draft.
-- [Default-route shared-executor prefill continuation (2026-10-12)](2026-10-12-default-prefill-yield.md): initial shared-host campaign; see the cross-hardware follow-up for current qualification.
 - [GLM-5.3 Flash load-window memory (2026-10-10)](2026-10-10-glm53-shardwise-load.md)
 - [Native MTP cold-loader repair on M5 Max (2026-10-09)](2026-10-09-m5-native-mtp-cold-loader.md)
 - [Mac mini model matrix: Qwen3.5 4B, Gemma 4 26B, and Qwen3.8 27B](2026-08-21-mac-mini-model-matrix.md)
@@ -63,6 +61,9 @@ summary statistics, and limitations.
 - [Contention-aware prompt admission benchmark](scheduler-admission-1950.md)
 - [Telemetry v2 inference-path overhead](telemetry-v2-inference.md)
 - [Qwen4 prompt-lookup qualification](qwen4-prompt-lookup-qualification.md)
+
+- [Prefill continuation across hardware and models (2026-10-13)](2026-10-13-prefill-hardware-model-matrix.md): M4 Pro/M5 Max, dense 4B/9B/27B, native control, per-cell passes and failed gates; draft.
+- [Default-route shared-executor prefill continuation (2026-10-12)](2026-10-12-default-prefill-yield.md): initial shared-host campaign; see the cross-hardware follow-up for current qualification.
 
 Keep qualification reports for enabled defaults and published performance
 claims while the corresponding behavior remains live, even when no other file
