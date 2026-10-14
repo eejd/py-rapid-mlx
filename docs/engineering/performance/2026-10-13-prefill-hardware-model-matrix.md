@@ -15,6 +15,8 @@ changed to create a favorable benchmark.
 
 Additional [Gemma 4 and Nemotron architecture controls](2026-10-13-prefill-architecture-controls.md) confirm that the acceleration path is disabled for both; they establish no speedup.
 
+The subsequent [27B/default2048 dogfood and shutdown review](2026-10-13-qwen27-default-prefill-dogfood.md) closes the previously untested 27B cell on final production source. This report retains its original per-cell gates, including the M4/2048 failure.
+
 ## Frozen experiment
 
 Baseline `bec47abba980d48432c8b5917ca682dd0a5758de`; candidate

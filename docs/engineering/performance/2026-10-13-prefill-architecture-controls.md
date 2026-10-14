@@ -132,6 +132,9 @@ contains the qualified dense-path gains and remaining default-sized gaps.
 
 The inference implementation is unchanged from the earlier regression suite and
 independent code review. This extension changes measurement documentation only.
-Keep the PR draft for the previously failed M4/2048 benefit gate and untested
-27B/default-sized cell; these controls do not waive either condition. No software
+At this campaign checkpoint, the failed M4/2048 benefit gate and untested
+27B/default-sized cell kept the PR draft. The subsequent
+[27B/default-sized dogfood report](2026-10-13-qwen27-default-prefill-dogfood.md)
+closes that missing cell and records the narrower integration benefit claim;
+the original M4 failure remains a failure. No software
 merge or release action is included.

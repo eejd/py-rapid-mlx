@@ -3377,6 +3377,64 @@ def test_public_next_enters_and_exits_stream_on_every_prefill_resume(monkeypatch
     gen.close()
 
 
+def test_scheduler_abort_defers_removal_until_executing_chunk_returns(monkeypatch):
+    from types import SimpleNamespace
+
+    from rapid_mlx.mllm_scheduler import MLLMScheduler
+
+    started, release, cleaned = threading.Event(), threading.Event(), threading.Event()
+    gen = _suspended_generator()
+    gen._old_wired_limit = None
+    request = gen.unprocessed_requests[0]
+    worker_threads, removal_threads = [], []
+
+    def pending(requests, cooperative):
+        try:
+            worker_threads.append(threading.get_ident())
+            started.set()
+            assert release.wait(timeout=5)
+            yield
+            raise AssertionError("cancelled prompt must not resume")
+        finally:
+            cleaned.set()
+
+    gen._process_prompt_steps = pending
+    original_remove = gen.remove
+
+    def remove(uids):
+        removal_threads.append(threading.get_ident())
+        return original_remove(uids)
+
+    monkeypatch.setattr(gen, "remove", remove)
+    monkeypatch.setattr(mx, "clear_cache", lambda: None)
+    scheduler = MLLMScheduler(
+        SimpleNamespace(config=SimpleNamespace(eos_token_id=2)),
+        SimpleNamespace(tokenizer=SimpleNamespace(eos_token_id=2)),
+    )
+    scheduler.batch_generator = gen
+    scheduler.request_id_to_uid[request.request_id] = request.uid
+    scheduler.uid_to_request_id[request.uid] = request.request_id
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        step = executor.submit(gen._next)
+        try:
+            assert started.wait(timeout=2)
+            # Event-loop cancellation uses the thread-safe scheduler API;
+            # generator.remove() is a step-thread operation, unlike close().
+            assert scheduler.abort_request(request.request_id)
+            assert removal_threads == []
+            assert not cleaned.is_set()
+        finally:
+            release.set()
+        assert step.result(timeout=2) == []
+        executor.submit(scheduler._process_pending_aborts).result(timeout=2)
+    assert removal_threads == worker_threads
+    assert cleaned.is_set()
+    assert gen._pending_prefill is None
+    assert not gen.has_pending()
+    assert not scheduler._pending_abort_ids
+    gen.close()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_chunk", [False, True])
 async def test_stop_defers_executing_prefill_cleanup_on_borrowed_executor(
