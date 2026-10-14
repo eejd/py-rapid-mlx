@@ -21,11 +21,17 @@ GOOSE_BIN="$(find "$TMP" -type f -name goose -print -quit)"
 cp "$GOOSE_BIN" "$HELPERS/goose"
 chmod 755 "$HELPERS/goose"
 cp "$ROOT/Work/work-inference-proxy.py" "$HELPERS/work-inference-proxy.py"
+cp "$ROOT/Work/work-helper-watchdog.py" "$HELPERS/work-helper-watchdog.py"
 curl -fLsS 'https://raw.githubusercontent.com/aaif-goose/goose/v1.54.0/LICENSE' \
     -o "$CONTENTS/Resources/Licenses/goose-APACHE-2.0.txt"
 PYTHON="$CONTENTS/Resources/rapid-mlx/python/bin/python3.12"
 SITE="$CONTENTS/Resources/rapid-mlx/site-packages"
 [[ -x "$PYTHON" && -d "$SITE" ]] || { echo "Work MVP needs the bundled Python sidecar" >&2; exit 1; }
+if [[ "${WORK_FULL:-0}" == "1" ]]; then
+    python3 -m pip download --disable-pip-version-check --no-deps --only-binary=:all: \
+        --dest "$HELPERS" 'pip==25.2'
+    mv "$HELPERS"/pip-25.2-py3-none-any.whl "$HELPERS/pip.whl"
+fi
 python3 -m pip install --disable-pip-version-check --no-deps --target "$SITE" \
     'pypdf==6.1.3' 'openpyxl==3.1.5' 'et_xmlfile==2.0.0'
 PYTHONPATH="$SITE" "$PYTHON" -c 'import pypdf, openpyxl, csv, decimal'

@@ -126,7 +126,8 @@ enum PortSweep {
     /// current shell does not.
     @discardableResult
     static func sweep(port: Int) -> [Int32] {
-        if ProcessInfo.processInfo.environment["RAPID_DESKTOP_NO_PORT_SWEEP"] != nil {
+        if Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" ||
+            ProcessInfo.processInfo.environment["RAPID_DESKTOP_NO_PORT_SWEEP"] != nil {
             return []
         }
         let raw = pidsOnPort(port: port)
