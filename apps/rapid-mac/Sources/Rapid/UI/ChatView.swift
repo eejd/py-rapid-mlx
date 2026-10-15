@@ -385,7 +385,18 @@ struct ChatView: View {
             pruneAttachmentDrafts()
             photoCapabilityNotice.dismiss()
         }
-        .onChange(of: alias) { _, _ in photoCapabilityNotice.dismiss() }
+        .onChange(of: alias) { _, _ in
+            photoCapabilityNotice.dismiss()
+            if WorkAgent.gooseChat {
+                viewModel.selectedGooseModelChanged()
+                prewarmGoose()
+            }
+        }
+        .onChange(of: server.isModelResident(alias)) { wasResident, isResident in
+            if WorkAgent.gooseChat, wasResident && !isResident {
+                viewModel.selectedGooseModelChanged()
+            }
+        }
         .onChange(of: photoAvailability) { _, availability in
             photoCapabilityNotice.reconcile(with: availability)
         }
@@ -397,14 +408,15 @@ struct ChatView: View {
 
     private func prewarmGoose() {
         guard WorkAgent.gooseChat,
-              case .ready(let alias) = server.state,
+              case .ready = server.state,
+              server.isModelResident(alias),
               let bearer = server.activeBearer, server.activePort > 0 else { return }
         WorkAgent.shared.updateProxyBearer(bearer)
         guard !viewModel.isStreaming else { return }
         let folder = URL(fileURLWithPath: viewModel.gooseFolderPath, isDirectory: true)
         Task {
             try? await WorkAgent.shared.prepare(folder: folder, rapidPort: server.activePort,
-                model: server.servingAlias ?? alias, bearer: bearer)
+                model: alias, bearer: bearer)
         }
     }
 
@@ -1083,9 +1095,13 @@ struct ChatView: View {
                 if let onUnloadResidentModels {
                     await onUnloadResidentModels()
                 } else {
+                    let outcome = await server.unloadResidentModelsIfIdle()
                     residentUnloadNotice = SidebarView.residentUnloadMessage(
-                        for: await server.unloadResidentModelsIfIdle()
+                        for: outcome
                     )
+                    if outcome == .stopped, WorkAgent.gooseChat {
+                        viewModel.selectedGooseModelChanged()
+                    }
                 }
             }
         } label: {

@@ -511,7 +511,10 @@ final class WorkAgent {
         if permission?.id == request.id {
             permission = pendingPermissions.isEmpty ? nil : pendingPermissions.removeFirst()
         }
+        let answeredGeneration = generation
         Task {
+            guard generation == answeredGeneration,
+                  sessionID == request.sessionID else { return }
             try? await post(["jsonrpc": "2.0", "id": request.rpcID,
                              "result": ["outcome": ["outcome": "selected", "optionId": optionID]]],
                             session: request.sessionID)
@@ -599,14 +602,12 @@ final class WorkAgent {
             request.setValue(connection, forHTTPHeaderField: "Acp-Connection-Id")
             request.setValue(session, forHTTPHeaderField: "Acp-Session-Id")
             do {
-                let (bytes, _) = try await URLSession.shared.bytes(for: request)
-                for try await line in bytes.lines {
-                    if Task.isCancelled { return }
+                try await transport.stream(request) { line in
+                    guard !Task.isCancelled else { return }
                     guard line.hasPrefix("data:"),
-                          let data = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces).data(using: .utf8),
-                          let message = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                          let data = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces).data(using: .utf8) else { return }
                     guard generation == streamGeneration else { return }
-                    handle(message)
+                    try? handleWire(data)
                 }
                 if !Task.isCancelled { helperStreamEnded(generation: streamGeneration, session: session) }
             } catch {

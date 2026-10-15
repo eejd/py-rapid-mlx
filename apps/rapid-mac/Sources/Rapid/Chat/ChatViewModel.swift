@@ -156,6 +156,12 @@ final class ChatViewModel {
         gooseContextIDs = []
     }
     func retryGoose() { gooseFallback = nil; WorkAgent.shared.stop(); gooseConversationID = nil }
+    func selectedGooseModelChanged() {
+        if isStreaming { stop() } else { WorkAgent.shared.stop() }
+        terminalizeGooseCards(status: "cancelled")
+        gooseConversationID = nil
+        gooseContextIDs = []
+    }
     func activateGooseFallback(_ error: Error) {
         gooseFallback = String(localized: "Tools are unavailable. Chat is using the direct model. Retry")
         WorkAgent.shared.stop()
@@ -1372,6 +1378,13 @@ final class ChatViewModel {
                 } catch {
                     guard epoch == self.conversationEpoch, !Task.isCancelled else {
                         self.finishGooseCancellation(epoch: epoch)
+                        return
+                    }
+                    if let helperFailure = WorkAgent.shared.error {
+                        self.applyGooseEvent(.error(helperFailure), initialPlaceholder: placeholderIndex)
+                        self.lastFailureAlias = alias
+                        self.isStreaming = false
+                        self.inflight = nil
                         return
                     }
                     self.activateGooseFallback(error)

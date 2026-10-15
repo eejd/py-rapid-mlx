@@ -82,6 +82,34 @@ struct GooseChatTests {
         #expect(throws: CancellationError.self) { try agent.checkPreparation(generation) }
     }
 
+    @Test("Duplicate ACP permission RPC is queued once and Stop invalidates it")
+    func wirePermission() throws {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        let packet = #"{"jsonrpc":"2.0","id":42,"method":"session/request_permission","params":{"sessionId":"session-a","toolCall":{"toolCallId":"t1","title":"Run command","rawInput":{"command":"echo hi"}},"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"reject_once","optionId":"no"}]}}"#
+        try agent.handleWire(Data(packet.utf8))
+        try agent.handleWire(Data(packet.utf8))
+        #expect(agent.permission?.id == "42")
+        agent.stop()
+        #expect(agent.permission == nil)
+        try agent.handleWire(Data(packet.utf8))
+        #expect(agent.permission == nil)
+    }
+
+    @Test("Switching models closes a pending approval card")
+    func modelSwitchWithApproval() {
+        let model = ChatViewModel(persistsConversations: false)
+        model.devSeedMessages([ChatMessage(role: .user, content: "Run it", status: .complete),
+                               ChatMessage(role: .assistant, status: .streaming)])
+        let request = WorkPermission(id: "42", sessionID: "old-session", toolCallID: "t1",
+                                     command: "echo hi", options: [])
+        model.applyGooseEvent(.permission(request, "developer__shell", "permission needed"), initialPlaceholder: 1)
+        #expect(model.goosePermission(for: "t1") != nil)
+        model.selectedGooseModelChanged()
+        #expect(model.goosePermission(for: "t1") == nil)
+        #expect(model.messages[1].gooseParts?.first?.tool?.permissionState == "cancelled")
+    }
+
     @Test("Goose Chat isolates global skills and keeps a compact tool set")
     func isolatedHelperContext() {
         #expect(WorkAgent.helperHome(gooseChat: true, fullAccess: true,
