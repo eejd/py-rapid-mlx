@@ -276,6 +276,108 @@ def test_real_tiny_conversion_roundtrip(tmp_path, bits):
     assert "96 GB+" in convert.model_card(bits, 70e9)
 
 
+def test_mixed_allocation_and_precision_boundaries():
+    # Full Super topology, without allocating the full checkpoint.
+    layers = (
+        1,
+        3,
+        5,
+        8,
+        10,
+        12,
+        14,
+        17,
+        19,
+        21,
+        23,
+        26,
+        28,
+        30,
+        32,
+        34,
+        37,
+        39,
+        41,
+        43,
+        45,
+        48,
+        50,
+        52,
+        54,
+        56,
+        59,
+        61,
+        63,
+        65,
+        67,
+        70,
+        72,
+        74,
+        76,
+        79,
+        81,
+        83,
+        85,
+        87,
+    )
+    assert "Memory qualification pending" in convert.model_card(3, 43e9)
+    assert "26 interior" in convert.model_card(3, 43e9)
+    model = super_h.Model(super_h.ModelArgs.from_dict(config()))
+    predicate = convert.quantization_predicate(model, 3)
+    allocated = []
+    for layer in layers:
+        for projection in ("fc1", "fc2"):
+            path = f"backbone.layers.{layer}.mixer.switch_mlp.{projection}"
+            recipe = predicate(path, None)
+            allocated.append(recipe["bits"])
+            assert recipe["group_size"] == 128
+    assert allocated.count(2) == 52
+    assert allocated.count(3) == 28
+    assert all(
+        predicate(f"backbone.layers.{i}.mixer.switch_mlp.fc1", None)["bits"] == 3
+        for i in layers[:7] + layers[-7:]
+    )
+    for path in (
+        "lm_head",
+        "backbone.layers.17.mixer.gate",
+        "backbone.layers.17.mixer.fc1_latent_proj",
+        "backbone.layers.17.mixer.fc2_latent_proj",
+    ):
+        assert predicate(path, None) is False
+    assert predicate("backbone.embeddings", None) == {
+        "bits": 8,
+        "group_size": 64,
+        "mode": "affine",
+    }
+    assert predicate("backbone.layers.17.mixer.shared_experts.fc1", None) == {
+        "bits": 4,
+        "group_size": 64,
+        "mode": "affine",
+    }
+
+
+def test_mixed_two_bit_expert_roundtrip(tmp_path, monkeypatch):
+    # Exercise real two-bit packing/loading alongside three-bit experts.
+    monkeypatch.setattr(convert, "TWO_BIT_LAYERS", frozenset({3}))
+    source = tmp_path / "source"
+    model = super_h.Model(super_h.ModelArgs.from_dict(config()))
+    model.set_dtype(mx.bfloat16)
+    save_model(source, model)
+    (source / "config.json").write_text(json.dumps(super_h.text_config(config())))
+    output = tmp_path / "mixed"
+    convert.main(["--source", str(source), "--output", str(output), "--bits", "3"])
+    loaded, metadata = load_model_checked(load_model, output)
+    for layer, bits in ((1, 3), (3, 2)):
+        for projection in ("fc1", "fc2"):
+            path = f"backbone.layers.{layer}.mixer.switch_mlp.{projection}"
+            assert metadata["quantization"][path] == {
+                "bits": bits,
+                "group_size": 128,
+                "mode": "affine",
+            }
+    assert bool(mx.all(mx.isfinite(loaded(mx.array([[1, 2, 3]])))))
+
+
 def test_metadata_recurrent_safety_and_parsers(tmp_path):
     from rapid_mlx.model_auto_config import (
         config_declares_linear_attention,

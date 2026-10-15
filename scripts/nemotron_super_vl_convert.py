@@ -1,4 +1,4 @@
-"""Offline Super VL text conversion; invoke under the shared large-model lock."""
+"""Offline CPU Super VL text conversion; inference gates require the GPU lock."""
 
 import argparse
 import json
@@ -14,6 +14,39 @@ from rapid_mlx.model_load_errors import load_model_checked
 from rapid_mlx.models.nemotron_h_super import text_config
 
 BASE_MODEL = "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+# Keep seven MoE layers at each boundary at three bits; the interior budget
+# needs 26 two-bit layers (42.76 GB weights plus metadata).
+TWO_BIT_LAYERS = frozenset(
+    (
+        17,
+        19,
+        21,
+        23,
+        26,
+        28,
+        30,
+        32,
+        34,
+        37,
+        39,
+        41,
+        43,
+        45,
+        48,
+        50,
+        52,
+        54,
+        56,
+        59,
+        61,
+        63,
+        65,
+        67,
+        70,
+        72,
+    )
+)
+
 ASSETS = {
     "tokenizer.json",
     "tokenizer_config.json",
@@ -35,7 +68,9 @@ def quantization_predicate(model, bits):
         if bits == 3:
             expert = ".switch_mlp." in path
             return {
-                "bits": 3 if expert else 4,
+                "bits": (2 if int(path.split(".")[2]) in TWO_BIT_LAYERS else 3)
+                if expert
+                else 4,
                 "group_size": 128 if expert else 64,
                 "mode": "affine",
             }
@@ -56,7 +91,8 @@ def model_card(bits, size):
     recipe = (
         "4-bit affine, group size 64"
         if bits == 4
-        else "mixed: routed experts 3-bit/group-128, other eligible projections 4-bit/group-64"
+        else "mixed: 26 interior MoE layers at 2-bit/group-128, 14 boundary layers at "
+        "3-bit/group-128, other eligible projections 4-bit/group-64"
     )
     return f"""---
 license: other
@@ -74,8 +110,8 @@ Text conversion of [{BASE_MODEL}](https://huggingface.co/{BASE_MODEL}).
 
 - Quantization: {recipe}; embeddings 8-bit/group-64. Output head,
   routers and latent projections retain checkpoint precision.
-- Artifact size: {size / 1e9:.3f} GB. Recommend **96 GB+** unified memory.
-  {"64 GB Macs may try short contexts with other applications closed; this is not a 64 GB hardware qualification." if size <= 50e9 else "Allow headroom beyond the weights for prefill, caches, macOS and applications."}
+- Artifact size: {size / 1e9:.3f} GB. {"Memory qualification pending the 1K runtime measurement." if bits == 3 and size <= 44e9 else "Recommend **96 GB+** unified memory."}
+  Allow headroom beyond the weights for prefill, caches, macOS and applications.
 - Text only: the vision tower, image projector and unused MTP head are omitted.
 - Declared context limit: 1,048,576 tokens; this does not promise that the full
   window fits the recommended memory. Validation scope and measured results
