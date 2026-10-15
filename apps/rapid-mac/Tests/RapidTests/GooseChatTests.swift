@@ -116,11 +116,14 @@ struct GooseChatTests {
                                ChatMessage(role: .assistant, status: .streaming)])
         let request = WorkPermission(id: "42", sessionID: "old-session", toolCallID: "t1",
                                      command: "echo hi", options: [])
+        model.applyGooseEvent(.tool(id: "t1", name: "developer__shell", input: "echo hi",
+                                    status: "in_progress", output: ""), initialPlaceholder: 1)
         model.applyGooseEvent(.permission(request, "developer__shell", "permission needed"), initialPlaceholder: 1)
         #expect(model.goosePermission(for: "t1") != nil)
         model.selectedGooseModelChanged()
         #expect(model.goosePermission(for: "t1") == nil)
         #expect(model.messages[1].gooseParts?.first?.tool?.permissionState == "cancelled")
+        #expect(model.messages[1].gooseParts?.first?.tool?.status == "cancelled")
     }
 
     @Test("Goose Chat isolates global skills and keeps a compact tool set")

@@ -606,8 +606,8 @@ final class WorkAgent {
                     guard !Task.isCancelled else { return }
                     guard line.hasPrefix("data:"),
                           let data = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces).data(using: .utf8) else { return }
-                    guard generation == streamGeneration else { return }
-                    try? handleWire(data)
+                    guard self.generation == streamGeneration else { return }
+                    try? self.handleWire(data)
                 }
                 if !Task.isCancelled { helperStreamEnded(generation: streamGeneration, session: session) }
             } catch {

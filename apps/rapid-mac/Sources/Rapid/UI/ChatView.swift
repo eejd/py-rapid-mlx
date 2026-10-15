@@ -282,6 +282,7 @@ struct ChatView: View {
     /// check, before ``ServerManager`` enters its own operating state.
     @State private var isUnloadingResidentModels = false
     @State private var residentUnloadNotice: String?
+    @State private var goosePrewarmTask: Task<Void, Never>?
     /// Refreshed from the active conversation every time the popover opens.
     /// SwiftUI may otherwise reuse the popover's old local `@State` when the
     /// same conversation closes and reopens it.
@@ -394,6 +395,8 @@ struct ChatView: View {
         }
         .onChange(of: server.isModelResident(alias)) { wasResident, isResident in
             if WorkAgent.gooseChat, wasResident && !isResident {
+                goosePrewarmTask?.cancel()
+                goosePrewarmTask = nil
                 viewModel.selectedGooseModelChanged()
             }
         }
@@ -407,6 +410,8 @@ struct ChatView: View {
     }
 
     private func prewarmGoose() {
+        goosePrewarmTask?.cancel()
+        goosePrewarmTask = nil
         guard WorkAgent.gooseChat,
               case .ready = server.state,
               server.isModelResident(alias),
@@ -414,7 +419,7 @@ struct ChatView: View {
         WorkAgent.shared.updateProxyBearer(bearer)
         guard !viewModel.isStreaming else { return }
         let folder = URL(fileURLWithPath: viewModel.gooseFolderPath, isDirectory: true)
-        Task {
+        goosePrewarmTask = Task {
             try? await WorkAgent.shared.prepare(folder: folder, rapidPort: server.activePort,
                 model: alias, bearer: bearer)
         }

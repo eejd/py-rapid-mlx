@@ -1524,7 +1524,7 @@ final class ChatViewModel {
             for part in parts.indices {
                 guard var card = parts[part].tool else { continue }
                 if card.permissionState == "permission needed" { card.permissionState = status }
-                if card.status == "running" { card.status = status }
+                if GooseToolPresentation.isRunning(card.status) { card.status = status }
                 parts[part].tool = card
             }
             messages[index].gooseParts = parts
