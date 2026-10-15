@@ -48,7 +48,7 @@ coverage 7.16.2, and diff-cover 8.0.3. No model weights were downloaded.
 The focused suite passed all 68 tests (13 Bailing, 13 Bolt, 5 registration/loader,
 20 parser, and 17 CI coverage-roster contracts). Ruff check and format check
 passed. Changed-line coverage against `origin/main` at
-`6fb35fbb24c5b8bb151d4fe2a7d7858adfc6d146` was 100%: all 296 changed
+`6fb35fbb24c5b8bb151d4fe2a7d7858adfc6d146` was 100%: all 297 changed
 executable production lines covered, zero missing.
 
 The Bolt contracts now live in `tests/test_nemotron_h_puzzle_vendored.py`,
