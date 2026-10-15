@@ -1173,7 +1173,11 @@ struct ContentView: View {
     private func refreshCatalogSnapshot() async {
         guard let binary = server.binaryPath else { return }
         let generation = downloads.cacheGeneration
-        await Self.ensureStartupModelLinks(generation: generation)
+        // Full Work has no bundled starter model. A stalled filesystem probe
+        // for an unrelated quickstart stub must not hide downloaded models.
+        if !WorkAgent.fullAccess {
+            await Self.ensureStartupModelLinks(generation: generation)
+        }
         guard !Task.isCancelled, generation == downloads.cacheGeneration else { return }
         var loaded = await ModelCatalogCache.shared.entries(
             binary: binary,
@@ -1975,7 +1979,9 @@ struct ContentView: View {
         // window and model-free Computer Use must remain usable while macOS
         // resolves volume access.
         let maintenanceGeneration = downloads.cacheGeneration
-        await Self.ensureStartupModelLinks(generation: maintenanceGeneration)
+        if !WorkAgent.fullAccess {
+            await Self.ensureStartupModelLinks(generation: maintenanceGeneration)
+        }
         guard !Task.isCancelled,
               maintenanceGeneration == downloads.cacheGeneration else { return }
         let sessionCatalog: [ModelEntry]
