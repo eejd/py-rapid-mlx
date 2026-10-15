@@ -2,6 +2,7 @@
 """CLI opt-in and server lifespan integration (no work when disabled)."""
 
 import ipaddress
+import socket
 from pathlib import Path
 
 _enabled = False
@@ -24,19 +25,39 @@ def validate_exposure(
             "authentication because --host cannot attest the inherited socket; "
             "set --api-key or RAPID_MLX_API_KEY"
         )
-    normalized = (host or "").strip().lower()
-    if normalized == "localhost":
+    if _is_loopback_host(host):
         return
-    try:
-        if ipaddress.ip_address(normalized).is_loopback:
-            return
-    except ValueError:
-        pass
     raise ValueError(
         "--enable-local-search on a non-loopback --host requires API-key "
         "authentication; set --api-key or RAPID_MLX_API_KEY, or bind to "
         "127.0.0.1/::1"
     )
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True only if every address the bind host resolves to is loopback.
+
+    Names (including ``localhost``) are resolved rather than trusted, because a
+    hosts-file entry can map them to a routable interface.
+    """
+    normalized = (host or "").strip().lower()
+    if not normalized:
+        return False
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(normalized, None, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return False
+    addresses = {info[4][0].split("%", 1)[0] for info in infos}
+    try:
+        return bool(addresses) and all(
+            ipaddress.ip_address(address).is_loopback for address in addresses
+        )
+    except ValueError:
+        return False
 
 
 def configure(enabled: bool, directory: str | None = None) -> None:

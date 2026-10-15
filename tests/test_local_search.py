@@ -4,6 +4,7 @@
 import asyncio
 import io
 import os
+import socket
 import sqlite3
 import stat
 import subprocess
@@ -47,13 +48,61 @@ FIRST_ROUTES = [
 ]
 
 
+def _fake_resolver(table):
+    def resolve(host, *args, **kwargs):
+        if host not in table:
+            raise socket.gaierror(socket.EAI_NONAME, "unknown host")
+        return [
+            (socket.AF_INET6 if ":" in addr else socket.AF_INET, 1, 6, "", (addr, 0))
+            for addr in table[host]
+        ]
+
+    return resolve
+
+
+@pytest.fixture
+def loopback_localhost(monkeypatch):
+    monkeypatch.setattr(
+        "rapid_mlx.local_search_runtime.socket.getaddrinfo",
+        _fake_resolver({"localhost": ["127.0.0.1", "::1"]}),
+    )
+
+
 @pytest.mark.parametrize("host", ["127.0.0.1", "127.23.4.5", "::1", "localhost"])
-def test_local_search_allows_unauthenticated_loopback(host):
+def test_local_search_allows_unauthenticated_loopback(host, loopback_localhost):
     validate_exposure(enabled=True, host=host, api_key=None)
 
 
+@pytest.mark.parametrize(
+    "addresses",
+    [["192.168.1.20"], ["127.0.0.1", "10.0.0.5"], ["fe80::1%en0"], []],
+)
+def test_local_search_rejects_localhost_resolving_off_loopback(monkeypatch, addresses):
+    monkeypatch.setattr(
+        "rapid_mlx.local_search_runtime.socket.getaddrinfo",
+        _fake_resolver({"localhost": addresses}),
+    )
+    with pytest.raises(ValueError, match="requires API-key authentication"):
+        validate_exposure(enabled=True, host="localhost", api_key=None)
+    validate_exposure(enabled=True, host="localhost", api_key="secret")
+
+
+def test_local_search_rejects_unresolvable_or_malformed_host(monkeypatch):
+    monkeypatch.setattr(
+        "rapid_mlx.local_search_runtime.socket.getaddrinfo",
+        _fake_resolver({"weird": ["not-an-address"]}),
+    )
+    for host in ["", "   ", "weird", "missing.invalid"]:
+        with pytest.raises(ValueError, match="requires API-key authentication"):
+            validate_exposure(enabled=True, host=host, api_key=None)
+
+
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.20", "server.local"])
-def test_local_search_requires_authentication_off_loopback(host):
+def test_local_search_requires_authentication_off_loopback(host, monkeypatch):
+    monkeypatch.setattr(
+        "rapid_mlx.local_search_runtime.socket.getaddrinfo",
+        _fake_resolver({"server.local": ["192.168.1.30"]}),
+    )
     with pytest.raises(ValueError, match="requires API-key authentication"):
         validate_exposure(enabled=True, host=host, api_key=None)
     validate_exposure(enabled=True, host=host, api_key="secret")
