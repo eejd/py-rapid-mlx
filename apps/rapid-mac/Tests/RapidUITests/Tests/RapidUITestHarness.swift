@@ -230,6 +230,7 @@ final class RapidUITestHarness {
         app = XCUIApplication(url: appURL)
         app.launchArguments += [
             "-com.rapidmlx.rapid.telemetry.enabled", "false",
+            "-rapid.server.auto_start_on_launch.v1", "false",
         ]
         app.launchEnvironment = [
             "HOME": testHome.path,
@@ -281,10 +282,16 @@ final class RapidUITestHarness {
         try? FileManager.default.removeItem(at: testHome)
     }
 
-    func startModel() {
+    func startModel(selectedModel: XCUIElement? = nil) {
         let readiness = element("Readiness.Action")
+        let modelPicker = selectedModel ?? element("ModelPickerBar.ModelMenu")
         XCTAssertTrue(readiness.waitForExistence(timeout: 20))
-        XCTAssertTrue(waitUntil(timeout: 20) { readiness.isEnabled })
+        XCTAssertTrue(waitUntil(timeout: 20) {
+            ((modelPicker.value as? String)?.contains(self.sidecarAlias) == true
+                || modelPicker.label.contains(self.sidecarAlias))
+                && readiness.label == "Start"
+                && readiness.isEnabled
+        })
         let priorServerStartCount = serverStartCount()
         // Hold the OS-selected port until the app is ready to spawn its fake
         // sidecar, reducing the bind race to the click-to-process-launch edge.
@@ -410,7 +417,12 @@ final class RapidUITestHarness {
                     _ = terminateFileDragSource(dragSource)
                 }
             }
-            source.click(forDuration: 1, thenDragTo: dropTarget)
+            source.click(
+                forDuration: 1,
+                thenDragTo: dropTarget,
+                withVelocity: .default,
+                thenHoldForDuration: 0.5
+            )
             guard terminateFileDragSource(dragSource) else { return 1 }
             return 1
         }
@@ -434,7 +446,16 @@ final class RapidUITestHarness {
                 url: url,
                 dropFirstGesture: simulateMissedFirstGesture && attempt == 1
             )
-            source.click(forDuration: 1, thenDragTo: dropTarget)
+            // Hosted macOS can release an immediate cross-app gesture before
+            // AppKit finishes destination negotiation. Keep the pointer over
+            // the composer briefly; the post-gesture settle budget starts only
+            // after this blocking gesture returns.
+            source.click(
+                forDuration: 1,
+                thenDragTo: dropTarget,
+                withVelocity: .default,
+                thenHoldForDuration: 0.5
+            )
             // Startup, termination and the blocking synthetic gesture are
             // bounded separately. Each completed gesture gets the full,
             // honest post-gesture settle window.

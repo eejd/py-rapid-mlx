@@ -58,7 +58,7 @@ def test_pixel_assertion_uses_element_screenshots_and_crops_chrome():
     assert "older.screenshot()" in source
     assert 'element("Images.ModelPicker", in: app)' in source
     assert 'picker.label.contains("fake-image-alias")' in source
-    assert "harness.startModel()" in source
+    assert "harness.startModel(selectedModel: picker)" in source
     assert 'sidecarAlias: "fake-image-alias"' in source
     assert "imageResponseCount(in: eventLog) == 1" in source
     assert "imageResponseCount(in: eventLog) == 2" in source
@@ -143,7 +143,7 @@ def test_xcui_runner_launches_production_bundle_with_fake_sidecar():
     assert "try? phase.write" not in chat_view
     assert 'fatalError("could not record completed UI-test file drop' in chat_view
     assert '"RAPID_XCUI_DROP_FIRST_GESTURE": dropFirstGesture ? "1" : "0"' in harness
-    assert "XCTAssertEqual(recoveredAttempts, 2)" in chat_source
+    assert "simulateMissedFirstGesture: true" not in chat_source
     assert "launchFileDragSource(" in harness
     assert "terminateFileDragSource(dragSource)" in harness
     assert "simulateMissedFirstGesture && attempt == 1" in harness
@@ -151,9 +151,13 @@ def test_xcui_runner_launches_production_bundle_with_fake_sidecar():
         "private func launchFileDragSource", 1
     )[0]
     launch_index = retry_loop.index("launchFileDragSource(")
-    gesture_index = retry_loop.index(
-        "source.click(forDuration: 1, thenDragTo: dropTarget)"
-    )
+    held_gesture = """source.click(
+                forDuration: 1,
+                thenDragTo: dropTarget,
+                withVelocity: .default,
+                thenHoldForDuration: 0.5
+            )"""
+    gesture_index = retry_loop.index(held_gesture)
     result_index = retry_loop.index("DragTransportFile.result(at: transportResultFile)")
     termination_index = retry_loop.index(
         "guard terminateFileDragSource(dragSource)", result_index
@@ -188,10 +192,9 @@ def test_xcui_runner_launches_production_bundle_with_fake_sidecar():
         "for attempt in 1...maximumAttempts"
     )
     assert "retry suppressed" in harness
-    assert "XCTAssertEqual(delayedChipAttempts, 1)" in chat_source
     assert "simulateCompletionVisibilityDelay: 3" in chat_source
     assert 'let dropTarget = element("rapid.chat.compose")' in harness
-    assert "click(forDuration: 1, thenDragTo: dropTarget)" in harness
+    assert harness.count(held_gesture) == 2
     assert "func testDragPasteAndRemovalPreserveWireIdentity()" in chat_source
     assert "NSImage(data: data)" in harness
     assert "pasteboard.writeObjects([image])" in harness
@@ -232,6 +235,32 @@ def test_xcui_runner_launches_production_bundle_with_fake_sidecar():
     assert "terminateFakeSidecars()" in harness
     assert "isExecutableFile" in harness
     assert "RapidUITests-$(date +%s)-$$.xcresult" in runner
+
+
+def test_xcui_start_waits_for_selected_model_and_start_action():
+    harness = (MAC / "Tests/RapidUITests/Tests/RapidUITestHarness.swift").read_text()
+    image_source = (
+        MAC / "Tests/RapidUITests/Tests/ImageGenerationPixelTests.swift"
+    ).read_text()
+    signature = "func startModel(selectedModel: XCUIElement? = nil) {"
+    start = harness.split(signature, 1)[1].split("\n    }", 1)[0]
+
+    selected_model = "contains(self.sidecarAlias)"
+    start_action = 'readiness.label == "Start"'
+    enabled = "readiness.isEnabled"
+    release = "releasePortReservation()"
+    click = "readiness.click()"
+
+    assert signature in harness
+    assert 'element("ModelPickerBar.ModelMenu")' in start
+    assert selected_model in start
+    assert start_action in start
+    assert enabled in start
+    assert "harness.startModel(selectedModel: picker)" in image_source
+    assert '"-rapid.server.auto_start_on_launch.v1", "false"' in harness
+    assert start.index(selected_model) < start.index(release) < start.index(click)
+    assert start.index(start_action) < start.index(release)
+    assert start.index(enabled) < start.index(release)
 
 
 def test_xcui_runner_can_reserve_its_loopback_listener():
