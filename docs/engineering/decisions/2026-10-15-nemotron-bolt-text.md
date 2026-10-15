@@ -42,30 +42,69 @@ not evidence of real-model generation quality.
 
 ## Verification and next phase
 
-At the local Phase A checkpoint, Ruff and four config/registration tests passed.
-The model-forward tests and changed-line coverage gate remain unverified: the
-required Studio lease was busy and no GPU run was started. The commands below
-are the coordinator's next validation action, not a record of passing results.
+Phase A was validated on studio-max (Apple M5 Max, 36 GB, macOS 27.0.1)
+with task-local CPython 3.12.15, MLX 0.32.4, mlx-lm 0.31.3, pytest 9.1.1,
+coverage 7.16.2, and diff-cover 8.0.3. No model weights were downloaded.
+The focused suite passed all 68 tests (13 Bailing, 13 Bolt, 5 registration/loader,
+20 parser, and 17 CI coverage-roster contracts). Ruff check and format check
+passed. Changed-line coverage against `origin/main` at
+`6fb35fbb24c5b8bb151d4fe2a7d7858adfc6d146` was 100%: all 296 changed
+executable production lines covered, zero missing.
 
-The new contracts live in `tests/test_bailing_hybrid_model.py`, which already runs
-in the Apple CI list. They cover heterogeneous config parsing, omni extraction,
-sanitization, float32/BF16 four-layer forwards and cached decode, single-kind
-schedules, norm/router math, quantization boundaries, SSM chunking, and model
-registration. The full-size config contract allocates no model tensors.
+The Bolt contracts now live in `tests/test_nemotron_h_puzzle_vendored.py`,
+explicitly listed in the Apple CI lane. A separate architecture file follows
+the established vendored-model test pattern and avoids coupling Bolt's config,
+registration state, and numerical contracts to the unrelated Bailing backbone.
+They cover heterogeneous config parsing, omni extraction, sanitization,
+float32/BF16 four-layer forwards and cached decode, single-kind schedules,
+norm/router math, quantization boundaries, SSM chunking and length-aware state,
+and model registration. The full-size config contract allocates no model tensors.
+Registration state is restored after each test; random weights use seed 0.
 
-Acquire a Machine Control lease for `studio-ultra` before running model tests.
-Run the following from this worktree while holding the lease, then release it
-only after test processes finish:
+M5 qualification requires `MLX_ENABLE_TF32=0` **before importing MLX**, as
+documented in [Apple offline validation](../operations/apple-offline-unit-validation.md).
+The initial default-precision run had 48 passes and three numerical failures:
+Bailing full-prefill/cache parity, Bolt float32 full-prefill/cache parity, and
+Bolt SSM full/chunk parity. The full-float32 rerun passed without changing the
+model implementation or loosening tolerances. This validates equal-precision
+cache/SSM semantics; it does not establish those strict parity tolerances for
+M5's default reduced-precision inference. BF16 and single-kind forward contracts
+also passed in the initial default-policy run.
+
+Acquire a Machine Control lease before running model tests. Copy the worktree
+to a task-local directory under `/private/tmp/rapid-mlx-bolt-tests/`, create a
+Python 3.12 venv there, and install `-e '.[dev]'` plus `diff-cover==8.0.3`.
+Run the following inside that directory while holding the lease:
 
 ```sh
-lockf -k /var/tmp/rapid-mlx-large-model.lock .venv/bin/pytest \
+MLX_ENABLE_TF32=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/pytest \
   tests/test_bailing_hybrid_model.py \
+  tests/test_nemotron_h_puzzle_vendored.py \
   tests/test_gpt_oss_puzzle_vendored.py \
   tests/test_nemotron_tool_parser_fail_open.py \
-  --cov=rapid_mlx --cov-report=xml:/private/tmp/rapid-mlx-bolt/coverage.xml
+  tests/test_ci_apple_coverage_union.py \
+  --cov=rapid_mlx --cov-report=xml:coverage.xml -q
 .venv/bin/ruff check rapid_mlx/models/nemotron_h_puzzle.py \
-  rapid_mlx/utils/tokenizer.py tests/test_bailing_hybrid_model.py
+  rapid_mlx/utils/tokenizer.py tests/test_bailing_hybrid_model.py \
+  tests/test_nemotron_h_puzzle_vendored.py
+.venv/bin/ruff format --check rapid_mlx/models/nemotron_h_puzzle.py \
+  rapid_mlx/utils/tokenizer.py tests/test_bailing_hybrid_model.py \
+  tests/test_nemotron_h_puzzle_vendored.py
 ```
+
+Copy `coverage.xml` back to the source worktree to compare its actual Git base
+without copying Git internals to the test machine. Mirror CI's diff-cover gate:
+
+```sh
+.venv/bin/python -m diff_cover.diff_cover_tool /path/to/coverage.xml \
+  --compare-branch origin/main --show-uncovered --fail-under 100
+```
+
+CI normally combines Linux and Apple coverage first; this focused Apple run
+alone covers every changed executable production line. Delete the remote task
+directory after processes finish, release the lease even after failure, and
+verify release with `list --json` and the lease record. A queued owner may
+claim the machine immediately after release.
 
 Pending after storage capacity and machine availability are resolved:
 

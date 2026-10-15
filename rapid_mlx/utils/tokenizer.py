@@ -881,7 +881,9 @@ def _register_vendored_archs() -> None:
             try:
                 from ..models import nemotron_h_puzzle as _nemotron_h_puzzle
 
-                sys.modules.setdefault("mlx_lm.models.nemotron_h_puzzle", _nemotron_h_puzzle)
+                sys.modules.setdefault(
+                    "mlx_lm.models.nemotron_h_puzzle", _nemotron_h_puzzle
+                )
             except Exception as e:
                 logger.warning(
                     "nemotron_h_puzzle vendored module failed to register — "
