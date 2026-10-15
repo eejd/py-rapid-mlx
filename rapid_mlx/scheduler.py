@@ -4103,9 +4103,10 @@ def _pflash_cached_prefix_tokens(
     Returns 0 — i.e. leaves PFlash on its ``total`` arithmetic — unless the
     basis is ``uncached``, the mode is ``auto``, the memory-aware cache (not
     the block-aware one) is in use and the prompt is long enough for the
-    threshold to matter.  Uses ``probe``, which has no side effects on the
-    cache, so a prompt that is probed and then compressed anyway costs nothing
-    and a prompt that stays uncompressed is fetched once by the normal path.
+    threshold to matter. ``probe`` itself has no side effects. When its result
+    would suppress compression, admission immediately performs one real fetch
+    and recomputes from the actual reuse; an intervening eviction can therefore
+    touch miss statistics before the request safely falls back to compression.
     """
     if getattr(pflash_config, "threshold_basis", "total") != "uncached":
         return 0
@@ -8316,16 +8317,18 @@ class Scheduler:
         if request.prompt_token_ids is not None and request.model_prompt_tokens == 0:
             request.model_prompt_tokens = len(request.prompt_token_ids)
 
-        # PFlash long-prompt compression — must run before any cache
-        # lookup. When compression engages, prompt_token_ids is replaced
-        # by the kept-token subsequence and the prefix cache is bypassed
-        # entirely (both fetch and store, see below) because the
+        # PFlash long-prompt compression — must be decided before any cached
+        # KV is used. When compression engages, prompt_token_ids is replaced
+        # by the kept-token subsequence and no prefix-cache state is reused or
+        # stored (the uncached basis may have performed one confirming lookup)
+        # because the
         # compressed token sequence is a positional fiction: position i
         # in compressed land does NOT correspond to position i in the
         # original prompt, so reusing KV computed for the uncompressed
         # prefix would inject position-shifted state into a later
         # uncompressed request that shares the same sink prefix.
         pflash_compressed = False
+        _pflash_prefetched: tuple[Any, list[int], float, str | None] | None = None
         if self.config.pflash_config.mode != "off" and request.prompt_token_ids:
             original_tokens = list(request.prompt_token_ids)
             original_prefix_boundary = request.prefix_boundary
@@ -8333,16 +8336,46 @@ class Scheduler:
             # threshold_basis=uncached: ask the memory-aware prefix cache,
             # with a side-effect-free probe, how much of this prompt it would
             # reuse, and let PFlash compare only the uncached remainder to the
-            # threshold.  Nothing is fetched here: if the request stays
-            # uncompressed, ``_fetch_memory_aware_prefix`` performs the one
-            # real fetch (LRU touch, statistics, materialisation) exactly as
-            # it does today; if it is compressed, the cache is never touched.
-            _pflash_cached_prefix = _pflash_cached_prefix_tokens(
-                self.config.pflash_config,
-                self.memory_aware_cache,
-                self.block_aware_cache,
-                original_tokens,
+            # threshold. If the probe would suppress compression, fetch once
+            # immediately and decide from the actual reusable amount so an
+            # intervening eviction cannot create a stale bypass. Other paths
+            # leave the normal fetch below unchanged.
+            structurally_ineligible = request.requires_prompt_integrity or (
+                request.has_tools and self.config.pflash_config.skip_when_tools
             )
+            _pflash_cached_prefix = 0
+            if not structurally_ineligible:
+                _pflash_cached_prefix = _pflash_cached_prefix_tokens(
+                    self.config.pflash_config,
+                    self.memory_aware_cache,
+                    self.block_aware_cache,
+                    original_tokens,
+                )
+                # A side-effect-free probe cannot reserve an entry. If it would
+                # suppress compression, immediately perform the one real fetch
+                # and make the decision from what was actually reusable. An
+                # eviction between probe and fetch therefore falls back to
+                # compression instead of admitting a threshold-sized cold
+                # prefill based on stale metadata.
+                if (
+                    _pflash_cached_prefix > 0
+                    and len(original_tokens) - _pflash_cached_prefix
+                    < self.config.pflash_config.threshold
+                    and self.memory_aware_cache is not None
+                ):
+                    _fetch_t0 = time.monotonic()
+                    _cache, _remaining = self.memory_aware_cache.fetch(original_tokens)
+                    _fetch_dt = time.monotonic() - _fetch_t0
+                    _match_type = self.memory_aware_cache._last_match_type
+                    _pflash_prefetched = (
+                        _cache,
+                        _remaining,
+                        _fetch_dt,
+                        _match_type,
+                    )
+                    _pflash_cached_prefix = (
+                        len(original_tokens) - len(_remaining) if _cache else 0
+                    )
             compressed_tokens, metadata = compress_request_tokens(
                 original_tokens,
                 self.config.pflash_config,
@@ -8358,10 +8391,10 @@ class Scheduler:
             request.pflash_metadata = metadata
             if metadata["compressed"]:
                 pflash_compressed = True
-                # M-02: count every prompt that took the PFlash bypass
-                # so /metrics surfaces the work that prefix-cache
-                # counters can't (the compressed sequence skips both
-                # fetch and store — see the explanation block above).
+                # M-02: count every prompt that took the PFlash bypass so
+                # /metrics surfaces compressed work independently of cache
+                # counters. The compressed sequence reuses and stores no KV;
+                # a stale-probe confirmation may still have counted a lookup.
                 # ``tokens_dropped`` = logical prompt length minus kept
                 # length, i.e. the saving operators want for capacity
                 # planning.
@@ -8438,7 +8471,7 @@ class Scheduler:
                 request.cache_hit_type = "miss"
                 request.remaining_tokens = request.prompt_token_ids
         elif self.memory_aware_cache is not None:
-            self._fetch_memory_aware_prefix(request)
+            self._fetch_memory_aware_prefix(request, prefetched=_pflash_prefetched)
         elif self.prefix_cache is not None:
             # Use legacy prefix cache
             cache, remaining = self.prefix_cache.fetch_cache(request.prompt_token_ids)
@@ -8485,16 +8518,25 @@ class Scheduler:
             f"Added request {request.request_id} with {request.num_prompt_tokens} prompt tokens"
         )
 
-    def _fetch_memory_aware_prefix(self, request: Request) -> None:
+    def _fetch_memory_aware_prefix(
+        self,
+        request: Request,
+        *,
+        prefetched: tuple[Any, list[int], float, str | None] | None = None,
+    ) -> None:
         """Look the request's prompt up in the memory-aware prefix cache."""
         import time as _time
 
         store: Any = self.memory_aware_cache
         prompt: list[int] = request.prompt_token_ids or []
-        _fetch_t0 = _time.monotonic()
-        cache, remaining = store.fetch(prompt)
-        _fetch_dt = _time.monotonic() - _fetch_t0
-        request.cache_hit_type = store._last_match_type
+        if prefetched is None:
+            _fetch_t0 = _time.monotonic()
+            cache, remaining = store.fetch(prompt)
+            _fetch_dt = _time.monotonic() - _fetch_t0
+            match_type = store._last_match_type
+        else:
+            cache, remaining, _fetch_dt, match_type = prefetched
+        request.cache_hit_type = match_type
         if cache:
             request.prompt_cache = cache
             request.cached_tokens = len(prompt) - len(remaining)

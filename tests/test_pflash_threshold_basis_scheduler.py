@@ -4,8 +4,9 @@
 The pure threshold arithmetic lives in ``test_pflash_threshold_basis.py``.
 These tests pin the cache contract: the basis decision uses
 ``MemoryAwarePrefixCache.probe`` (no LRU / statistics / copy / decompress
-side effects), the normal admission path performs exactly one ``fetch`` for
-an uncompressed request, and a compressed request never touches the cache.
+side effects). A probe that would suppress compression is confirmed by exactly
+one real fetch; if that fetch misses after eviction, admission recomputes and
+compresses rather than trusting stale probe metadata.
 """
 
 from unittest.mock import MagicMock
@@ -91,18 +92,23 @@ def _scheduler(pflash_config: PFlashConfig) -> Scheduler:
     )
 
 
-def _fake_cache(matched: int, match_type: str = "prefix") -> MagicMock:
-    """A memory-aware cache double whose ``probe`` reports ``matched`` tokens
-    and whose ``fetch`` reuses the same amount."""
+def _fake_cache(
+    matched: int,
+    match_type: str = "prefix",
+    *,
+    fetch_matched: int | None = None,
+) -> MagicMock:
+    """Cache double with independently configurable probe/fetch reuse."""
     fake = MagicMock()
     fake._entries = {}
     fake._last_match_type = "miss"
     fake.probe.return_value = PrefixProbe(matched, match_type if matched else "miss")
 
     def _fetch(prompt):
-        if matched:
+        actual = matched if fetch_matched is None else fetch_matched
+        if actual:
             fake._last_match_type = match_type
-            return ["cache"], list(prompt[matched:])
+            return ["cache"], list(prompt[actual:])
         fake._last_match_type = "miss"
         return None, list(prompt)
 
@@ -261,6 +267,20 @@ class TestSchedulerUncachedBasis:
         fake.fetch.assert_not_called()
         assert request.cache_hit_type == "miss"
 
+    def test_eviction_between_probe_and_fetch_recomputes_and_compresses(self):
+        scheduler = _scheduler(_config())
+        fake = _fake_cache(matched=1500, fetch_matched=0)
+        scheduler.memory_aware_cache = fake
+        request = _request(2000)
+
+        scheduler.add_request(request)
+
+        assert request.pflash_metadata["compressed"] is True
+        assert request.pflash_metadata["cached_prefix_tokens"] == 0
+        fake.probe.assert_called_once()
+        fake.fetch.assert_called_once()
+        assert request.cache_hit_type == "miss"
+
     def test_large_uncached_remainder_still_compresses_and_never_fetches(self):
         scheduler = _scheduler(_config())
         fake = _fake_cache(matched=500)  # 1500 uncached >= threshold 1000
@@ -274,9 +294,9 @@ class TestSchedulerUncachedBasis:
         fake.probe.assert_called_once()
         fake.fetch.assert_not_called()
 
-    def test_structural_fallback_after_probe_fetches_exactly_once(self):
-        # Probe says "compress" (large remainder) but compression is then
-        # refused by the tools rule: admission must fetch once, not twice.
+    def test_structural_fallback_skips_probe_and_fetches_exactly_once(self):
+        # Tool prompts are ineligible before threshold arithmetic, so admission
+        # skips the O(prompt) probe and performs only the normal cache fetch.
         scheduler = _scheduler(_config(skip_when_tools=True))
         fake = _fake_cache(matched=500)
         scheduler.memory_aware_cache = fake
@@ -286,7 +306,7 @@ class TestSchedulerUncachedBasis:
 
         assert request.pflash_metadata["compressed"] is False
         assert request.pflash_metadata["reason"] == "tools"
-        fake.probe.assert_called_once()
+        fake.probe.assert_not_called()
         fake.fetch.assert_called_once()
         assert request.cached_tokens == 500
 
