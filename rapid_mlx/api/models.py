@@ -19,6 +19,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -2274,6 +2275,7 @@ class ChatCompletionResponse(BaseModel):
     choices: list[ChatCompletionChoice]
     usage: Usage = Field(default_factory=Usage)
     metrics: PerRequestMetrics | None = None
+    _termination_error_kind: str | None = PrivateAttr(default=None)
 
 
 # =============================================================================

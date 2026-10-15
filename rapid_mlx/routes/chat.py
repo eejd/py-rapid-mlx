@@ -6899,6 +6899,7 @@ async def _create_chat_completion_impl(
         ),
         metrics=_build_response_metrics(output),
     )
+    chat_response._termination_error_kind = getattr(output, "error_kind", None)
     # ── Response cache — STORE ───────────────────────────────────────
     #
     # Store the assembled response under the key computed at the lookup
@@ -7010,6 +7011,7 @@ async def _stream_buffered_chat_response(
     terminal = outputs[-1]
     terminal.finished = True
     terminal.finish_reason = choice.finish_reason
+    terminal.error_kind = response._termination_error_kind
     terminal.prompt_tokens = response.usage.prompt_tokens
     terminal.completion_tokens = response.usage.completion_tokens
     if response.metrics is not None:

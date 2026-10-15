@@ -32,12 +32,21 @@ run in unit-test CI without an Apple Silicon GPU.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from rapid_mlx.api.models import (
+    AssistantMessage,
+    ChatCompletionChoice,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ToolCall,
+    Usage,
+)
 from rapid_mlx.api.protocol_mapping import public_finish_reason
 from rapid_mlx.config import reset_config
 from rapid_mlx.engine.base import GenerationOutput
@@ -559,6 +568,55 @@ def test_repetition_stop_keeps_standard_finish_reason(stream):
 def test_repetition_tag_does_not_finish_an_unfinished_tool_delta():
     assert public_finish_reason(None, "repetition") is None
     assert public_finish_reason("tool_calls", "repetition") == "length"
+
+
+def test_buffered_chat_replay_keeps_length_for_truncated_tool_call():
+    from rapid_mlx.routes.chat import _stream_buffered_chat_response
+
+    response = ChatCompletionResponse(
+        model="test-model",
+        choices=[
+            ChatCompletionChoice(
+                message=AssistantMessage(
+                    tool_calls=[
+                        ToolCall.model_validate(
+                            {
+                                "id": "call_test",
+                                "type": "function",
+                                "function": {"name": "ping", "arguments": "{}"},
+                            }
+                        )
+                    ]
+                ),
+                finish_reason="length",
+            )
+        ],
+        usage=Usage(prompt_tokens=2, completion_tokens=80, total_tokens=82),
+    )
+    response._termination_error_kind = "repetition"
+    assert "_termination_error_kind" not in response.model_dump_json()
+    request = ChatCompletionRequest(
+        model="test-model", messages=[{"role": "user", "content": "hello"}], stream=True
+    )
+
+    async def collect():
+        return [
+            chunk async for chunk in _stream_buffered_chat_response(response, request)
+        ]
+
+    chunks = [
+        json.loads(line.removeprefix("data: "))
+        for chunk in asyncio.run(collect())
+        for line in chunk.splitlines()
+        if line.startswith("data: {")
+    ]
+    finishes = [
+        choice["finish_reason"]
+        for chunk in chunks
+        for choice in chunk.get("choices", [])
+        if choice.get("finish_reason")
+    ]
+    assert finishes == ["length"]
 
 
 def test_repetition_stop_with_inline_tool_call_uses_length():
