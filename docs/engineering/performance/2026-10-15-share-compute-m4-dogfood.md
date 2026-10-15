@@ -97,6 +97,32 @@ failover; this TensorFold profile advertises tools/media/grammar unsupported.
   credentials remained in their intended private cache during the test; prompt
   caches were disabled on disk while in-memory prefix reuse remained effective.
 
+## External oMLX reference (checked 2026-10-15)
+
+These are community-submitted results hosted by oMLX, not our own controlled
+A/B measurements. The closest hardware match found was M4 Pro / 16 GPU cores /
+48 GB. The reported model is `mlx-community--Qwen3.8-27B-4bit`, rather than our
+pinned Vontra target. oMLX 0.6.3rc2 used DFlash, thinking disabled, in-memory
+DFlash cache enabled, and SpecPrefill / ANE prefill disabled:
+
+| Prompt | Reported TTFT | Prefill rate | Source |
+| --- | --- | --- | --- |
+| 1,024 tokens | 10.509 s | 97.4 tok/s | [oMLX result](https://omlx.ai/benchmarks/performance/kfn85rp2) |
+| 4,096 tokens | 42.697 s | 95.9 tok/s | [oMLX result](https://omlx.ai/benchmarks/performance/nj17h1k1) |
+
+These recipes do not establish an oMLX + TensorFold result. No public result
+matching our exact target/draft revisions, TensorFold runtime, hardware and
+prompt was identified. Do not call these an exact same-model comparison or use
+them to claim a measured Rapid speedup. They are consistent with roughly
+100 tok/s fresh prefill on this hardware: a rough 780 / 97.4 estimate is 8.0 s,
+close to our local 7.8 s. This estimate is not another measured benchmark.
+
+The public reference does not demonstrate subsecond fresh 1K prefill on this
+configuration. It also does not qualify cached TTFT. Our working repeat cache
+and the fresh-prompt launch gate remain separate facts. A definitive comparison
+requires the same leased M4, exact weights, identical prompts and TTFT definition
+across fresh, identical-repeat and follow-up cases.
+
 ## Limits and handoff
 
 Real API replies contained usage/cost fields, but no contributor read key was
