@@ -33,7 +33,7 @@ def test_identity(length, speed):
     assert time_stretch(audio, 24000, speed) is audio
 
 
-@pytest.mark.parametrize("length", [1, 2, 767])
+@pytest.mark.parametrize("length", [1, 2, 767, 768, 1535])
 @pytest.mark.parametrize("speed", [0.5, 2.0])
 def test_short_clips_resample(length, speed):
     audio = np.linspace(0.25, 0.75, length, dtype=np.float32)

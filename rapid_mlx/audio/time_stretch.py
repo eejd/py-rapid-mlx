@@ -29,7 +29,7 @@ def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarra
     """Change tempo by ``speed`` using 32 ms frames with 50% overlap.
 
     Input and output are mono float32 samples. Non-empty clips shorter than
-    one frame use linear resampling; longer clips preserve pitch with WSOLA.
+    two frames use linear resampling; longer clips preserve pitch with WSOLA.
     Frame alignment follows audiotsm's correlation against the previous
     frame's natural progression; normalized Hann overlap-add joins the frames.
     """
@@ -45,7 +45,7 @@ def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarra
 
     # Never drop non-empty audio (round(0.5) == 0).
     output_length = max(1, round(len(audio) / speed))
-    if len(audio) < frame_length:
+    if len(audio) < 2 * frame_length:  # too short to search for alignment
         return np.interp(
             np.linspace(0, len(audio) - 1, output_length), np.arange(len(audio)), audio
         ).astype(np.float32)
