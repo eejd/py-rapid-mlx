@@ -152,6 +152,7 @@ struct RapidApp: App {
         // vanished between the check and the hand-off (quit-and-relaunch),
         // this launch is the only Desktop and carries on.
         if SingleInstanceGuard.yieldsLaunch() { exit(0) }
+        if WorkAgent.gooseChat { GoosePermissionPolicy.resetYOLOForLaunch() }
         // Install the crash reporter FIRST — every other init step can
         // fatalError under bad disk / permissions state, and we want
         // those abortions to leave a marker for the next launch.

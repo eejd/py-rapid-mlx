@@ -78,6 +78,10 @@ struct GooseChatTests {
 
     @Test("Permission policy keeps decisions in the app")
     func permissionPolicy() {
+        let defaults = UserDefaults(suiteName: "GooseChatTests.\(UUID().uuidString)")!
+        defaults.set(true, forKey: GoosePermissionPolicy.yoloKey)
+        GoosePermissionPolicy.resetYOLOForLaunch(defaults: defaults)
+        #expect(!defaults.bool(forKey: GoosePermissionPolicy.yoloKey))
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer").answer == .ask)
         #expect(GoosePermissionPolicy.decide(yolo: true, alwaysAllowed: [], tool: "developer").cardState == "auto-allowed")
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: ["developer"], tool: "developer").answer == .allow)
@@ -116,8 +120,10 @@ struct GooseChatTests {
         #expect(model.messages[1].gooseParts?.allSatisfy {
             $0.tool != nil || $0.text?.isEmpty == false
         } == true)
-        model.applyGooseEvent(.error("tool failed"), initialPlaceholder: 1)
-        #expect(model.lastError == "tool failed")
+        model.applyGooseEvent(.error("Server error (502 Bad Gateway) at http://127.0.0.1:1234"), initialPlaceholder: 1)
+        #expect(model.lastError == ChatViewModel.gooseFailureCopy)
+        #expect(model.messages[1].errorMessage == ChatViewModel.gooseFailureCopy)
+        #expect(model.messages[1].gooseErrorDetails?.contains("502 Bad Gateway") == true)
         #expect(model.messages.last?.status == .failed)
         model.applyGooseEvent(.cancelled, initialPlaceholder: 1)
     }
@@ -128,6 +134,10 @@ struct GooseChatTests {
         let decoded = try JSONDecoder().decode(ChatConversation.self, from: JSONEncoder().encode(conversation))
         #expect(decoded.gooseSessionID == "session-1")
         #expect(decoded.gooseFolder == "/tmp/scratch")
+        #expect(ChatViewModel.repairGooseTitles([decoded]).first?.title == "first")
+        var renamed = decoded
+        renamed.hasCustomTitle = true
+        #expect(ChatViewModel.repairGooseTitles([renamed]).first?.title == "Task")
         #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User: first"))
         let toolOnly = ChatMessage(role: .assistant, gooseParts: [
             GooseTurnPart(tool: GooseToolCard(id: "t", name: "write · snake.html",

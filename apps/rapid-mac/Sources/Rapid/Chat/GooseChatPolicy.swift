@@ -15,6 +15,10 @@ enum GoosePermissionPolicy {
     static let yoloKey = "Rapid.GooseChat.yoloDefault"
     static let allowedKey = "Rapid.GooseChat.alwaysAllowed"
 
+    static func resetYOLOForLaunch(defaults: UserDefaults = .standard) {
+        defaults.set(false, forKey: yoloKey)
+    }
+
     static func decide(yolo: Bool, alwaysAllowed: Set<String>, tool: String,
                        userDecision: GoosePermissionAnswer? = nil) -> GoosePermissionDecision {
         if yolo { return .init(answer: .allow, cardState: "auto-allowed") }

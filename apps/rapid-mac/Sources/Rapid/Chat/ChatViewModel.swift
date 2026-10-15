@@ -314,9 +314,11 @@ final class ChatViewModel {
         self.conversationStoreURL = conversationStoreURL
         self.onProductValueDelivered = onProductValueDelivered
         self.documentCache = documentCache
-        self.conversations = persistsConversations
+        let loadedConversations = persistsConversations
             ? ConversationStore.load(from: conversationStoreURL)
             : []
+        self.conversations = WorkAgent.gooseChat
+            ? Self.repairGooseTitles(loadedConversations) : loadedConversations
         self.folders = persistsConversations
             ? ConversationFolderStore.load(from: Self.folderStoreURL(for: conversationStoreURL))
             : []
@@ -330,6 +332,17 @@ final class ChatViewModel {
     }
 
     // MARK: - Conversation history (M3)
+
+    static func repairGooseTitles(_ conversations: [ChatConversation]) -> [ChatConversation] {
+        conversations.map { original in
+            var conversation = original
+            guard !conversation.hasCustomTitle,
+                  conversation.messages.contains(where: { $0.role == .user }) else { return conversation }
+            conversation.title = ConversationStore.title(from: conversation.messages)
+            conversation.hasGeneratedTitle = false
+            return conversation
+        }
+    }
 
     /// Snapshot the active conversation into ``conversations`` + disk. A
     /// no-op until the user has actually sent something (no empty rows in
@@ -1379,11 +1392,12 @@ final class ChatViewModel {
             return
         }
         if let error = agent.error {
-            let receivedContent = messages.dropFirst(placeholderIndex).contains {
-                !$0.content.isEmpty || !($0.gooseParts ?? []).isEmpty
-            } || !messages[placeholderIndex].content.isEmpty || !(messages[placeholderIndex].gooseParts ?? []).isEmpty
-            if !receivedContent { throw WorkError.message(error) }
-            lastError = error
+            Self.clearGooseFailedText(&messages[placeholderIndex])
+            messages[placeholderIndex].status = .failed
+            messages[placeholderIndex].errorMessage = Self.gooseFailureCopy
+            messages[placeholderIndex].gooseErrorDetails = error
+            lastError = Self.gooseFailureCopy
+            lastFailureAlias = alias
             isStreaming = false
             inflight = nil
             gooseContextIDs = []
@@ -1498,9 +1512,11 @@ final class ChatViewModel {
                                         folder: gooseFolder.path)))
             }
         case .error(let message):
-            lastError = message
+            lastError = Self.gooseFailureCopy
+            Self.clearGooseFailedText(&messages[initialPlaceholder])
             messages[initialPlaceholder].status = .failed
-            messages[initialPlaceholder].errorMessage = message
+            messages[initialPlaceholder].errorMessage = Self.gooseFailureCopy
+            messages[initialPlaceholder].gooseErrorDetails = message
         case .cancelled: break
         case .throughput(let rate):
             let message = messages[initialPlaceholder]
@@ -1514,6 +1530,13 @@ final class ChatViewModel {
                 engineTokensPerSecond: rate
             )
         }
+    }
+
+    static let gooseFailureCopy = String(localized: "Couldn't complete that request. Please try again.")
+
+    private static func clearGooseFailedText(_ message: inout ChatMessage) {
+        message.content = ""
+        message.gooseParts = message.gooseParts?.filter { $0.tool != nil }
     }
 
     /// HF repo for the alias the next Send will start, supplied by the

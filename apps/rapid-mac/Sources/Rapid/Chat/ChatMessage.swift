@@ -451,6 +451,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
     /// Optional inline error string for ``.failed`` rows. Shown under the
     /// (possibly partial) content with a red caption.
     var errorMessage: String?
+    var gooseErrorDetails: String?
     /// Rule-based diagnosis rendered instead of raw tool/transport details.
     /// Optional so sessions written by older builds decode unchanged.
     var failureKind: FailureDiagnosis.Kind?
@@ -610,6 +611,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         reasoning: String = "",
         status: Status = .complete,
         errorMessage: String? = nil,
+        gooseErrorDetails: String? = nil,
         failureKind: FailureDiagnosis.Kind? = nil,
         toolCalls: [ToolCall]? = nil,
         toolCallID: String? = nil,
@@ -634,6 +636,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         self.reasoning = reasoning
         self.status = status
         self.errorMessage = errorMessage
+        self.gooseErrorDetails = gooseErrorDetails
         self.failureKind = failureKind
         self.toolCalls = toolCalls
         self.toolCallID = toolCallID
@@ -659,7 +662,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, role, content, imageAttachments, imageDeliveryStatus
         case fileAttachments, reasoning, status
-        case errorMessage, failureKind, toolCalls, toolCallID, gooseTool, gooseParts
+        case errorMessage, gooseErrorDetails, failureKind, toolCalls, toolCallID, gooseTool, gooseParts
         case stats, reasoningTruncated, contentTruncated
         case toolNotCalledFlagged
         case toolCallArtifactSuppressed
@@ -699,6 +702,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         try c.encode(reasoning, forKey: .reasoning)
         try c.encode(status, forKey: .status)
         try c.encodeIfPresent(errorMessage, forKey: .errorMessage)
+        try c.encodeIfPresent(gooseErrorDetails, forKey: .gooseErrorDetails)
         try c.encodeIfPresent(failureKind?.legacyPersistedKind, forKey: .failureKind)
         try c.encodeIfPresent(failureKind, forKey: .failureKindV2)
         try c.encodeIfPresent(toolCalls, forKey: .toolCalls)
@@ -733,6 +737,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         self.reasoning = try c.decode(String.self, forKey: .reasoning)
         self.status = try c.decode(Status.self, forKey: .status)
         self.errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+        self.gooseErrorDetails = try c.decodeIfPresent(String.self, forKey: .gooseErrorDetails)
         // Prefer the finer v2 value; fall back to the original key for rows
         // written before it existed (and for rows an older build re-saved).
         //

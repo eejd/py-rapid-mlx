@@ -2128,7 +2128,7 @@ private struct MessageRow: View {
             branchSwitcher
             copyButton(text: assistantCopyText, label: String(localized: "Copy response"))
             selectTextButton(text: assistantCopyText)
-            QuietIconButton(
+            if message.gooseErrorDetails == nil { QuietIconButton(
                 symbol: "arrow.clockwise",
                 label: String(localized: "Retry response"),
                 help: retryEnabled ? String(localized: "Retry response") : retryTooltip,
@@ -2139,6 +2139,7 @@ private struct MessageRow: View {
             .disabled(isStreaming || !retryEnabled)
             .accessibilityHint(retryEnabled ? "" : retryTooltip)
             .accessibilityIdentifier(actionIdentifier("Retry"))
+            }
             deleteButton
         }
     }
@@ -2310,7 +2311,7 @@ private struct MessageRow: View {
         .onAppear {
             // Auto-expand a truncated reasoning-only turn so the user
             // sees the partial trace instead of an empty bubble.
-            if message.reasoningTruncated { reasoningExpanded = true }
+            if message.reasoningTruncated || reasoningInProgress { reasoningExpanded = true }
         }
     }
 
@@ -2324,7 +2325,9 @@ private struct MessageRow: View {
     }
 
     private var reasoningTitle: String {
-        reasoningInProgress ? String(localized: "Reasoning…") : String(localized: "Reasoning")
+        WorkAgent.gooseChat
+            ? (reasoningInProgress ? String(localized: "Thinking…") : String(localized: "Thinking"))
+            : (reasoningInProgress ? String(localized: "Reasoning…") : String(localized: "Reasoning"))
     }
 
     private var reasoningAccessibilityLabel: String {
@@ -2344,10 +2347,26 @@ private struct MessageRow: View {
     }
 
     private var failureCaption: some View {
-        Text(message.errorMessage ?? String(localized: "The model couldn't complete that request."))
-            .font(.footnote)
-            .foregroundStyle(failureCaptionTint)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(message.errorMessage ?? String(localized: "The model couldn't complete that request."))
+                    .foregroundStyle(failureCaptionTint)
+                if message.gooseErrorDetails != nil {
+                    Button("Retry") { _ = onRetry() }
+                        .disabled(isStreaming || !retryEnabled)
+                        .accessibilityIdentifier(actionIdentifier("Retry"))
+                }
+            }
+            if let details = message.gooseErrorDetails {
+                DisclosureGroup("Details") {
+                    Text(details).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityIdentifier(actionIdentifier("ErrorDetails"))
+            }
+        }
+        .font(.footnote)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// A cooperative ``.notice`` — a model swap that superseded the request —
@@ -2372,7 +2391,12 @@ private struct MessageRow: View {
     /// separately rather than being silently blended into it, so a slow
     /// prefill reads as a slow prefill instead of a slow model.
     private var statsCaption: String? {
-        guard message.status == .complete, let stats = message.stats else { return nil }
+        guard let stats = message.stats else { return nil }
+        if WorkAgent.gooseChat && message.status == .streaming,
+           let rate = stats.reportedTokensPerSecond {
+            return "\(AssistantStatsFormatter.formatTPS(rate)) tok/s"
+        }
+        guard message.status == .complete else { return nil }
         var parts: [String] = []
         if let reported = stats.reportedTokensPerSecond {
             parts.append("\(AssistantStatsFormatter.formatTPS(reported)) tok/s")
