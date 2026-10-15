@@ -92,6 +92,10 @@ struct GooseChatTests {
         #expect(decoded.gooseSessionID == "session-1")
         #expect(decoded.gooseFolder == "/tmp/scratch")
         #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User: first"))
+        let toolOnly = ChatMessage(role: .assistant, gooseParts: [
+            GooseTurnPart(tool: GooseToolCard(id: "t", name: "write · snake.html",
+                input: "{}", output: "created", status: "completed"))])
+        #expect(ChatViewModel.gooseReplay(decoded.messages + [toolOnly]).contains("Tools: write · snake.html: completed"))
         let visible = decoded.messages.map(\.id)
         #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
             sessionConversationID: nil, currentContextIDs: visible, visibleContextIDs: visible, sessionID: nil))

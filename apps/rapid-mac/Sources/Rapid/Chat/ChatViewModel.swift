@@ -1396,8 +1396,17 @@ final class ChatViewModel {
     }
 
     static func gooseReplay(_ prior: [ChatMessage]) -> String {
-        let turns = prior.filter { ($0.role == .user || $0.role == .assistant) && !$0.content.isEmpty }
-            .suffix(8).map { "\($0.role == .user ? "User" : "Assistant"): \(String($0.content.prefix(1200)))" }
+        let turns = prior.filter {
+            ($0.role == .user || $0.role == .assistant)
+                && (!$0.content.isEmpty || $0.gooseParts?.contains(where: { $0.tool != nil }) == true)
+        }.suffix(8).map { message in
+            let tools = (message.gooseParts ?? []).compactMap(\.tool).suffix(6).map { card in
+                "\(card.name): \(card.status)\(card.output.isEmpty ? "" : " — \(String(card.output.prefix(200)))")"
+            }
+            let text = String(message.content.prefix(1200))
+            let summary = tools.isEmpty ? text : text + "\nTools: " + tools.joined(separator: "; ")
+            return "\(message.role == .user ? "User" : "Assistant"): \(summary)"
+        }
         guard !turns.isEmpty else { return "" }
         return "Conversation so far (for context):\n" + turns.joined(separator: "\n") + "\n\nCurrent request: "
     }
