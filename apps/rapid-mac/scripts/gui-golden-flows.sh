@@ -876,6 +876,10 @@ Rapid.experimental.computerUseEnabled bool false
 Rapid.experimental.localSearchEnabled bool false
 Rapid.experimental.communityBenchmarkEnabled bool false
 Rapid.experimental.shareComputeEnabled bool false
+rapid.mcp.connectors.enabled.v1 bool false
+rapid.mcp.approval.mode.v1 string ask
+rapid.window.hideDockChoice string notAsked
+SUAutomaticallyUpdate bool true
 rapid.perf.modelOverrides.v1 data 7b7d
 rapid.server.auto_start_on_launch.v1 bool true
 rapid.server.confirm_active_request_switch.v1 bool true

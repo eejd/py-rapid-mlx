@@ -36,6 +36,22 @@ class HarnessIsolationTests(unittest.TestCase):
             key = re.search(r'static let enabledKey = "([^"]+)"', text)[1]
             default = re.search(r"static let defaultEnabled = (true|false)", text)[1]
             self.assertEqual(seeds[key], ("bool", default), str(config))
+        # These Settings feature controls use stores rather than FeatureConfig.
+        for source, constant, expected in (
+            ("MCP/MCPConfigStore.swift", "enabledKey", ("bool", "false")),
+            ("MCP/MCPToolApprovalStore.swift", "modeKey", ("string", "ask")),
+            ("UI/DockVisibilityPromptStore.swift", "choiceKey", ("string", "notAsked")),
+        ):
+            text = (ROOT / "Sources/Rapid" / source).read_text()
+            key = re.search(r"static let " + constant + r' = "([^"]+)"', text)[1]
+            self.assertEqual(seeds[key], expected, source)
+        updater = (
+            ROOT / "Sources/Rapid/Updater/SparkleUpdateController.swift"
+        ).read_text()
+        update_key = re.search(
+            r'object\(forKey: "([^"]+)"\) as\? Bool \?\? true', updater
+        )[1]
+        self.assertEqual(seeds[update_key], ("bool", "true"))
         # MTP uses a per-model JSON map, not a global on/off flag. An empty
         # map preserves the product/catalog default and allows UI opt-in.
         perf = (ROOT / "Sources/Rapid/Server/ModelPerfConfigStore.swift").read_text()
