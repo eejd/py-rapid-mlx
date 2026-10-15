@@ -11386,7 +11386,7 @@ class Scheduler:
                 request._prefill_memory_sampled = False
                 request.set_finished(RequestStatus.FINISHED_ABORTED)
                 request.prompt_cache = None
-                request._extracted_cache = None
+                cast(Any, request)._extracted_cache = None
                 request._continuous_mtp_state = None
                 request.batch_uid = None
             if self.block_aware_cache is not None:
