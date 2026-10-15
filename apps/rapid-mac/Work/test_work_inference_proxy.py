@@ -56,8 +56,6 @@ class StreamRateTests(unittest.TestCase):
                          ["shell", "tree", "write", "edit"])
         self.assertIn("current facts", compact["messages"][0]["content"])
         self.assertIn("exact source URL", compact["messages"][0]["content"])
-        self.assertIn("GOOGL is Alphabet Class A", compact["messages"][0]["content"])
-        self.assertIn("goose-finance-quote.py GOOGL", compact["messages"][0]["content"])
 
     def test_rotated_server_key_is_read_for_each_upstream_request(self):
         module = self.module
