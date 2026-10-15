@@ -250,7 +250,7 @@ final class WorkAgent {
         env["WORK_HELPER_OWNERSHIP_TOKEN"] = UUID().uuidString + UUID().uuidString
         env["GOOSE_SERVER__SECRET_KEY"] = secret
         if Self.gooseChat {
-            env["GOOSE_SHELL"] = resources.appendingPathComponent("Helpers/work-helper-watchdog.py").path
+            env["GOOSE_SHELL"] = resources.appendingPathComponent("Helpers/bash").path
         }
         env["GOOSE_TELEMETRY_OFF"] = "1"
         env["GOOSE_TELEMETRY_ENABLED"] = "false"

@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,40 @@ sys.exit(0 if ready.exists() else 3)
 
 
 class WatchdogTests(unittest.TestCase):
+    def test_goose_shell_alias_matches_bash_and_strips_credentials(self):
+        rapid_mac = WATCHDOG.parent.parent
+        build_script = (rapid_mac / "scripts/build-work-helper.sh").read_text()
+        work_agent = (rapid_mac / "Sources/Rapid/WorkAgent.swift").read_text()
+
+        with tempfile.TemporaryDirectory() as directory:
+            shell = pathlib.Path(directory) / "bash"
+            shutil.copy2(WATCHDOG, shell)
+            shell.chmod(0o755)
+            command = (
+                "items=(first second); "
+                "[[ $0 == /bin/bash && ${items[1]} == second "
+                "&& -z ${RAPID_LOCAL_WORK_KEY+x} "
+                "&& -z ${GOOSE_SERVER__SECRET_KEY+x} && -z ${WORK_PROXY_BEARER+x} ]] "
+                '&& printf "%s" "$SAFE_VALUE"'
+            )
+            result = subprocess.run(
+                [str(shell), "-c", command],
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "RAPID_LOCAL_WORK_KEY": "private-key",
+                    "GOOSE_SERVER__SECRET_KEY": "private-server-key",
+                    "WORK_PROXY_BEARER": "private-proxy-key",
+                    "SAFE_VALUE": "works",
+                },
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "works")
+        self.assertIn('"$HELPERS/bash"', build_script)
+        self.assertIn('appendingPathComponent("Helpers/bash")', work_agent)
+
     def test_helper_exits_when_owner_disappears(self):
         for starts_as_group_leader, resistant in (
             (False, False),

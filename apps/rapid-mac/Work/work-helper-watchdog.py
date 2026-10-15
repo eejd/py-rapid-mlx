@@ -112,7 +112,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "-c":
         if key not in {"GOOSE_SERVER__SECRET_KEY", "RAPID_LOCAL_WORK_KEY"}
         and not key.startswith("WORK_PROXY_")
     }
-    os.execve("/bin/sh", ["/bin/sh", "-c", sys.argv[2]], clean)
+    os.execve("/bin/bash", ["/bin/bash", "-c", sys.argv[2]], clean)
 
 owner = int(sys.argv[1])
 command = sys.argv[2:]

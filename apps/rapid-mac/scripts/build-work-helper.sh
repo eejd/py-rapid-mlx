@@ -25,6 +25,10 @@ cp "$GOOSE_BIN" "$HELPERS/goose"
 chmod 755 "$HELPERS/goose"
 cp "$ROOT/Work/work-inference-proxy.py" "$HELPERS/work-inference-proxy.py"
 cp "$ROOT/Work/work-helper-watchdog.py" "$HELPERS/work-helper-watchdog.py"
+# Goose exposes the GOOSE_SHELL basename in the model's shell tool schema.
+# Keep stock Goose's `bash` description while running the credential scrubber.
+cp "$ROOT/Work/work-helper-watchdog.py" "$HELPERS/bash"
+chmod 755 "$HELPERS/bash"
 fi
 if [[ "$PHASE" != stage ]]; then
 mkdir -p "$CONTENTS/Resources/Licenses"
