@@ -1676,7 +1676,7 @@ private struct GooseToolCardView: View {
                 Image(systemName: "hammer")
                 Text(GooseToolPresentation.title(name: card.name, input: card.input, folder: folder))
                     .fontWeight(.medium).lineLimit(1)
-                if GooseToolPresentation.isFailure(card.status), !card.output.isEmpty {
+                if GooseToolPresentation.isFailure(card.status) {
                     Text(String((card.output.components(separatedBy: .newlines).first ?? card.status)
                         .replacingOccurrences(of: folder, with: ".").prefix(90)))
                         .lineLimit(1).foregroundStyle(.secondary)
