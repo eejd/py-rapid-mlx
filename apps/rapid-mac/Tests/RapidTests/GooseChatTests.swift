@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import SQLite3
 import Testing
 @testable import Rapid
 
@@ -220,6 +222,16 @@ struct GooseChatTests {
         #expect(ChatViewModel.gooseReplay(decoded.messages + [toolOnly]).contains("Tools: write · snake.html: completed"))
         let longAnswer = ChatMessage(role: .assistant, content: String(repeating: "preamble ", count: 180) + "Final answer: done")
         #expect(ChatViewModel.gooseReplay(decoded.messages + [longAnswer]).contains("Final answer: done"))
+        var cancelled = ChatMessage(role: .assistant, content: "partial")
+        cancelled.errorMessage = "Stopped."
+        var failed = ChatMessage(role: .assistant, content: "broken", status: .failed)
+        failed.errorMessage = "Failed"
+        let legacyTool = ChatMessage(role: .tool, content: "Older tool output", toolCallID: "old")
+        let replay = ChatViewModel.gooseReplay(decoded.messages + [cancelled, failed, legacyTool])
+        #expect(replay.contains("[cancelled]"))
+        #expect(replay.contains("[failed]"))
+        #expect(replay.contains("Tool result [completed]: Older tool output"))
+        #expect(replay.contains("Bounded reconstruction"))
         let visible = decoded.messages.map(\.id)
         #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
             sessionConversationID: nil, currentContextIDs: visible, visibleContextIDs: visible, sessionID: nil))
@@ -227,6 +239,50 @@ struct GooseChatTests {
             sessionConversationID: decoded.id, currentContextIDs: visible, visibleContextIDs: visible, sessionID: "s"))
         #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
             sessionConversationID: decoded.id, currentContextIDs: visible, visibleContextIDs: [UUID()], sessionID: "s"))
+    }
+
+    @Test("Deletion removes only owned copies and all recorded helper sessions")
+    func retention() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("goose-retain-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("workspace")
+        let user = ChatMessage(role: .user, content: "", fileAttachments: [
+            try ChatFileAttachment(filename: "source.csv", kind: .csv, extractedText: "preview",
+                                   sourceByteCount: 7)])
+        let copies = folder.appendingPathComponent("Attachments/\(user.id.uuidString)")
+        try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: true)
+        let owned = copies.appendingPathComponent(user.fileAttachments[0].id.uuidString + ".txt")
+        let userOutput = copies.appendingPathComponent("my-result.txt")
+        try "copy".write(to: owned, atomically: true, encoding: .utf8)
+        try "keep".write(to: userOutput, atomically: true, encoding: .utf8)
+        try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
+            folders: [folder.path], messages: [user])
+        #expect(!FileManager.default.fileExists(atPath: owned.path))
+        #expect(FileManager.default.fileExists(atPath: userOutput.path))
+
+        let hash = SHA256.hash(data: Data(folder.path.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let database = root.appendingPathComponent("databases/\(hash)/data/sessions/sessions.db")
+        try FileManager.default.createDirectory(at: database.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        var handle: OpaquePointer?
+        #expect(sqlite3_open(database.path, &handle) == SQLITE_OK)
+        defer { sqlite3_close(handle) }
+        #expect(sqlite3_exec(handle, "CREATE TABLE sessions(id TEXT PRIMARY KEY); "
+            + "CREATE TABLE messages(session_id TEXT); CREATE TABLE usage_ledger(session_id TEXT); "
+            + "INSERT INTO sessions VALUES('first'),('superseded'),('other'); "
+            + "INSERT INTO messages VALUES('first'),('superseded'),('other'); "
+            + "INSERT INTO usage_ledger VALUES('first'),('superseded'),('other');",
+            nil, nil, nil) == SQLITE_OK)
+        try GooseConversationRetention.deleteSessions([
+            GooseOwnedSession(id: "first", folder: folder.path),
+            GooseOwnedSession(id: "superseded", folder: folder.path),
+        ], root: root.appendingPathComponent("databases"))
+        var statement: OpaquePointer?
+        #expect(sqlite3_prepare_v2(handle, "SELECT count(*) FROM sessions", -1, &statement, nil) == SQLITE_OK)
+        #expect(sqlite3_step(statement) == SQLITE_ROW)
+        #expect(sqlite3_column_int(statement, 0) == 1)
+        sqlite3_finalize(statement)
     }
 
     @Test("Goose chats appear newest first and reopen their saved transcript")

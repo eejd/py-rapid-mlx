@@ -12,9 +12,8 @@ struct GooseOwnedSession: Codable, Equatable {
 enum GooseConversationRetention {
     /// Goose stores one SQLite database per selected workspace. Its pinned
     /// session manager deletes message and usage rows before the session row.
-    static func deleteSessions(_ sessions: [GooseOwnedSession]) throws {
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Rapid/agent-goose-chat/workspaces")
+    static func deleteSessions(_ sessions: [GooseOwnedSession], root: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Rapid/agent-goose-chat/workspaces")) throws {
         for group in Dictionary(grouping: sessions, by: \.folder) {
             let digest = SHA256.hash(data: Data(group.key.utf8))
                 .map { String(format: "%02x", $0) }.joined()
