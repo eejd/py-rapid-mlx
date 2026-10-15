@@ -226,7 +226,9 @@ final class ChatViewModel {
             if oldValue && !isStreaming {
                 persistActive()
                 scheduleBackgroundAssist()
-                scheduleMemoryExtraction()
+                // Goose maintains its own memory. The separate Desktop
+                // extraction would start an extra model turn after each reply.
+                if !WorkAgent.gooseChat { scheduleMemoryExtraction() }
             }
         }
     }
