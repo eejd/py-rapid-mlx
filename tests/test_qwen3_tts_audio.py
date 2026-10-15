@@ -518,6 +518,9 @@ def test_family_speed_handling(monkeypatch, family, speed, stream):
     engine._model_family = family
     engine._loaded = True
     engine.model = FakeModel()
+    if stream and family == "qwen3_tts" and speed == 1.0:
+        engine._loaded = False
+        monkeypatch.setattr(engine, "load", lambda: setattr(engine, "_loaded", True))
     # IndexTTS requires a reference in generate(); isolate decoding from tempo.
     fake_generate = types.ModuleType("mlx_audio.tts.generate")
     fake_generate.load_audio = lambda *args, **kwargs: source
@@ -534,7 +537,7 @@ def test_family_speed_handling(monkeypatch, family, speed, stream):
     else:
         outputs = [engine.generate("hello", speed=speed, ref_audio="reference.wav")]
     (call,) = calls
-    if family in {"qwen3_tts", "kokoro"} or (stream and speed == 1.0):
+    if family == "kokoro" or (stream and speed == 1.0):
         assert call["speed"] == speed
     else:
         assert "speed" not in call
@@ -543,3 +546,8 @@ def test_family_speed_handling(monkeypatch, family, speed, stream):
     assert sum(out.duration for out in outputs) == pytest.approx(expected / sample_rate)
     if stream and family != "kokoro" and speed != 1.0:
         assert len(outputs) == 1
+    if stream and family == "qwen3_tts" and speed == 1.0:
+        assert engine._loaded
+        assert len(outputs) == 3
+        for output, chunk in zip(outputs, np.array_split(source, 3), strict=True):
+            np.testing.assert_array_equal(output.audio, chunk)

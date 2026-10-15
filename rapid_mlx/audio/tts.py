@@ -774,7 +774,10 @@ class TTSEngine:
                 if ref_audio:
                     gen_kwargs["ref_audio"] = ref_audio
             else:
-                gen_kwargs = {"text": text, "voice": voice, "speed": speed}
+                gen_kwargs = {"text": text, "voice": voice}
+                # Post-stretched families must not also apply native tempo.
+                if self._model_family not in _POST_STRETCH_FAMILIES:
+                    gen_kwargs["speed"] = speed
                 if self._model_family == "qwen3_tts":
                     gen_kwargs["lang_code"] = "auto"
                     if self._is_qwen3_voicedesign():
