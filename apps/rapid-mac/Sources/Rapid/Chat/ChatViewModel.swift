@@ -513,7 +513,9 @@ final class ChatViewModel {
         // next message. `hasGeneratedTitle` already means "a title has
         // landed", so gating on it keeps the once-per-conversation promise
         // while letting a cancelled or failed attempt be retried next turn.
-        let needsTitle = conversations.first { $0.id == conversationID }
+        // Goose Chat history uses the first user message as its stable title.
+        // The generic background titler would replace it after the reply.
+        let needsTitle = !WorkAgent.gooseChat && conversations.first { $0.id == conversationID }
             .map { !$0.hasCustomTitle && !$0.hasGeneratedTitle } == true
 
         followUp = .pending
