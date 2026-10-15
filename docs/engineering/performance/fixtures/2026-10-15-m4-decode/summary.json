@@ -1,0 +1,171 @@
+{
+  "archive_members": 70,
+  "phases": {
+    "pilot": {
+      "streams": 14,
+      "measured": 12,
+      "comparisons": [
+        {
+          "model": "gemma4b",
+          "context_target": 1024,
+          "actual_prompt_tokens": 854,
+          "median_decode_tps": {
+            "baseline": 68.00080017528677
+          },
+          "counts": {
+            "baseline": 2
+          }
+        },
+        {
+          "model": "gemma4b",
+          "context_target": 8192,
+          "actual_prompt_tokens": 8022,
+          "median_decode_tps": {
+            "baseline": 62.292252892718594
+          },
+          "counts": {
+            "baseline": 2
+          }
+        },
+        {
+          "model": "gemma4b",
+          "context_target": 16384,
+          "actual_prompt_tokens": 16214,
+          "median_decode_tps": {
+            "baseline": 56.459433716983284
+          },
+          "counts": {
+            "baseline": 2
+          }
+        },
+        {
+          "model": "qwen4b",
+          "context_target": 1024,
+          "actual_prompt_tokens": 856,
+          "median_decode_tps": {
+            "baseline": 80.16600812568345
+          },
+          "counts": {
+            "baseline": 2
+          }
+        },
+        {
+          "model": "qwen4b",
+          "context_target": 8192,
+          "actual_prompt_tokens": 8024,
+          "median_decode_tps": {
+            "baseline": 72.60349227235216
+          },
+          "counts": {
+            "baseline": 2
+          }
+        },
+        {
+          "model": "qwen4b",
+          "context_target": 16384,
+          "actual_prompt_tokens": 16216,
+          "median_decode_tps": {
+            "baseline": 65.94303014255067
+          },
+          "counts": {
+            "baseline": 2
+          }
+        }
+      ]
+    },
+    "fused": {
+      "streams": 28,
+      "measured": 24,
+      "comparisons": [
+        {
+          "model": "gemma4b",
+          "context_target": 1024,
+          "actual_prompt_tokens": 854,
+          "median_decode_tps": {
+            "baseline": 68.0378450283256,
+            "d512": 67.47829485849124
+          },
+          "counts": {
+            "baseline": 4,
+            "d512": 4
+          },
+          "throughput_change_pct": -0.8224101889197311
+        },
+        {
+          "model": "gemma4b",
+          "context_target": 8192,
+          "actual_prompt_tokens": 8022,
+          "median_decode_tps": {
+            "baseline": 62.13275577033893,
+            "d512": 62.00727258632869
+          },
+          "counts": {
+            "baseline": 4,
+            "d512": 4
+          },
+          "throughput_change_pct": -0.20195979150524623
+        },
+        {
+          "model": "gemma4b",
+          "context_target": 16384,
+          "actual_prompt_tokens": 16214,
+          "median_decode_tps": {
+            "baseline": 56.71186775370833,
+            "d512": 56.7807604438765
+          },
+          "counts": {
+            "baseline": 4,
+            "d512": 4
+          },
+          "throughput_change_pct": 0.12147843634309208
+        }
+      ]
+    },
+    "mask": {
+      "streams": 12,
+      "measured": 8,
+      "comparisons": [
+        {
+          "model": "gemma4b",
+          "context_target": 8192,
+          "actual_prompt_tokens": 8022,
+          "median_decode_tps": {
+            "baseline": 62.340481517715716,
+            "d512_nomask": 63.10782598047443
+          },
+          "counts": {
+            "baseline": 2,
+            "d512_nomask": 2
+          },
+          "throughput_change_pct": 1.2308927426886385
+        },
+        {
+          "model": "gemma4b",
+          "context_target": 16384,
+          "actual_prompt_tokens": 16214,
+          "median_decode_tps": {
+            "baseline": 56.585977732441805,
+            "d512_nomask": 57.659285048494525
+          },
+          "counts": {
+            "baseline": 2,
+            "d512_nomask": 2
+          },
+          "throughput_change_pct": 1.8967725911314792
+        }
+      ]
+    }
+  },
+  "matching_observed_output_hashes": true,
+  "host": {
+    "servers": 10,
+    "samples": 671,
+    "swap_min": 195493888,
+    "swap_max": 195493888,
+    "foreign_large_python_pids": []
+  },
+  "attention_reference_pairs": 12,
+  "attention_max_abs_difference": 0.00146484375,
+  "cache_growth_runs": 48,
+  "verified_dependency_python_files": 1616
+}

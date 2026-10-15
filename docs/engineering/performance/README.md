@@ -6,6 +6,7 @@ summary statistics, and limitations.
 
 ## Reports
 
+- [M4 long-context decode candidate experiments (2026-10-15)](2026-10-15-m4-long-context-decode.md)
 - [First-token prefill contention benchmark and findings (2026-10-12)](2026-10-12-first-token-prefill.md)
 
 - [GLM-5.3 Flash load-window memory (2026-10-10)](2026-10-10-glm53-shardwise-load.md)
