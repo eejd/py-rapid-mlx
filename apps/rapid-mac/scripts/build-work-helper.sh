@@ -33,6 +33,9 @@ curl -fLsS 'https://raw.githubusercontent.com/aaif-goose/goose/v1.54.0/LICENSE' 
 cp "$ROOT/Resources/Licenses/goose-third-party-licenses.txt" "$CONTENTS/Resources/Licenses/"
 PYTHON="$CONTENTS/Resources/rapid-mlx/python/bin/python3.12"
 SITE="$CONTENTS/Resources/rapid-mlx/site-packages"
+if [[ "${SKIP_SIDECAR:-0}" == 1 ]]; then
+    exit 0
+fi
 [[ -x "$PYTHON" && -d "$SITE" ]] || { echo "Goose Chat needs the bundled Python sidecar" >&2; exit 1; }
 python3 -m pip install --disable-pip-version-check --no-deps --target "$SITE" \
     'openpyxl==3.1.5' 'et_xmlfile==2.0.0'
