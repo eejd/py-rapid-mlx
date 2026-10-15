@@ -801,6 +801,7 @@ struct ChatView: View {
                 .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity)
             } else if let error = viewModel.lastError,
+                      !(WorkAgent.gooseChat && viewModel.messages.last?.gooseErrorDetails != nil),
                       ModelReadiness.turnErrorApplies(
                           failureAlias: viewModel.lastFailureAlias,
                           selectedAlias: alias
