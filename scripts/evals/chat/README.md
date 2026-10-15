@@ -19,15 +19,13 @@ A 45-minute run on the 27B is a time budget, not a reason to truncate silently. 
 
 ## Runner
 
-Launch an **isolated** 27B MTP engine, the app's `work-inference-proxy.py --goose-chat`, and a Goose `serve` helper with `--with-builtin developer,computercontroller,memory,autovisualiser,tutorial`, using the same provider JSON and environment fields as `WorkAgent.swift`. Use fresh HOME, workspace, and ports; keep Work Full and the installed app untouched. Pass the helper and engine URLs to `run.py`. The runner opens ACP sessions, supplies the bundled `chat-web-mcp.py` for web-on cases, answers permission requests once (eval YOLO), and writes resumable JSONL records. Direct baseline calls the same engine without tools. Put helper and engine secrets in `GOOSE_QA_ACP_SECRET` and `GOOSE_QA_ENGINE_BEARER` environment variables; they are never written to result files.
+Start an **isolated** 27B MTP engine on an unused port, then use the launcher with staged (uninstalled) app resources. It starts the same Goose built-ins, custom provider, inference proxy, and credential bridge as `WorkAgent.swift` in fresh private directories. It runs `run.py` against the helper and direct engine path, grants tool requests once (eval YOLO), and terminates only the helpers it started. Keep Work Full, the installed Goose Chat app, and other agents' processes untouched. The engine remains the caller's responsibility. Set `GOOSE_QA_ENGINE_BEARER` in the environment; the launcher does not put it in command arguments or results.
 
 ```sh
-python3 scripts/evals/chat/run.py \
-  --acp http://127.0.0.1:<own-goose-port> \
-  --engine http://127.0.0.1:<own-engine-port> \
-  --web-script apps/rapid-mac/Work/chat-web-mcp.py \
-  --output scripts/evals/chat/results/run.jsonl \
-  --workspaces /tmp/goose-qa-workspaces
+python3 scripts/evals/chat/launch.py \
+  --resources /path/to/staged/Rapid-MLX.app/Contents/Resources \
+  --engine-port <own-engine-port> \
+  --output scripts/evals/chat/results/run.jsonl
 python3 scripts/evals/chat/score.py scripts/evals/chat/results/run.jsonl
 ```
 
