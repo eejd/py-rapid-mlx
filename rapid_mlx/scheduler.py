@@ -11411,6 +11411,7 @@ class Scheduler:
         # Clear UID mappings (batch generator is gone)
         self.request_id_to_uid.clear()
         self.uid_to_request_id.clear()
+        self._hybrid_checkpoints.clear()
 
         # Release Metal memory
         mx.clear_cache()
