@@ -119,6 +119,30 @@ struct SettingsWebSearchKeyDraftTests {
         #expect(store.readWithoutUserInteraction(account: account) == .found("replacement-key"))
     }
 
+    @Test("Legacy Keychain operations suppress authentication and restore the previous UI policy")
+    func legacyAuthenticationPolicyIsScoped() {
+        var original: DarwinBoolean = false
+        #expect(SecKeychainGetUserInteractionAllowed(&original) == errSecSuccess)
+        let allowedDuringCall = SecurityKeychainItems.withoutUserInteraction(failure: true) {
+            var allowed: DarwinBoolean = true
+            #expect(SecKeychainGetUserInteractionAllowed(&allowed) == errSecSuccess)
+            return allowed.boolValue
+        }
+        #expect(!allowedDuringCall)
+        var restored: DarwinBoolean = false
+        #expect(SecKeychainGetUserInteractionAllowed(&restored) == errSecSuccess)
+        #expect(restored.boolValue == original.boolValue)
+    }
+
+    @Test("A missing or locked default Keychain refuses insertion without a system dialog")
+    func unavailableDefaultKeychainDoesNotInsert() {
+        let account = "rapid.keychain-insertion-test.\(UUID().uuidString)"
+        let service = "rapid.keychain-insertion-test.\(UUID().uuidString)"
+        let items = SecurityKeychainItems(insertionKeychain: { nil })
+        #expect(!items.upsert(account: account, service: service, secret: "disposable-test-value"))
+        #expect(items.query(account: account, service: service) == .missing)
+    }
+
     @Test("Security status distinguishes a missing item from denied non-interactive access")
     func securityReadStatusMapping() {
         #expect(SecurityKeychainItems.readResult(status: errSecItemNotFound, data: nil) == .missing)

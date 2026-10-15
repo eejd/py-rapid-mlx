@@ -34,6 +34,20 @@ struct ShareComputeProviderTests {
     static let firstKey = "qsppk-first-fixture-12345678"
     static let secondKey = "qsppk-second-fixture-87654321"
 
+    @Test("Sharing explains why local chat is paused without offering an unusable Start")
+    func sharingReadiness() {
+        let readiness = ModelReadiness.sharingCompute
+        #expect(!readiness.sendAllowed)
+        #expect(!readiness.isFailure)
+        #expect(!readiness.isWorking)
+        #expect(readiness.action == nil)
+        #expect(readiness.alias == nil)
+        #expect(readiness.statusRole == .idle)
+        #expect(readiness.detail?.contains("Stop sharing") == true)
+        #expect(readiness.composerPlaceholder.contains("sharing"))
+        #expect(readiness.accessibilityLabel.contains(readiness.headline))
+    }
+
     @Test("Provider key validation rejects other keys and malformed pastes", arguments: [
         "", "sk-consumer-123456789", "qsprk-read-only-123456789", "qsppk-short",
         "qsppk-key with spaces", "qsppk-key\nwith-newline", "qsppk-key\u{0}with-control",

@@ -89,10 +89,10 @@ final class ShareComputeManager {
             providerKeyMessage = nil
         case .unavailable:
             providerKeyIsStored = true
-            providerKeyMessage = "Unlock your Keychain to use the saved provider key."
+            providerKeyMessage = String(localized: "Unlock your Keychain to use the saved provider key.")
         case .corrupted:
             providerKeyIsStored = true
-            providerKeyMessage = "Replace the saved provider key in Settings → Experimental → Share Compute."
+            providerKeyMessage = String(localized: "Replace the saved provider key in Settings → Experimental → Share Compute.")
         }
     }
 
@@ -100,7 +100,7 @@ final class ShareComputeManager {
     func saveProviderKey(_ raw: String) -> Bool {
         guard canEditProviderKey else { return false }
         guard let key = ShareComputeProviderKey.validate(raw) else {
-            providerKeyMessage = "Paste a complete qsppk- provider key as a single line."
+            providerKeyMessage = String(localized: "Paste a complete qsppk- provider key as a single line.")
             return false
         }
         if case .found(let existing) = providerStore.load(), existing == key {
@@ -113,7 +113,7 @@ final class ShareComputeManager {
         // route rewards to the previous account. Node credentials are retained.
         guard invalidateRegistrationProof() else { return false }
         guard providerStore.save(key) else {
-            providerKeyMessage = "This Mac couldn't save the provider key. Unlock your Keychain and try again."
+            providerKeyMessage = String(localized: "This Mac couldn't save the provider key. Check that you have an unlocked login Keychain and try again.")
             return false
         }
         refreshProviderKey()
@@ -125,7 +125,7 @@ final class ShareComputeManager {
         guard canEditProviderKey else { return false }
         guard invalidateRegistrationProof() else { return false }
         guard providerStore.remove() else {
-            providerKeyMessage = "This Mac couldn't remove the provider key. Unlock your Keychain and try again."
+            providerKeyMessage = String(localized: "This Mac couldn't remove the provider key. Unlock your Keychain and try again.")
             return false
         }
         refreshProviderKey()
@@ -574,12 +574,12 @@ final class ShareComputeManager {
             do {
                 let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true else {
-                    providerKeyMessage = "The local node registration isn't a regular file. Repair the QuickSilver state directory before changing the saved key."
+                    providerKeyMessage = String(localized: "The local node registration isn't a regular file. Repair the QuickSilver state directory before changing the saved key.")
                     return false
                 }
                 try FileManager.default.removeItem(at: url)
             } catch {
-                providerKeyMessage = "This Mac couldn't reset its node registration. Check access to the local QuickSilver state directory and try again."
+                providerKeyMessage = String(localized: "This Mac couldn't reset its node registration. Check access to the local QuickSilver state directory and try again.")
                 return false
             }
         }

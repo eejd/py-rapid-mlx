@@ -17,7 +17,9 @@ provider key (`qsppk-`). The model weights are downloaded once if needed.
    the first connection sheet. Saving settings does not start sharing.
 4. On **Share**, click **Start sharing** (or **Set up sharing** for first setup). This release shares Qwen 27B only.
    Rapid unloads the current local model and runs an exclusive pool process:
-   the sharing model is unavailable to local chat. Repeat sessions start using
+   the sharing model is unavailable to local chat. Chat explains that sharing
+   must stop before a local model can start; it does not offer a blocked Start.
+   Repeat sessions start using
    the saved account or existing node, without another key-entry sheet.
 5. Wait for **Your Mac is contributing** and **Provider: Connected**. The Mac
    can receive work while the app and share session remain running. Use
@@ -27,6 +29,9 @@ provider key (`qsppk-`). The model weights are downloaded once if needed.
    You can replace or remove the saved provider key in Settings while offline.
    Replacing the account key invalidates the old local registration proof before
    writing the new Keychain entry, so the next join registers the new account.
+   If the login Keychain is missing, locked, or denies this app access, Rapid
+   reports the problem without opening a system authentication/reset dialog.
+   A valid cached node can still reconnect without reading the provider key.
    Removing the saved key does not revoke remote credentials; use QuickSilver's
    dashboard for revocation. Local node credentials are retained, but the GUI
    requires a provider key again after its registration proof is invalidated.
