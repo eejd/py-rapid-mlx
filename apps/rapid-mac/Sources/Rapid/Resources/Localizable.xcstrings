@@ -2,6 +2,9 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "Couldn't complete that request. Please try again." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法完成该请求。请重试。" } } } },
+    "Thinking" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "思考" } } } },
+    "Thinking…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "思考中…" } } } },
     "Wrote %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已写入 %@" } } } },
     "Edited %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已编辑 %@" } } } },
     "Ran `%@`" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "运行了 `%@`" } } } },
