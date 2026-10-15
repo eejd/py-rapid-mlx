@@ -365,9 +365,13 @@ struct ChatView: View {
         .rapidAnimation(RapidMotion.standard, value: showsLifecycleBand)
         .background(RapidTheme.surfaceCanvas)
         // Drop a stale error banner once the server is provably ready.
-        .onChange(of: server.state) { _, newState in
-            if case .ready = newState { viewModel.clearStaleErrorBanner() }
+        .onChange(of: server.state, initial: true) { _, newState in
+            if case .ready = newState {
+                viewModel.clearStaleErrorBanner()
+                prewarmGoose()
+            }
         }
+        .onChange(of: viewModel.gooseFolderPath) { _, _ in prewarmGoose() }
         // Forward an external focus request onto the composer's own token.
         // Routed through the existing token rather than a second mechanism
         // so every focus request in this view — Send, Cmd+L, onboarding
@@ -388,6 +392,17 @@ struct ChatView: View {
         .onChange(of: draft) { _, _ in photoCapabilityNotice.dismiss() }
         .onChange(of: gooseYOLO) { _, enabled in
             if enabled { viewModel.allowPendingGoosePermissions() }
+        }
+    }
+
+    private func prewarmGoose() {
+        guard WorkAgent.gooseChat, !viewModel.isStreaming,
+              case .ready(let alias) = server.state,
+              let bearer = server.activeBearer, server.activePort > 0 else { return }
+        let folder = URL(fileURLWithPath: viewModel.gooseFolderPath, isDirectory: true)
+        Task {
+            try? await WorkAgent.shared.prepare(folder: folder, rapidPort: server.activePort,
+                model: server.servingAlias ?? alias, bearer: bearer)
         }
     }
 
