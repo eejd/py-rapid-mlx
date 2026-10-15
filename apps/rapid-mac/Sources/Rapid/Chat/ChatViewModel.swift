@@ -336,28 +336,31 @@ final class ChatViewModel {
     static func repairGooseTitles(_ conversations: [ChatConversation]) -> [ChatConversation] {
         conversations.map { original in
             var conversation = original
-            conversation.messages = conversation.messages.map { originalMessage in
-                var message = originalMessage
-                if message.role == .assistant,
-                   message.content.hasPrefix("Ran into this error:") {
-                    message.gooseErrorDetails = message.content
-                    clearGooseFailedText(&message)
-                    message.errorMessage = gooseFailureCopy
-                    message.status = .failed
-                } else if message.role == .assistant, message.status == .failed,
-                          let raw = message.errorMessage,
-                          raw.contains("127.0.0.1") || raw.contains("Bad Gateway") {
-                    message.gooseErrorDetails = raw
-                    message.errorMessage = gooseFailureCopy
-                }
-                return message
-            }
+            conversation.messages = conversation.messages.map(repairGooseError)
+            conversation.branches = conversation.branches.map(repairGooseError)
             guard !conversation.hasCustomTitle,
                   conversation.messages.contains(where: { $0.role == .user }) else { return conversation }
             conversation.title = ConversationStore.title(from: conversation.messages)
             conversation.hasGeneratedTitle = false
             return conversation
         }
+    }
+
+    private static func repairGooseError(_ original: ChatMessage) -> ChatMessage {
+        var message = original
+        guard message.role == .assistant else { return message }
+        if message.content.contains("Ran into this error: Server error"),
+           message.content.contains("127.0.0.1") {
+            message.gooseErrorDetails = message.content
+            clearGooseFailedText(&message)
+            message.errorMessage = gooseFailureCopy
+            message.status = .failed
+        } else if message.status == .failed, let raw = message.errorMessage,
+                  raw.contains("127.0.0.1") || raw.contains("Bad Gateway") {
+            message.gooseErrorDetails = raw
+            message.errorMessage = gooseFailureCopy
+        }
+        return message
     }
 
     /// Snapshot the active conversation into ``conversations`` + disk. A
@@ -1495,6 +1498,20 @@ final class ChatViewModel {
         case .session(let id): gooseSessionID = id
         case .text(let chunk):
             guard !chunk.isEmpty else { break }
+            if let details = messages[initialPlaceholder].gooseErrorDetails,
+               details.contains("Ran into this error: Server error") {
+                messages[initialPlaceholder].gooseErrorDetails = details + chunk
+                break
+            }
+            if (messages[initialPlaceholder].content + chunk)
+                .contains("Ran into this error: Server error") {
+                messages[initialPlaceholder].gooseErrorDetails = messages[initialPlaceholder].content + chunk
+                Self.clearGooseFailedText(&messages[initialPlaceholder])
+                messages[initialPlaceholder].status = .failed
+                messages[initialPlaceholder].errorMessage = Self.gooseFailureCopy
+                lastError = Self.gooseFailureCopy
+                break
+            }
             messages[initialPlaceholder].content += chunk
             if messages[initialPlaceholder].gooseParts == nil { messages[initialPlaceholder].gooseParts = [] }
             if let last = messages[initialPlaceholder].gooseParts?.indices.last,

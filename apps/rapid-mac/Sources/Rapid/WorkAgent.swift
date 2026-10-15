@@ -79,6 +79,11 @@ final class WorkAgent {
     }
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
+        // A Send can arrive while ready-model prewarm is still opening Goose.
+        for _ in 0..<200 {
+            if !isPreparing { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
         guard !isPreparing else { throw WorkError.message("Chat is already starting.") }
         let requestedRevision = conversationRevision
         let folder = folder.resolvingSymlinksInPath()
