@@ -2085,13 +2085,14 @@ class BatchedEngine(BaseEngine):
 
         # Create and start MLLM scheduler — pass the model-owning executor so
         # _step_no_queue runs on the same thread as model load.
-        self._mllm_scheduler = MLLMScheduler(
+        mllm_scheduler = MLLMScheduler(
             model=self._model,
             processor=worker_processor,
             config=mllm_config,
             step_executor=self._model_load_executor,
             model_name=self._model_name,
         )
+        self._mllm_scheduler = mllm_scheduler
         await self._mllm_scheduler.start()
 
         config = getattr(self._mllm_instance, "config", None)
@@ -2113,6 +2114,11 @@ class BatchedEngine(BaseEngine):
             self._mllm_dense_singleton_fastpath = bool(
                 config_model_type == "qwen3_5" and self._mllm_native_text_engine
             )
+            if self._mllm_native_text_engine:
+                # Both schedulers use the model-loading thread. A text-only
+                # singleton must return between prefill chunks so native
+                # peers can run without waiting for its entire prompt.
+                mllm_scheduler.cooperative_prefill = True
 
         logger.info(
             f"MLLM Scheduler started with continuous batching: "
@@ -2225,11 +2231,20 @@ class BatchedEngine(BaseEngine):
         # Spinning the step worker BEFORE model load — and reusing the same
         # worker for AsyncEngineCore via the model_load_executor handoff —
         # keeps every MLX op on a single owning thread.
-        self._model_load_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="mlx-step",
-            initializer=_init_mlx_step_thread,
-        )
+        worker = getattr(self, "_model_load_executor", None)
+        if worker is not None:
+            try:
+                worker.submit(lambda: None).result()
+            except (concurrent.futures.thread.BrokenThreadPool, RuntimeError):
+                worker.shutdown(wait=False)
+                worker = None
+        if worker is None:
+            worker = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="mlx-step",
+                initializer=_init_mlx_step_thread,
+            )
+        self._model_load_executor = worker
         # getattr-guarded (not a direct self._enable_disk_stream read):
         # some tests build a BatchedEngine via object.__new__ and set only
         # the attributes their scenario needs (see
@@ -2600,8 +2615,8 @@ class BatchedEngine(BaseEngine):
         return executor.submit(func, *args, **kwargs).result()
 
     async def idle_stop(self) -> None:
-        """Unload weights while retaining the MLLM model-owning stream thread."""
-        await self.stop(preserve_model_worker=self._is_mllm)
+        """Unload weights while retaining the model-owning stream thread."""
+        await self.stop(preserve_model_worker=True)
 
     async def stop(self, *, preserve_model_worker: bool = False) -> None:
         """Stop the engine and cleanup resources."""
@@ -2649,17 +2664,12 @@ class BatchedEngine(BaseEngine):
                 future.add_done_callback(release_after_build)
             release_model_matchers(tokenizer)
 
-        if (
-            self._is_mllm
-            and self._model_load_executor is not None
-            and not preserve_model_worker
-        ):
+        if self._model_load_executor is not None and not preserve_model_worker:
             self._model_load_executor.shutdown(wait=False)
 
-        # The dual text engine borrows this worker and never shuts it down.
-        # Idle unload preserves it; final MLLM shutdown above releases it.
-        # Text-only engines own and shut down their separate step executor.
-        if not preserve_model_worker or not self._is_mllm:
+        # EngineCore borrows this worker and never shuts it down. Idle unload
+        # preserves the MLX stream; final shutdown releases the worker.
+        if not preserve_model_worker:
             self._model_load_executor = None
         self._start_time = None
 
