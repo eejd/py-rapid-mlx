@@ -2008,6 +2008,10 @@ struct ContentView: View {
     }
 
     private static func ensureStartupModelLinks(generation: UInt) async {
+        // Goose Chat uses the selected models folder directly. This legacy
+        // link maintenance follows the default HF cache, which may be a
+        // symlink into /Volumes and request removable-volume access at launch.
+        guard !WorkAgent.gooseChat else { return }
         await startupModelLinkMaintenance.run(generation: generation) {
             _ = BundledModel.installBundledSnapshotSymlink()
             _ = QuickstartModel.installAllSnapshotSymlinks()
