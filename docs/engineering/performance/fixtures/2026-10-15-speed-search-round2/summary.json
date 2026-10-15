@@ -1,0 +1,125 @@
+{
+  "source_commit": "5c70e238f6068d373553c48d92786a5cf333d05b",
+  "servers": 18,
+  "streams": 86,
+  "measured_streams": 68,
+  "host_samples": 979,
+  "observed_swap_bytes": {
+    "A": [
+      195493888
+    ],
+    "B": [
+      512032768
+    ]
+  },
+  "campaigns": {
+    "A-short": {
+      "856": {
+        "median_tps": {
+          "baseline": 79.63079564351412,
+          "gdn": 83.19980945416418
+        },
+        "samples_per_arm": {
+          "baseline": 4,
+          "gdn": 4
+        },
+        "throughput_change_percent": 4.481951714544685
+      }
+    },
+    "A-pack": {
+      "856": {
+        "median_tps": {
+          "gdn": 83.19026134544026,
+          "gdn_pack": 83.34995987391295
+        },
+        "samples_per_arm": {
+          "gdn": 4,
+          "gdn_pack": 4
+        },
+        "throughput_change_percent": 0.1919678167731087
+      }
+    },
+    "A-long": {
+      "856": {
+        "median_tps": {
+          "baseline": 79.6556854026733,
+          "gdn": 82.49477431705891
+        },
+        "samples_per_arm": {
+          "baseline": 4,
+          "gdn": 4
+        },
+        "throughput_change_percent": 3.5642012243489285
+      },
+      "8024": {
+        "median_tps": {
+          "baseline": 72.58225350717588,
+          "gdn": 75.18381753104823
+        },
+        "samples_per_arm": {
+          "baseline": 4,
+          "gdn": 4
+        },
+        "throughput_change_percent": 3.5842976735561916
+      },
+      "16216": {
+        "median_tps": {
+          "baseline": 65.61882475631967,
+          "gdn": 67.93931642141362
+        },
+        "samples_per_arm": {
+          "baseline": 4,
+          "gdn": 4
+        },
+        "throughput_change_percent": 3.53632006320026
+      }
+    },
+    "B-long": {
+      "856": {
+        "median_tps": {
+          "baseline": 80.47439294379554,
+          "gdn": 83.18734217594896
+        },
+        "samples_per_arm": {
+          "baseline": 4,
+          "gdn": 4
+        },
+        "throughput_change_percent": 3.3711956473510662
+      },
+      "8024": {
+        "median_tps": {
+          "baseline": 73.32119003610461,
+          "gdn": 75.62220322557248
+        },
+        "samples_per_arm": {
+          "baseline": 4,
+          "gdn": 4
+        },
+        "throughput_change_percent": 3.1382649249620753
+      },
+      "16216": {
+        "median_tps": {
+          "baseline": 65.89009109250064,
+          "gdn": 68.16043893068985
+        },
+        "samples_per_arm": {
+          "baseline": 4,
+          "gdn": 4
+        },
+        "throughput_change_percent": 3.445658976251753
+      }
+    },
+    "A-activation": {
+      "856": {
+        "median_tps": {
+          "gdn": 83.12340652936126,
+          "gdn_pack": 83.31547645868699
+        },
+        "samples_per_arm": {
+          "gdn": 2,
+          "gdn_pack": 2
+        }
+      }
+    }
+  }
+}
