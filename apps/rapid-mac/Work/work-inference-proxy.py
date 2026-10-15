@@ -81,12 +81,19 @@ def compact_goose_request(body):
         if message.get("role") == "system":
             message["content"] = GOOSE_CHAT_SYSTEM + saved_goose_memories()
             break
+
     # Keep every built-in tool and its argument schema. Long prose in Goose's
     # descriptions duplicates the compact behavior prompt on every turn.
     def trim_descriptions(value):
         if isinstance(value, dict):
-            return {key: (item[:180] if key == "description" and isinstance(item, str)
-                          else trim_descriptions(item)) for key, item in value.items()}
+            return {
+                key: (
+                    item[:180]
+                    if key == "description" and isinstance(item, str)
+                    else trim_descriptions(item)
+                )
+                for key, item in value.items()
+            }
         if isinstance(value, list):
             return [trim_descriptions(item) for item in value]
         return value
@@ -127,7 +134,10 @@ class StreamRate:
                 self.completion_tokens = usage.get("completion_tokens")
             for choice in event.get("choices", []):
                 delta = choice.get("delta", {})
-                if any(delta.get(key) for key in ("content", "reasoning_content", "tool_calls")):
+                if any(
+                    delta.get(key)
+                    for key in ("content", "reasoning_content", "tool_calls")
+                ):
                     now = time.monotonic()
                     if self.first_token_at is None:
                         self.first_token_at = now
@@ -147,7 +157,11 @@ class StreamRate:
             return None
         duration = self.last_token_at - self.first_token_at
         estimated_tokens = self.streamed_chars / 4
-        return (estimated_tokens - 1) / duration if estimated_tokens > 1 and duration > 0.05 else None
+        return (
+            (estimated_tokens - 1) / duration
+            if estimated_tokens > 1 and duration > 0.05
+            else None
+        )
 
     def tokens_per_second(self):
         count = self.completion_tokens
@@ -207,7 +221,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/metrics" and GOOSE_CHAT:
-            if not hmac.compare_digest(self.headers.get("X-Metrics-Key", ""), METRICS_KEY):
+            if not hmac.compare_digest(
+                self.headers.get("X-Metrics-Key", ""), METRICS_KEY
+            ):
                 self.send_error(401)
                 return
             with METRICS_LOCK:

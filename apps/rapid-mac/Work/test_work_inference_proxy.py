@@ -18,8 +18,9 @@ class StreamRateTests(unittest.TestCase):
     def setUpClass(cls):
         spec = importlib.util.spec_from_file_location("work_inference_proxy", PROXY)
         cls.module = importlib.util.module_from_spec(spec)
-        with patch.object(sys, "argv", [str(PROXY), "0", "0", "test-model"]), patch.dict(
-            os.environ, {"WORK_PROXY_BEARER": "test"}
+        with (
+            patch.object(sys, "argv", [str(PROXY), "0", "0", "test-model"]),
+            patch.dict(os.environ, {"WORK_PROXY_BEARER": "test"}),
         ):
             spec.loader.exec_module(cls.module)
 
@@ -38,27 +39,63 @@ class StreamRateTests(unittest.TestCase):
 
     def test_goose_request_removes_global_prompt_and_compacts_all_tool_schemas(self):
         original = {
-            "model": "test-model", "stream": True,
+            "model": "test-model",
+            "stream": True,
             "messages": [
                 {"role": "system", "content": "global skills " * 2000},
                 {"role": "user", "content": "今天谷歌股价多少？"},
             ],
-            "tools": [{"type": "function", "function": {"name": name,
-                       "description": "large schema " * 50,
-                       "parameters": {"type": "object", "properties": {
-                           "input": {"type": "string", "description": "argument detail " * 50}}}}}
-                      for name in ("shell", "tree", "write", "edit", "memory__remember",
-                                   "autovisualiser__show_chart", "computercontroller__open",
-                                   "tutorial__help")],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": "large schema " * 50,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "input": {
+                                    "type": "string",
+                                    "description": "argument detail " * 50,
+                                }
+                            },
+                        },
+                    },
+                }
+                for name in (
+                    "shell",
+                    "tree",
+                    "write",
+                    "edit",
+                    "memory__remember",
+                    "autovisualiser__show_chart",
+                    "computercontroller__open",
+                    "tutorial__help",
+                )
+            ],
         }
         compact = self.module.compact_goose_request(json.loads(json.dumps(original)))
         self.assertLess(len(json.dumps(compact)), 5500)
         self.assertEqual(compact["messages"][1], original["messages"][1])
-        self.assertEqual([t["function"]["name"] for t in compact["tools"]],
-                         ["shell", "tree", "write", "edit", "memory__remember",
-                          "autovisualiser__show_chart", "computercontroller__open",
-                          "tutorial__help"])
-        self.assertEqual(compact["tools"][0]["function"]["parameters"]["properties"]["input"]["type"], "string")
+        self.assertEqual(
+            [t["function"]["name"] for t in compact["tools"]],
+            [
+                "shell",
+                "tree",
+                "write",
+                "edit",
+                "memory__remember",
+                "autovisualiser__show_chart",
+                "computercontroller__open",
+                "tutorial__help",
+            ],
+        )
+        self.assertEqual(
+            compact["tools"][0]["function"]["parameters"]["properties"]["input"][
+                "type"
+            ],
+            "string",
+        )
         self.assertIn("current facts", compact["messages"][0]["content"])
         self.assertIn("exact URL", compact["messages"][0]["content"])
 
@@ -79,23 +116,38 @@ class StreamRateTests(unittest.TestCase):
             memory = directory / "preferences.txt"
             memory.write_text("Reply concisely.")
             with patch.dict(os.environ, {"GOOSE_PATH_ROOT": root}):
-                body = {"messages": [{"role": "system", "content": "global skills " * 1000}]}
+                body = {
+                    "messages": [{"role": "system", "content": "global skills " * 1000}]
+                }
                 result = self.module.compact_goose_request(body)
-                self.assertIn("preferences: Reply concisely.", result["messages"][0]["content"])
+                self.assertIn(
+                    "preferences: Reply concisely.", result["messages"][0]["content"]
+                )
                 self.assertNotIn("global skills", result["messages"][0]["content"])
                 memory.unlink()
-                self.assertNotIn("Saved memories", self.module.compact_goose_request(body)["messages"][0]["content"])
+                self.assertNotIn(
+                    "Saved memories",
+                    self.module.compact_goose_request(body)["messages"][0]["content"],
+                )
 
     def test_greetings_and_other_languages_retain_tool_schemas(self):
         body = {
             "messages": [
                 {"role": "system", "content": "large prompt " * 2000},
-                {"role": "user", "content": "Reply in the user's language.\nhi\n<turn-context>time</turn-context>"},
+                {
+                    "role": "user",
+                    "content": "Reply in the user's language.\nhi\n<turn-context>time</turn-context>",
+                },
             ],
             "tools": [{"type": "function", "function": {"name": "shell"}}],
             "tool_choice": "auto",
         }
-        for prompt in ("hi", "你好", "帮我看看 Hacker News 首页前 5 条", "write snake.html"):
+        for prompt in (
+            "hi",
+            "你好",
+            "帮我看看 Hacker News 首页前 5 条",
+            "write snake.html",
+        ):
             candidate = json.loads(json.dumps(body))
             candidate["messages"][1]["content"] = prompt
             compact = self.module.compact_goose_request(candidate)
@@ -107,8 +159,12 @@ class StreamRateTests(unittest.TestCase):
         module = self.module
         rate = module.StreamRate()
         with patch.object(module.time, "monotonic", side_effect=[10.0, 10.5]):
-            rate.feed(b'data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"write_file","arguments":"{\\\"path\\\":\\\"a"}}]}}]}\n\n')
-            rate.feed(b'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":".txt\\\"}"}}]}}]}\n\n')
+            rate.feed(
+                b'data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"write_file","arguments":"{\\"path\\":\\"a"}}]}}]}\n\n'
+            )
+            rate.feed(
+                b'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":".txt\\"}"}}]}}]}\n\n'
+            )
         self.assertGreater(rate.live_tokens_per_second(), 0)
 
     def test_older_request_cannot_overwrite_newer_rate(self):
@@ -126,6 +182,7 @@ class StreamRateTests(unittest.TestCase):
     def test_terminal_usage_is_published_before_upstream_eof(self):
         module = self.module
         previous = module.LATEST_METRIC.copy()
+
         class Response:
             status = 200
             headers = {"Content-Type": "text/event-stream"}
@@ -147,11 +204,19 @@ class StreamRateTests(unittest.TestCase):
                 return b""
 
         self_test = self
-        body = json.dumps({"model": "test-model", "stream": True,
-                           "messages": [{"role": "user", "content": "hi"}]}).encode()
+        body = json.dumps(
+            {
+                "model": "test-model",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+        ).encode()
         handler = object.__new__(module.Handler)
         handler.path = "/v1/chat/completions"
-        handler.headers = {"Authorization": "Bearer test", "Content-Length": str(len(body))}
+        handler.headers = {
+            "Authorization": "Bearer test",
+            "Content-Length": str(len(body)),
+        }
         handler.rfile = io.BytesIO(body)
         handler.wfile = io.BytesIO()
         handler.send_response = lambda _status: None
@@ -159,9 +224,11 @@ class StreamRateTests(unittest.TestCase):
         handler.end_headers = lambda: None
         try:
             module.LATEST_METRIC.update(sequence=0, tokensPerSecond=None)
-            with patch.object(module, "GOOSE_CHAT", True), patch.object(
-                module.OPENER, "open", return_value=Response()
-            ), patch.object(module.time, "monotonic", side_effect=[10.0, 10.5]):
+            with (
+                patch.object(module, "GOOSE_CHAT", True),
+                patch.object(module.OPENER, "open", return_value=Response()),
+                patch.object(module.time, "monotonic", side_effect=[10.0, 10.5]),
+            ):
                 handler.do_POST()
             self.assertEqual(module.LATEST_METRIC["tokensPerSecond"], 20.0)
         finally:
