@@ -1458,8 +1458,13 @@ final class ChatViewModel {
         }
         let replay = reuseSession ? "" : Self.gooseReplay(previous)
         let user = messages[placeholderIndex - 1]
-        try writeGooseRequestContract(globalInstruction: globalInstruction,
+        let (contractURL, contractData) = try writeGooseRequestContract(globalInstruction: globalInstruction,
             conversationInstruction: conversationInstruction, memoryContext: memoryContext)
+        defer {
+            if (try? Data(contentsOf: contractURL)) == contractData {
+                try? FileManager.default.removeItem(at: contractURL)
+            }
+        }
         let prompt = replay + user.content + (try gooseAttachmentNote(for: user))
         await agent.prompt(prompt)
         guard epoch == conversationEpoch else { return }
@@ -1594,17 +1599,21 @@ final class ChatViewModel {
 
     private func writeGooseRequestContract(globalInstruction: String,
                                            conversationInstruction: String,
-                                           memoryContext: String?) throws {
-        let contract = Self.gooseRequestContract(globalInstruction: globalInstruction,
+                                           memoryContext: String?) throws -> (URL, Data) {
+        var contract = Self.gooseRequestContract(globalInstruction: globalInstruction,
             conversationInstruction: conversationInstruction, memoryContext: memoryContext,
             sampling: sampling?.resolved(toolsEnabled: false), now: Date())
+        contract["turn_id"] = UUID().uuidString
         let digest = SHA256.hash(data: Data(gooseFolder.path.utf8))
             .map { String(format: "%02x", $0) }.joined()
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Rapid/agent-goose-chat/workspaces")
         let destination = root.appendingPathComponent(digest).appendingPathComponent("chat-contract.json")
         let safe = try GooseToolPresentation.containedDestination(destination, root: root)
-        try JSONSerialization.data(withJSONObject: contract).write(to: safe, options: .atomic)
+        let data = try JSONSerialization.data(withJSONObject: contract)
+        try data.write(to: safe, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: safe.path)
+        return (safe, data)
     }
 
     static func gooseRequestContract(globalInstruction: String,
