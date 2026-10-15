@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import Rapid
@@ -16,20 +17,23 @@ struct FullWorkLandingTests {
         ]) == .images)
     }
 
-    @Test("Work recommends the largest cached Qwen that fits RAM")
+    @Test("Work prefers downloaded 27B, then 35B, then 9B when each fits RAM")
     func cachedRecommendation() {
         let catalog = [
             ModelEntry(alias: "qwen3.6-35b-4bit", hfRepo: nil, sizeOnDisk: nil, cached: true),
             ModelEntry(alias: "qwen3.6-27b-4bit", hfRepo: nil, sizeOnDisk: nil, cached: true),
+            ModelEntry(alias: "qwen3.5-9b-4bit", hfRepo: nil, sizeOnDisk: nil, cached: true),
         ]
         let large = MacHardware(brandString: "M3 Max", family: .m3, tier: .max,
                                 physicalRAMBytes: 64 << 30, memoryBandwidthGBs: 400)
         let small = MacHardware(brandString: "M3 Pro", family: .m3, tier: .pro,
                                 physicalRAMBytes: 16 << 30, memoryBandwidthGBs: 150)
-        #expect(WorkView.recommendedModel(in: catalog, on: large)?.alias == "qwen3.6-35b-4bit")
-        #expect(WorkView.recommendedModel(in: catalog, on: small) == nil)
+        #expect(WorkView.recommendedModel(in: catalog, on: large)?.alias == "qwen3.6-27b-4bit")
+        #expect(WorkView.recommendedModel(in: catalog, on: small)?.alias == "qwen3.5-9b-4bit")
         #expect(WorkView.recommendedModel(in: catalog.filter { $0.alias.contains("27b") },
                                           on: large)?.alias == "qwen3.6-27b-4bit")
+        #expect(WorkView.recommendedModel(in: catalog.filter { !$0.alias.contains("27b") },
+                                          on: large)?.alias == "qwen3.6-35b-4bit")
     }
 
     @Test("Full uses and creates the Playground until its own folder chooser is used")
@@ -53,5 +57,15 @@ struct FullWorkLandingTests {
         try fileManager.createDirectory(at: chosen, withIntermediateDirectories: true)
         #expect(try WorkView.fullFolder(homeDirectory: home, savedPath: chosen.path,
                                         explicitlyChosen: true, fileManager: fileManager) == chosen)
+    }
+
+    @Test("accessibility value setting updates the Work prompt model")
+    func accessibilityTextUpdatesBinding() {
+        let editor = WorkPromptField.AccessibleEditor(frame: .zero)
+        var boundValue = ""
+        editor.valueChanged = { boundValue = $0 }
+        editor.setAccessibilityValue("Write a README")
+        #expect(boundValue == "Write a README")
+        #expect(editor.string == boundValue)
     }
 }

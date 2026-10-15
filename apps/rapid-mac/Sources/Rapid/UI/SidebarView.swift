@@ -894,6 +894,7 @@ struct SidebarView: View {
                         .font(RapidFont.caption)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .help(model.displayName(preferredAlias: preferredAlias))
                     Spacer(minLength: 4)
                     Text(Self.formatBytes(model.displayBytes))
                         .font(.system(size: 10, design: .monospaced))

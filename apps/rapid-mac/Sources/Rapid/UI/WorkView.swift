@@ -12,6 +12,7 @@ struct WorkView: View {
     @State private var folder: URL?
     @State private var expanded: Set<String> = []
     @State private var submitting = false
+    @State private var pendingExample: String?
     @AppStorage("Rapid.Work.lastFolder") private var privateLastFolder = ""
     @AppStorage("Rapid.WorkFull.lastFolder") private var fullLastFolder = ""
     @AppStorage("Rapid.WorkFull.folderExplicitlyChosen") private var fullFolderExplicitlyChosen = false
@@ -40,7 +41,7 @@ struct WorkView: View {
 
     static func recommendedModel(in catalog: [ModelEntry], on hardware: MacHardware) -> ModelEntry? {
         let availableModels = availableModels(in: catalog, on: hardware)
-        for alias in ["qwen3.6-35b-4bit", "qwen3.6-27b-4bit"] {
+        for alias in ["qwen3.6-27b-4bit", "qwen3.6-35b-4bit", "qwen3.5-9b-4bit"] {
             if let entry = availableModels.first(where: { $0.alias.lowercased() == alias }) {
                 return entry
             }
@@ -90,11 +91,13 @@ struct WorkView: View {
                     .background(.orange.opacity(0.25))
             }
             Divider()
-            if server.servingAlias == nil || server.activeBearer == nil {
+            if WorkAgent.fullAccess, folder != nil, agent.text.isEmpty, agent.steps.isEmpty {
+                fullLanding
+            } else if server.servingAlias == nil || server.activeBearer == nil {
                 ContentUnavailableView {
                     Label("Start a model to use Work", systemImage: "cpu")
                 } description: {
-                    Text("Work uses the model running in Rapid-MLX Desktop.")
+                    Text("Work uses the model running in Rapid-MLX.")
                 } actions: {
                     if WorkAgent.fullAccess {
                         if let recommendedModel {
@@ -161,26 +164,11 @@ struct WorkView: View {
                     .padding()
                 }
                 Divider()
-                HStack(alignment: .bottom) {
-                    TextField("Ask about files, or request a new file…", text: $message, axis: .vertical)
-                        .accessibilityIdentifier("WorkView.Message")
-                        .lineLimit(2...5)
-                        .onSubmit(send)
-                    if agent.isBusy {
-                        Button("Stop") { agent.cancel() }
-                            .accessibilityIdentifier("WorkView.Stop")
-                    } else if submitting || agent.isPreparing || agent.isOpeningSession {
-                        ProgressView("Starting…")
-                    } else {
-                        Button("Send", action: send)
-                            .accessibilityIdentifier("WorkView.Send")
-                            .buttonStyle(.borderedProminent)
-                            .disabled(submitting || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }.padding()
+                composer
             }
         }
         .task {
+            agent.beginFreshFullLanding()
             if ProcessInfo.processInfo.arguments.contains("--work-mvp-synthetic-test") {
                 await runSyntheticTest()
                 return
@@ -212,7 +200,9 @@ struct WorkView: View {
         }
         .onChange(of: server.activeBearer) { _, _ in
             if !ProcessInfo.processInfo.arguments.contains("--work-mvp-synthetic-test") { agent.stop() }
+            sendPendingExampleIfReady()
         }
+        .onChange(of: server.servingAlias) { _, _ in sendPendingExampleIfReady() }
         .sheet(item: $agent.permission) { request in
             VStack(alignment: .leading, spacing: 14) {
                 Label("Approve this action?", systemImage: "hand.raised")
@@ -237,6 +227,131 @@ struct WorkView: View {
             .padding(24).frame(width: 620)
             .interactiveDismissDisabled()
         }
+    }
+
+    private static let exampleTasks = [
+        "Build a snake game as one HTML file",
+        "Summarize today's Hacker News posts about local AI into a web page",
+        "Write a Python expense tracker with tests",
+        "Turn the files in this folder into a tidy README",
+    ]
+
+    private var fullLanding: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 24)
+            VStack(alignment: .leading, spacing: 20) {
+                Text("What should we work on?")
+                    .font(.largeTitle.weight(.semibold))
+                    .accessibilityIdentifier("WorkView.LandingHeadline")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(Self.exampleTasks, id: \.self) { task in
+                        Button { sendExample(task) } label: {
+                            Text(task)
+                                .font(.body)
+                                .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+                                .padding(14)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityIdentifier("WorkView.Example.\(Self.exampleTasks.firstIndex(of: task) ?? 0)")
+                    }
+                }
+                if server.servingAlias == nil || server.activeBearer == nil {
+                    HStack(spacing: 12) {
+                        Text("Work uses the model running in Rapid-MLX.")
+                            .foregroundStyle(.secondary)
+                        if let recommendedModel {
+                            Button("Start recommended: \(recommendedModel.alias)") {
+                                startModel(recommendedModel.alias)
+                            }
+                            .accessibilityIdentifier("WorkView.StartRecommendedModel")
+                        }
+                        Menu("Choose a model") {
+                            if availableModels.isEmpty {
+                                Text("No downloaded chat model fits this Mac")
+                            } else {
+                                ForEach(availableModels, id: \.alias) { entry in
+                                    Button(modelMenuTitle(entry)) { startModel(entry.alias) }
+                                        .accessibilityIdentifier("WorkView.StartModel.\(entry.alias)")
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("WorkView.ChooseModel")
+                    }
+                }
+                if let error = agent.error {
+                    Text(error).foregroundStyle(.red)
+                        .accessibilityIdentifier("WorkView.Error")
+                }
+            }
+            .frame(maxWidth: 760)
+            .padding(24)
+            Spacer(minLength: 24)
+            composer
+        }
+    }
+
+    private func modelMenuTitle(_ entry: ModelEntry) -> String {
+        let status = entry.alias == recommendedModel?.alias ? "Recommended · downloaded" : "Downloaded"
+        return [entry.alias, entry.sizeOnDisk, status].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private var canSend: Bool {
+        folder != nil && server.servingAlias != nil && server.activeBearer != nil
+            && !submitting && !agent.isPreparing && !agent.isOpeningSession
+            && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .bottom) {
+                if WorkAgent.fullAccess {
+                    WorkPromptField(text: $message, onSubmit: send)
+                        .accessibilityIdentifier("WorkView.Message")
+                        .frame(minHeight: 48, maxHeight: 100)
+                } else {
+                    TextField("Ask about files, or request a new file…", text: $message, axis: .vertical)
+                        .accessibilityIdentifier("WorkView.Message")
+                        .lineLimit(2...5)
+                        .onSubmit(send)
+                }
+                if agent.isBusy {
+                    Button("Stop") { agent.cancel() }
+                        .accessibilityIdentifier("WorkView.Stop")
+                } else if submitting || agent.isPreparing || agent.isOpeningSession {
+                    ProgressView("Starting…")
+                } else {
+                    Button("Send", action: send)
+                        .accessibilityIdentifier("WorkView.Send")
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canSend)
+                }
+            }
+            if WorkAgent.fullAccess {
+                Text("Press Enter to send")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+    }
+
+    private func sendExample(_ task: String) {
+        message = task
+        if server.servingAlias != nil, server.activeBearer != nil {
+            send()
+        } else if let recommendedModel {
+            pendingExample = task
+            startModel(recommendedModel.alias)
+        }
+    }
+
+    private func sendPendingExampleIfReady() {
+        guard let pendingExample, server.servingAlias != nil, server.activeBearer != nil else { return }
+        self.pendingExample = nil
+        message = pendingExample
+        send()
     }
 
     private func chooseFolder() {
@@ -296,6 +411,68 @@ struct WorkView: View {
         ]
         if let data = try? JSONSerialization.data(withJSONObject: result) {
             try? data.write(to: selected.appendingPathComponent("work-mvp-test-result.json"), options: .atomic)
+        }
+    }
+}
+
+/// NSTextView forwards accessibility value changes to the same binding as typing.
+/// SwiftUI's TextField may update its AX value without committing its text binding.
+struct WorkPromptField: NSViewRepresentable {
+    @Binding var text: String
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let editor = AccessibleEditor(frame: NSRect(x: 0, y: 0, width: 480, height: 48))
+        editor.isRichText = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.isVerticallyResizable = true
+        editor.isHorizontallyResizable = false
+        editor.autoresizingMask = [.width]
+        editor.textContainer?.widthTracksTextView = true
+        editor.font = .preferredFont(forTextStyle: .body)
+        editor.setAccessibilityLabel("Message to Work")
+        editor.setAccessibilityIdentifier("WorkView.Message")
+        editor.textContainerInset = NSSize(width: 8, height: 8)
+        editor.delegate = context.coordinator
+        editor.valueChanged = { context.coordinator.parent.text = $0 }
+        scroll.documentView = editor
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let editor = scroll.documentView as? AccessibleEditor else { return }
+        if editor.string != text { editor.string = text }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: WorkPromptField
+        init(_ parent: WorkPromptField) { self.parent = parent }
+        func textDidChange(_ notification: Notification) {
+            guard let editor = notification.object as? NSTextView else { return }
+            parent.text = editor.string
+        }
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            parent.onSubmit()
+            return true
+        }
+    }
+
+    final class AccessibleEditor: NSTextView {
+        var valueChanged: ((String) -> Void)?
+        override func setAccessibilityValue(_ value: Any?) {
+            super.setAccessibilityValue(value)
+            if let value = value as? String {
+                string = value
+                valueChanged?(value)
+            }
         }
     }
 }

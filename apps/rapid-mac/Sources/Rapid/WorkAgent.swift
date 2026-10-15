@@ -51,9 +51,16 @@ final class WorkAgent {
     private var sandboxProfileURLs: [URL] = []
     private var pendingPermissions: [WorkPermission] = []
     private var generation = 0
+    private var fullLandingInitialized = false
     var lifecycleGeneration: Int { generation }
 
     private init() {}
+
+    func beginFreshFullLanding() {
+        guard Self.fullAccess, !fullLandingInitialized else { return }
+        fullLandingInitialized = true
+        beginNewChat()
+    }
 
     func beginNewChat() {
         conversationRevision += 1
