@@ -395,9 +395,7 @@ def test_k1_cohort_drafts_once_per_cycle_and_verifies_two_wide():
         terminal=[False, False],
     )
     assert [lane.num_draft for lane in batch.lanes] == [1, 1]
-    assert ("trim", (0, 0), {"verify_size": 2, "validate": False}) not in [
-        event for event in cache_events if event[0] == "preflight"
-    ]
+    assert ("trim", (0, 0), {"verify_size": 2, "validate": False}) not in cache_events
 
 
 def test_cohort_uses_uniform_depth_for_scalar_confirmed_boundary():
