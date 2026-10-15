@@ -61,15 +61,36 @@ norm/router math, quantization boundaries, SSM chunking and length-aware state,
 and model registration. The full-size config contract allocates no model tensors.
 Registration state is restored after each test; random weights use seed 0.
 
-M5 qualification requires `MLX_ENABLE_TF32=0` **before importing MLX**, as
-documented in [Apple offline validation](../operations/apple-offline-unit-validation.md).
-The initial default-precision run had 48 passes and three numerical failures:
-Bailing full-prefill/cache parity, Bolt float32 full-prefill/cache parity, and
-Bolt SSM full/chunk parity. The full-float32 rerun passed without changing the
-model implementation or loosening tolerances. This validates equal-precision
-cache/SSM semantics; it does not establish those strict parity tolerances for
-M5's default reduced-precision inference. BF16 and single-kind forward contracts
-also passed in the initial default-policy run.
+The initial M5 default-precision run had three numerical failures across the
+focused suite: Bailing full-prefill/cache parity, Bolt float32 full-prefill/cache
+parity, and Bolt SSM full/chunk parity. The full-float32 rerun passed.
+
+The Bolt float32 comparisons now account for TF32's 10 fraction bits without
+requiring a process environment setting. They bound both RMS and peak error by
+`8 * 2**-10` times the corresponding reference scale. The eight-rounding-unit
+budget accommodates composed matmuls selecting GEMM versus GEMV kernels; scaling
+by tensor RMS/peak avoids unstable elementwise relative errors at cancellation
+zeros. Exact expert-index and per-layer weight-shape assertions remain strict,
+as does router score normalization/scaling. Negative controls inject a 1% output
+head scaling error, omit router scaling, and remove the SSM residual. All must
+be detected. BF16 tolerances are unchanged.
+
+Installed MLX 0.32.4 caches `MLX_ENABLE_TF32` in a function-local C++ static in
+`mlx/include/mlx/utils.h`; the Python core and Metal API stubs expose no precision
+switch. The existing `test_muse_glimmer_model.py` precedent selects full fp32 in
+a fresh subprocess to compare cache semantics at equal precision. These Bolt
+contracts instead retain the caller's precision policy to cover the default GPU
+path, using the bounded comparisons and negative controls above.
+
+The test portability follow-up was validated on mzr-001 (Apple M4 Pro, 48 GiB,
+macOS 26.5.1, CPython 3.12.12, MLX 0.32.4, mlx-lm 0.31.3) after the studio-max
+FIFO queue timed out while that host remained busy. Both the unset default
+policy and `MLX_ENABLE_TF32=0` passed all 68 focused tests, including the negative
+controls. Each run covered all 297 changed production lines against the Phase A
+base and all 23 executable test lines changed by this follow-up against
+`921021257`. Ruff and diff checks passed. The task directory was deleted and
+the Machine Control lease released. These follow-up runs establish M4 behavior;
+M5 execution of the revised comparisons remains unverified.
 
 Acquire a Machine Control lease before running model tests. Copy the worktree
 to a task-local directory under `/private/tmp/rapid-mlx-bolt-tests/`, create a
@@ -77,7 +98,7 @@ Python 3.12 venv there, and install `-e '.[dev]'` plus `diff-cover==8.0.3`.
 Run the following inside that directory while holding the lease:
 
 ```sh
-MLX_ENABLE_TF32=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/pytest \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/pytest \
   tests/test_bailing_hybrid_model.py \
   tests/test_nemotron_h_puzzle_vendored.py \
   tests/test_gpt_oss_puzzle_vendored.py \
@@ -91,6 +112,8 @@ MLX_ENABLE_TF32=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/pytest \
   rapid_mlx/utils/tokenizer.py tests/test_bailing_hybrid_model.py \
   tests/test_nemotron_h_puzzle_vendored.py
 ```
+
+Repeat the pytest command with `MLX_ENABLE_TF32=0` for full-float32 parity.
 
 Copy `coverage.xml` back to the source worktree to compare its actual Git base
 without copying Git internals to the test machine. Mirror CI's diff-cover gate:

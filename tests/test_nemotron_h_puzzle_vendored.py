@@ -11,6 +11,20 @@ pytestmark = pytest.mark.requires_mlx
 import mlx.core as mx  # noqa: E402
 
 
+def _assert_float32_parity(actual, expected):
+    # M5 float32 GEMM uses TF32 (10 fraction bits), whereas GEMV does not.
+    # Prefill/decode and different SSM chunks can select different kernels.
+    # Allow eight TF32 rounding units across the composed matmuls. Scale by
+    # the reference RMS and peak, rather than each element: cancellation can
+    # leave individual outputs near zero. Both bounds still reject 1% scaling.
+    tolerance = 8 * 2**-10
+    error = actual - expected
+    assert bool(
+        mx.mean(mx.square(error)) <= tolerance**2 * mx.mean(mx.square(expected))
+    )
+    assert bool(mx.max(mx.abs(error)) <= tolerance * mx.max(mx.abs(expected)))
+
+
 @pytest.fixture(autouse=True)
 def _isolate_puzzle_registration(monkeypatch):
     from rapid_mlx.utils import tokenizer
@@ -173,9 +187,17 @@ class TestNemotronBolt:
         mx.eval(expected, prefill, decoded)
         assert expected.shape == (1, 4, 64)
         assert bool(mx.all(mx.isfinite(expected)))
-        atol = 0.08 if dtype == mx.bfloat16 else 1e-4
-        assert bool(mx.allclose(expected[:, :3], prefill, atol=atol, rtol=atol))
-        assert bool(mx.allclose(expected[:, 3:], decoded, atol=atol, rtol=atol))
+        if dtype == mx.bfloat16:
+            assert bool(mx.allclose(expected[:, :3], prefill, atol=0.08, rtol=0.08))
+            assert bool(mx.allclose(expected[:, 3:], decoded, atol=0.08, rtol=0.08))
+        else:
+            _assert_float32_parity(prefill, expected[:, :3])
+            _assert_float32_parity(decoded, expected[:, 3:])
+            # Inject a real output-head scaling error; the TF32 budget must
+            # remain small enough to detect even a 1% change.
+            model.lm_head.weight = model.lm_head.weight * 1.01
+            with pytest.raises(AssertionError):
+                _assert_float32_parity(model(tokens), expected)
         assert len(cache) == 2
         for index, count, width in [(1, 4, 16), (3, 6, 24)]:
             mixer = model.layers[index].mixer
@@ -274,7 +296,12 @@ class TestNemotronBolt:
         ]
         assert bool(mx.array_equal(mx.sort(inds), mx.sort(expected_inds)))
         selected = mx.take_along_axis(raw, inds, axis=-1)
-        assert bool(mx.allclose(scores, selected / selected.sum(-1, keepdims=True) * 5))
+        expected_scores = selected / selected.sum(-1, keepdims=True) * 5
+        assert bool(mx.allclose(scores, expected_scores))
+        # Missing routed scaling must fail independently of forward tolerances.
+        gate.routed_scaling_factor = 1.0
+        _, unscaled_scores = gate(x)
+        assert not bool(mx.allclose(unscaled_scores, expected_scores))
         predicate = self.model().quant_predicate
         for path in (
             "lm_head",
@@ -302,8 +329,14 @@ class TestNemotronBolt:
         args = (x, mx.zeros(2), b, c, mx.ones(2), dt, mx.zeros(2))
         full, state = module.ssm_attn(*args)
         chunked, chunk_state = module.ssm_attn(*args, step=2)
-        assert bool(mx.allclose(full, chunked, atol=2e-5, rtol=2e-5))
-        assert bool(mx.allclose(state, chunk_state, atol=2e-5, rtol=2e-5))
+        _assert_float32_parity(chunked, full)
+        _assert_float32_parity(chunk_state, state)
+        # Removing the SSM residual is a semantic error, not TF32 roundoff.
+        without_residual, _ = module.ssm_attn(
+            x, mx.zeros(2), b, c, mx.zeros(2), dt, mx.zeros(2), step=2
+        )
+        with pytest.raises(AssertionError):
+            _assert_float32_parity(without_residual, full)
         mask = mx.array([[True] * 5, [True, True, False, False, False]])
         initial = mx.ones((2, 2, 16, 32))
         result, state = module.ssm_attn(
