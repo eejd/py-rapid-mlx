@@ -103,8 +103,11 @@ final class WorkAgent {
     func preopenGooseChatSession() {
         guard Self.gooseChat, isRunning, !isBusy, sessionHasPrompted else { return }
         let previous = pendingGooseChatSession
+        let requestedGeneration = generation
         pendingGooseChatSession = Task {
             if let previous { _ = try? await previous.value }
+            try Task.checkCancellation()
+            guard generation == requestedGeneration else { throw CancellationError() }
             try await newSession()
         }
     }
@@ -373,6 +376,7 @@ final class WorkAgent {
     }
 
     func newSession() async throws {
+        try Task.checkCancellation()
         if !isRunning {
             isOpeningSession = false
             text = ""
