@@ -671,7 +671,7 @@ struct SettingsView: View {
             Toggle(isOn: telemetryEnabledBinding) {
                 SettingsRowLabel(
                     title: String(localized: "Send anonymous usage data"),
-                    description: String(localized: "Versions, Mac hardware tier, public model and feature names, coarse performance, redacted crash diagnostics, and error categories. For each first successful text chat reply, dictation, or generated image, only the milestone name and “Desktop” are sent. This version does not send a vision-reply milestone. Rapid sends these metadata-only events: the app's to rapidmlx.com's telemetry service, the bundled engine's to its usage collector—never your IP or a per-person profile; the app's collector keeps only a coarse country code. Never prompts, responses, attachments, keys, account details, or unredacted user paths.")
+                    description: String(localized: "Versions, Mac hardware tier, public model and feature names, coarse performance, redacted crash diagnostics, and error categories. For each first successful text chat reply, dictation, or generated image, only the milestone name and “Desktop” are sent. This version does not send a vision-reply milestone. Rapid sends these metadata-only events: the app's to its collector, the bundled engine's to a separate processor—never your IP or a per-person profile; the app's collector keeps only a coarse country code. Never prompts, responses, attachments, keys, account details, or unredacted user paths.")
                 )
             }
             .toggleStyle(TrailingSettingsToggleStyle())
@@ -712,7 +712,7 @@ struct SettingsView: View {
 
             SettingsRowLabel(
                 title: String(localized: "Where the data goes"),
-                description: String(localized: "telemetry.rapidmlx.com — a Cloudflare Worker that strips client IPs before writing to storage. Source is open at github.com/raullenchai/rapidmlx.com under telemetry-worker/.")
+                description: String(localized: "The app collector strips client IPs before storing anonymous usage events. The bundled engine uses a separate processor.")
             )
             }
 

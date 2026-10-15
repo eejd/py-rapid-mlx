@@ -119,7 +119,7 @@ struct TelemetryLifecycleWiringTests {
         let normalized = privacy.replacingOccurrences(of: "**", with: "")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let command = "rapid-mlx telemetry off"
-        let processors = ["rapidmlx.com's telemetry service", "PostHog Cloud (US)"]
+        let processors = ["https://telemetry.rapidmlx.com/v1/events", "https://us.i.posthog.com/batch/"]
         for phrase in [
             "Starting in 0.15.0, it is on by default.",
             "A refusal recorded in 0.15.0 or later is never reversed.",

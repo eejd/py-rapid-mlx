@@ -158,15 +158,14 @@ Anonymous telemetry does **not** collect:
 * Prompt or response contents from traffic to your `rapid-mlx` server.
 * Tool API keys.
 
-The engine sends only `POST https://us.i.posthog.com/batch/` telemetry
-requests to PostHog Cloud (US). Every event disables GeoIP
-enrichment and person-profile creation; PostHog receives no IP or location
-property from Rapid-MLX.
+The engine sends telemetry only to `https://us.i.posthog.com/batch/`.
+Every event disables location enrichment and person-profile creation;
+no IP or location property is included in the event.
 
 The desktop app sends its own events to
-`https://telemetry.rapidmlx.com/v1/events`. The receiving Cloudflare Worker
-derives a coarse two-letter country code from connection metadata for aggregate
-reporting (`XX` when unavailable), strips client IPs, and writes events to R2;
+`https://telemetry.rapidmlx.com/v1/events`. The receiving collector derives a coarse two-letter country code from
+connection metadata for aggregate reporting (`XX` when unavailable), strips
+client IPs, and stores events;
 the IP address is never stored. Source is open at
 `github.com/raullenchai/rapidmlx.com` under `telemetry-worker/`.
 
@@ -308,8 +307,8 @@ distributions are out of scope but we will help triage.
 
 ## Third-party services
 
-* **Telemetry collector** — Cloudflare Workers + R2 storage. Subject
-  to Cloudflare's data processing terms.
+* **Usage data processors** — the app collector and the engine processor
+  receive only the metadata described above.
 * **Auto-update channel** — signed production builds use Sparkle to poll
   `https://dl.rapidmlx.com/appcast.xml` every six hours. Sparkle sends a
   standard app/version user agent but no system profile
