@@ -1039,7 +1039,7 @@ def _install_continuous_mtp_router(
     # it to the attested recursive draft depth, so K=1 is reachable on hosts
     # where the verify forward is cheap per position but the per-cycle
     # overhead is not.
-    requested_depth = max(1, int(getattr(config, "mtp_max_k", 2)))
+    requested_depth = getattr(config, "mtp_max_k", 2)
     decision = plan_router_install(
         model,
         enabled=getattr(config, "mtp_continuous_batching", False),

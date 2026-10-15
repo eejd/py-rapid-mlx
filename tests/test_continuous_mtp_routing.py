@@ -637,6 +637,23 @@ def test_live_installer_threads_mtp_max_k_into_the_cohort_policy(
 
 
 @pytest.mark.requires_mlx
+@pytest.mark.parametrize("bad_depth", [0, -1, True, 1.5])
+def test_live_installer_preserves_planner_depth_validation(bad_depth):
+    from rapid_mlx.scheduler import SchedulerConfig, _install_continuous_mtp_router
+
+    config = SchedulerConfig(
+        spec_decode="mtp",
+        mtp_continuous_batching=True,
+        mtp_max_k=bad_depth,
+        max_num_seqs=4,
+        completion_batch_size=4,
+    )
+
+    with pytest.raises(ValueError, match="max_draft_tokens"):
+        _install_continuous_mtp_router(_SchedulerBatchGenerator(), _Model(), config)
+
+
+@pytest.mark.requires_mlx
 def test_live_installer_clamp_warning_waits_for_admission_and_fires_once(
     monkeypatch, caplog
 ):
