@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Observation
 
@@ -570,10 +571,17 @@ final class ShareComputeManager {
     private func invalidateRegistrationProof() -> Bool {
         for model in ShareComputeModel.desktopSharing {
             let url = Self.registrationURL(catalogID: model.catalogID, home: home)
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
             do {
-                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-                guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                // fileExists also returns false for inaccessible ancestors.
+                // Only ENOENT proves absence; every other metadata error must
+                // prevent changing the account while an old proof may exist.
+                var metadata = stat()
+                if url.path.withCString({ Darwin.lstat($0, &metadata) }) != 0 {
+                    let code = errno
+                    if code == ENOENT { continue }
+                    throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+                }
+                guard metadata.st_mode & S_IFMT == S_IFREG else {
                     providerKeyMessage = String(localized: "The local node registration isn't a regular file. Repair the QuickSilver state directory before changing the saved key.")
                     return false
                 }

@@ -171,6 +171,57 @@ struct ShareComputeProviderTests {
         #expect(try String(contentsOf: sentinel, encoding: .utf8) == "keep")
     }
 
+    @Test("Inaccessible registration metadata cannot switch or remove the saved account", .enabled(if: getuid() != 0))
+    func registrationPermissionsFailClosed() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("share-proof-permissions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = ShareComputeModel.desktopSharing[0]
+        let marker = ShareComputeManager.registrationURL(catalogID: model.catalogID, home: home)
+        let directory = marker.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let proof = try JSONSerialization.data(withJSONObject: [
+            "schema_version": 1, "model": model.catalogID, "alias": model.alias, "worker": "test-mac"
+        ])
+        try proof.write(to: marker)
+        try Data("{}".utf8).write(to: ShareComputeManager.credentialCacheURL(catalogID: model.catalogID, home: home))
+        let keychain = ShareComputeTestKeychain()
+        keychain.values[ShareComputeProviderKeyStore.account] = Self.firstKey
+        let manager = ShareComputeManager(
+            server: ServerManager(testingState: .idle),
+            providerStore: ShareComputeProviderKeyStore(keychain: keychain), home: home
+        )
+        #expect(manager.hasRegistration(for: model, worker: "test-mac"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+        let saved = manager.saveProviderKey(Self.secondKey)
+        let removed = manager.removeProviderKey()
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        #expect(!saved)
+        #expect(!removed)
+        #expect(keychain.values[ShareComputeProviderKeyStore.account] == Self.firstKey)
+        #expect(try Data(contentsOf: marker) == proof)
+        #expect(manager.hasRegistration(for: model, worker: "test-mac"))
+    }
+
+    @Test("A dangling registration symlink is refused rather than treated as absent")
+    func danglingRegistrationIsPreserved() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("share-proof-symlink-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let marker = ShareComputeManager.registrationURL(catalogID: "qwen3.8-27b", home: home)
+        try FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let target = home.appendingPathComponent("missing-proof")
+        try FileManager.default.createSymbolicLink(at: marker, withDestinationURL: target)
+        let keychain = ShareComputeTestKeychain()
+        keychain.values[ShareComputeProviderKeyStore.account] = Self.firstKey
+        let manager = ShareComputeManager(
+            server: ServerManager(testingState: .idle),
+            providerStore: ShareComputeProviderKeyStore(keychain: keychain), home: home
+        )
+        #expect(!manager.saveProviderKey(Self.secondKey))
+        #expect(keychain.values[ShareComputeProviderKeyStore.account] == Self.firstKey)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: marker.path) == target.path)
+    }
+
     @Test("Real child stop/rejoin reuses node, excludes local inference and leaves models unloaded")
     func offlineAndOnline() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("share-on-off-\(UUID().uuidString)")
