@@ -148,7 +148,7 @@ final class ChatViewModel {
     func setGooseFolder(_ url: URL) { gooseFolder = url.standardizedFileURL }
     func retryGoose() { gooseFallback = nil; WorkAgent.shared.stop(); gooseConversationID = nil }
     func activateGooseFallback(_ error: Error) {
-        gooseFallback = "Tools are unavailable. Chat is using the direct model. Retry"
+        gooseFallback = String(localized: "Tools are unavailable. Chat is using the direct model. Retry")
         WorkAgent.shared.stop()
     }
 
