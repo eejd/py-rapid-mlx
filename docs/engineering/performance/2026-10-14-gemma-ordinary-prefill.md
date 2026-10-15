@@ -70,7 +70,7 @@ Use separate checkouts of the baseline and candidate, the same pinned dependenci
 and cached model. Start each process in ABBA order:
 
 ```sh
-python -m rapid_mlx serve /path/to/cached/model --host 127.0.0.1 --port 18646 \
+rapid-mlx serve /path/to/cached/model --host 127.0.0.1 --port 18646 \
   --served-model-name hotpath --no-spec-decode --disable-prefix-cache \
   --disable-disk-caches --disable-model-downloads
 ```
