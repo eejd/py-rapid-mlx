@@ -565,7 +565,6 @@ struct ChatView: View {
         // chrome. Its Markdown child reads the incremental store directly.
         VStack(alignment: .leading, spacing: RapidTheme.Space.lg) {
             ForEach(messages) { message in
-                if true {
                     let usesIncrementalMarkdown = message.role == .assistant
                         && (
                             message.status == .streaming
@@ -655,7 +654,6 @@ struct ChatView: View {
                         }
                     }
                     .id(message.id)
-                }
             }
             // A sibling of the ForEach, not a row inside it: that is what
             // makes "under the last answer" true without MessageRow needing

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 
@@ -945,9 +946,15 @@ final class ChatViewModel {
         }
         let folders = Set((ownedSessions + (legacy.map { [$0] } ?? [])).map(\.folder)
             + (stored?.gooseFolder.map { [$0] } ?? []) + (id == activeConversationID ? [gooseFolder.path] : []))
-        let ownedDirectories = id == activeConversationID
+        let recordedDirectories = id == activeConversationID
             ? gooseAttachmentDirectories : stored?.gooseAttachmentDirectories ?? []
         let ownedMessages = id == activeConversationID ? liveTree() : stored?.allMessages ?? []
+        let legacyDirectories = folders.flatMap { folder in
+            ownedMessages.filter { !$0.fileAttachments.isEmpty || !$0.imageAttachments.isEmpty }
+                .map { URL(fileURLWithPath: folder)
+                    .appendingPathComponent("Attachments/\($0.id.uuidString)").path }
+        }
+        let ownedDirectories = recordedDirectories + legacyDirectories
 
         if id == activeConversationID { cancelInflightWork() }
         do {
@@ -1560,6 +1567,7 @@ final class ChatViewModel {
                 .write(to: safe, atomically: true, encoding: .utf8)
             paths.append(destination.path)
         }
+        persistActive(touching: false)
         return "\nAttached files copied into this conversation folder:\n" + paths.joined(separator: "\n")
     }
 
@@ -1601,7 +1609,10 @@ final class ChatViewModel {
         case .session(let id):
             gooseSessionID = id
             let owned = GooseOwnedSession(id: id, folder: gooseFolder.path)
-            if !gooseOwnedSessions.contains(owned) { gooseOwnedSessions.append(owned) }
+            if !gooseOwnedSessions.contains(owned) {
+                gooseOwnedSessions.append(owned)
+                persistActive(touching: false)
+            }
         case .text(let chunk):
             guard !chunk.isEmpty else { break }
             if let details = messages[initialPlaceholder].gooseErrorDetails,
@@ -2451,17 +2462,36 @@ final class ChatViewModel {
 
     // MARK: - Plain chat stream
 
-    /// Historical conversations can contain agent tool rows. Keep readable
-    /// user and assistant prose while dropping obsolete tool envelopes before
-    /// sending a new plain chat request.
+    /// Flatten legacy tool results into readable assistant evidence while
+    /// removing obsolete tool-call envelopes from the direct-chat wire body.
     nonisolated static func plainChatHistory(_ history: [ChatMessage]) -> [ChatMessage] {
-        let flattened = history.compactMap { original -> ChatMessage? in
-            guard original.role != .tool, original.role != .unknown else { return nil }
+        var flattened: [ChatMessage] = []
+        var pendingTools: [String] = []
+        for original in history {
+            if original.role == .tool {
+                pendingTools.append("Tool result: " + String(original.content.prefix(1200)))
+                continue
+            }
+            guard original.role != .unknown else { continue }
             var message = original
             message.toolCalls = nil
             message.toolCallID = nil
             message.wireSuffix = nil
-            return message
+            if !pendingTools.isEmpty {
+                if message.role == .assistant {
+                    message.content = pendingTools.joined(separator: "\n")
+                        + (message.content.isEmpty ? "" : "\n" + message.content)
+                } else {
+                    flattened.append(ChatMessage(role: .assistant,
+                        content: pendingTools.joined(separator: "\n")))
+                }
+                pendingTools.removeAll()
+            }
+            flattened.append(message)
+        }
+        if !pendingTools.isEmpty {
+            flattened.append(ChatMessage(role: .assistant,
+                content: pendingTools.joined(separator: "\n")))
         }
         return filterEmptyAssistantsForWire(flattened)
     }

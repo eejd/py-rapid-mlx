@@ -73,7 +73,11 @@ enum GooseConversationRetention {
                   let message = messages.first(where: { $0.id == messageID }) else { continue }
             let filenames = message.imageAttachments.map {
                 $0.id.uuidString + "-" + URL(fileURLWithPath: $0.filename).lastPathComponent
-            } + message.fileAttachments.map { $0.id.uuidString + ".txt" }
+            } + message.imageAttachments.map { URL(fileURLWithPath: $0.filename).lastPathComponent }
+                + message.fileAttachments.map { $0.id.uuidString + ".txt" }
+                + message.fileAttachments.map {
+                    URL(fileURLWithPath: $0.filename).deletingPathExtension().lastPathComponent + ".txt"
+                }
             for name in filenames {
                 let file = try GooseToolPresentation.containedDestination(
                     directory.appendingPathComponent(name), root: root)
