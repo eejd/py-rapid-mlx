@@ -281,7 +281,7 @@ final class QuickstartCoordinator {
         displayName: "LFM2.5 · 1.2B",
         hfRepo: "mlx-community/LFM2.5-1.2B-Instruct-4bit",
         downloadBytes: 663_397_140,
-        blurb: "For basic chat only; less accurate than larger models.",
+        blurb: "For basic chat only; less accurate and not recommended for tools.",
         tier: .lowMemory
     )
 

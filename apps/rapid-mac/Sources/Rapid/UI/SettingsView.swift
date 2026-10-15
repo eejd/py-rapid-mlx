@@ -653,7 +653,7 @@ struct SettingsView: View {
                         } else { gooseYOLODefault = enabled }
                     }))
                     Text("Approved tools run with your Mac user permissions and can access files outside the selected chat folder.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(RapidFont.caption).foregroundStyle(.secondary)
                     ForEach(gooseAllowedTools, id: \.self) { tool in
                         HStack {
                             Text(GoosePermissionPolicy.scope(tool))

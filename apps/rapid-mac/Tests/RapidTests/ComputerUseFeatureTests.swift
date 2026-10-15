@@ -11,6 +11,8 @@ struct ComputerUseFeatureTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
+        #expect(!ComputerUseFeatureConfig.defaultEnabled)
+        defaults.set(false, forKey: ComputerUseFeatureConfig.enabledKey)
         #expect(!ComputerUseFeatureConfig.isEnabled(in: defaults))
         defaults.set(true, forKey: ComputerUseFeatureConfig.enabledKey)
         #expect(ComputerUseFeatureConfig.isEnabled(in: defaults))

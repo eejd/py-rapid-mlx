@@ -135,7 +135,7 @@ struct SpeculativeDecodingAvailability: Equatable, Sendable {
             fallback = "%@ is configured, but this request requires ordinary decoding."
         case .unsupportedTools:
             key = "speculative_status.unsupported_tools.help"
-            fallback = "%@ cannot serve this request in the current acceleration mode."
+            fallback = "%@ cannot serve tool requests in this mode. Turn off acceleration in Settings → Performance and restart the model to use tools."
         case .pending:
             key = "speculative_status.pending.help"
             fallback = "%@ is configured. Rapid-MLX will confirm the runtime when generation starts."

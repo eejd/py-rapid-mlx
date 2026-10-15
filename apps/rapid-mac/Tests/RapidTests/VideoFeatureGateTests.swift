@@ -10,6 +10,8 @@ struct VideoFeatureGateTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
+        #expect(!VideoFeatureConfig.defaultEnabled)
+        defaults.set(false, forKey: VideoFeatureConfig.enabledKey)
         #expect(!VideoFeatureConfig.isEnabled(in: defaults))
         defaults.set(true, forKey: VideoFeatureConfig.enabledKey)
         #expect(VideoFeatureConfig.isEnabled(in: defaults))
