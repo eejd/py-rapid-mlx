@@ -37,7 +37,7 @@ class StreamRateTests(unittest.TestCase):
         rate.feed(b'data: {"choices":[],"usage":{"completion_tokens":11}}\n\n')
         self.assertEqual(rate.tokens_per_second(), 20.0)
 
-    def test_goose_request_removes_global_prompt_and_unused_tool_schemas(self):
+    def test_goose_request_removes_global_prompt_and_compacts_all_tool_schemas(self):
         original = {
             "model": "test-model", "stream": True,
             "messages": [
@@ -45,17 +45,23 @@ class StreamRateTests(unittest.TestCase):
                 {"role": "user", "content": "今天谷歌股价多少？"},
             ],
             "tools": [{"type": "function", "function": {"name": name,
-                       "description": "large schema " * 50}}
-                      for name in ("shell", "tree", "write", "edit", "apps__create_app",
-                                   "autovisualiser__show_chart")],
+                       "description": "large schema " * 50,
+                       "parameters": {"type": "object", "properties": {
+                           "input": {"type": "string", "description": "argument detail " * 50}}}}}
+                      for name in ("shell", "tree", "write", "edit", "memory__remember",
+                                   "autovisualiser__show_chart", "computercontroller__open",
+                                   "tutorial__help")],
         }
         compact = self.module.compact_goose_request(json.loads(json.dumps(original)))
-        self.assertLess(len(json.dumps(compact)), 4000)
+        self.assertLess(len(json.dumps(compact)), 5500)
         self.assertEqual(compact["messages"][1], original["messages"][1])
         self.assertEqual([t["function"]["name"] for t in compact["tools"]],
-                         ["shell", "tree", "write", "edit"])
+                         ["shell", "tree", "write", "edit", "memory__remember",
+                          "autovisualiser__show_chart", "computercontroller__open",
+                          "tutorial__help"])
+        self.assertEqual(compact["tools"][0]["function"]["parameters"]["properties"]["input"]["type"], "string")
         self.assertIn("current facts", compact["messages"][0]["content"])
-        self.assertIn("exact source URL", compact["messages"][0]["content"])
+        self.assertIn("exact URL", compact["messages"][0]["content"])
 
     def test_rotated_server_key_is_read_for_each_upstream_request(self):
         module = self.module
@@ -67,7 +73,7 @@ class StreamRateTests(unittest.TestCase):
                 key_file.write_text("rotated")
                 self.assertEqual(module.upstream_bearer(), "rotated")
 
-    def test_exact_greeting_omits_tool_schemas(self):
+    def test_greetings_and_other_languages_retain_tool_schemas(self):
         body = {
             "messages": [
                 {"role": "system", "content": "large prompt " * 2000},
@@ -76,11 +82,13 @@ class StreamRateTests(unittest.TestCase):
             "tools": [{"type": "function", "function": {"name": "shell"}}],
             "tool_choice": "auto",
         }
-        compact = self.module.compact_goose_request(body)
-        self.assertNotIn("tools", compact)
-        self.assertNotIn("tool_choice", compact)
-        self.assertEqual(compact["messages"][1]["content"],
-                         "Reply in the user's language.\nhi\n<turn-context>time</turn-context>")
+        for prompt in ("hi", "你好", "帮我看看 Hacker News 首页前 5 条", "write snake.html"):
+            candidate = json.loads(json.dumps(body))
+            candidate["messages"][1]["content"] = prompt
+            compact = self.module.compact_goose_request(candidate)
+            self.assertEqual(compact["tools"], body["tools"])
+            self.assertEqual(compact["tool_choice"], "auto")
+            self.assertEqual(compact["messages"][1]["content"], prompt)
 
     def test_tool_arguments_contribute_to_live_rate(self):
         module = self.module

@@ -27,7 +27,6 @@ METRICS_KEY = os.environ.get("WORK_PROXY_METRICS_KEY", "")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
-GOOSE_CHAT_TOOLS = {"shell", "tree", "write", "edit"}
 GOOSE_CHAT_SYSTEM = (
     "You are Goose Chat, a local assistant. Use the available tools when needed. "
     "For current facts, use a tool to fetch a live source before answering; "
@@ -52,25 +51,22 @@ def upstream_bearer():
 def compact_goose_request(body):
     """Keep the local 27B's first-turn prefill small enough for live chat."""
     messages = body.get("messages") or []
-    latest_user = next((message.get("content", "") for message in reversed(messages)
-                        if message.get("role") == "user"), "")
-    # Goose prefixes the user text with its two-line behavior and appends
-    # <turn-context>. An exact greeting needs no file or shell schema.
-    request_line = (latest_user.split("<turn-context>", 1)[0].strip().splitlines() or [""])[-1]
-    greeting = request_line.strip().casefold().strip("!！.。 ") in {"hi", "hello", "hey", "你好", "嗨"}
     for message in messages:
         if message.get("role") == "system":
             message["content"] = GOOSE_CHAT_SYSTEM
             break
-    tools = body.get("tools")
-    if isinstance(tools, list):
-        selected = [tool for tool in tools
-                    if tool.get("function", {}).get("name") in GOOSE_CHAT_TOOLS]
-        if selected:
-            body["tools"] = selected
-    if greeting:
-        body.pop("tools", None)
-        body.pop("tool_choice", None)
+    # Keep every built-in tool and its argument schema. Long prose in Goose's
+    # descriptions duplicates the compact behavior prompt on every turn.
+    def trim_descriptions(value):
+        if isinstance(value, dict):
+            return {key: (item[:180] if key == "description" and isinstance(item, str)
+                          else trim_descriptions(item)) for key, item in value.items()}
+        if isinstance(value, list):
+            return [trim_descriptions(item) for item in value]
+        return value
+
+    if isinstance(body.get("tools"), list):
+        body["tools"] = trim_descriptions(body["tools"])
     return body
 
 

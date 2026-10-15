@@ -9,7 +9,7 @@ struct GooseChatTests {
     func isolatedHelperContext() {
         #expect(WorkAgent.helperHome(gooseChat: true, fullAccess: true,
             userHome: "/Users/test", support: "/tmp/chat-support") == "/tmp/chat-support")
-        #expect(WorkAgent.builtinExtensions(gooseChat: true, fullAccess: true) == "developer")
+        #expect(WorkAgent.builtinExtensions(gooseChat: true, fullAccess: true) == "developer,computercontroller,memory,autovisualiser,tutorial")
         #expect(WorkAgent.helperHome(gooseChat: false, fullAccess: true,
             userHome: "/Users/test", support: "/tmp/chat-support") == "/Users/test")
     }
