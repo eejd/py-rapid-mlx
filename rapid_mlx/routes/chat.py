@@ -2708,17 +2708,20 @@ def _contains_structural_tool_wire_leak(
     if cross_match and _span_has_tool_payload_object(cross_match.group(0)):
         return True
     for marker_re in _TOOL_WIRE_STANDALONE_MARKERS:
-        match = marker_re.search(text)
-        if not match:
-            continue
-        window_end = min(len(text), match.end() + 2048)
-        if (
-            _payload_object_after_marker(
-                text, match.end(), window_end, allow_truncated=allow_truncated
-            )
-            is not None
-        ):
-            return True
+        matches = (
+            marker_re.finditer(text) if allow_truncated else [marker_re.search(text)]
+        )
+        for match in matches:
+            if not match:
+                continue
+            window_end = min(len(text), match.end() + 2048)
+            if (
+                _payload_object_after_marker(
+                    text, match.end(), window_end, allow_truncated=allow_truncated
+                )
+                is not None
+            ):
+                return True
     return False
 
 

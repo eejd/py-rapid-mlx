@@ -1542,8 +1542,9 @@ def test_4663_incomplete_examples_are_not_terminal_wire(raw):
 @pytest.mark.parametrize(
     "choice", ["required", {"type": "function", "function": {"name": "add_numbers"}}]
 )
-def test_4663_forced_truncated_payload_does_not_leak_to_content(choice):
-    raw = '<tool_call> {"name": "add_numbers", "'
+@pytest.mark.parametrize("narration", ["", "Use <tool_call> for tool invocation.\n"])
+def test_4663_forced_truncated_payload_does_not_leak_to_content(choice, narration):
+    raw = narration + '<tool_call> {"name": "add_numbers", "'
     client = _make_client(_RecordingEngine(text=raw), tool_call_parser="hermes")
     response = client.post(
         "/v1/chat/completions",
@@ -1557,7 +1558,7 @@ def test_4663_forced_truncated_payload_does_not_leak_to_content(choice):
     )
     assert response.status_code == 200, response.text
     message = response.json()["choices"][0]["message"]
-    assert not message.get("content"), message
+    assert (message.get("content") or "").strip() == narration.strip(), message
     assert not message.get("reasoning_content"), message
     assert message["tool_calls"][0]["function"] == {
         "name": "add_numbers",
@@ -1566,8 +1567,9 @@ def test_4663_forced_truncated_payload_does_not_leak_to_content(choice):
 
 
 @pytest.mark.parametrize("chunk_size", [1, 7, 200])
-def test_4663_stream_terminal_does_not_replay_truncated_wire(chunk_size):
-    raw = '<tool_call> {"name": "add_numbers", "'
+@pytest.mark.parametrize("narration", ["", "Use <tool_call> for tool invocation.\n"])
+def test_4663_stream_terminal_does_not_replay_truncated_wire(chunk_size, narration):
+    raw = narration + '<tool_call> {"name": "add_numbers", "'
 
     class Engine(_RecordingEngine):
         async def stream_chat(self, messages, **kwargs):
@@ -1618,7 +1620,7 @@ def test_4663_stream_terminal_does_not_replay_truncated_wire(chunk_size):
             visible += (delta.get("content") or "") + (
                 delta.get("reasoning_content") or ""
             )
-    assert not visible, visible
+    assert visible.strip() == narration.strip(), visible
 
 
 def test_4663_forced_truncated_wire_in_reasoning_preserves_narration():
