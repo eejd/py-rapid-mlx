@@ -20,6 +20,10 @@
     "gdpval": {
       "url": "https://huggingface.co/datasets/openai/gdpval/resolve/11e7900cdcac61bc4daf59e65feb238acda98fbf/data/train-00000-of-00001.parquet",
       "sha256": "f8422fab9b21d90c0ee5f0659842ab666d418cb8940842918f9f4b0df7ae0202"
+    },
+    "gaia": {
+      "url": "https://huggingface.co/datasets/gaia-benchmark/GAIA/resolve/682dd723ee1e1697e00360edccf2366dc8418dd9/2023/validation/metadata.level1.parquet",
+      "sha256": "5e574b0faeb4603b816e426cf7c7aefb1fe398d32f9c4861e1a4e3304f2b1281"
     }
   },
   "ids": {
@@ -168,7 +172,22 @@
       "81db15ff-ceea-4f63-a1cd-06dc88114709",
       "7bbfcfe9-132d-4194-82bb-d6f29d001b01"
     ],
-    "gaia": []
-  },
-  "gaia_status": "Gated validation metadata unavailable; accept source terms and place file in private cache."
+    "gaia": [
+      "5cfb274c-0207-4aa7-9575-6ac0bd95d9b2",
+      "cffe0e32-c9a6-4c52-9877-78ceb4aaa9fb",
+      "7bd855d8-463d-4ed5-93ca-5fe35145f733",
+      "389793a7-ca17-4e82-81cb-2b3a2391b4b9",
+      "f918266a-b3e0-4914-865d-4faa564f1aef",
+      "65afbc8a-89ca-4ad5-8d62-355bb401f61d",
+      "50ec8903-b81f-4257-9450-1085afd2c319",
+      "9d191bce-651d-4746-be2d-7ef8ecadb9c2",
+      "c365c1c7-a3db-4d5e-a9a1-66f56eae7865",
+      "5a0c1adf-205e-4841-a666-7c3ef95def9d",
+      "a1e91b78-d3d8-4675-bb8d-62741b4b68a6",
+      "5188369a-3bbe-43d8-8b94-11558f909a08",
+      "b415aba4-4b68-4fc6-9b89-2c812e55a3e1",
+      "cf106601-ab4f-4af9-b045-5295fe67b37d",
+      "c714ab3a-da30-4603-bacd-d008800188b9"
+    ]
+  }
 }

@@ -67,7 +67,10 @@ def prepare():
     if gaia.exists():
         import pyarrow.parquet as pq
         rows = pq.read_table(gaia).to_pylist()
-        manifest["ids"]["gaia"] = ranked(rows, "task_id", 15)
+        supported = (".txt", ".py", ".docx", ".xlsx")
+        file_rows = [r for r in rows if str(r.get("file_name", "")).lower().endswith(supported)]
+        web_rows = [r for r in rows if not r.get("file_name")]
+        manifest["ids"]["gaia"] = ranked(file_rows, "task_id", min(6, len(file_rows))) + ranked(web_rows, "task_id", 15 - min(6, len(file_rows)))
         manifest["sources"]["gaia"] = {"url": "https://huggingface.co/datasets/gaia-benchmark/GAIA/resolve/682dd723ee1e1697e00360edccf2366dc8418dd9/2023/validation/metadata.level1.parquet", "sha256": hashlib.sha256(gaia.read_bytes()).hexdigest()}
     else:
         manifest["ids"]["gaia"] = []

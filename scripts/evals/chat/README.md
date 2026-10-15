@@ -1,6 +1,6 @@
 # Goose Chat QA benchmark subset
 
-`python3 scripts/evals/chat/prepare.py` downloads source data to `~/.cache/rapid-mlx/chat-eval/` and verifies the SHA-256 hashes in `subset.json`. Commit only the IDs and hashes. It selects IDs by SHA-256 of `goose-chat-qa-20261015:<id>`, with Arena restricted to `hard_prompt` and GDPval to three document and two spreadsheet tasks with no reference files. This avoids choosing questions after viewing model answers. Source records and answers stay out of Git.
+`python3 scripts/evals/chat/prepare.py` downloads source data to `~/.cache/rapid-mlx/chat-eval/` and verifies the SHA-256 hashes in `subset.json`. Commit only the IDs and hashes. It selects IDs by SHA-256 of `goose-chat-qa-20261015:<id>`, with Arena restricted to `hard_prompt`, GDPval to three document and two spreadsheet tasks with no reference files, and GAIA level 1 to six supported text/document/spreadsheet attachments plus nine web-only tasks. This avoids choosing questions after viewing model answers. Source records and answers stay out of Git.
 
 | Dataset | Access and terms checked 2026-10-15 | Subset |
 | --- | --- | --- |
@@ -8,10 +8,10 @@
 | [SimpleQA](https://github.com/openai/simple-evals) | Public CSV and MIT evaluation repository | 30 |
 | [Chinese SimpleQA](https://huggingface.co/datasets/OpenStellarTeam/Chinese-SimpleQA) | Public, CC BY-NC-SA 4.0 on dataset card (the evaluation code has separate MIT terms) | 20 |
 | [IFEval](https://huggingface.co/datasets/google/IFEval) | Public, Apache 2.0 | 40 |
-| [GAIA 2023 validation level 1](https://huggingface.co/datasets/gaia-benchmark/GAIA) | Gated; terms prohibit republishing validation content in a crawlable location. HTTP 401 without accepted access. | 15 once authorized; currently unavailable |
+| [GAIA 2023 validation level 1](https://huggingface.co/datasets/gaia-benchmark/GAIA) | Gated; terms prohibit republishing validation content in a crawlable location. Accepted local access permits private evaluation. | 15 |
 | [GDPval](https://huggingface.co/datasets/openai/gdpval) | Public gold files and rubrics; dataset card has no explicit license tag. Use internally, do not redistribute source files. | 5 |
 
-GAIA: after accepting the dataset terms with your own Hugging Face account, place `metadata.level1.parquet` in the private cache as `gaia-metadata.level1.parquet` and rerun `prepare.py`. The manifest will then contain the 15 IDs. Do not commit the source, answers, or attachments.
+GAIA: after accepting the dataset terms with your own Hugging Face account, place `metadata.level1.parquet` in the private cache as `gaia-metadata.level1.parquet` and rerun `prepare.py`. The committed manifest contains 15 IDs. The runner fetches six selected attachments only into the private eval workspace. Do not commit the source, answers, or attachments.
 
 Each result record should include `benchmark`, `id`, `path` (`goose` or `direct`), `web` (true/false), `answer`, `first_visible_s`, `total_s`, `tool_calls`, `permission_prompts`, `failure`, and `empty`. Keep raw outputs in an ignored local results directory. Score Arena from blinded, position-swapped comparisons, with ties and unresolved disagreements counted separately. Use the official IFEval checker for its programmatic pass rate. Report SimpleQA labels as correct, incorrect, and not-attempted; human review is required for semantic aliases. GAIA uses its official exact-answer normalization. GDPval deliverables require the public rubrics and gold artifacts for review; existence alone is not a quality score.
 
@@ -31,7 +31,7 @@ python3 scripts/evals/chat/run.py \
 python3 scripts/evals/chat/score.py scripts/evals/chat/results/run.jsonl
 ```
 
-The runner stops at 45 minutes and preserves partial results. It does not turn unscored rows into successes. A second run resumes missing rows. The current revision captures answers and artifacts but does not automate the official IFEval checker, GAIA normalization, or rubric grading; those scores must remain pending until checked.
+The runner stops at 45 minutes and preserves partial results. It does not turn unscored rows into successes. A second run resumes missing rows. The current revision captures answers and artifacts but does not automate GAIA normalization or GDPval rubric grading; those scores must remain pending until checked.
 
 IFEval strict programmatic scoring uses Google's pinned reference code. In a separate evaluation environment install its requirements (`absl-py`, `langdetect`, `immutabledict`, `nltk`) and run `python3 scripts/evals/chat/check_ifeval.py scripts/evals/chat/results/run.jsonl --output scripts/evals/chat/results/ifeval-labels.json`, then pass that file to `score.py --labels`. The code is cached outside Git.
 

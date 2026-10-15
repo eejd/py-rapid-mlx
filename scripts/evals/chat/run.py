@@ -215,6 +215,25 @@ def direct(question, base, model, bearer, timeout):
     return state
 
 
+def stage_gaia_attachment(row, folder):
+    relative = row.get("file_path") or ""
+    if not relative:
+        return
+    name = pathlib.PurePosixPath(relative).name
+    if not name or name != row.get("file_name"):
+        raise ValueError("Invalid GAIA attachment path")
+    target = folder / name
+    if target.exists():
+        return
+    token_file = pathlib.Path.home() / ".cache/huggingface/token"
+    if not token_file.is_file():
+        raise RuntimeError("GAIA attachment needs accepted Hugging Face access")
+    url = "https://huggingface.co/datasets/gaia-benchmark/GAIA/resolve/682dd723ee1e1697e00360edccf2366dc8418dd9/" + relative
+    request = urllib.request.Request(url, headers={"Authorization": "Bearer " + token_file.read_text().strip()})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        target.write_bytes(response.read())
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--acp", required=True, help="isolated Goose helper base URL")
@@ -239,7 +258,7 @@ def main():
     completed = {(r["benchmark"], r["id"], r["path"], bool(r["web"])) for line in args.output.read_text().splitlines()
                  if line.strip() for r in [json.loads(line)]} if args.output.exists() else set()
     with args.output.open("a") as output:
-        for benchmark, id_, question, _ in load_items():
+        for benchmark, id_, question, source in load_items():
             paths = [("goose", True), ("goose", False), ("direct", False)] if benchmark in ("simpleqa", "chinese") else [("goose", True), ("direct", False)]
             for path, web in paths:
                 if (benchmark, id_, path, web) in completed:
@@ -248,6 +267,8 @@ def main():
                     return
                 folder = args.workspaces / (benchmark + "-" + id_)
                 folder.mkdir(parents=True, exist_ok=True)
+                if benchmark == "gaia" and path == "goose":
+                    stage_gaia_attachment(source, folder)
                 result = (acp.ask(question, folder, args.web_script if web else None, args.item_timeout)
                           if path == "goose" else direct(question, args.engine, args.model, bearer, args.item_timeout))
                 result.update({"benchmark": benchmark, "id": id_, "path": path, "web": web})
