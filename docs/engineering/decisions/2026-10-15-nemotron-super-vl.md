@@ -58,34 +58,35 @@ new serving API promise.
 ## Reproduction
 
 Create the task-local Python 3.12 environment and install `-e '.[dev]'`.
-All model operations, including conversion and model tests, use
-`lockf -k /var/tmp/rapid-mlx-large-model.lock`. The complete 88-file source
+Inference and GPU model tests use
+`lockf -k /var/tmp/rapid-mlx-large-model.lock`. Offline conversion explicitly
+selects the CPU and does not require the GPU lock. The complete 88-file source
 snapshot has been verified; the converter additionally rejects any missing
 indexed weight shard.
 
 ```sh
 source_snapshot="$HOME/.cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16/snapshots/a1ccf94d69377bf82c4db39798aac28447d9c16f"
 output_root=/Volumes/RTL-2T/scratch-archive/rapid-mlx/super-vl-120b
-HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 lockf -k \
-  /var/tmp/rapid-mlx-large-model.lock .venv/bin/python \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python \
   scripts/nemotron_super_vl_convert.py --source "$source_snapshot" \
   --output "$output_root/text-4bit-g64" --bits 4
-HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 lockf -k \
-  /var/tmp/rapid-mlx-large-model.lock .venv/bin/python \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python \
   scripts/nemotron_super_vl_convert.py --source "$source_snapshot" \
   --output "$output_root/text-3bit-mixed" --bits 3
 ```
 
 The four-bit recipe uses affine/group-64 eligible projections and eight-bit
-embeddings. Mixed three-bit uses routed experts at three-bit/group-128, other
+embeddings. The budgeted mixed recipe uses 26 interior MoE layers at
+two-bit/group-128 and 14 boundary MoE layers at three-bit/group-128, other
 eligible projections at four-bit/group-64, and eight-bit embeddings. Both
 preserve the output head, router and latent projections at source precision.
 The converter writes the model card and reports every output file, including
 README, excluding `.cache` directories. Catalog sizing separately uses
 `rapid_mlx._download_gate._is_weight_file`, the same filename filter used by
 `scripts/gen_model_sizes.py`; it excludes README, LICENSE and the Jinja template.
-Model cards require Rapid-MLX PR #4679 and follow-up and recommend 96 GB+ memory;
-any shorter-context 64 GB suggestion is explicitly unqualified.
+Model cards require Rapid-MLX PR #4679 and follow-up. Four-bit guidance is
+128 GB+; mixed guidance must come from its measured 1K peak, with the physical
+qualification hardware identified.
 
 Intended publication repositories, for human upload only:
 
@@ -143,7 +144,7 @@ responses, proper finish reasons, and no leaked control tokens. Examples:
 zero and its own server stops cleanly; no other process is stopped by this task.
 
 Direct generator throughput is 466.12–467.59 prompt tokens/s and 48.39–48.56
-decode tokens/s for 1,024 prompt / 64 generation tokens, with a 72.68 GB process
+decode tokens/s for 1,024 prompt / 64 generation tokens, with a 72.68 GB MLX allocator
 peak. [Environment, commands, parity table and evidence](../performance/2026-10-15-nemotron-super-vl-text.md).
 
 The four-bit catalog alias `nemotron-3.5-super-vl`, exact filtered footprint,
@@ -159,7 +160,8 @@ The final regressions, full BF16 reference and HTTP serving then completed.
 Roughly 70 minutes of the original time budget went to lock waits. The task
 never bypassed the lock or stopped a foreign process. Mixed three-bit was
 deferred before conversion to preserve the primary four-bit gates; its output
-directory and catalog entry do not exist. Four-bit qualification is local only;
+directory and catalog entry did not exist at that checkpoint. The continuation
+results below supersede that mixed-artifact status. Four-bit qualification is local only;
 there was no push, upload or release action.
 
 Run focused tensor and conversion gates:
@@ -171,6 +173,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 lockf -k \
   tests/test_nemotron_h_puzzle_vendored.py \
   tests/test_nemotron_tool_parser_fail_open.py \
   tests/test_nemotron_bolt_metadata.py tests/test_model_metadata.py \
+  tests/test_nemotron_super_metadata.py \
   --basetemp=/private/tmp/nemotron-super-vl-tests \
   --cov=rapid_mlx --cov=scripts --cov-report=xml:coverage.xml -q
 .venv/bin/python -m diff_cover.diff_cover_tool coverage.xml \
@@ -187,15 +190,48 @@ materializing a roughly 241 GB contiguous model. Reference prompts run together
 inside the exclusive window; every invocation holds the shared lock. Serving and
 1K performance scripts are prepared in the private evidence directory.
 
-Vector next action: convert mixed three-bit into
-`/Volumes/RTL-2T/scratch-archive/rapid-mlx/super-vl-120b/text-3bit-mixed`,
-reuse the archived eight-prompt BF16 reference, run shorter quantized sampling
-and the same HTTP gates, then add its measured catalog footprint and update
-README totals. Harbor/coordinator must provide a real exclusive model-lock
-window for that work and defer full validators until it completes. The current
-four-bit artifact, catalog and source changes are ready for local review.
-Vision remains feasibility-only; Vector owns a separate image-input follow-up.
-The human retains publication and release authorization.
+The continuation produces the mixed artifact at
+`/Volumes/RTL-2T/scratch-archive/rapid-mlx/super-vl-120b/text-3bit-mixed` on CPU
+in 267.35 seconds. Its weights total 42,746,861,568 bytes and generator-filtered
+catalog footprint is 42,764,296,516 bytes. All nine shard extents and protected
+precision boundaries pass inspection. Keeping all experts at three bits would
+produce about 51.925 GB; the requested disk and allocator budgets require most
+expert layers at two bits. The selected 26 interior layers leave seven MoE
+layers at each boundary at three bits. Per-module config records this mix.
+
+The locked eight-prompt comparison passes the requested minimum of 5/8 strict
+first-token matches: **6/8 strict**, **7/8 tie-aware**, **68/80 top-10 overlap**,
+and **4/8 identical sampled sequences**. All **seven HTTP serving gates pass**,
+including reasoning separation and streaming/non-streaming XML tools with
+follow-ups. The 1K/64-token benchmark reaches **458.47–459.28 prompt tokens/s**,
+**49.93–50.06 decode tokens/s**, and a maximum **45.903368468 GB MLX allocator
+peak**, below the requested 46 GB limit. The final artifact is
+**42,764,311,538 bytes**, including the measured-memory model card.
+
+The artifact targets 64 GB unified memory at short contexts; start at 1K with
+prefill chunks of 256 and leave memory for macOS and applications. Measurements
+use a 256 GiB M3 Ultra, so a physical 64 GB Mac and long contexts remain
+unqualified. The recipe and tensor/conversion tests are committed as
+`6a866e188`; the parent branch's later precision-boundary comments/regression
+are merged as `acb5e990a` without changing inference math.
+
+The alias `nemotron-3.5-super-vl-3bit` selects the intended `MLX-3bit` repository,
+native parsers, explicit recurrence, text-only capability and no speculative
+decoding. The catalog uses the exact **42,764,296,516-byte** generator-filtered
+footprint. README totals are **208 text / 274 total aliases**, and the model
+table identifies mixed 2/3-bit precision explicitly. The original 4-bit alias
+remains unchanged.
+
+The focused suite passes **97 tests**. Ruff and format checks pass. Changed-line
+coverage against `origin/vector/nemotron-35-bolt` is **142/142, 100%**. All
+**3,848 catalog/README contract tests pass** on CPU, independently of the GPU lock;
+all inference and tensor tests held the lock. After yielding only our own
+initial serving harness, the gates waited approximately 63 minutes for the
+priority #4679 validator, then completed under the shared lock.
+
+Vector owns this completed local text qualification. No push, upload or release
+was performed. Vision remains a separate image-input follow-up; the human
+retains publication and release authorization.
 
 Private operational scratch is under `/private/tmp/nemotron-super-vl-evidence/`;
 completed measurements and harnesses are archived under
