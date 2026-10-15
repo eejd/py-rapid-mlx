@@ -54,6 +54,31 @@ struct GooseChatTests {
             sessionConversationID: decoded.id, currentContextIDs: visible, visibleContextIDs: [UUID()], sessionID: "s"))
     }
 
+    @Test("Goose chats appear newest first and reopen their saved transcript")
+    func historyList() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("goose-history-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = root.appendingPathComponent("conversations.json")
+        let model = ChatViewModel(conversationStoreURL: store)
+        model.send("First task", alias: "test-model")
+        model.stopAndPersist()
+        let firstID = model.activeConversationID
+        model.newConversation()
+        model.send("Second task", alias: "test-model")
+        model.stopAndPersist()
+        let secondID = model.activeConversationID
+        #expect(model.conversations.map(\.id) == [secondID, firstID])
+        #expect(model.conversations.map(\.title) == ["Second task", "First task"])
+        model.selectConversation(firstID)
+        #expect(model.messages.first?.content == "First task")
+        #expect(model.activeConversationID == firstID)
+        model.send("Continue", alias: "test-model")
+        model.stopAndPersist()
+        #expect(model.conversations.first?.id == firstID)
+        #expect(model.messages.contains(where: { $0.content == "Continue" }))
+    }
+
     @Test("Helper failure activates direct chat fallback and Retry clears it")
     func fallback() {
         let model = ChatViewModel(persistsConversations: false)

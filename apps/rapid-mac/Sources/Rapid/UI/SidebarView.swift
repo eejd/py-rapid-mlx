@@ -401,7 +401,8 @@ struct SidebarView: View {
 
             // Folders can exist before any conversation does (create one, then
             // file into it), so an empty history no longer means an empty rail.
-            if !WorkAgent.fullAccess && (!chat.conversations.isEmpty || !chat.folders.isEmpty) {
+            if (!WorkAgent.fullAccess || WorkAgent.gooseChat)
+                && (!chat.conversations.isEmpty || !chat.folders.isEmpty) {
                 // Date-grouped history (#1470), titled with the shared
                 // SectionHeader so the groups match the refreshed visual
                 // system (#1460) instead of the PR's original inline caption.
@@ -1522,14 +1523,21 @@ struct SidebarView: View {
                     // History rows carry no icon but keep the same leading
                     // inset as the nav rows above, so titles and nav labels
                     // align down one column instead of stepping in and out.
-                    Text(conv.title)
-                        .font(isActive ? RapidFont.bodyEmphasis : RapidFont.body)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .padding(.leading, RapidTheme.Layout.iconSlot + RapidTheme.Space.sm)
-                        // Reserve the controls' width so revealing them
-                        // re-truncates the title instead of overlapping it.
-                        .padding(.trailing, showsControls ? Self.rowControlsWidth : 0)
+                    HStack(spacing: RapidTheme.Space.xs) {
+                        Text(conv.title)
+                            .font(isActive ? RapidFont.bodyEmphasis : RapidFont.body)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if conv.id == chat.activeConversationID && chat.isStreaming {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .accessibilityLabel(String(localized: "Generating response"))
+                        }
+                    }
+                    .padding(.leading, RapidTheme.Layout.iconSlot + RapidTheme.Space.sm)
+                    // Reserve the controls' width so revealing them
+                    // re-truncates the title instead of overlapping it.
+                    .padding(.trailing, showsControls ? Self.rowControlsWidth : 0)
                 }
                 .accessibilityIdentifier("Sidebar.Conversation.\(conv.id.uuidString)")
                 if showsControls {
