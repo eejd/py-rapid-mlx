@@ -1676,15 +1676,16 @@ private struct GooseToolCardView: View {
                 Image(systemName: "hammer")
                 Text(GooseToolPresentation.title(name: card.name, input: card.input, folder: folder))
                     .fontWeight(.medium).lineLimit(1)
+                if GooseToolPresentation.isFailure(card.status), !card.output.isEmpty {
+                    Text(String((card.output.components(separatedBy: .newlines).first ?? card.status)
+                        .replacingOccurrences(of: folder, with: ".").prefix(90)))
+                        .lineLimit(1).foregroundStyle(.secondary)
+                }
+                if let permission = card.permissionState { Text(permission).font(.caption2).foregroundStyle(.secondary) }
                 Spacer(minLength: 4)
                 if GooseToolPresentation.isRunning(card.status) { ProgressView().controlSize(.mini) }
                 else if GooseToolPresentation.isFailure(card.status) { Image(systemName: "xmark.circle").foregroundStyle(.red) }
                 else { Image(systemName: "checkmark.circle").foregroundStyle(.green) }
-                if GooseToolPresentation.isFailure(card.status), !card.output.isEmpty {
-                    Text(String((card.output.components(separatedBy: .newlines).first ?? card.status).prefix(90)))
-                        .lineLimit(1).foregroundStyle(.secondary)
-                }
-                if let permission = card.permissionState { Text(permission).font(.caption2).foregroundStyle(.secondary) }
             }.font(.caption)
         }
         .help(GooseToolPresentation.isFailure(card.status) ? card.output.components(separatedBy: .newlines).first ?? card.status : card.status)
