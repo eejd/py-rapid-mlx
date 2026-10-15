@@ -57,6 +57,48 @@ struct GooseToolCard: Codable, Equatable, Hashable {
     var permissionState: String? = nil
 }
 
+enum GooseToolPresentation {
+    static func title(name: String, input: String, folder: String) -> String {
+        let args = (input.data(using: .utf8).flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        }) ?? [:]
+        let lower = name.lowercased()
+        let path = ["path", "file_path", "filename", "file", "target_path", "url"]
+            .compactMap { args[$0] as? String }.first
+        let relative: String? = path.map { value in
+            let prefix = URL(fileURLWithPath: folder).standardizedFileURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+            if value.hasPrefix(prefix) { return String(value.dropFirst(prefix.count)) }
+            return value.hasPrefix("/") ? URL(fileURLWithPath: value).lastPathComponent : value
+        }
+        let subject = relative ?? String(localized: "file")
+        if lower.contains("write") || lower.contains("create_file") { return String(localized: "Wrote \(subject)") }
+        if lower.contains("edit") || lower.contains("patch") { return String(localized: "Edited \(subject)") }
+        if lower.contains("shell") || lower.contains("command") || lower.contains("execute") || lower.contains("run") {
+            let command = (args["command"] as? String ?? args["cmd"] as? String ?? name)
+                .replacingOccurrences(of: "\n", with: " ")
+            return String(localized: "Ran `\(String(command.prefix(90)))`")
+        }
+        if lower.contains("list") { return String(localized: "Listed files") }
+        if lower.contains("open") || lower.contains("browse") { return String(localized: "Opened \(subject)") }
+        if lower.contains("read") { return String(localized: "Read \(subject)") }
+        return relative.map { "\(name) · \($0)" } ?? name
+    }
+
+    static func isRunning(_ status: String) -> Bool {
+        ["running", "pending", "in_progress", "updated"].contains(status.lowercased())
+    }
+
+    static func isFailure(_ status: String) -> Bool {
+        let value = status.lowercased()
+        return value.contains("fail") || value.contains("error") || value.contains("cancel") || value.contains("declin")
+    }
+
+    static func outputPreview(_ output: String, expanded: Bool) -> String {
+        let lines = output.components(separatedBy: .newlines)
+        return expanded ? output : lines.prefix(40).joined(separator: "\n")
+    }
+}
+
 /// Ordered pieces of one ACP assistant turn. A tool updates its existing
 /// piece, while text after the tool starts a new piece in the same message.
 struct GooseTurnPart: Codable, Equatable, Identifiable {

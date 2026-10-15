@@ -5,6 +5,19 @@ import Testing
 @MainActor
 @Suite("Goose Chat")
 struct GooseChatTests {
+    @Test("Tool titles use verbs and paths relative to the chat folder")
+    func toolTitles() {
+        let folder = "/tmp/chat"
+        #expect(GooseToolPresentation.title(name: "developer__write_file", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Wrote snake.html")
+        #expect(GooseToolPresentation.title(name: "developer__edit_file", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Edited snake.html")
+        #expect(GooseToolPresentation.title(name: "developer__shell", input: #"{"command":"python3 hello.py"}"#, folder: folder) == "Ran `python3 hello.py`")
+        #expect(GooseToolPresentation.title(name: "developer__list", input: "{}", folder: folder) == "Listed files")
+        #expect(GooseToolPresentation.title(name: "computercontroller__open", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Opened snake.html")
+        #expect(GooseToolPresentation.title(name: "developer__read", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Read snake.html")
+        #expect(GooseToolPresentation.title(name: "custom", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "custom · snake.html")
+        #expect(GooseToolPresentation.outputPreview((1...45).map(String.init).joined(separator: "\n"), expanded: false).components(separatedBy: .newlines).count == 40)
+    }
+
     @Test("Permission policy keeps decisions in the app")
     func permissionPolicy() {
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer").answer == .ask)

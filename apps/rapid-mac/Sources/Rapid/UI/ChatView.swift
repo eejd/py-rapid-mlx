@@ -617,6 +617,7 @@ struct ChatView: View {
                         onDelete: {
                             _ = viewModel.deleteMessage(id: message.id)
                         },
+                        gooseFolderPath: viewModel.gooseFolderPath,
                         onGooseDecision: { id, allow, always in
                             if let (request, tool) = viewModel.goosePermission(for: id) {
                                 viewModel.answerGoosePermission(request, tool: tool, allow: allow, always: always)
@@ -1651,29 +1652,38 @@ struct ChatView: View {
 /// or a neutral system note.
 private struct GooseToolCardView: View {
     let card: GooseToolCard
+    let folder: String
     let onDecision: (String, Bool, Bool) -> Void
+    @State private var showAllOutput = false
 
     var body: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 6) {
-                Text(card.input).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                if !card.input.isEmpty {
+                    Text(card.input).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }
                 if !card.output.isEmpty {
                     Divider()
-                    Text(String(card.output.prefix(4000)))
+                    Text(GooseToolPresentation.outputPreview(card.output, expanded: showAllOutput))
                         .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    if card.output.components(separatedBy: .newlines).count > 40 && !showAllOutput {
+                        Button("Show more") { showAllOutput = true }.buttonStyle(.link)
+                    }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "hammer")
-                Text(card.name).fontWeight(.medium)
-                Text(String(card.input.replacingOccurrences(of: "\n", with: " ").prefix(100)))
-                    .lineLimit(1).foregroundStyle(.secondary)
+                Text(GooseToolPresentation.title(name: card.name, input: card.input, folder: folder))
+                    .fontWeight(.medium).lineLimit(1)
                 Spacer(minLength: 4)
-                Text(card.status == "running" ? "◌" : card.status.lowercased().contains("fail") ? "✗" : "✓")
+                if GooseToolPresentation.isRunning(card.status) { ProgressView().controlSize(.mini) }
+                else if GooseToolPresentation.isFailure(card.status) { Image(systemName: "xmark.circle").foregroundStyle(.red) }
+                else { Image(systemName: "checkmark.circle").foregroundStyle(.green) }
                 if let permission = card.permissionState { Text(permission).font(.caption2).foregroundStyle(.secondary) }
             }.font(.caption)
         }
+        .help(GooseToolPresentation.isFailure(card.status) ? card.output.components(separatedBy: .newlines).first ?? card.status : card.status)
         .padding(8)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
         .accessibilityIdentifier("ChatView.GooseTool.\(card.id)")
@@ -1721,6 +1731,7 @@ private struct MessageRow: View {
     /// Delete this message and its whole subtree. Called only after the
     /// confirmation below is accepted.
     var onDelete: () -> Void = {}
+    var gooseFolderPath: String = ""
     var onGooseDecision: (String, Bool, Bool) -> Void = { _, _, _ in }
 
     @State private var reasoningExpanded: Bool = false
@@ -1973,11 +1984,11 @@ private struct MessageRow: View {
                         TextKitMarkdownView(content: text)
                     }
                     if let card = part.tool {
-                        GooseToolCardView(card: card, onDecision: onGooseDecision)
+                        GooseToolCardView(card: card, folder: gooseFolderPath, onDecision: onGooseDecision)
                     }
                 }
             } else if let card = message.gooseTool {
-                GooseToolCardView(card: card, onDecision: onGooseDecision)
+                GooseToolCardView(card: card, folder: gooseFolderPath, onDecision: onGooseDecision)
             }
             if !message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 reasoningDisclosure
