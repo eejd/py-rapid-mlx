@@ -134,10 +134,16 @@ def main(argv=None):
             quant_predicate=quantization_predicate(model, args.bits),
         )
         save_model(args.output, model, donate_model=True)
-        save_config(config, args.output / "config.json")
+        save_config(text_config(config), args.output / "config.json")
     for name in ASSETS:
         if (args.source / name).is_file():
-            shutil.copyfile(args.source / name, args.output / name)
+            if name == "tokenizer_config.json":
+                tokenizer_config = json.loads((args.source / name).read_text())
+                for key in ("auto_map", "processor_class"):
+                    tokenizer_config.pop(key, None)
+                (args.output / name).write_text(json.dumps(tokenizer_config, indent=2))
+            else:
+                shutil.copyfile(args.source / name, args.output / name)
     card = args.output / "README.md"
     card.write_text(model_card(args.bits, artifact_size(args.output)))
     card.write_text(model_card(args.bits, artifact_size(args.output)))

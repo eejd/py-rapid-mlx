@@ -217,13 +217,29 @@ def test_real_tiny_conversion_roundtrip(tmp_path, bits):
         json.dumps({"model_type": "nemotron_h_omni", "llm_config": config()})
     )
     (source / "chat_template.jinja").write_text("{{ messages }}")
+    (source / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "tokenizer_class": "TokenizersBackend",
+                "auto_map": {"AutoProcessor": "remote.Processor"},
+                "processor_class": "RemoteProcessor",
+            }
+        )
+    )
     output = tmp_path / "output"
     result = convert.main(
         ["--source", str(source), "--output", str(output), "--bits", str(bits)]
     )
     assert result["bytes"] == sum(f.stat().st_size for f in output.iterdir())
+    assert (
+        not {"auto_map", "model_file"}
+        & json.loads((output / "config.json").read_text()).keys()
+    )
     assert "openmdw-1.1" in (output / "README.md").read_text()
     assert (output / "chat_template.jinja").read_text() == "{{ messages }}"
+    assert json.loads((output / "tokenizer_config.json").read_text()) == {
+        "tokenizer_class": "TokenizersBackend"
+    }
     loaded, text = load_model_checked(load_model, output)
     assert isinstance(loaded, super_h.Model)
     params = dict(tree_flatten(loaded.parameters()))

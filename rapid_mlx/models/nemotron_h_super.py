@@ -44,29 +44,33 @@ class ModelArgs(base.ModelArgs):
         return self
 
 
+@mx.compile
+def rms_norm(x, weight, eps):
+    # Round the normalized activation before applying its weight.
+    value = x.astype(mx.float32)
+    variance = mx.mean(mx.square(value), axis=-1, keepdims=True)
+    return weight * (value * mx.rsqrt(variance + eps)).astype(x.dtype)
+
+
+@mx.compile
+def gated_rms_norm(x, weight, gate, eps, group_size):
+    value = x.astype(mx.float32)
+    if gate is not None:
+        value = value * nn.silu(gate.astype(mx.float32))
+    grouped = mx.unflatten(value, axis=-1, shape=(-1, group_size))
+    variance = mx.mean(mx.square(grouped), axis=-1, keepdims=True)
+    grouped = grouped * mx.rsqrt(variance + eps)
+    return weight * grouped.flatten(-2).astype(x.dtype)
+
+
 class RMSNorm(shared.NemotronHRMSNorm):
-    @mx.compile
     def __call__(self, x):
-        # The checkpoint's language norm rounds the normalized activation
-        # before applying its weight. Keep the BF16 boundary explicit.
-        dtype = x.dtype
-        value = x.astype(mx.float32)
-        variance = mx.mean(mx.square(value), axis=-1, keepdims=True)
-        value = (value * mx.rsqrt(variance + self.eps)).astype(dtype)
-        return self.weight * value
+        return rms_norm(x, self.weight, self.eps)
 
 
 class GatedRMSNorm(base.MambaRMSNormGated):
-    @mx.compile
     def __call__(self, x, gate=None):
-        dtype = x.dtype
-        value = x.astype(mx.float32)
-        if gate is not None:
-            value = value * nn.silu(gate.astype(mx.float32))
-        grouped = mx.unflatten(value, axis=-1, shape=(-1, self.group_size))
-        variance = mx.mean(mx.square(grouped), axis=-1, keepdims=True)
-        grouped = grouped * mx.rsqrt(variance + self.eps)
-        return self.weight * grouped.flatten(-2).astype(dtype)
+        return gated_rms_norm(x, self.weight, gate, self.eps, self.group_size)
 
 
 class Model(shared.Model):
