@@ -1,6 +1,7 @@
 # Nemotron 3.5 Super VL text support
 
-Owner: Vector. Host: Studio, M3 Ultra, 256 GiB unified memory.
+Owner: Vector. Host: Studio, M3 Ultra (28 CPU / 60 GPU cores), 256 GiB
+unified memory.
 Branch: `vector/nemotron-35-super-vl`, stacked on the Bolt text support branch.
 Local conversion and validation only; no push, PR, upload or release execution.
 
@@ -10,8 +11,10 @@ The source is `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`, revision
 `a1ccf94d69377bf82c4db39798aac28447d9c16f`. The coordinator restored the
 original download. On resume, all **88 files** and **64 indexed weight shards**
 are present in the standard Hugging Face cache. Every safetensors shard's
-header-declared final tensor extent matches its physical file size. The
-snapshot totals 248,937,280,067 bytes; the checkpoint index declares
+header-declared final tensor extent matches its physical file size.
+All 88 cached files also match their Hugging Face blob content hashes
+(SHA-256 for LFS blobs and Git blob SHA-1 otherwise); the complete hash pass
+took 125.59 seconds. The snapshot totals 248,937,280,067 bytes; the index declares
 248,906,833,960 tensor bytes. No second weight download was started by this task.
 
 The text converter hoists `llm_config`, derives the 88-layer count, removes
@@ -104,27 +107,48 @@ and vision qualification remain pending.
 
 ## Evidence status
 
-Stacked on completed Bolt head `b652c2265`. Before this resume, metadata,
-alias schema, size-manifest, CI and preflight contracts passed **3,924 tests**.
-On resume the three Super configuration-only contracts pass. Ruff check,
-format check and diff checks pass. Source completion is now independently
-verified as described above; no model download was initiated by this task.
+Stacked on Bolt head `7118aaf72`, including the current-chunk SSM gather bound
+and generator-aligned catalog expectations. All 88 source files pass content
+hashes. Conversion succeeds in 321.02 seconds; the text artifact loads and
+completes eight greedy smoke prompts plus two 1K generator benchmarks.
 
-The first conversion, tensor/conversion regression suite and BF16 paging
-self-check are queued under the shared lock. The lock holder is the unrelated
-PR #4599 validator (`lockf` PID 56926), not a process owned by this task.
-The human's exclusive machine allocation has been relayed to Harbor and the
-coordinator. No other process has been stopped or modified.
+Four-bit output:
+`/Volumes/RTL-2T/scratch-archive/rapid-mlx/super-vl-120b/text-4bit-g64`.
+It contains 69,540,668,652 bytes. The generator-compatible catalog footprint is
+69,540,654,086 bytes. Fourteen converted shards pass extent checks; runtime
+weights total 69,523,298,304 bytes. The directory includes its OpenMDW 1.1
+model card, Rapid-only requirement and memory guidance.
 
-Additional metadata checks exposed two inherited Bolt catalog-test failures:
-`tests/test_nemotron_bolt_metadata.py` expects 43,274,347,300 / 31,670,622,410
-bytes, while the base branch's generator-aligned manifest records
-43,274,333,036 / 31,670,608,078 bytes. The coordinator owns correcting these
-expectations in the Bolt branch. The other 40 metadata checks pass.
+The compiled norm implementation uses the same free-function binding pattern
+as the shared precision adapter. Directly decorating an instance method did
+not bind `self` with the installed MLX API; the tiny tensor contracts caught
+this before qualification. The corrected norms pass the complete 53-test
+Super/shared-model/parser suite. The converter also removes unused null model
+selectors and tokenizer processor selectors from saved text metadata.
 
-No full-checkpoint generation has run yet. Conversion, measured artifact and
-catalog sizes, eight-prompt MLX BF16 parity, serving, 1K throughput and the
-100% changed-line coverage gate remain pending. This is not release approval.
+The evaluation-only paged BF16 reference passes its tiny full/cached resident
+comparison bit-exactly. Full-checkpoint BF16 parity and HTTP serving are still
+pending the shared lock. Quantized smoke outputs include Paris, 391, Buenos
+días, primary light colors red/green/blue, and Ada name recall. Direct generator
+throughput is 466.12–467.59 prompt tokens/s and 48.39–48.56 decode tokens/s for
+1,024 prompt / 64 generation tokens, with a 72.68 GB process peak.
+[Reproduction, environment and raw evidence](../performance/2026-10-15-nemotron-super-vl-text.md).
+
+The four-bit catalog alias `nemotron-3.5-super-vl`, exact filtered footprint,
+README alias totals and model table pass **3,774 tests**. The 42 Bolt/general
+metadata tests also pass. Ruff and diff checks pass. A 100% changed-line result
+was obtained before the final tokenizer-asset cleanup; the fresh 95-test suite
+and final coverage gate for the current code remain queued and are not claimed
+complete. The three-bit artifact has not started and has no catalog entry.
+
+The unrelated PR #4599 validator held the lock until approximately 19:50 UTC.
+The task yielded its waiting positions to Bolt's short check, then converted
+and sampled four-bit. A second unrelated validator, PR #4672 (`lockf` PID 57383),
+acquired the lock around 20:00 UTC. The queued fresh regressions, BF16 parity
+and serving gates are blocked behind it. Harbor and the coordinator received
+high-priority FYIs; the exclusive window was also requested through the user
+input channel. No foreign process was stopped or modified. This is not release
+approval; full-model parity, serving and final coverage remain required.
 
 Run focused tensor and conversion gates:
 
@@ -134,6 +158,8 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 lockf -k \
   tests/test_nemotron_h_super.py \
   tests/test_nemotron_h_puzzle_vendored.py \
   tests/test_nemotron_tool_parser_fail_open.py \
+  tests/test_nemotron_bolt_metadata.py tests/test_model_metadata.py \
+  --basetemp=/private/tmp/nemotron-super-vl-tests \
   --cov=rapid_mlx --cov=scripts --cov-report=xml:coverage.xml -q
 .venv/bin/python -m diff_cover.diff_cover_tool coverage.xml \
   --compare-branch origin/vector/nemotron-35-bolt --show-uncovered --fail-under 100
@@ -145,18 +171,22 @@ colors, a sequence, a brief explanation and user-name recall. Compare first-toke
 top-1/top-10 and greedy token sequences against MLX BF16. The evaluation-only
 BF16 paging implementation must first pass its tiny resident-model comparison;
 it copies exact selected source experts into the native switch MLP to avoid
-materializing a roughly 241 GB contiguous model. Run reference prompts under
-separate lock acquisitions to keep individual windows bounded. Serving and
+materializing a roughly 241 GB contiguous model. Reference prompts run together
+inside the exclusive window; every invocation holds the shared lock. Serving and
 1K performance scripts are prepared in the private evidence directory.
 
 Harbor/coordinator next action: provide the already-authorized exclusive
-model-lock window and correct the inherited Bolt size-test expectations.
-Vector owns tensor-contract fixes, conversion, parity, stream/non-stream
-serving, throughput, local catalog sizing and the final coverage gate. Vision
-remains a feasibility-only report in this task; Vector owns its separate
-image-input follow-up. The human retains upload and release authorization.
+model-lock window and defer another full validator until qualification ends.
+The inherited Bolt catalog-test mismatch is resolved by the committed
+dependency rebase. Vector owns the queued final regressions/coverage,
+full-checkpoint BF16 parity, stream/non-stream serving, then mixed-three-bit
+conversion with its corresponding gates, catalog size and README total update.
+Vision remains feasibility-only; Vector owns a separate image-input follow-up.
+The human retains upload and release authorization.
 
-Private operational evidence is under `/private/tmp/nemotron-super-vl-evidence/`.
+Private operational scratch is under `/private/tmp/nemotron-super-vl-evidence/`;
+completed measurements and harnesses are archived under
+`/Volumes/RTL-2T/scratch-archive/rapid-mlx/super-vl-120b/evidence/`.
 Role start FYIs were attempted through Orca; Atlas, Pixel and Echo named
 mailboxes were unavailable. Harbor's live mailbox received the start FYI.
 Atlas/coordinator owns release authorization and the human owns publication.
