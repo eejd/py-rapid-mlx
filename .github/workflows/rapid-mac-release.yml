@@ -118,9 +118,9 @@ jobs:
       # step. The bundled sidecar (Contents/Resources/rapid-mlx) dominates.
       # The sidecar now ships the base vision/image/video runtimes (torch,
       # mflux, mlx-video; OpenCV excluded pending a licensing decision):
-      # measured 2026-10-07 on an Apple Silicon builder, the .app went
-      # 578 -> 1293 MiB (sidecar 502 -> 1211 MiB). Keep ~20 MiB headroom.
-      BUNDLE_SIZE_CAP_MB: "1315"
+      # measured 2026-10-15 on the M3, the standard Chat build is 1570 MiB
+      # including the pinned helper. Keep measured headroom for signing.
+      BUNDLE_SIZE_CAP_MB: "1650"
       # Per-release DMG growth ceiling — enforced by the "Bundle size delta
       # gate" step against the previous rapid-mac release. The full-runtime
       # release grows the compressed DMG 133 -> 239 MiB (+106 MiB); restore
