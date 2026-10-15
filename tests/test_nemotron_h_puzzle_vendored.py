@@ -312,6 +312,58 @@ class TestNemotronBolt:
             assert predicate(path, None) is False
         assert predicate("backbone.layers.1.mixer.switch_mlp.fc1", None) is True
 
+    @pytest.mark.parametrize("normalize", [True, False])
+    def test_top_one_router_normalization(self, normalize):
+        gate = self.model().layers[1].mixer.gate
+        gate.top_k = 1
+        gate.norm_topk_prob = normalize
+        gate.weight = mx.zeros_like(gate.weight)
+        _, weights = gate(mx.ones((2, 32)))
+        expected = gate.routed_scaling_factor * (1 if normalize else 0.5)
+        assert bool(mx.array_equal(weights, mx.full((2, 1), expected)))
+
+    @pytest.mark.parametrize("use_mask", [True, False])
+    @pytest.mark.parametrize("lengths", [(256, 300), (0, 256), (255, 257)])
+    def test_right_padded_ssm_matches_independent_sequences(self, lengths, use_mask):
+        module = self.module()
+        size = 333  # A full 256-token chunk followed by a partial chunk.
+        x = mx.random.normal((2, size, 2, 16))
+        b = mx.random.normal((2, size, 1, 32))
+        c = mx.random.normal((2, size, 1, 32))
+        # Slow decay keeps the incoming state measurable across a chunk boundary.
+        dt = mx.full((2, size, 2), -5.0)
+        initial = mx.random.normal((2, 2, 16, 32))
+        a_log, d, bias = mx.zeros(2), mx.ones(2), mx.zeros(2)
+        mask = mx.arange(size)[None, :] < mx.array(lengths)[:, None]
+        outputs, state = module.ssm_attn(
+            x,
+            a_log,
+            b,
+            c,
+            d,
+            dt,
+            bias,
+            state=initial,
+            mask=mask if use_mask else None,
+            lengths=mx.array(lengths),
+        )
+        for row, length in enumerate(lengths):
+            if length == 0:
+                assert bool(mx.array_equal(state[row], initial[row]))
+                continue
+            expected, expected_state = module.ssm_attn(
+                x[row : row + 1, :length],
+                a_log,
+                b[row : row + 1, :length],
+                c[row : row + 1, :length],
+                d,
+                dt[row : row + 1, :length],
+                bias,
+                state=initial[row : row + 1],
+            )
+            _assert_float32_parity(outputs[row, :length], expected[0])
+            _assert_float32_parity(state[row], expected_state[0])
+
     def test_ssm_native_dt_and_chunked_reference(self):
         module = self.module()
         dt = mx.array([[-1.17, 0.23]], dtype=mx.bfloat16)

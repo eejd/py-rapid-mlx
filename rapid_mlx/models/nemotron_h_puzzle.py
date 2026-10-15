@@ -271,15 +271,22 @@ class NemotronHMamba2Mixer(base.NemotronHMamba2Mixer):
 class MoEGate(base.MoEGate):
     def __call__(self, x):
         logits = x.astype(mx.float32) @ self.weight.astype(mx.float32).T
-        return base.group_expert_select(
+        normalize_top_one = self.top_k == 1 and self.norm_topk_prob
+        inds, scores = base.group_expert_select(
             logits,
             self.e_score_correction_bias,
             self.top_k,
             self.n_group,
             self.topk_group,
-            self.routed_scaling_factor,
+            1.0 if normalize_top_one else self.routed_scaling_factor,
             self.norm_topk_prob,
         )
+        # The shared selector normalizes only when top_k > 1. The reference
+        # normalizes every selected set before applying routed scaling.
+        if normalize_top_one:
+            scores = scores / (scores.sum(axis=-1, keepdims=True) + 1e-20)
+            scores = scores * self.routed_scaling_factor
+        return inds, scores
 
 
 class NemotronHMoE(base.NemotronHMoE):
@@ -509,6 +516,9 @@ def ssm_attn(
 
     def _step(dtx, dtA, B, C, state, mask):
         s = dtx.shape[1]
+        if lengths is not None:
+            valid = mx.arange(s)[None, :] < lengths[:, None]
+            mask = valid if mask is None else mask & valid
         B = mx.transpose(B, (0, 2, 3, 1))
 
         CB = mx.swapaxes(C, 1, 2) @ B
@@ -536,6 +546,10 @@ def ssm_attn(
         next_state = dtxdecay @ B
 
         if state is not None:
+            # Incoming state advances only through valid tokens, including in
+            # the partial final chunk of a right-padded batch.
+            if mask is not None:
+                dtA = mx.where(mask[..., None], dtA, 0)
             exp_dtA_cumsum = mx.exp(mx.cumsum(dtA, axis=-2))
             next_state += exp_dtA_cumsum[:, -1, :, None, None] * state
             C = C.reshape(b, s, g, 1, d, 1)
@@ -545,7 +559,7 @@ def ssm_attn(
             y += exp_dtA_cumsum[..., None] * y_prev
         if lengths is not None and state is not None:
             next_state = mx.where(
-                mx.expand_dims(lengths < 0, (1, 2, 3)), state, next_state
+                mx.expand_dims(lengths <= 0, (1, 2, 3)), state, next_state
             )
 
         return y.astype(x.dtype), next_state
