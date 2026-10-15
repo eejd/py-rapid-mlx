@@ -91,6 +91,7 @@ struct GooseChatTests {
         model.applyGooseEvent(.permission(WorkPermission(id: "1", sessionID: "s", toolCallID: "t1", command: "write", options: []), "developer", "permission needed"), initialPlaceholder: 1)
         model.applyGooseEvent(.tool(id: "t1", name: "developer", input: "", status: "completed", output: "done"), initialPlaceholder: 1)
         model.applyGooseEvent(.tool(id: "t1", name: "write · /tmp/chat/report.txt", input: "", status: "completed", output: ""), initialPlaceholder: 1)
+        model.applyGooseEvent(.tool(id: "t1", name: "", input: "", status: "completed", output: ""), initialPlaceholder: 1)
         #expect(model.messages.count == 2)
         #expect(model.messages[1].gooseParts?.count == 2)
         #expect(model.messages[1].gooseParts?[1].tool?.output == "done")
