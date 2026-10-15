@@ -101,11 +101,56 @@ and vision qualification remain pending.
 
 ## Evidence status
 
-Initial platform-neutral metadata, alias-schema and CI contracts: 3,762 passed.
-Model contracts are queued on the shared lock behind an unrelated validation
-process; no model-test result is claimed yet. Full source download, conversion,
-parity, serving transcripts, performance, artifact catalog sizes, final changed-line
-coverage and final Bolt-base rebase are pending. This is not yet a release gate.
+Rebased onto completed Bolt head `b652c2265` (including padded incoming-state
+and routing corrections). The rebase preserves both architecture-specific
+metadata profiles. Rebased metadata, alias schema, size-manifest, CI and
+preflight contracts: **3,924 passed**. Three new configuration-only contracts
+also passed: extraction/native config compatibility, checked-loader opt-in and
+explicit-callback behavior, recurrent safety and parser selection. Ruff check,
+format check and diff checks pass.
+
+The five new tensor/conversion contracts remain unexecuted while the complete
+eight-test suite waits on the shared model lock behind unrelated PR validation.
+The separate tiny resident-versus-paged BF16 self-check is also queued. No
+full-checkpoint model run has started from this task. The existing source
+weight download failed; no new weight download, cache deletion or partial-file
+repair was attempted under the task's explicit download restriction.
+
+Full source completion, artifact conversion and measured sizes, quantized/BF16
+parity, serving transcripts, throughput and 100% changed-line coverage remain
+pending. Catalog entries must wait for working artifacts and final directory
+byte totals. This is **not a release gate** and makes no generation-quality,
+throughput or memory-qualification claim.
+
+Once the dependencies are restored, run focused tensor and conversion gates:
+
+```sh
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 lockf -k \
+  /var/tmp/rapid-mlx-large-model.lock .venv/bin/pytest \
+  tests/test_nemotron_h_super.py \
+  tests/test_nemotron_h_puzzle_vendored.py \
+  tests/test_nemotron_tool_parser_fail_open.py \
+  --cov=rapid_mlx --cov=scripts --cov-report=xml:coverage.xml -q
+.venv/bin/python -m diff_cover.diff_cover_tool coverage.xml \
+  --compare-branch b652c2265 --show-uncovered --fail-under 100
+```
+
+Use the documented conversion commands only after all 88 snapshot files exist.
+Eight parity prompts cover factual recall, arithmetic, code, translation, light
+colors, a sequence, a brief explanation and user-name recall. Compare first-token
+top-1/top-10 and greedy token sequences against MLX BF16. The evaluation-only
+BF16 paging implementation must first pass its tiny resident-model comparison;
+it copies exact selected source experts into the native switch MLP to avoid
+materializing a roughly 241 GB contiguous model. Run reference prompts under
+separate lock acquisitions to keep individual windows bounded. Serving and
+1K/8K performance scripts are prepared in the private evidence directory.
+
+Atlas/coordinator next action: restore the original failed download or amend
+the no-new-download instruction, and provide a shared model-lock window.
+Vector then owns fixing any tensor-contract failures, conversion, parity,
+stream/non-stream serving, throughput, exact catalog sizes and the final
+coverage gate. Vector owns the separate image-input follow-up. The human
+retains upload and release authorization.
 
 Private operational evidence is under `/private/tmp/nemotron-super-vl-evidence/`.
 Role start FYIs were attempted through Orca; Atlas, Pixel and Echo named
