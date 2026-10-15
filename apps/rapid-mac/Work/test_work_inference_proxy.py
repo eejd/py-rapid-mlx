@@ -58,7 +58,11 @@ class StreamRateTests(unittest.TestCase):
                                     "type": "string",
                                     "description": "argument detail " * 50,
                                     "enum": ["text", "file"],
-                                }
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "User-facing description",
+                                },
                             },
                             "required": ["input"],
                         },
@@ -102,8 +106,40 @@ class StreamRateTests(unittest.TestCase):
         self.assertEqual(parameters["required"], ["input"])
         self.assertEqual(parameters["properties"]["input"]["enum"], ["text", "file"])
         self.assertNotIn("description", parameters["properties"]["input"])
+        self.assertIn("description", parameters["properties"])
+        self.assertEqual(parameters["properties"]["description"], {"type": "string"})
         self.assertIn("current facts", compact["messages"][0]["content"])
         self.assertIn("exact URL", compact["messages"][0]["content"])
+        self.assertIn("developer file tools", compact["messages"][0]["content"])
+
+    def test_focused_inner_tool_keeps_parameter_guidance(self):
+        body = {
+            "tools": [
+                {
+                    "function": {
+                        "name": "create_app_content",
+                        "description": "Create content",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "description": {
+                                    "type": "string",
+                                    "description": "Describe the app",
+                                },
+                            },
+                            "required": ["description"],
+                        },
+                    }
+                }
+            ]
+        }
+        compact = self.module.compact_goose_request(body)
+        self.assertEqual(
+            compact["tools"][0]["function"]["parameters"]["properties"]["description"][
+                "description"
+            ],
+            "Describe the app",
+        )
 
     def test_rotated_server_key_is_read_for_each_upstream_request(self):
         module = self.module

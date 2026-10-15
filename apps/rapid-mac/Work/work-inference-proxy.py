@@ -30,7 +30,9 @@ LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
 GOOSE_CHAT_SYSTEM = (
     "You are Goose Chat, a local assistant. Use the available tools when needed. "
     "For current facts, call a general tool promptly to fetch a live source; "
-    "cite its exact URL and retrieval time. If the source fails, say so. "
+    "include a Markdown link to its exact URL and the retrieval time. "
+    "If the source fails, say so. "
+    "For requested local files, use the developer file tools. "
     "For shell web requests, use curl -fsSL -A 'Mozilla/5.0' and check the response. "
     "Never claim a tool ran unless it did."
 )
@@ -85,23 +87,26 @@ def compact_goose_request(body):
 
     # Keep every built-in tool and its complete argument structure. Property
     # descriptions duplicate names/types and dominate first-turn prefill.
-    def strip_parameter_descriptions(value):
+    def strip_parameter_descriptions(value, property_map=False):
         if isinstance(value, dict):
             return {
-                key: strip_parameter_descriptions(item)
+                key: strip_parameter_descriptions(item, key == "properties")
                 for key, item in value.items()
-                if key != "description"
+                if key != "description" or property_map
             }
         if isinstance(value, list):
             return [strip_parameter_descriptions(item) for item in value]
         return value
 
     if isinstance(body.get("tools"), list):
+        # A focused inner tool call has little prefill cost and may need its
+        # parameter guidance to generate a valid response.
+        focused_call = len(body["tools"]) <= 3
         for tool in body["tools"]:
             function = tool.get("function", {})
             if isinstance(function.get("description"), str):
                 function["description"] = function["description"][:120]
-            if "parameters" in function:
+            if "parameters" in function and not focused_call:
                 function["parameters"] = strip_parameter_descriptions(
                     function["parameters"]
                 )
