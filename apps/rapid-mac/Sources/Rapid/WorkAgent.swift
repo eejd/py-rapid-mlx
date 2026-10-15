@@ -58,6 +58,7 @@ final class WorkAgent {
     private var secret = ""
     private var connection: String?
     private var sessionID: String?
+    private var pendingGooseChatSession: Task<Void, Error>?
     private var nextID = 1
     private var waiters: [String: CheckedContinuation<Data, Error>] = [:]
     private var streams: [Task<Void, Never>] = []
@@ -77,6 +78,26 @@ final class WorkAgent {
         text = ""
         steps = []
         error = nil
+    }
+
+    /// Start the next Goose session while the user is composing a new chat.
+    /// A Send joins this task, so a fast Send cannot open a second session.
+    func preopenGooseChatSession() {
+        guard Self.gooseChat, isRunning, !isBusy else { return }
+        let previous = pendingGooseChatSession
+        pendingGooseChatSession = Task {
+            if let previous { _ = try? await previous.value }
+            try await newSession()
+        }
+    }
+
+    func ensureNewGooseChatSession() async throws {
+        if let pendingGooseChatSession {
+            try await pendingGooseChatSession.value
+            self.pendingGooseChatSession = nil
+        } else {
+            try await newSession()
+        }
     }
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
@@ -415,6 +436,8 @@ final class WorkAgent {
 
     func stop() {
         generation += 1
+        pendingGooseChatSession?.cancel()
+        pendingGooseChatSession = nil
         streams.forEach { $0.cancel() }
         streams = []
         let children = [process, proxyProcess].compactMap { $0 }

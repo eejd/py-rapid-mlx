@@ -1107,6 +1107,7 @@ final class ChatViewModel {
         activeConversationID = UUID()
         gooseSessionID = nil
         locallyCreatedConversationID = activeConversationID
+        if WorkAgent.gooseChat { WorkAgent.shared.preopenGooseChatSession() }
         lastError = nil
         lastFailureKind = nil
         lastFailureAlias = nil
@@ -1394,7 +1395,7 @@ final class ChatViewModel {
         let sameHelperSession = agent.currentSessionID == sessionBeforePrepare
         let reuseSession = canReuse && sameHelperSession
         if !reuseSession {
-            if sameHelperSession { try await agent.newSession() }
+            if sameHelperSession { try await agent.ensureNewGooseChatSession() }
             gooseConversationID = activeConversationID
         }
         let previous = Array(messages.prefix(placeholderIndex - 1))
