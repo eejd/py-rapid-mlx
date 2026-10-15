@@ -1105,8 +1105,8 @@ def _install_continuous_mtp_router(
         _CONTINUOUS_MTP_DEPTH_CLAMP_WARNED = True
         logger.log(
             _level,
-            "[MTP-continuous] num_speculative_tokens=%d exceeds the attested "
-            "recursive draft depth; the cohort drafts %d per lane (the "
+            "[MTP-continuous] num_speculative_tokens=%d exceeds the supported "
+            "continuous draft depth; the cohort drafts %d per lane (the "
             "singleton verifier keeps max_k=%d)",
             decision.requested_draft_tokens,
             decision.draft_tokens,

@@ -29,6 +29,7 @@ from .batched import (
     plan_admission,
 )
 from .continuous_engine import SelfMTPLaneSpec, SelfMTPSampling
+from .mlx_backend import RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS
 from .prepared_state import (
     PreparedMTPState,
     PreparedStateIdentity,
@@ -318,10 +319,16 @@ def plan_router_install(
         )
         and getattr(candidate, "mtp", None) is not None
     )
+    attested_depth = descriptor_map.get("recursive_draft_depth")
+    descriptor_supports_backend = (
+        isinstance(attested_depth, int)
+        and not isinstance(attested_depth, bool)
+        and attested_depth >= RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS
+    )
     descriptor_core = (
         descriptor_map.get("protocol_version") == 1
         and descriptor_map.get("fixed_membership") is True
-        and descriptor_map.get("recursive_draft_depth") == 2
+        and descriptor_supports_backend
         and callable(batch_forward)
     )
     capabilities = BatchedMTPCapabilities(
@@ -371,11 +378,9 @@ def plan_router_install(
             ),
         )
 
-    # The injected batched forward recurses exactly ``recursive_draft_depth``
-    # times per cycle, so that is the deepest draft any lane can be planned
-    # at; a deeper request is clamped here rather than refused later by the
-    # backend's ``prepare``.
-    attested_depth = descriptor_map.get("recursive_draft_depth")
+    # The descriptor attests what the model can recurse through, while the
+    # Rapid backend has its own implementation ceiling. Clamp against both so
+    # an over-capable descriptor cannot admit a depth that ``prepare`` rejects.
     depth_ceiling = (
         attested_depth
         if isinstance(attested_depth, int)
@@ -383,7 +388,11 @@ def plan_router_install(
         and attested_depth >= 1
         else 1
     )
-    draft_tokens = min(max_draft_tokens, depth_ceiling)
+    draft_tokens = min(
+        max_draft_tokens,
+        depth_ceiling,
+        RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS,
+    )
     router = ContinuousMTPIntegrationRouter(
         config=BatchedMTPConfig(
             enabled=enabled,
@@ -427,7 +436,6 @@ def _runtime_refusals(
     descriptor = runtime.capability_descriptor
     required_descriptor = {
         "protocol_version": 1,
-        "recursive_draft_depth": 2,
         "fixed_membership": True,
         "dynamic_join": True,
         "quantized_cache": False,
@@ -437,6 +445,13 @@ def _runtime_refusals(
     for name, expected in required_descriptor.items():
         if descriptor.get(name) != expected:
             reasons.append(f"capability descriptor mismatch: {name}")
+    recursive_depth = descriptor.get("recursive_draft_depth")
+    if (
+        isinstance(recursive_depth, bool)
+        or not isinstance(recursive_depth, int)
+        or recursive_depth < RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS
+    ):
+        reasons.append("capability descriptor mismatch: recursive_draft_depth")
     if runtime.cache_quantized:
         reasons.append("quantized cache is unsupported")
     if runtime.cache_windowed:

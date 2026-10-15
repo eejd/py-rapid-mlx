@@ -332,6 +332,22 @@ def test_planner_clamps_requested_depth_to_the_attested_recursive_depth():
     )
     assert (exact.requested_draft_tokens, exact.draft_tokens) == (2, 2)
 
+    # A future descriptor may attest deeper recursion before the Rapid backend
+    # implements it. It remains compatible, but the backend ceiling is
+    # authoritative at admission.
+    deeper_model = _Model()
+    deeper_model.batched_mtp_capability = MappingProxyType(
+        {**dict(_descriptor()), "recursive_draft_depth": 4}
+    )
+    backend_limited = plan_router_install(
+        deeper_model, enabled=True, hard_reserve_bytes=0, max_draft_tokens=4
+    )
+    assert backend_limited.admitted is True
+    assert backend_limited.requested_draft_tokens == 4
+    assert backend_limited.draft_tokens == 2
+    assert backend_limited.router is not None
+    assert backend_limited.router.config.max_draft_tokens == 2
+
     # A refused install reports no depth at all.
     refused = plan_router_install(
         _Model(), enabled=True, max_lanes=1, hard_reserve_bytes=0, max_draft_tokens=3
@@ -631,7 +647,7 @@ def test_live_installer_threads_mtp_max_k_into_the_cohort_policy(
     clamp_lines = [
         record.message
         for record in caplog.records
-        if "exceeds the attested recursive draft depth" in record.message
+        if "exceeds the supported continuous draft depth" in record.message
     ]
     assert bool(clamp_lines) is clamped
 
@@ -689,7 +705,7 @@ def test_live_installer_clamp_warning_waits_for_admission_and_fires_once(
         return [
             record
             for record in caplog.records
-            if "exceeds the attested recursive draft depth" in record.message
+            if "exceeds the supported continuous draft depth" in record.message
         ]
 
     # 1. Planner refuses (one lane cannot amortize a cohort): no cohort, no
