@@ -94,8 +94,6 @@ struct ChatConversation: Identifiable, Codable, Equatable {
     var folderID: UUID? = nil
     var gooseSessionID: String? = nil
     var gooseFolder: String? = nil
-    /// All helper sessions ever opened for this conversation, including replayed branches.
-    var gooseSessionIDs: [String] = []
     var gooseOwnedSessions: [GooseOwnedSession] = []
     var gooseAttachmentDirectories: [String] = []
 
@@ -116,7 +114,6 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         folderID: UUID? = nil,
         gooseSessionID: String? = nil,
         gooseFolder: String? = nil,
-        gooseSessionIDs: [String] = [],
         gooseOwnedSessions: [GooseOwnedSession] = [],
         gooseAttachmentDirectories: [String] = []
     ) {
@@ -148,7 +145,6 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         self.folderID = folderID
         self.gooseSessionID = gooseSessionID
         self.gooseFolder = gooseFolder
-        self.gooseSessionIDs = gooseSessionIDs
         self.gooseOwnedSessions = gooseOwnedSessions
         self.gooseAttachmentDirectories = gooseAttachmentDirectories
     }
@@ -164,7 +160,7 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         case id, title, messages, branches, activeLeafID, branchChoices
         case createdAt, updatedAt, isPinned, isArchived, hasCustomTitle
         case hasGeneratedTitle
-        case customInstructions, folderID, gooseSessionID, gooseFolder, gooseSessionIDs, gooseOwnedSessions, gooseAttachmentDirectories
+        case customInstructions, folderID, gooseSessionID, gooseFolder, gooseOwnedSessions, gooseAttachmentDirectories
     }
 
     /// Hand-written to match ``init(from:)``'s string-keyed
@@ -211,7 +207,6 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(folderID, forKey: .folderID)
         try c.encodeIfPresent(gooseSessionID, forKey: .gooseSessionID)
         try c.encodeIfPresent(gooseFolder, forKey: .gooseFolder)
-        if !gooseSessionIDs.isEmpty { try c.encode(gooseSessionIDs, forKey: .gooseSessionIDs) }
         if !gooseOwnedSessions.isEmpty { try c.encode(gooseOwnedSessions, forKey: .gooseOwnedSessions) }
         if !gooseAttachmentDirectories.isEmpty { try c.encode(gooseAttachmentDirectories, forKey: .gooseAttachmentDirectories) }
     }
@@ -261,7 +256,6 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         customInstructions = try c.decodeIfPresent(String.self, forKey: .customInstructions)
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         gooseSessionID = try c.decodeIfPresent(String.self, forKey: .gooseSessionID)
-        gooseSessionIDs = try c.decodeIfPresent([String].self, forKey: .gooseSessionIDs) ?? []
         gooseOwnedSessions = try c.decodeIfPresent([GooseOwnedSession].self, forKey: .gooseOwnedSessions) ?? []
         gooseAttachmentDirectories = try c.decodeIfPresent([String].self, forKey: .gooseAttachmentDirectories) ?? []
         gooseFolder = try c.decodeIfPresent(String.self, forKey: .gooseFolder)

@@ -294,6 +294,7 @@ final class ChatViewModel {
     /// App-owned lifecycle signal for a real, visible assistant completion.
     /// Kept as a callback so chat has no dependency on telemetry policy.
     private let onProductValueDelivered: @MainActor (ProductValueKind) -> Void
+    private var reportedGooseProductValueIDs: Set<UUID> = []
     /// Injectable so conversation deletion can remove extracts in isolated tests.
     private let documentCache: DocumentContentCache
 
@@ -1446,6 +1447,7 @@ final class ChatViewModel {
             if sameHelperSession { try await agent.ensureNewGooseChatSession() }
             gooseConversationID = activeConversationID
         }
+        if let sessionID = agent.currentSessionID { recordGooseSession(sessionID) }
         let previous = Array(messages.prefix(placeholderIndex - 1))
         // Recreate owned copies after a relaunch or branch switch. Their names
         // are derived from persisted message and attachment IDs.
@@ -1483,19 +1485,24 @@ final class ChatViewModel {
         isStreaming = false
         inflight = nil
         gooseContextIDs = messages.map(\.id)
-        if !Task.isCancelled,
-           let delivered = currentMessage(index: placeholderIndex),
-           delivered.status == .complete,
-           !delivered.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            onProductValueDelivered(.chatReply)
+        if !Task.isCancelled, let delivered = currentMessage(index: placeholderIndex) {
+            reportGooseProductValueIfDelivered(delivered)
         }
+    }
+
+    func reportGooseProductValueIfDelivered(_ message: ChatMessage) {
+        guard message.role == .assistant, message.status == .complete,
+              !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              reportedGooseProductValueIDs.insert(message.id).inserted else { return }
+        onProductValueDelivered(.chatReply)
     }
 
     static func gooseReplay(_ prior: [ChatMessage]) -> String {
         let eligible = prior.filter {
             ($0.role == .user || $0.role == .assistant || $0.role == .tool)
                 && (!$0.content.isEmpty || !$0.fileAttachments.isEmpty || !$0.imageAttachments.isEmpty
-                    || $0.gooseParts?.contains(where: { $0.tool != nil }) == true)
+                    || $0.gooseParts?.contains(where: { $0.tool != nil }) == true
+                    || $0.status == .failed || $0.errorMessage == "Stopped.")
         }
         let turns = eligible.suffix(8).map { message in
             let allTools = (message.gooseParts ?? []).compactMap(\.tool)
@@ -1618,13 +1625,7 @@ final class ChatViewModel {
     func applyGooseEvent(_ event: GooseChatEvent, initialPlaceholder: Int) {
         guard messages.indices.contains(initialPlaceholder) else { return }
         switch event {
-        case .session(let id):
-            gooseSessionID = id
-            let owned = GooseOwnedSession(id: id, folder: gooseFolder.path)
-            if !gooseOwnedSessions.contains(owned) {
-                gooseOwnedSessions.append(owned)
-                persistActive(touching: false)
-            }
+        case .session(let id): recordGooseSession(id)
         case .text(let chunk):
             guard !chunk.isEmpty else { break }
             if let details = messages[initialPlaceholder].gooseErrorDetails,
@@ -1688,6 +1689,15 @@ final class ChatViewModel {
                 reasoningEmitted: !message.reasoning.isEmpty,
                 engineTokensPerSecond: rate
             )
+        }
+    }
+
+    private func recordGooseSession(_ id: String) {
+        gooseSessionID = id
+        let owned = GooseOwnedSession(id: id, folder: gooseFolder.path)
+        if !gooseOwnedSessions.contains(owned) {
+            gooseOwnedSessions.append(owned)
+            persistActive(touching: false)
         }
     }
 

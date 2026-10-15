@@ -324,6 +324,21 @@ struct GooseChatTests {
         #expect(contract["max_tokens"] as? Int == 1536)
     }
 
+    @Test("A successful Goose reply delivers product value exactly once")
+    func productValue() {
+        var delivered = 0
+        let model = ChatViewModel(persistsConversations: false,
+            onProductValueDelivered: { kind in
+                if kind == .chatReply { delivered += 1 }
+            })
+        let reply = ChatMessage(role: .assistant, content: "Done", status: .complete)
+        model.reportGooseProductValueIfDelivered(reply)
+        model.reportGooseProductValueIfDelivered(reply)
+        model.reportGooseProductValueIfDelivered(ChatMessage(role: .assistant,
+            content: "partial", status: .failed))
+        #expect(delivered == 1)
+    }
+
     @Test("Goose chats appear newest first and reopen their saved transcript")
     func historyList() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("goose-history-\(UUID())")
