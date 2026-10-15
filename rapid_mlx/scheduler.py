@@ -11389,15 +11389,19 @@ class Scheduler:
                 request._extracted_cache = None
                 request._continuous_mtp_state = None
                 request.batch_uid = None
-            # Discard failed KV; do not route through successful cache storage.
             if self.block_aware_cache is not None:
+                # A failed request cannot store its fetched paged prefix.
+                # Return those block references before the allocator flush.
                 try:
                     self.block_aware_cache.release_cache(request_id)
-                except Exception as exc:
+                except Exception:
+                    # Keep recovering other requests after a partially failed
+                    # Metal operation; an individual cache error must not pin
+                    # the rest of the failed batch in ``running``.
                     logger.warning(
-                        "Failed to release cache for request %s during recovery: %s",
+                        "Failed to release paged cache for aborted request %s",
                         request_id,
-                        exc,
+                        exc_info=True,
                     )
             aborted_ids.add(request_id)
             self.finished_req_ids.add(request_id)
