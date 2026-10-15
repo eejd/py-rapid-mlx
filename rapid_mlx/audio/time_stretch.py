@@ -22,7 +22,7 @@
 """Pitch-preserving, offline WSOLA for mono TTS waveforms."""
 
 import numpy as np
-from scipy.fft import irfft, next_fast_len, rfft
+from numpy.fft import irfft, rfft
 
 
 def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarray:
@@ -69,7 +69,7 @@ def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarra
             candidates = source[lower : upper + frame_length]
             # Circular correlation agrees with linear correlation over valid
             # starts; no padding for the unused full-correlation tail is needed.
-            fft_length = next_fast_len(len(candidates), real=True)
+            fft_length = 1 << (len(candidates) - 1).bit_length()
             correlation = irfft(
                 rfft(candidates, fft_length) * rfft(natural, fft_length).conj(),
                 fft_length,
