@@ -2316,11 +2316,13 @@ final class ChatViewModel {
         conversationInstruction: String = "",
         memoryContext: String? = nil
     ) async {
+        let isTextOnlyTurn = messages[..<initialPlaceholder]
+            .last(where: { $0.role == .user })?.imageAttachments.isEmpty ?? true
         defer {
             if epoch == conversationEpoch {
                 isStreaming = false
                 inflight = nil
-                if !Task.isCancelled,
+                if isTextOnlyTurn, !Task.isCancelled,
                    let delivered = currentMessage(index: initialPlaceholder),
                    delivered.status == .complete,
                    delivered.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
