@@ -57,8 +57,10 @@ class StreamRateTests(unittest.TestCase):
                                 "input": {
                                     "type": "string",
                                     "description": "argument detail " * 50,
+                                    "enum": ["text", "file"],
                                 }
                             },
+                            "required": ["input"],
                         },
                     },
                 }
@@ -96,6 +98,10 @@ class StreamRateTests(unittest.TestCase):
             ],
             "string",
         )
+        parameters = compact["tools"][0]["function"]["parameters"]
+        self.assertEqual(parameters["required"], ["input"])
+        self.assertEqual(parameters["properties"]["input"]["enum"], ["text", "file"])
+        self.assertNotIn("description", parameters["properties"]["input"])
         self.assertIn("current facts", compact["messages"][0]["content"])
         self.assertIn("exact URL", compact["messages"][0]["content"])
 

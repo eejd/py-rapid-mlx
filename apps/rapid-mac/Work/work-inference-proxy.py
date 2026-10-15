@@ -29,8 +29,9 @@ METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
 GOOSE_CHAT_SYSTEM = (
     "You are Goose Chat, a local assistant. Use the available tools when needed. "
-    "For current facts, use a tool to fetch a live source before answering; "
+    "For current facts, call a general tool promptly to fetch a live source; "
     "cite its exact URL and retrieval time. If the source fails, say so. "
+    "For shell web requests, use curl -fsSL -A 'Mozilla/5.0' and check the response. "
     "Never claim a tool ran unless it did."
 )
 
@@ -82,24 +83,28 @@ def compact_goose_request(body):
             message["content"] = GOOSE_CHAT_SYSTEM + saved_goose_memories()
             break
 
-    # Keep every built-in tool and its argument schema. Long prose in Goose's
-    # descriptions duplicates the compact behavior prompt on every turn.
-    def trim_descriptions(value):
+    # Keep every built-in tool and its complete argument structure. Property
+    # descriptions duplicate names/types and dominate first-turn prefill.
+    def strip_parameter_descriptions(value):
         if isinstance(value, dict):
             return {
-                key: (
-                    item[:180]
-                    if key == "description" and isinstance(item, str)
-                    else trim_descriptions(item)
-                )
+                key: strip_parameter_descriptions(item)
                 for key, item in value.items()
+                if key != "description"
             }
         if isinstance(value, list):
-            return [trim_descriptions(item) for item in value]
+            return [strip_parameter_descriptions(item) for item in value]
         return value
 
     if isinstance(body.get("tools"), list):
-        body["tools"] = trim_descriptions(body["tools"])
+        for tool in body["tools"]:
+            function = tool.get("function", {})
+            if isinstance(function.get("description"), str):
+                function["description"] = function["description"][:120]
+            if "parameters" in function:
+                function["parameters"] = strip_parameter_descriptions(
+                    function["parameters"]
+                )
     return body
 
 
