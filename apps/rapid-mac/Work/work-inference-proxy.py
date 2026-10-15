@@ -57,8 +57,11 @@ def upstream_bearer():
 def compact_goose_request(body):
     """Keep the local 27B's first-turn prefill small enough for live chat."""
     messages = body.get("messages") or []
-    for message in messages:
+    desktop_system = body.pop("_rapid_desktop_system", False)
+    for index, message in enumerate(messages):
         if message.get("role") == "system":
+            if desktop_system and index == 0:
+                continue
             message["content"] = GOOSE_CHAT_SYSTEM
             break
     tools = body.get("tools")

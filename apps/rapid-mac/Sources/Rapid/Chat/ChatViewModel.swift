@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 
@@ -139,6 +140,9 @@ final class ChatViewModel {
     private var conversationEpoch = 0
     private var gooseConversationID: UUID?
     private var gooseSessionID: String?
+    private var gooseOwnedSessions: [GooseOwnedSession] = []
+    private var gooseAttachmentDirectories: [String] = []
+    private var gooseAttachmentHashes: [String: String] = [:]
     private var gooseContextIDs: [UUID] = []
     private var goosePermissions: [String: (WorkPermission, String)] = [:]
     private var gooseFolder: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace", isDirectory: true)
@@ -309,6 +313,7 @@ final class ChatViewModel {
     /// App-owned lifecycle signal for a real, visible assistant completion.
     /// Kept as a callback so chat has no dependency on telemetry policy.
     private let onProductValueDelivered: @MainActor (ProductValueKind) -> Void
+    private var reportedGooseProductValueIDs: Set<UUID> = []
     /// Injectable so conversation deletion can remove extracts in isolated tests.
     private let documentCache: DocumentContentCache
 
@@ -433,6 +438,9 @@ final class ChatViewModel {
                 )
                 conversation.gooseSessionID = gooseSessionID
                 conversation.gooseFolder = gooseFolder.path
+                conversation.gooseOwnedSessions = gooseOwnedSessions
+                conversation.gooseAttachmentDirectories = gooseAttachmentDirectories
+                conversation.gooseAttachmentHashes = gooseAttachmentHashes
             }
         } else {
             conversations.insert(
@@ -447,7 +455,10 @@ final class ChatViewModel {
                     updatedAt: now,
                     customInstructions: Self.normalizedInstruction(conversationInstructions),
                     gooseSessionID: gooseSessionID,
-                    gooseFolder: gooseFolder.path
+                    gooseFolder: gooseFolder.path,
+                    gooseOwnedSessions: gooseOwnedSessions,
+                    gooseAttachmentDirectories: gooseAttachmentDirectories,
+                    gooseAttachmentHashes: gooseAttachmentHashes
                 ),
                 at: 0
             )
@@ -934,6 +945,9 @@ final class ChatViewModel {
         adoptTree(conv.allMessages, activeLeafID: conv.activeLeafID ?? conv.messages.last?.id)
         conversationInstructions = conv.customInstructions ?? ""
         gooseSessionID = conv.gooseSessionID
+        gooseOwnedSessions = conv.gooseOwnedSessions
+        gooseAttachmentDirectories = conv.gooseAttachmentDirectories
+        gooseAttachmentHashes = conv.gooseAttachmentHashes
         gooseFolder = URL(fileURLWithPath: conv.gooseFolder ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace").path)
         activeConversationID = id
         lastError = nil
@@ -950,13 +964,47 @@ final class ChatViewModel {
         if let stored = conversations.first(where: { $0.id == id }) {
             attachmentIDs.formUnion(stored.allMessages.flatMap { $0.fileAttachments.map(\.id) })
         }
+        let stored = conversations.first(where: { $0.id == id })
+        let ownedSessions = id == activeConversationID ? gooseOwnedSessions : stored?.gooseOwnedSessions ?? []
+        let legacy = stored.flatMap { conversation -> GooseOwnedSession? in
+            guard let session = conversation.gooseSessionID, let folder = conversation.gooseFolder else { return nil }
+            return GooseOwnedSession(id: session, folder: folder)
+        }
+        let recordedDirectories = id == activeConversationID
+            ? gooseAttachmentDirectories : stored?.gooseAttachmentDirectories ?? []
+        let recordedFolders = recordedDirectories.map {
+            URL(fileURLWithPath: $0).deletingLastPathComponent().deletingLastPathComponent().path
+        }
+        let folders = Set((ownedSessions + (legacy.map { [$0] } ?? [])).map(\.folder)
+            + (stored?.gooseFolder.map { [$0] } ?? [])
+            + (id == activeConversationID ? [gooseFolder.path] : []) + recordedFolders)
+        let ownedMessages = id == activeConversationID ? liveTree() : stored?.allMessages ?? []
+        let legacyDirectories = folders.flatMap { folder in
+            ownedMessages.filter { !$0.fileAttachments.isEmpty || !$0.imageAttachments.isEmpty }
+                .map { URL(fileURLWithPath: folder)
+                    .appendingPathComponent("Attachments/\($0.id.uuidString)").path }
+        }
+        let ownedDirectories = recordedDirectories + legacyDirectories
+        let ownedHashes = id == activeConversationID
+            ? gooseAttachmentHashes : stored?.gooseAttachmentHashes ?? [:]
+
+        if id == activeConversationID { cancelInflightWork() }
+        do {
+            try GooseConversationRetention.deleteSessions(ownedSessions + (legacy.map { [$0] } ?? []))
+            try GooseConversationRetention.deleteAttachmentDirectories(
+                ownedDirectories, folders: Array(folders), messages: ownedMessages,
+                hashes: ownedHashes)
+            try GooseConversationRetention.deleteContractsOwned(by: id, folders: Array(folders))
+        } catch {
+            lastError = "Could not remove all Chat helper data: \(error.localizedDescription)"
+            return
+        }
 
         // If deleting the OPEN conversation, tear down the live transcript
         // FIRST — otherwise the `isStreaming = false` below fires
         // persistActive() via didSet while the deleted messages + id are
         // still active, re-inserting the conversation we just removed.
         if id == activeConversationID {
-            cancelInflightWork()
             conversationEpoch &+= 1
             messages.removeAll()
             branchedAway.removeAll()
@@ -968,6 +1016,9 @@ final class ChatViewModel {
             lastError = nil
             lastFailureKind = nil
             lastFailureAlias = nil
+            gooseOwnedSessions = []
+            gooseAttachmentDirectories = []
+            gooseAttachmentHashes = [:]
         }
         conversations.removeAll { $0.id == id }
         saveConversations()
@@ -1130,6 +1181,9 @@ final class ChatViewModel {
         conversationInstructions = ""
         activeConversationID = UUID()
         gooseSessionID = nil
+        gooseOwnedSessions = []
+        gooseAttachmentDirectories = []
+        gooseAttachmentHashes = [:]
         locallyCreatedConversationID = activeConversationID
         if WorkAgent.gooseChat { WorkAgent.shared.preopenGooseChatSession() }
         lastError = nil
@@ -1373,7 +1427,8 @@ final class ChatViewModel {
             if WorkAgent.gooseChat && gooseFallback == nil {
                 do {
                     try await self.runGooseTurn(alias: alias, placeholderIndex: placeholderIndex, epoch: epoch,
-                        globalInstruction: globalInstruction, conversationInstruction: chatInstruction)
+                        globalInstruction: globalInstruction, conversationInstruction: chatInstruction,
+                        memoryContext: memoryContext)
                     return
                 } catch {
                     guard epoch == self.conversationEpoch, !Task.isCancelled else {
@@ -1405,7 +1460,8 @@ final class ChatViewModel {
     }
 
     private func runGooseTurn(alias: String, placeholderIndex: Int, epoch: Int,
-                              globalInstruction: String, conversationInstruction: String) async throws {
+                              globalInstruction: String, conversationInstruction: String,
+                              memoryContext: String?) async throws {
         guard let server, let bearer = server.activeBearer, server.activePort > 0 else {
             throw WorkError.message("The local model is unavailable.")
         }
@@ -1442,13 +1498,32 @@ final class ChatViewModel {
             }
             gooseConversationID = activeConversationID
         }
+        if let sessionID = agent.currentSessionID { recordGooseSession(sessionID) }
         let previous = Array(messages.prefix(placeholderIndex - 1))
+        // Recreate owned copies after a relaunch or branch switch. Their names
+        // are derived from persisted message and attachment IDs.
+        if !reuseSession {
+            try await replayGooseAttachments(previous, ownerID: activeConversationID)
+        }
+        guard epoch == conversationEpoch, !Task.isCancelled else {
+            finishGooseCancellation(epoch: epoch)
+            return
+        }
         let replay = reuseSession ? "" : Self.gooseReplay(previous)
         let user = messages[placeholderIndex - 1]
-        let instructions = [globalInstruction, conversationInstruction]
-            .compactMap { Self.normalizedInstruction($0) }
-        let instructionText = instructions.isEmpty ? "" : "Instructions for this chat:\n" + instructions.joined(separator: "\n") + "\n\n"
-        let prompt = instructionText + replay + user.content + (try gooseAttachmentNote(for: user))
+        let (contractURL, contractData) = try writeGooseRequestContract(globalInstruction: globalInstruction,
+            conversationInstruction: conversationInstruction, memoryContext: memoryContext, alias: alias)
+        defer {
+            if (try? Data(contentsOf: contractURL)) == contractData {
+                try? FileManager.default.removeItem(at: contractURL)
+            }
+        }
+        let attachmentNote = try await gooseAttachmentNote(for: user)
+        guard epoch == conversationEpoch, !Task.isCancelled else {
+            finishGooseCancellation(epoch: epoch)
+            return
+        }
+        let prompt = replay + user.content + attachmentNote
         await agent.prompt(prompt)
         guard epoch == conversationEpoch else { return }
         if Task.isCancelled {
@@ -1476,25 +1551,48 @@ final class ChatViewModel {
         inflight = nil
         gooseContextIDs = messages.map(\.id)
         terminalizeGooseCards(status: "completed")
+        if !Task.isCancelled, let delivered = currentMessage(index: placeholderIndex) {
+            reportGooseProductValueIfDelivered(delivered)
+        }
+    }
+
+    func reportGooseProductValueIfDelivered(_ message: ChatMessage) {
+        guard message.role == .assistant, message.status == .complete,
+              !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              reportedGooseProductValueIDs.insert(message.id).inserted else { return }
+        onProductValueDelivered(.chatReply)
     }
 
     static func gooseReplay(_ prior: [ChatMessage]) -> String {
-        let turns = prior.filter {
-            ($0.role == .user || $0.role == .assistant)
-                && (!$0.content.isEmpty || $0.gooseParts?.contains(where: { $0.tool != nil }) == true)
-        }.suffix(8).map { message in
-            let tools = (message.gooseParts ?? []).compactMap(\.tool).suffix(6).map { card in
+        let eligible = prior.filter {
+            ($0.role == .user || $0.role == .assistant || $0.role == .tool)
+                && (!$0.content.isEmpty || !$0.fileAttachments.isEmpty || !$0.imageAttachments.isEmpty
+                    || $0.gooseParts?.contains(where: { $0.tool != nil }) == true
+                    || $0.status == .failed || $0.errorMessage == "Stopped.")
+        }
+        let turns = eligible.suffix(8).map { message in
+            let allTools = (message.gooseParts ?? []).compactMap(\.tool)
+            let tools = allTools.suffix(6).map { card in
                 "\(card.name): \(card.status)\(card.output.isEmpty ? "" : " — \(String(card.output.prefix(200)))")"
             }
             // Keep the conclusion of a grouped text/tool/text turn. Its
             // pre-tool narration can otherwise consume the whole replay cap.
             let text = message.role == .assistant
                 ? String(message.content.suffix(1200)) : String(message.content.prefix(1200))
-            let summary = tools.isEmpty ? text : text + "\nTools: " + tools.joined(separator: "; ")
-            return "\(message.role == .user ? "User" : "Assistant"): \(summary)"
+            let attachments = message.role == .user ? Self.gooseAttachmentReferences(for: message) : ""
+            let toolSummary = tools.isEmpty ? "" : "\nTools: " + tools.joined(separator: "; ")
+            let outcome: String
+            if message.errorMessage == "Stopped." { outcome = " [cancelled]" }
+            else if message.status == .failed { outcome = " [failed]" }
+            else { outcome = " [completed]" }
+            let omitted = (message.content.count > 1200 || allTools.count > 6) ? " [bounded excerpt]" : ""
+            let role = message.role == .user ? "User" : (message.role == .tool ? "Tool result" : "Assistant")
+            return "\(role)\(outcome)\(omitted): \(text)\(attachments)\(toolSummary)"
         }
         guard !turns.isEmpty else { return "" }
-        return "Conversation so far (for context):\n" + turns.joined(separator: "\n") + "\n\nCurrent request: "
+        let omitted = eligible.count > 8 ? "Earlier turns omitted.\n" : ""
+        return "Bounded reconstruction of conversation (for context; not a complete transcript):\n"
+            + omitted + turns.joined(separator: "\n") + "\n\nCurrent request: "
     }
 
     static func canReuseGooseSession(activeConversationID: UUID, sessionConversationID: UUID?,
@@ -1531,33 +1629,154 @@ final class ChatViewModel {
         }
     }
 
-    private func gooseAttachmentNote(for user: ChatMessage) throws -> String {
+    func replayGooseAttachments(_ previous: [ChatMessage], ownerID: UUID) async throws {
+        for message in previous where message.role == .user {
+            guard activeConversationID == ownerID, !Task.isCancelled else { return }
+            _ = try await gooseAttachmentNote(for: message)
+            guard activeConversationID == ownerID, !Task.isCancelled else { return }
+        }
+    }
+
+    func gooseAttachmentNote(for user: ChatMessage) async throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
+        let ownerID = activeConversationID
         let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
         _ = try GooseToolPresentation.containedDestination(directory, root: gooseFolder)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !gooseAttachmentDirectories.contains(directory.path) {
+            gooseAttachmentDirectories.append(directory.path)
+        }
         var paths: [String] = []
         for image in user.imageAttachments {
-            let name = URL(fileURLWithPath: image.filename).lastPathComponent
+            let name = image.id.uuidString + "-" + URL(fileURLWithPath: image.filename).lastPathComponent
             let destination = directory.appendingPathComponent(name)
             let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
+            let exists = FileManager.default.fileExists(atPath: safe.path)
+            var existingHash: String?
+            if exists { existingHash = await Task.detached { Self.sha256OfFile(safe) }.value }
+            guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
+            if exists && gooseAttachmentHashes[safe.path] != existingHash {
+                paths.append(destination.path)
+                continue
+            }
             try image.data.write(to: safe, options: .atomic)
+            gooseAttachmentHashes[safe.path] = Self.sha256(image.data)
             paths.append(destination.path)
         }
         for file in user.fileAttachments {
-            let name = URL(fileURLWithPath: file.filename).deletingPathExtension().lastPathComponent + ".txt"
+            let name = file.id.uuidString + ".txt"
             let destination = directory.appendingPathComponent(name)
             let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
-            try file.extractedText.write(to: safe, atomically: true, encoding: .utf8)
+            let exists = FileManager.default.fileExists(atPath: safe.path)
+            var existingHash: String?
+            if exists { existingHash = await Task.detached { Self.sha256OfFile(safe) }.value }
+            guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
+            if exists && gooseAttachmentHashes[safe.path] != existingHash {
+                paths.append(destination.path)
+                continue
+            }
+            let cache = documentCache
+            let id = file.id
+            let retained = await Task.detached(priority: .userInitiated) {
+                cache.getAwaitingCompletionStatus(id)
+            }.value
+            guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
+            if exists {
+                let currentHash = await Task.detached { Self.sha256OfFile(safe) }.value
+                guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
+                if gooseAttachmentHashes[safe.path] != currentHash {
+                    paths.append(destination.path)
+                    continue
+                }
+            }
+            if FileManager.default.fileExists(atPath: safe.path),
+               retained?.entry.isComplete != true {
+                paths.append(destination.path)
+                continue
+            }
+            let text = retained?.entry.text ?? file.extractedText
+            let status = retained == nil ? "preview only; retained extract unavailable"
+                : retained!.extractionPending ? "extraction pending"
+                : retained!.entry.hitSizeCeiling ? "truncated at retention limit"
+                : retained!.entry.isComplete ? "complete" : "incomplete extraction"
+            let exported = "Extraction status: \(status)\nSource: \(file.filename)\n\n" + text
+            let data = Data(exported.utf8)
+            try data.write(to: safe, options: .atomic)
+            gooseAttachmentHashes[safe.path] = Self.sha256(data)
             paths.append(destination.path)
         }
+        persistActive(touching: false)
         return "\nAttached files copied into this conversation folder:\n" + paths.joined(separator: "\n")
+    }
+
+    nonisolated private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated private static func sha256OfFile(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return sha256(data)
+    }
+
+    private static func gooseAttachmentReferences(for user: ChatMessage) -> String {
+        guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
+        let directory = "Attachments/\(user.id.uuidString)/"
+        let images = user.imageAttachments.map {
+            directory + $0.id.uuidString + "-" + URL(fileURLWithPath: $0.filename).lastPathComponent
+        }
+        let files = user.fileAttachments.map { directory + $0.id.uuidString + ".txt" }
+        return "\nAttachments (relative to conversation folder): " + (images + files).joined(separator: ", ")
+    }
+
+    private func writeGooseRequestContract(globalInstruction: String,
+                                           conversationInstruction: String,
+                                           memoryContext: String?, alias: String) throws -> (URL, Data) {
+        var contract = Self.gooseRequestContract(globalInstruction: globalInstruction,
+            conversationInstruction: conversationInstruction, memoryContext: memoryContext,
+            sampling: sampling?.resolved(toolsEnabled: false), alias: alias, now: Date())
+        contract["turn_id"] = UUID().uuidString
+        contract["conversation_id"] = activeConversationID.uuidString
+        let digest = SHA256.hash(data: Data(gooseFolder.path.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Rapid/agent-goose-chat/workspaces")
+        let destination = root.appendingPathComponent(digest).appendingPathComponent("chat-contract.json")
+        let safe = try GooseToolPresentation.containedDestination(destination, root: root)
+        let data = try JSONSerialization.data(withJSONObject: contract)
+        try data.write(to: safe, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: safe.path)
+        return (safe, data)
+    }
+
+    static func gooseRequestContract(globalInstruction: String,
+                                     conversationInstruction: String,
+                                     memoryContext: String?,
+                                     sampling: ResolvedSampling?, alias: String, now: Date) -> [String: Any] {
+        let system = Self.addingInstructionLayers(to: [],
+            dateContext: Self.currentDateContext(now: now),
+            memoryContext: memoryContext, global: globalInstruction,
+            conversation: conversationInstruction).first?.content ?? ""
+        let request = ChatStreamClient.Request(alias: alias, messages: [],
+            temperature: sampling?.temperature ?? SamplingConfig.temperatureDefault,
+            topP: sampling?.topP ?? SamplingConfig.topPDefault,
+            maxTokens: sampling?.maxTokens ?? SamplingConfig.maxTokensDefault,
+            repetitionPenalty: sampling?.repetitionPenalty ?? SamplingConfig.repetitionPenaltyDefault,
+            repetitionPenaltyIsImplicitDefault: sampling?.repetitionPenaltyIsImplicitDefault ?? true,
+            enableThinking: sampling?.enableThinking ?? SamplingConfig.enableThinkingDefault)
+        return [
+            "system_prompt": system,
+            "temperature": request.temperature,
+            "top_p": request.topP,
+            "max_tokens": request.maxTokens,
+            "repetition_penalty": request.wireRepetitionPenalty,
+            "enable_thinking": request.enableThinking,
+        ]
     }
 
     func applyGooseEvent(_ event: GooseChatEvent, initialPlaceholder: Int) {
         guard messages.indices.contains(initialPlaceholder) else { return }
         switch event {
-        case .session(let id): gooseSessionID = id
+        case .session(let id): recordGooseSession(id)
         case .text(let chunk):
             guard !chunk.isEmpty else { break }
             if let details = messages[initialPlaceholder].gooseErrorDetails,
@@ -1575,13 +1794,6 @@ final class ChatViewModel {
                 break
             }
             messages[initialPlaceholder].content += chunk
-            if messages[initialPlaceholder].gooseParts == nil { messages[initialPlaceholder].gooseParts = [] }
-            if let last = messages[initialPlaceholder].gooseParts?.indices.last,
-               messages[initialPlaceholder].gooseParts?[last].text != nil {
-                messages[initialPlaceholder].gooseParts?[last].text? += chunk
-            } else {
-                messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(text: chunk))
-            }
         case .thinking(let chunk):
             messages[initialPlaceholder].reasoning += chunk
         case .tool(let id, let name, let input, let status, let output):
@@ -1632,6 +1844,15 @@ final class ChatViewModel {
                 reasoningEmitted: !message.reasoning.isEmpty,
                 engineTokensPerSecond: rate
             )
+        }
+    }
+
+    private func recordGooseSession(_ id: String) {
+        gooseSessionID = id
+        let owned = GooseOwnedSession(id: id, folder: gooseFolder.path)
+        if !gooseOwnedSessions.contains(owned) {
+            gooseOwnedSessions.append(owned)
+            persistActive(touching: false)
         }
     }
 
@@ -2418,17 +2639,36 @@ final class ChatViewModel {
 
     // MARK: - Plain chat stream
 
-    /// Historical conversations can contain agent tool rows. Keep readable
-    /// user and assistant prose while dropping obsolete tool envelopes before
-    /// sending a new plain chat request.
+    /// Flatten legacy tool results into readable assistant evidence while
+    /// removing obsolete tool-call envelopes from the direct-chat wire body.
     nonisolated static func plainChatHistory(_ history: [ChatMessage]) -> [ChatMessage] {
-        let flattened = history.compactMap { original -> ChatMessage? in
-            guard original.role != .tool, original.role != .unknown else { return nil }
+        var flattened: [ChatMessage] = []
+        var pendingTools: [String] = []
+        for original in history {
+            if original.role == .tool {
+                pendingTools.append("Tool result: " + String(original.content.prefix(1200)))
+                continue
+            }
+            guard original.role != .unknown else { continue }
             var message = original
             message.toolCalls = nil
             message.toolCallID = nil
             message.wireSuffix = nil
-            return message
+            if !pendingTools.isEmpty {
+                if message.role == .assistant {
+                    message.content = pendingTools.joined(separator: "\n")
+                        + (message.content.isEmpty ? "" : "\n" + message.content)
+                } else {
+                    flattened.append(ChatMessage(role: .assistant,
+                        content: pendingTools.joined(separator: "\n")))
+                }
+                pendingTools.removeAll()
+            }
+            flattened.append(message)
+        }
+        if !pendingTools.isEmpty {
+            flattened.append(ChatMessage(role: .assistant,
+                content: pendingTools.joined(separator: "\n")))
         }
         return filterEmptyAssistantsForWire(flattened)
     }

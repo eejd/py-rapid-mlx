@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import SQLite3
 import Testing
 @testable import Rapid
 
@@ -315,17 +317,16 @@ struct GooseChatTests {
         model.applyGooseEvent(.tool(id: "t1", name: "write · /tmp/chat/report.txt", input: "", status: "completed", output: ""), initialPlaceholder: 1)
         model.applyGooseEvent(.tool(id: "t1", name: "", input: "", status: "completed", output: ""), initialPlaceholder: 1)
         #expect(model.messages.count == 2)
-        #expect(model.messages[1].gooseParts?.count == 2)
-        #expect(model.messages[1].gooseParts?[1].tool?.output == "done")
-        #expect(model.messages[1].gooseParts?[1].tool?.name == "write · /tmp/chat/report.txt")
-        #expect(model.messages[1].gooseParts?[1].tool?.permissionState == "permission needed")
+        #expect(model.messages[1].gooseParts?.count == 1)
+        #expect(model.messages[1].gooseParts?[0].tool?.output == "done")
+        #expect(model.messages[1].gooseParts?[0].tool?.name == "write · /tmp/chat/report.txt")
+        #expect(model.messages[1].gooseParts?[0].tool?.permissionState == "permission needed")
         model.applyGooseEvent(.text("Done"), initialPlaceholder: 1)
         model.applyGooseEvent(.throughput(42.5), initialPlaceholder: 1)
         #expect(model.messages[1].stats?.reportedTokensPerSecond == 42.5)
         #expect(model.messages.count == 2)
         #expect(model.messages[1].content == "HelloDone")
-        #expect(model.messages[1].gooseParts?.count == 3)
-        #expect(model.messages[1].gooseParts?[2].text == "Done")
+        #expect(model.messages[1].gooseParts?.count == 1)
         #expect(model.messages[1].gooseParts?.allSatisfy {
             $0.tool != nil || $0.text?.isEmpty == false
         } == true)
@@ -369,13 +370,23 @@ struct GooseChatTests {
             content: "Ran into this error: please check your input"))
         #expect(ChatViewModel.repairGooseTitles([quoted])[0].messages.last?.content
             == "Ran into this error: please check your input")
-        #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User: first"))
+        #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User [completed]: first"))
         let toolOnly = ChatMessage(role: .assistant, gooseParts: [
             GooseTurnPart(tool: GooseToolCard(id: "t", name: "write · snake.html",
                 input: "{}", output: "created", status: "completed"))])
         #expect(ChatViewModel.gooseReplay(decoded.messages + [toolOnly]).contains("Tools: write · snake.html: completed"))
         let longAnswer = ChatMessage(role: .assistant, content: String(repeating: "preamble ", count: 180) + "Final answer: done")
         #expect(ChatViewModel.gooseReplay(decoded.messages + [longAnswer]).contains("Final answer: done"))
+        var cancelled = ChatMessage(role: .assistant, content: "partial")
+        cancelled.errorMessage = "Stopped."
+        var failed = ChatMessage(role: .assistant, content: "broken", status: .failed)
+        failed.errorMessage = "Failed"
+        let legacyTool = ChatMessage(role: .tool, content: "Older tool output", toolCallID: "old")
+        let replay = ChatViewModel.gooseReplay(decoded.messages + [cancelled, failed, legacyTool])
+        #expect(replay.contains("[cancelled]"))
+        #expect(replay.contains("[failed]"))
+        #expect(replay.contains("Tool result [completed]: Older tool output"))
+        #expect(replay.contains("Bounded reconstruction"))
         let visible = decoded.messages.map(\.id)
         #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
             sessionConversationID: nil, currentContextIDs: visible, visibleContextIDs: visible, sessionID: nil))
@@ -383,6 +394,215 @@ struct GooseChatTests {
             sessionConversationID: decoded.id, currentContextIDs: visible, visibleContextIDs: visible, sessionID: "s"))
         #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
             sessionConversationID: decoded.id, currentContextIDs: visible, visibleContextIDs: [UUID()], sessionID: "s"))
+    }
+
+    @Test("Deletion removes only owned copies and all recorded helper sessions")
+    func retention() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("goose-retain-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("workspace")
+        let user = ChatMessage(role: .user, content: "", fileAttachments: [
+            try ChatFileAttachment(filename: "source.csv", kind: .csv, extractedText: "preview",
+                                   sourceByteCount: 7)])
+        let copies = folder.appendingPathComponent("Attachments/\(user.id.uuidString)")
+        try FileManager.default.createDirectory(at: copies, withIntermediateDirectories: true)
+        let owned = copies.appendingPathComponent(user.fileAttachments[0].id.uuidString + ".txt")
+        let userOutput = copies.appendingPathComponent("my-result.txt")
+        try "copy".write(to: owned, atomically: true, encoding: .utf8)
+        try "keep".write(to: userOutput, atomically: true, encoding: .utf8)
+        let copiedHash = SHA256.hash(data: Data("copy".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
+            folders: [folder.path], messages: [user], hashes: [owned.path: copiedHash])
+        #expect(!FileManager.default.fileExists(atPath: owned.path))
+        #expect(FileManager.default.fileExists(atPath: userOutput.path))
+        try "changed by user".write(to: owned, atomically: true, encoding: .utf8)
+        try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
+            folders: [folder.path], messages: [user], hashes: [owned.path: copiedHash])
+        #expect(FileManager.default.fileExists(atPath: owned.path))
+        let legacyCopy = copies.appendingPathComponent("source.txt")
+        try "preview".write(to: legacyCopy, atomically: true, encoding: .utf8)
+        try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
+            folders: [folder.path], messages: [user])
+        #expect(!FileManager.default.fileExists(atPath: legacyCopy.path))
+        #expect(FileManager.default.fileExists(atPath: owned.path))
+
+        let hash = SHA256.hash(data: Data(folder.path.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let database = root.appendingPathComponent("databases/\(hash)/data/sessions/sessions.db")
+        try FileManager.default.createDirectory(at: database.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        var handle: OpaquePointer?
+        #expect(sqlite3_open(database.path, &handle) == SQLITE_OK)
+        defer { sqlite3_close(handle) }
+        #expect(sqlite3_exec(handle, "CREATE TABLE sessions(id TEXT PRIMARY KEY); "
+            + "CREATE TABLE messages(session_id TEXT); CREATE TABLE usage_ledger(session_id TEXT); "
+            + "INSERT INTO sessions VALUES('first'),('superseded'),('other'); "
+            + "INSERT INTO messages VALUES('first'),('superseded'),('other'); "
+            + "INSERT INTO usage_ledger VALUES('first'),('superseded'),('other');",
+            nil, nil, nil) == SQLITE_OK)
+        try GooseConversationRetention.deleteSessions([
+            GooseOwnedSession(id: "first", folder: folder.path),
+            GooseOwnedSession(id: "superseded", folder: folder.path),
+        ], root: root.appendingPathComponent("databases"))
+        var statement: OpaquePointer?
+        #expect(sqlite3_prepare_v2(handle, "SELECT count(*) FROM sessions", -1, &statement, nil) == SQLITE_OK)
+        #expect(sqlite3_step(statement) == SQLITE_ROW)
+        #expect(sqlite3_column_int(statement, 0) == 1)
+        sqlite3_finalize(statement)
+        let contract = root.appendingPathComponent("databases/\(hash)/chat-contract.json")
+        let conversationID = UUID()
+        try JSONSerialization.data(withJSONObject: ["conversation_id": conversationID.uuidString,
+            "system_prompt": "private memory"]).write(to: contract)
+        try GooseConversationRetention.deleteContractsOwned(by: UUID(),
+            folders: [folder.path], root: root.appendingPathComponent("databases"))
+        #expect(FileManager.default.fileExists(atPath: contract.path))
+        try GooseConversationRetention.deleteContractsOwned(by: conversationID,
+            folders: [folder.path], root: root.appendingPathComponent("databases"))
+        #expect(!FileManager.default.fileExists(atPath: contract.path))
+    }
+
+    @Test("Goose exports the retained extract and replays attachment-only rows")
+    func retainedAttachment() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-extract-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let file = try ChatFileAttachment(filename: "large.csv", kind: .csv,
+            extractedText: "opening preview", sourceByteCount: 100, totalCharacterCount: 28)
+        cache.put(file.id, entry: DocumentContentCache.Entry(
+            filename: file.filename, text: "opening preview\nfinal row,42", isComplete: true))
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let user = ChatMessage(role: .user, fileAttachments: [file])
+        let note = try await model.gooseAttachmentNote(for: user)
+        let exported = folder.appendingPathComponent("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt")
+        #expect(note.contains(exported.path))
+        #expect(try String(contentsOf: exported, encoding: .utf8).contains("Extraction status: complete"))
+        #expect(try String(contentsOf: exported, encoding: .utf8).contains("final row,42"))
+        let replay = ChatViewModel.gooseReplay([user])
+        #expect(replay.contains("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt"))
+        cache.remove(file.id)
+        _ = try await model.gooseAttachmentNote(for: user)
+        #expect(try String(contentsOf: exported, encoding: .utf8).contains("final row,42"))
+        try "user changed this copy".write(to: exported, atomically: true, encoding: .utf8)
+        _ = try await model.gooseAttachmentNote(for: user)
+        #expect(try String(contentsOf: exported, encoding: .utf8) == "user changed this copy")
+    }
+
+    @Test("A conversation switch during extraction cannot export into the next chat")
+    func extractionSwitch() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-switch-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let file = try ChatFileAttachment(filename: "pending.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        cache.put(file.id, entry: DocumentContentCache.Entry(
+            filename: file.filename, text: "full text", isComplete: true))
+        cache.beginPending(file.id)
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let user = ChatMessage(role: .user, fileAttachments: [file])
+        let task = Task { try await model.gooseAttachmentNote(for: user) }
+        let directory = folder.appendingPathComponent("Attachments/\(user.id.uuidString)")
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: directory.path) {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        model.newConversation()
+        cache.finishPending(file.id)
+        _ = try await task.value
+        #expect(!FileManager.default.fileExists(atPath:
+            directory.appendingPathComponent(file.id.uuidString + ".txt").path))
+    }
+
+    @Test("Replay stops before a second attachment after a conversation switch")
+    func replayStopsAfterSwitch() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-replay-switch-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let firstFile = try ChatFileAttachment(filename: "pending.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        let secondFile = try ChatFileAttachment(filename: "next.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        cache.put(firstFile.id, entry: DocumentContentCache.Entry(
+            filename: firstFile.filename, text: "full text", isComplete: true))
+        cache.beginPending(firstFile.id)
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let first = ChatMessage(role: .user, fileAttachments: [firstFile])
+        let second = ChatMessage(role: .user, fileAttachments: [secondFile])
+        let ownerID = model.activeConversationID
+        let task = Task { try await model.replayGooseAttachments([first, second], ownerID: ownerID) }
+        let firstDirectory = folder.appendingPathComponent("Attachments/\(first.id.uuidString)")
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: firstDirectory.path) {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        model.newConversation()
+        let nextOwnerID = model.activeConversationID
+        cache.finishPending(firstFile.id)
+        try await task.value
+        #expect(model.activeConversationID == nextOwnerID)
+        #expect(!FileManager.default.fileExists(atPath:
+            folder.appendingPathComponent("Attachments/\(second.id.uuidString)").path))
+    }
+
+    @Test("An edit made during extraction is not overwritten")
+    func editDuringExtraction() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-edit-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let file = try ChatFileAttachment(filename: "pending.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        cache.put(file.id, entry: DocumentContentCache.Entry(filename: file.filename,
+            text: "retained text", isComplete: true))
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let user = ChatMessage(role: .user, fileAttachments: [file])
+        _ = try await model.gooseAttachmentNote(for: user)
+        let exported = folder.appendingPathComponent("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt")
+        cache.beginPending(file.id)
+        let task = Task { try await model.gooseAttachmentNote(for: user) }
+        try await Task.sleep(for: .milliseconds(10))
+        try "user output".write(to: exported, atomically: true, encoding: .utf8)
+        cache.finishPending(file.id)
+        _ = try await task.value
+        #expect(try String(contentsOf: exported, encoding: .utf8) == "user output")
+    }
+
+    @Test("Goose contract carries direct-chat instructions, memory and sampling")
+    func requestContract() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let sampling = ResolvedSampling(temperature: 0.23, topP: 0.95,
+            maxTokens: 1536, repetitionPenalty: 1.1,
+            repetitionPenaltyIsImplicitDefault: true, enableThinking: false)
+        let expected = ChatViewModel.addingInstructionLayers(to: [],
+            dateContext: ChatViewModel.currentDateContext(now: date),
+            memoryContext: "Remember the user's project", global: "Be concise",
+            conversation: "Use Swift").first?.content
+        let contract = ChatViewModel.gooseRequestContract(
+            globalInstruction: "Be concise", conversationInstruction: "Use Swift",
+            memoryContext: "Remember the user's project", sampling: sampling,
+            alias: "test-model", now: date)
+        #expect(contract["system_prompt"] as? String == expected)
+        #expect(contract["temperature"] as? Double == 0.23)
+        #expect(contract["top_p"] as? Double == 0.95)
+        #expect(contract["max_tokens"] as? Int == 1536)
+        #expect(contract["repetition_penalty"] as? Double == 1.1)
+        #expect(contract["enable_thinking"] as? Bool == false)
+    }
+
+    @Test("A successful Goose reply delivers product value exactly once")
+    func productValue() {
+        var delivered = 0
+        let model = ChatViewModel(persistsConversations: false,
+            onProductValueDelivered: { kind in
+                if kind == .chatReply { delivered += 1 }
+            })
+        let reply = ChatMessage(role: .assistant, content: "Done", status: .complete)
+        model.reportGooseProductValueIfDelivered(reply)
+        model.reportGooseProductValueIfDelivered(reply)
+        model.reportGooseProductValueIfDelivered(ChatMessage(role: .assistant,
+            content: "partial", status: .failed))
+        #expect(delivered == 1)
     }
 
     @Test("Goose chats appear newest first and reopen their saved transcript")

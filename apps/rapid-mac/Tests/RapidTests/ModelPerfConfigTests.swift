@@ -354,6 +354,20 @@ struct ModelPerfConfigTests {
         ) == ["--no-spec-decode"])
     }
 
+    @Test("Goose Chat disables incompatible DFlash tool requests")
+    func dflashToolsCompatibility() {
+        let preset = SpeculativeDecodingPreset(method: .dflash,
+            model: "draft", tokens: nil, backend: "tensorfold", defaultEnabled: false)
+        let flags = ["--speculative-config", #"{"method":"dflash","model":"draft"}"#]
+        let safe = ServerManager.speculativeSafePerformanceOverrides(
+            defaultPreset: preset, userOverrides: flags, toolsEnabled: true)
+        #expect(safe == ["--no-spec-decode"])
+        #expect(!ServerManager.speculativeDecodingRequested(
+            defaultPreset: preset, userOverrides: flags, toolsEnabled: true))
+        #expect(ServerManager.speculativeDecodingRequested(
+            defaultPreset: preset, userOverrides: flags, toolsEnabled: false))
+    }
+
     @Test("Target-only TensorFold MTP defaults on and keeps an explicit opt-out")
     func targetOnlyTensorFoldMTPDefaultOnContract() {
         let preset = SpeculativeDecodingPreset(

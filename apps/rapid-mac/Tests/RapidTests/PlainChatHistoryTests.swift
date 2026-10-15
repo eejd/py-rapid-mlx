@@ -17,7 +17,7 @@ struct PlainChatHistoryTests {
 
         let plain = ChatViewModel.plainChatHistory(history)
         #expect(plain.map(\.role) == [.user, .assistant, .user])
-        #expect(plain.map(\.content) == ["What happened?", "Here is the answer.", "Explain more."])
+        #expect(plain.map(\.content) == ["What happened?", "Tool result: Old search result\nHere is the answer.", "Explain more."])
         #expect(plain.allSatisfy { $0.toolCalls == nil && $0.toolCallID == nil && $0.wireSuffix == nil })
     }
 

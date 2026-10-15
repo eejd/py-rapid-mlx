@@ -42,6 +42,7 @@ final class StreamingMarkdownStore {
 
     private var presentationBuffer = StreamingTextPresentationBuffer()
     private var isFinishing = false
+    private var largeTailFrameCounter = 0
 
     var segments: [StreamingMarkdownDocument.Segment] { document.segments }
     var result: MarkdownResult { document.result }
@@ -72,6 +73,7 @@ final class StreamingMarkdownStore {
             document = StreamingMarkdownDocument()
             documentMessageID = id
             presentationBuffer = StreamingTextPresentationBuffer()
+            largeTailFrameCounter = 0
         }
         messageID = id
         isFinishing = false
@@ -119,10 +121,18 @@ final class StreamingMarkdownStore {
         documentMessageID = nil
         presentationBuffer = StreamingTextPresentationBuffer()
         isFinishing = false
+        largeTailFrameCounter = 0
     }
 
     /// Advance presentation by one real or test-controlled display frame.
     func advancePresentationFrame(duration: TimeInterval) {
+        // A long open code fence remains one mutable Markdown block. Parsing
+        // it on every display frame grows the main-thread cost with every line.
+        // Present that tail at 10 Hz while retaining 60 Hz for short replies.
+        if !isFinishing && document.mutableSource.utf8.count >= 4_096 {
+            largeTailFrameCounter += 1
+            if largeTailFrameCounter % 6 != 0 { return }
+        }
         if let delta = presentationBuffer.presentFrame(
             duration: duration,
             isFinishing: isFinishing

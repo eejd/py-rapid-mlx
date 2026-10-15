@@ -5,9 +5,14 @@ import io
 import json
 import os
 import pathlib
+import socket
+import subprocess
 import tempfile
 import sys
+import threading
 import unittest
+import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
 
@@ -58,6 +63,84 @@ class StreamRateTests(unittest.TestCase):
         self.assertIn("exact source URL", compact["messages"][0]["content"])
         self.assertIn("GOOGL is Alphabet Class A", compact["messages"][0]["content"])
         self.assertIn("google.com/finance/quote/GOOGL:NASDAQ", compact["messages"][0]["content"])
+
+    def test_desktop_system_and_sampling_survive_goose_compaction(self):
+        request = {"_rapid_desktop_system": True, "temperature": 0.2,
+                   "top_p": 0.8, "max_tokens": 1234, "repetition_penalty": 1.05,
+                   "chat_template_kwargs": {"enable_thinking": False}, "messages": [
+                       {"role": "system", "content": "User memory and instructions"},
+                       {"role": "system", "content": "Goose long prompt"},
+                       {"role": "user", "content": "Hello"}]}
+        compact = self.module.compact_goose_request(request)
+        self.assertEqual(compact["messages"][0]["content"], "User memory and instructions")
+        self.assertEqual(compact["messages"][1]["content"], self.module.GOOSE_CHAT_SYSTEM)
+        self.assertEqual(compact["temperature"], 0.2)
+        self.assertEqual(compact["top_p"], 0.8)
+        self.assertEqual(compact["max_tokens"], 1234)
+        self.assertEqual(compact["repetition_penalty"], 1.05)
+        self.assertEqual(compact["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertNotIn("_rapid_desktop_system", compact)
+
+    def test_bridge_applies_per_turn_contract(self):
+        received = {}
+
+        class Upstream(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+
+            def do_POST(self):
+                received.update(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+        upstream = HTTPServer(("127.0.0.1", 0), Upstream)
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            bridge_port = probe.getsockname()[1]
+        with tempfile.TemporaryDirectory() as directory:
+            (pathlib.Path(directory) / "chat-contract.json").write_text(json.dumps({
+                "system_prompt": "Use Swift. Remember the project.",
+                "temperature": 0.19, "top_p": 0.77, "max_tokens": 768,
+                "repetition_penalty": 1.08, "enable_thinking": False}))
+            script = pathlib.Path(__file__).with_name("work-helper-watchdog.py")
+            bridge = subprocess.Popen([sys.executable, str(script), "--credential-bridge",
+                str(bridge_port), str(upstream.server_port)], cwd=directory,
+                env={**os.environ, "WORK_BRIDGE_SCOPED_KEY": "scoped",
+                     "WORK_BRIDGE_UPSTREAM_KEY": "upstream"},
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                health = f"http://127.0.0.1:{bridge_port}/health"
+                for _ in range(100):
+                    try:
+                        urllib.request.urlopen(health, timeout=0.1).close()
+                        break
+                    except OSError:
+                        threading.Event().wait(0.01)
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{bridge_port}/v1/chat/completions",
+                    data=json.dumps({"messages": [{"role": "system", "content": "Goose"},
+                        {"role": "user", "content": "Hi"}], "temperature": 0.9,
+                        "max_tokens": 4000}).encode(),
+                    headers={"Authorization": "Bearer scoped", "Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    self.assertEqual(response.read(), b"ok")
+                self.assertEqual(received["messages"][0]["content"],
+                                 "Use Swift. Remember the project.")
+                self.assertEqual(received["messages"][1]["content"], "Goose")
+                self.assertEqual(received["temperature"], 0.19)
+                self.assertEqual(received["top_p"], 0.77)
+                self.assertEqual(received["max_tokens"], 768)
+                self.assertEqual(received["repetition_penalty"], 1.08)
+                self.assertEqual(received["chat_template_kwargs"], {"enable_thinking": False})
+            finally:
+                bridge.terminate()
+                bridge.wait(timeout=3)
+                upstream.shutdown()
+                upstream.server_close()
+                thread.join(timeout=3)
 
     def test_rotated_server_key_is_read_for_each_upstream_request(self):
         module = self.module
