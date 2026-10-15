@@ -1621,6 +1621,33 @@ def test_4663_stream_terminal_does_not_replay_truncated_wire(chunk_size):
     assert not visible, visible
 
 
+def test_4663_forced_truncated_wire_in_reasoning_preserves_narration():
+    raw = 'Need to call the tool.\n<tool_call> {"name": "add_numbers", "'
+
+    class Engine(_RecordingEngine):
+        async def chat(self, messages, **kwargs):
+            output = await super().chat(messages, **kwargs)
+            output.reasoning_text = raw
+            return output
+
+    client = _make_client(Engine(text=raw))
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "Call add_numbers now."}],
+            "tools": _SOLO_TOOL,
+            "tool_choice": "required",
+            "max_tokens": 128,
+        },
+    )
+    assert response.status_code == 200, response.text
+    message = response.json()["choices"][0]["message"]
+    assert message["tool_calls"]
+    assert "Need to call the tool." in (message.get("reasoning_content") or "")
+    assert "<tool_call>" not in (message.get("reasoning_content") or "")
+
+
 def test_codex_r11_broad_scrub_does_not_cross_family_strip_marker_prose():
     """Cross-family scrub needs payload evidence before deleting a span."""
 
