@@ -41,6 +41,8 @@ struct SettingsView: View {
     @State private var restartingSetup = false
     @AppStorage(GoosePermissionPolicy.yoloKey) private var gooseYOLODefault = false
     @State private var gooseAllowedTools: [String] = []
+    @State private var confirmGooseYOLO = false
+    @State private var goosePermissionResetError = false
     @AppStorage(LocalSearchFeatureConfig.enabledKey)
     private var localSearchEnabled = LocalSearchFeatureConfig.defaultEnabled
     @AppStorage(VideoFeatureConfig.enabledKey)
@@ -640,10 +642,16 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.xl) {
             if WorkAgent.gooseChat {
                 SettingsSection("Tool permissions") {
-                    Toggle("YOLO default", isOn: $gooseYOLODefault)
+                    Toggle("YOLO", isOn: Binding(get: { gooseYOLODefault }, set: { enabled in
+                        if enabled && !UserDefaults.standard.bool(forKey: "Rapid.GooseChat.yoloConfirmed") {
+                            confirmGooseYOLO = true
+                        } else { gooseYOLODefault = enabled }
+                    }))
+                    Text("Approved tools run with your Mac user permissions and can access files outside the selected chat folder.")
+                        .font(.caption).foregroundStyle(.secondary)
                     ForEach(gooseAllowedTools, id: \.self) { tool in
                         HStack {
-                            Text(tool)
+                            Text(GoosePermissionPolicy.scope(tool))
                             Spacer()
                             Button("Remove") {
                                 gooseAllowedTools.removeAll { $0 == tool }
@@ -652,11 +660,25 @@ struct SettingsView: View {
                         }
                     }
                     Button("Reset all") {
+                        WorkAgent.shared.stop()
                         gooseAllowedTools = []
                         UserDefaults.standard.removeObject(forKey: GoosePermissionPolicy.allowedKey)
+                        gooseYOLODefault = false
+                        UserDefaults.standard.removeObject(forKey: "Rapid.GooseChat.yoloConfirmed")
+                        do { try WorkAgent.resetStoredNativePermissions() }
+                        catch { goosePermissionResetError = true }
                     }
-                    .disabled(gooseAllowedTools.isEmpty)
                 }
+                .confirmationDialog("YOLO lets tools run without asking. They act with your Mac user permissions, including outside the selected folder.",
+                                    isPresented: $confirmGooseYOLO) {
+                    Button("Turn on YOLO") {
+                        UserDefaults.standard.set(true, forKey: "Rapid.GooseChat.yoloConfirmed")
+                        gooseYOLODefault = true
+                    }
+                }
+                .alert("Couldn't reset tool permissions", isPresented: $goosePermissionResetError) {
+                    Button("OK", role: .cancel) {}
+                } message: { Text("Try Reset all again before starting another chat.") }
                 .onAppear {
                     gooseAllowedTools = UserDefaults.standard.stringArray(forKey: GoosePermissionPolicy.allowedKey) ?? []
                 }

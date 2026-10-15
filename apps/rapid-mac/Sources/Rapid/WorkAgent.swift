@@ -53,8 +53,10 @@ final class WorkAgent {
     var syntheticTestAutoApproval = false
     private var process: Process?
     private var proxyProcess: Process?
+    private var bridgeProcess: Process?
     private var port = 0
     private var proxyPort = 0
+    private var bridgePort = 0
     private var secret = ""
     private var connection: String?
     private var sessionID: String?
@@ -65,6 +67,8 @@ final class WorkAgent {
     private var serverIdentity: String?
     private var sandboxProfileURLs: [URL] = []
     private var pendingPermissions: [WorkPermission] = []
+    private var toolIdentities: [String: String] = [:]
+    private var rawToolOutputs: [String: String] = [:]
     private var generation = 0
     var lifecycleGeneration: Int { generation }
 
@@ -122,17 +126,22 @@ final class WorkAgent {
         try fileManager.createDirectory(at: rootSupport, withIntermediateDirectories: true,
                                         attributes: [.posixPermissions: 0o700])
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: rootSupport.path)
+        if Self.gooseChat { _ = try GooseToolPresentation.containedDestination(support, root: rootSupport) }
         try fileManager.createDirectory(at: support, withIntermediateDirectories: true,
                                         attributes: [.posixPermissions: 0o700])
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
+        if Self.gooseChat { try GoosePermissionPolicy.resetNativePolicy(in: support) }
         for directory in [temporary, providerDirectory] {
+            if Self.gooseChat { _ = try GooseToolPresentation.containedDestination(directory, root: support) }
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true,
                                             attributes: [.posixPermissions: 0o700])
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         }
         port = try Self.freePort()
         repeat { proxyPort = try Self.freePort() } while proxyPort == port
+        repeat { bridgePort = try Self.freePort() } while bridgePort == port || bridgePort == proxyPort
         secret = UUID().uuidString + UUID().uuidString
+        let inferenceKey = UUID().uuidString + UUID().uuidString
         let contextLimit = Self.fullAccess
             ? await Self.contextLimit(rapidPort: rapidPort, model: model, bearer: bearer)
             : 16384
@@ -140,7 +149,7 @@ final class WorkAgent {
         let provider: [String: Any] = [
             "name": "custom_rapid_local", "engine": "openai", "display_name": "Rapid Local",
             "api_key_env": "RAPID_LOCAL_WORK_KEY",
-            "base_url": "http://127.0.0.1:\(proxyPort)/v1/chat/completions",
+            "base_url": "http://127.0.0.1:\(Self.gooseChat ? bridgePort : proxyPort)/v1/chat/completions",
             "models": [["name": model, "context_limit": contextLimit]],
             "supports_streaming": true, "requires_auth": true, "dynamic_models": false,
         ]
@@ -181,14 +190,18 @@ final class WorkAgent {
             "NO_PROXY": "127.0.0.1,localhost",
         ]
         env["GOOSE_PATH_ROOT"] = support.path
+        env["WORK_HELPER_OWNERSHIP_TOKEN"] = UUID().uuidString + UUID().uuidString
         env["GOOSE_SERVER__SECRET_KEY"] = secret
+        if Self.gooseChat {
+            env["GOOSE_SHELL"] = resources.appendingPathComponent("Helpers/work-helper-watchdog.py").path
+        }
         env["GOOSE_TELEMETRY_OFF"] = "1"
         env["GOOSE_TELEMETRY_ENABLED"] = "false"
         env["GOOSE_DISABLE_KEYRING"] = "1"
         env["GOOSE_PROVIDER"] = "custom_rapid_local"
         env["GOOSE_MODEL"] = model
         env["GOOSE_MODE"] = Self.gooseChat ? "approve" : (Self.fullAccess ? "auto" : "approve")
-        env["RAPID_LOCAL_WORK_KEY"] = bearer
+        env["RAPID_LOCAL_WORK_KEY"] = Self.gooseChat ? inferenceKey : bearer
         env["PATH"] = python.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         env["PYTHONPATH"] = resources.appendingPathComponent("rapid-mlx/site-packages").path
         if Self.fullAccess {
@@ -235,6 +248,22 @@ final class WorkAgent {
             directory: support, environment: proxyEnv)
         guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
             throw WorkError.message("The local Work inference gate did not start.")
+        }
+        if Self.gooseChat {
+            var bridgeEnv = env
+            bridgeEnv.removeValue(forKey: "GOOSE_SERVER__SECRET_KEY")
+            bridgeEnv.removeValue(forKey: "RAPID_LOCAL_WORK_KEY")
+            bridgeEnv["WORK_BRIDGE_SCOPED_KEY"] = inferenceKey
+            bridgeEnv["WORK_BRIDGE_UPSTREAM_KEY"] = bearer
+            let watchdog = resources.appendingPathComponent("Helpers/work-helper-watchdog.py")
+            bridgeProcess = try Self.launchHelper(profile: nil, python: pythonExecutable,
+                executable: pythonExecutable,
+                arguments: ["-I", "-S", watchdog.path, "--credential-bridge",
+                            String(bridgePort), String(proxyPort)],
+                directory: support, environment: bridgeEnv)
+            guard await Self.waitForHealth(process: bridgeProcess!, port: bridgePort) else {
+                throw WorkError.message("The local inference credential bridge did not start.")
+            }
         }
         guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
         process = try Self.launchHelper(
@@ -289,6 +318,8 @@ final class WorkAgent {
         error = nil
         permission = nil
         pendingPermissions = []
+        toolIdentities = [:]
+        rawToolOutputs = [:]
         let result = try await call(method: "session/new", params: [
             "cwd": folder.path, "mcpServers": [],
             "_meta": ["client": "Rapid Work"],
@@ -353,8 +384,8 @@ final class WorkAgent {
             }
         } catch {
             if generation == promptGeneration {
-                self.error = error.localizedDescription
-                onChatEvent?(.error(error.localizedDescription))
+                self.error = redact(error.localizedDescription)
+                onChatEvent?(.error(redact(error.localizedDescription)))
             }
         }
         if generation == promptGeneration { isBusy = false }
@@ -417,18 +448,19 @@ final class WorkAgent {
         generation += 1
         streams.forEach { $0.cancel() }
         streams = []
-        let children = [process, proxyProcess].compactMap { $0 }
+        let children = [process, proxyProcess, bridgeProcess].compactMap { $0 }
         for child in children {
             let group = child.processIdentifier
             if group > 0 { _ = Darwin.kill(-group, SIGTERM) }
         }
-        if !children.isEmpty { usleep(150_000) }
+        if !children.isEmpty { usleep(800_000) }
         for child in children {
             let group = child.processIdentifier
             if group > 0 { _ = Darwin.kill(-group, SIGKILL) }
         }
         process = nil
         proxyProcess = nil
+        bridgeProcess = nil
         for profile in sandboxProfileURLs { try? FileManager.default.removeItem(at: profile) }
         sandboxProfileURLs = []
         isRunning = false
@@ -436,6 +468,8 @@ final class WorkAgent {
         isOpeningSession = false
         permission = nil
         pendingPermissions = []
+        toolIdentities = [:]
+        rawToolOutputs = [:]
         connection = nil
         sessionID = nil
         secret = ""
@@ -443,6 +477,36 @@ final class WorkAgent {
             continuation.resume(throwing: WorkError.message("Work stopped."))
         }
         waiters = [:]
+    }
+
+    static func resetStoredNativePermissions() throws {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Rapid/agent-goose-chat/workspaces")
+        guard FileManager.default.fileExists(atPath: root.path) else { return }
+        for support in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
+            _ = try GooseToolPresentation.containedDestination(support, root: root)
+            try GoosePermissionPolicy.resetNativePolicy(in: support)
+        }
+    }
+
+    private func redact(_ value: String) -> String {
+        Self.redacted(value, secrets: [secret, serverIdentity?.components(separatedBy: ":").last ?? ""])
+    }
+
+    static func redacted(_ value: String, secrets: [String]) -> String {
+        var safe = value
+        for secret in secrets where secret.count >= 8 {
+            safe = safe.replacingOccurrences(of: secret, with: "[redacted]")
+            // ACP can split output into arbitrary chunks. Hide a trailing
+            // prefix until the following update establishes the full value.
+            for length in stride(from: min(secret.count - 1, safe.count), through: 4, by: -1) {
+                if safe.hasSuffix(String(secret.prefix(length))) {
+                    safe.replaceSubrange(safe.index(safe.endIndex, offsetBy: -length)..., with: "[redacted]")
+                    break
+                }
+            }
+        }
+        return safe
     }
 
     private func openStream(session: String?) {
@@ -466,7 +530,7 @@ final class WorkAgent {
                     handle(message)
                 }
             } catch {
-                if !Task.isCancelled { self.error = "Work stream ended: \(error.localizedDescription)" }
+                if !Task.isCancelled { self.error = redact("Work stream ended: \(error.localizedDescription)") }
             }
         })
     }
@@ -475,7 +539,7 @@ final class WorkAgent {
         if let id = message["id"], message["method"] == nil,
            let continuation = waiters.removeValue(forKey: String(describing: id)) {
             if let failure = message["error"] {
-                continuation.resume(throwing: WorkError.message("ACP error: \(failure)"))
+                continuation.resume(throwing: WorkError.message("ACP error: \(redact(String(describing: failure)))"))
             } else {
                 let result = message["result"] as? [String: Any] ?? [:]
                 if let data = try? JSONSerialization.data(withJSONObject: result) {
@@ -497,7 +561,8 @@ final class WorkAgent {
                 command: input?["command"] as? String ?? tool["title"] as? String ?? "Unknown command",
                 options: params["options"] as? [[String: Any]] ?? [], rpcID: id)
             if Self.gooseChat {
-                let name = tool["name"] as? String ?? tool["title"] as? String ?? "Tool"
+                let name = toolIdentities[request.toolCallID]
+                    ?? GoosePermissionPolicy.toolIdentity(tool) ?? "unknown"
                 let decision = GoosePermissionPolicy.decide(tool: name)
                 onChatEvent?(.permission(request, name, decision.cardState))
                 if decision.answer == .allow { answerPermission(request, allow: true) }
@@ -521,24 +586,27 @@ final class WorkAgent {
         case "agent_message_chunk":
             if let content = update["content"] as? [String: Any],
                content["type"] as? String == "text", let chunk = content["text"] as? String {
-                text += chunk
-                onChatEvent?(.text(chunk))
+                let safe = redact(chunk)
+                text += safe
+                onChatEvent?(.text(safe))
             }
         case "agent_thought_chunk":
             if let content = update["content"] as? [String: Any],
-               let chunk = content["text"] as? String { onChatEvent?(.thinking(chunk)) }
+               let chunk = content["text"] as? String { onChatEvent?(.thinking(redact(chunk))) }
         case "tool_call":
             let id = update["toolCallId"] as? String ?? UUID().uuidString
+            if let identity = GoosePermissionPolicy.toolIdentity(update) { toolIdentities[id] = identity }
+            rawToolOutputs[id] = ""
             let input = update["rawInput"] as? [String: Any]
-            steps.append(WorkStep(id: id, command: input?["command"] as? String ?? update["title"] as? String ?? "Tool", status: "Running"))
-            onChatEvent?(.tool(id: id, name: update["title"] as? String ?? "Tool",
-                               input: input.map { Self.printJSON($0) } ?? "", status: "running", output: ""))
+            steps.append(WorkStep(id: id, command: redact(input?["command"] as? String ?? update["title"] as? String ?? "Tool"), status: "Running"))
+            onChatEvent?(.tool(id: id, name: redact(update["title"] as? String ?? "Tool"),
+                               input: redact(input.map { Self.printJSON($0) } ?? ""), status: "running", output: ""))
         case "tool_call_update":
             guard let id = update["toolCallId"] as? String,
                   let index = steps.firstIndex(where: { $0.id == id }) else { return }
             steps[index].status = update["status"] as? String ?? "Updated"
             if let raw = update["rawOutput"] as? [String: Any] {
-                steps[index].output = (raw["stdout"] as? String ?? "") + (raw["stderr"] as? String ?? "")
+                rawToolOutputs[id] = (raw["stdout"] as? String ?? "") + (raw["stderr"] as? String ?? "")
             }
             if let content = update["content"] as? [[String: Any]] {
                 let text = content.compactMap { item -> String? in
@@ -547,17 +615,18 @@ final class WorkAgent {
                     if item["type"] as? String == "text" { return item["text"] as? String }
                     return nil
                 }.joined(separator: "\n")
-                if !text.isEmpty { steps[index].output = text }
+                if !text.isEmpty { rawToolOutputs[id] = text }
             }
             if let meta = update["_meta"] as? [String: Any],
                let notification = meta["toolNotification"] as? [String: Any],
                let params = notification["params"] as? [String: Any],
                let chunks = params["chunks"] as? [[String: Any]] {
-                steps[index].output += chunks.compactMap { $0["output"] as? String }.joined()
+                rawToolOutputs[id, default: ""] += chunks.compactMap { $0["output"] as? String }.joined()
             }
+            steps[index].output = redact(rawToolOutputs[id] ?? "")
             let changedInput = (update["rawInput"] as? [String: Any]).map { Self.printJSON($0) } ?? ""
-            onChatEvent?(.tool(id: id, name: update["title"] as? String ?? "",
-                               input: changedInput, status: steps[index].status, output: steps[index].output))
+            onChatEvent?(.tool(id: id, name: redact(update["title"] as? String ?? ""),
+                               input: redact(changedInput), status: steps[index].status, output: steps[index].output))
         default: break
         }
     }

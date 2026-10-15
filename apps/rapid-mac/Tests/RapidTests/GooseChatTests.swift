@@ -84,11 +84,64 @@ struct GooseChatTests {
         #expect(!defaults.bool(forKey: GoosePermissionPolicy.yoloKey))
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer").answer == .ask)
         #expect(GoosePermissionPolicy.decide(yolo: true, alwaysAllowed: [], tool: "developer").cardState == "auto-allowed")
-        #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: ["developer"], tool: "developer").answer == .allow)
+        #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: ["developer__shell"], tool: "developer__shell").answer == .allow)
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer", userDecision: .allow).cardState == "allowed")
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer", userDecision: .decline).answer == .decline)
         let request = WorkPermission(id: "42", sessionID: "s", toolCallID: "t", command: "run", options: [], rpcID: 42)
         #expect(request.rpcID as? Int == 42)
+        let call: [String: Any] = ["title": "developer: shell · echo secret",
+            "_meta": ["goose": ["toolCall": ["toolName": "developer__shell"]]]]
+        #expect(GoosePermissionPolicy.toolIdentity(call) == "developer__shell")
+        #expect(GoosePermissionPolicy.scope("developer__shell") == "Run shell commands")
+        #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: ["developer__shell"],
+            tool: "developer__shell").answer == .allow)
+        #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: ["developer: shell · echo secret"],
+            tool: "developer__shell").answer == .ask)
+        #expect(WorkAgent.redacted("output: acp-secret and engine-bearer",
+            secrets: ["acp-secret", "engine-bearer"]) == "output: [redacted] and [redacted]")
+        #expect(WorkAgent.redacted("output: acp-se", secrets: ["acp-secret"]) == "output: [redacted]")
+    }
+
+    @Test("Native grants are replaced at launch even after a YOLO tool writes them")
+    func nativePermissionReset() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("goose-policy-\(UUID())")
+        let config = root.appendingPathComponent("config")
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let policy = config.appendingPathComponent("permission.yaml")
+        let defaults = UserDefaults(suiteName: "GooseGrantRestart.\(UUID())")!
+        defaults.set(true, forKey: GoosePermissionPolicy.yoloKey)
+        #expect(GoosePermissionPolicy.decide(tool: "developer__shell", defaults: defaults).answer == .allow)
+        try "user:\n  always_allow: [developer__shell]\n".write(to: policy, atomically: true, encoding: .utf8)
+        GoosePermissionPolicy.resetYOLOForLaunch(defaults: defaults)
+        try GoosePermissionPolicy.resetNativePolicy(in: root)
+        #expect(try String(contentsOf: policy, encoding: .utf8) == GoosePermissionPolicy.lockedNativePolicy)
+        #expect(GoosePermissionPolicy.decide(tool: "developer__shell", defaults: defaults).answer == .ask)
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("goose-grant-\(UUID()).yaml")
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try "outside".write(to: outside, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: policy)
+        try FileManager.default.createSymbolicLink(at: policy, withDestinationURL: outside)
+        try GoosePermissionPolicy.resetNativePolicy(in: root)
+        #expect(try String(contentsOf: policy, encoding: .utf8) == GoosePermissionPolicy.lockedNativePolicy)
+        #expect(try String(contentsOf: outside, encoding: .utf8) == "outside")
+    }
+
+    @Test("App owned file actions reject symlink escapes")
+    func rejectsSymlinkEscape() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("goose-path-\(UUID())")
+        let folder = base.appendingPathComponent("chat")
+        let outside = base.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createSymbolicLink(at: folder.appendingPathComponent("Attachments"), withDestinationURL: outside)
+        #expect(throws: CocoaError.self) {
+            _ = try GooseToolPresentation.containedDestination(folder.appendingPathComponent("Attachments/new.txt"), root: folder)
+        }
+        let card = GooseToolCard(id: "t", name: "developer__write_file",
+            input: "{\"path\":\"\(folder.path)/Attachments/new.txt\"}", status: "completed")
+        #expect(GooseToolPresentation.producedFile(card, folder: folder.path) == nil)
     }
 
     @Test("ACP text, thinking, tool lifecycle and permission enter the transcript")
