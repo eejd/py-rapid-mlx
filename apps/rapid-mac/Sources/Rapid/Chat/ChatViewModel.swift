@@ -1574,6 +1574,7 @@ final class ChatViewModel {
 
     func gooseAttachmentNote(for user: ChatMessage) async throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
+        let ownerID = activeConversationID
         let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
         _ = try GooseToolPresentation.containedDestination(directory, root: gooseFolder)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1588,6 +1589,7 @@ final class ChatViewModel {
             let exists = FileManager.default.fileExists(atPath: safe.path)
             var existingHash: String?
             if exists { existingHash = await Task.detached { Self.sha256OfFile(safe) }.value }
+            guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
             if exists && gooseAttachmentHashes[safe.path] != existingHash {
                 paths.append(destination.path)
                 continue
@@ -1603,6 +1605,7 @@ final class ChatViewModel {
             let exists = FileManager.default.fileExists(atPath: safe.path)
             var existingHash: String?
             if exists { existingHash = await Task.detached { Self.sha256OfFile(safe) }.value }
+            guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
             if exists && gooseAttachmentHashes[safe.path] != existingHash {
                 paths.append(destination.path)
                 continue
@@ -1612,6 +1615,15 @@ final class ChatViewModel {
             let retained = await Task.detached(priority: .userInitiated) {
                 cache.getAwaitingCompletionStatus(id)
             }.value
+            guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
+            if exists {
+                let currentHash = await Task.detached { Self.sha256OfFile(safe) }.value
+                guard activeConversationID == ownerID, !Task.isCancelled else { return "" }
+                if gooseAttachmentHashes[safe.path] != currentHash {
+                    paths.append(destination.path)
+                    continue
+                }
+            }
             if FileManager.default.fileExists(atPath: safe.path),
                retained?.entry.isComplete != true {
                 paths.append(destination.path)

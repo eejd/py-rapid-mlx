@@ -334,6 +334,54 @@ struct GooseChatTests {
         #expect(try String(contentsOf: exported, encoding: .utf8) == "user changed this copy")
     }
 
+    @Test("A conversation switch during extraction cannot export into the next chat")
+    func extractionSwitch() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-switch-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let file = try ChatFileAttachment(filename: "pending.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        cache.put(file.id, entry: DocumentContentCache.Entry(
+            filename: file.filename, text: "full text", isComplete: true))
+        cache.beginPending(file.id)
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let user = ChatMessage(role: .user, fileAttachments: [file])
+        let task = Task { try await model.gooseAttachmentNote(for: user) }
+        let directory = folder.appendingPathComponent("Attachments/\(user.id.uuidString)")
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: directory.path) {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        model.newConversation()
+        cache.finishPending(file.id)
+        _ = try await task.value
+        #expect(!FileManager.default.fileExists(atPath:
+            directory.appendingPathComponent(file.id.uuidString + ".txt").path))
+    }
+
+    @Test("An edit made during extraction is not overwritten")
+    func editDuringExtraction() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-edit-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let file = try ChatFileAttachment(filename: "pending.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        cache.put(file.id, entry: DocumentContentCache.Entry(filename: file.filename,
+            text: "retained text", isComplete: true))
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let user = ChatMessage(role: .user, fileAttachments: [file])
+        _ = try await model.gooseAttachmentNote(for: user)
+        let exported = folder.appendingPathComponent("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt")
+        cache.beginPending(file.id)
+        let task = Task { try await model.gooseAttachmentNote(for: user) }
+        try await Task.sleep(for: .milliseconds(10))
+        try "user output".write(to: exported, atomically: true, encoding: .utf8)
+        cache.finishPending(file.id)
+        _ = try await task.value
+        #expect(try String(contentsOf: exported, encoding: .utf8) == "user output")
+    }
+
     @Test("Goose contract carries direct-chat instructions, memory and sampling")
     func requestContract() {
         let date = Date(timeIntervalSince1970: 1_700_000_000)
