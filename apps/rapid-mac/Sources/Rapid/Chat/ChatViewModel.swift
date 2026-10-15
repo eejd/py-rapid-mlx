@@ -1422,7 +1422,7 @@ final class ChatViewModel {
             visibleContextIDs: priorIDs,
             sessionID: sessionBeforePrepare)
         agent.onChatEvent = { [weak self] event in
-            guard let self, epoch == self.conversationEpoch else { return }
+            guard let self, epoch == self.conversationEpoch, self.isStreaming else { return }
             self.applyGooseEvent(event, initialPlaceholder: placeholderIndex)
         }
         try await agent.prepare(folder: turnFolder, rapidPort: server.activePort,

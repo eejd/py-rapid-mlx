@@ -27,6 +27,9 @@ struct GooseChatTests {
         agent.stop()
         try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"late"}}}}"#)
         #expect(events.count == 3)
+        agent.acceptSessionForTesting("session-b", folder: URL(fileURLWithPath: "/tmp/b"))
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"old session"}}}}"#)
+        #expect(events.count == 3)
     }
 
     @Test("ACP permission identity is consumed once and reset with the turn")
@@ -52,7 +55,7 @@ struct GooseChatTests {
         agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
         let response = HTTPURLResponse(url: URL(string: "http://127.0.0.1/acp")!, statusCode: 200,
                                        httpVersion: nil, headerFields: nil)!
-        agent.transport = ACPTransport { _ in (Data(), response) }
+        agent.transport = ACPTransport(send: { _ in (Data(), response) })
         let pending = Task { () -> Bool in
             do {
                 _ = try await agent.call(method: "session/prompt", params: ["sessionId": "session-a"],
@@ -93,6 +96,23 @@ struct GooseChatTests {
         try agent.checkPreparation(generation)
         agent.stop()
         #expect(throws: CancellationError.self) { try agent.checkPreparation(generation) }
+    }
+
+    @Test("Stop releases a pending ACP session/new waiter")
+    func stopDuringSessionOpen() async throws {
+        let agent = WorkAgent()
+        let response = HTTPURLResponse(url: URL(string: "http://127.0.0.1/acp")!, statusCode: 200,
+                                       httpVersion: nil, headerFields: nil)!
+        agent.transport = ACPTransport(send: { _ in (Data(), response) })
+        let pending = Task { () -> Bool in
+            do {
+                _ = try await agent.call(method: "session/new", params: ["cwd": "/tmp/a"], timeout: 90)
+                return false
+            } catch { return true }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        agent.stop()
+        #expect(await pending.value)
     }
 
     @Test("Duplicate ACP permission RPC is queued once and Stop invalidates it")

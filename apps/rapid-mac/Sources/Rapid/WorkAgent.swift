@@ -335,6 +335,13 @@ final class WorkAgent {
                         "--platform", Self.fullAccess ? "cli" : "desktop", "--with-builtin",
                         Self.builtinExtensions(gooseChat: Self.gooseChat, fullAccess: Self.fullAccess)],
             directory: folder, environment: env)
+        let launchGeneration = generation
+        process?.terminationHandler = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.helperStreamEnded(generation: launchGeneration, session: self.sessionID)
+            }
+        }
         let startedProcess = process!
         guard await Self.waitForHealth(process: startedProcess, port: port) else {
             throw WorkError.message("The Chat helper did not start.")
@@ -379,11 +386,11 @@ final class WorkAgent {
         isOpeningSession = true
         defer { if generation == sessionGeneration { isOpeningSession = false } }
         if let old = sessionID {
+            turnOwner.clearSession()
             try? await notify(method: "session/cancel", params: ["sessionId": old], session: old)
             guard generation == sessionGeneration else { throw WorkError.message("Chat stopped.") }
             streams.last?.cancel()
         }
-        turnOwner.clearSession()
         text = ""
         steps = []
         error = nil
