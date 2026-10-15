@@ -138,6 +138,13 @@ struct GooseChatTests {
         var renamed = decoded
         renamed.hasCustomTitle = true
         #expect(ChatViewModel.repairGooseTitles([renamed]).first?.title == "Task")
+        var legacy = decoded
+        legacy.messages.append(ChatMessage(role: .assistant,
+            content: "Ran into this error: Server error (502 Bad Gateway) at http://127.0.0.1:57718"))
+        let repaired = ChatViewModel.repairGooseTitles([legacy])[0].messages.last!
+        #expect(repaired.content.isEmpty)
+        #expect(repaired.errorMessage == ChatViewModel.gooseFailureCopy)
+        #expect(repaired.gooseErrorDetails?.contains("57718") == true)
         #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User: first"))
         let toolOnly = ChatMessage(role: .assistant, gooseParts: [
             GooseTurnPart(tool: GooseToolCard(id: "t", name: "write · snake.html",

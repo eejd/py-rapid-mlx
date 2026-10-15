@@ -336,6 +336,22 @@ final class ChatViewModel {
     static func repairGooseTitles(_ conversations: [ChatConversation]) -> [ChatConversation] {
         conversations.map { original in
             var conversation = original
+            conversation.messages = conversation.messages.map { originalMessage in
+                var message = originalMessage
+                if message.role == .assistant,
+                   message.content.hasPrefix("Ran into this error:") {
+                    message.gooseErrorDetails = message.content
+                    clearGooseFailedText(&message)
+                    message.errorMessage = gooseFailureCopy
+                    message.status = .failed
+                } else if message.role == .assistant, message.status == .failed,
+                          let raw = message.errorMessage,
+                          raw.contains("127.0.0.1") || raw.contains("Bad Gateway") {
+                    message.gooseErrorDetails = raw
+                    message.errorMessage = gooseFailureCopy
+                }
+                return message
+            }
             guard !conversation.hasCustomTitle,
                   conversation.messages.contains(where: { $0.role == .user }) else { return conversation }
             conversation.title = ConversationStore.title(from: conversation.messages)
