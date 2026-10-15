@@ -62,8 +62,8 @@ struct SecurityKeychainItems: KeychainItemAccessing {
 
     // This is the sole application Keychain I/O entry point: provider, ledger,
     // web-search and bearer credentials all use SystemKeychain -> this adapter.
-    // The production source-routing regression pins that centralization, so
-    // every app SecItem operation shares this lock and suppression scope.
+    // A source guard checks direct Swift Keychain I/O calls outside this file;
+    // the current credential callers all share this lock and suppression scope.
     // File-based database/ACL dialogs ignore LAContext; temporarily suppress
     // legacy UI here and restore the caller's previous policy afterward.
     // Code-signature inspection and random-byte generation do not authenticate

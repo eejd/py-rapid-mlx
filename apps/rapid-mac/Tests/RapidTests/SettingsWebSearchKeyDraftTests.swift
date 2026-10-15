@@ -119,7 +119,7 @@ struct SettingsWebSearchKeyDraftTests {
         #expect(store.readWithoutUserInteraction(account: account) == .found("replacement-key"))
     }
 
-    @Test("Production Keychain operations all route through the coordinated adapter")
+    @Test("Direct Swift Keychain I/O calls route through the coordinated adapter")
     func productionKeychainRoutingIsCentralized() throws {
         let source = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

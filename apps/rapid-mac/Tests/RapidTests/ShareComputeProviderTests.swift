@@ -77,7 +77,7 @@ struct ShareComputeProviderTests {
         #expect(store.load() != .found(key))
     }
 
-    @Test("Failed key writes and deletes preserve account and registration")
+    @Test("Failed key-store writes and deletes preserve the saved account")
     func failedStorageDoesNotSwitchAccount() throws {
         let suite = "ShareComputeProviderFailure.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -95,6 +95,42 @@ struct ShareComputeProviderTests {
         keychain.failDelete = false
         #expect(store.remove())
         #expect(store.load() == .missing)
+    }
+
+    @Test("Failed manager key changes retain the account but require registration again", arguments: [false, true])
+    func failedManagerStorageInvalidatesProof(removing: Bool) throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("share-key-write-failure-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = ShareComputeModel.desktopSharing[0]
+        let marker = ShareComputeManager.registrationURL(catalogID: model.catalogID, home: home)
+        let cache = ShareComputeManager.credentialCacheURL(catalogID: model.catalogID, home: home)
+        try FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [
+            "schema_version": 1, "model": model.catalogID, "alias": model.alias, "worker": "test-mac"
+        ]).write(to: marker)
+        let cachedNode = Data("{\"node\":\"existing-fixture\"}".utf8)
+        try cachedNode.write(to: cache)
+        let keychain = ShareComputeTestKeychain()
+        keychain.values[ShareComputeProviderKeyStore.account] = Self.firstKey
+        keychain.failWrite = !removing
+        keychain.failDelete = removing
+        let store = ShareComputeProviderKeyStore(keychain: keychain)
+        let server = ServerManager(testingState: .ready(alias: "personal-model"))
+        let manager = ShareComputeManager(server: server, providerStore: store, home: home)
+        #expect(!manager.needsRegistration(for: model, worker: "test-mac"))
+
+        let succeeded = removing ? manager.removeProviderKey() : manager.saveProviderKey(Self.secondKey)
+
+        #expect(!succeeded)
+        #expect(store.load() == .found(try #require(ShareComputeProviderKey.validate(Self.firstKey))))
+        // Invalidate before secret mutation: even a failed switch must never
+        // reuse a possibly stale payout binding. The private node cache survives.
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+        #expect(manager.needsRegistration(for: model, worker: "test-mac"))
+        #expect(try Data(contentsOf: cache) == cachedNode)
+        #expect(server.servingAlias == "personal-model")
+        #expect(manager.canEditProviderKey)
+        #expect(manager.providerKeyMessage != nil)
     }
 
     @Test("Locked, corrupt and read-only credentials remain distinct")
