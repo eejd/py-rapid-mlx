@@ -917,6 +917,15 @@ def test_resolved_folder(tmp_path):
     assert validate_folder(str(root)) == root.resolve()
 
 
+def test_virtual_environment_folder_stays_excluded(tmp_path):
+    root = folder(tmp_path)
+    (root / "pyvenv.cfg").touch()
+    with pytest.raises(
+        ValueError, match="^path is hidden, sensitive, or an excluded directory$"
+    ):
+        validate_folder(str(root))
+
+
 @pytest.mark.parametrize("root_kind", ["home", "ancestor", "outside"])
 def test_home_and_package_exclusions_for_any_root(tmp_path, monkeypatch, root_kind):
     from rapid_mlx.local_search.extraction import PACKAGE_SUFFIXES
@@ -6260,19 +6269,69 @@ def test_folder_route_scandir_permission_denied(tmp_path, monkeypatch, os_errno)
     asyncio.run(scenario())
 
 
-def test_folder_route_unreadable_path_returns_permission_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "failure", [PermissionError(), OSError(errno.EPERM, "storage denied")]
+)
+def test_folder_route_storage_permission_error_stays_generic(
+    tmp_path, monkeypatch, failure
+):
+    root = folder(tmp_path)
+
     async def scenario():
         async with client_app(tmp_path, monkeypatch) as (client, app, _):
+            validated = []
 
-            async def denied(path):
-                raise PermissionError()
+            def denied(path):
+                validated.append(path)
+                raise failure
 
-            monkeypatch.setattr(app.state.local_search, "add_folder", denied)
+            monkeypatch.setattr(app.state.local_search.store, "add_folder", denied)
             response = await client.post(
-                "/v1/local-search/folders", json={"path": str(tmp_path)}
+                "/v1/local-search/folders", json={"path": str(root)}
             )
-            assert response.status_code == 403
-            assert response.json()["error"]["code"] == "folder_permission_denied"
+            assert validated == [root.resolve()]
+            assert response.status_code == 400
+            assert response.json()["error"] == {
+                "message": "path must be an existing absolute directory without '..', outside excluded directories, other than /",
+                "type": "invalid_request_error",
+                "code": "invalid_folder_path",
+                "param": "path",
+            }
+            assert app.state.local_search.store.folders() == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_folder_route_excluded_unreadable_path_stays_invalid(
+    tmp_path, monkeypatch, nested
+):
+    sensitive = folder(tmp_path, ".hidden")
+    root = folder(sensitive, "documents") if nested else sensitive
+    scandir = os.scandir
+    probed = []
+
+    def denied(path):
+        if path == root.resolve():
+            probed.append(path)
+            raise PermissionError("folder denied")
+        return scandir(path)
+
+    async def scenario():
+        async with client_app(tmp_path, monkeypatch) as (client, app, _):
+            monkeypatch.setattr(os, "scandir", denied)
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(root)}
+            )
+            assert response.status_code == 400
+            assert response.json()["error"] == {
+                "message": "path is hidden, sensitive, or an excluded directory",
+                "type": "invalid_request_error",
+                "code": "invalid_folder_path",
+                "param": "path",
+            }
+            assert probed == []
+            assert app.state.local_search.store.folders() == []
 
     asyncio.run(scenario())
 
@@ -8354,14 +8413,19 @@ def test_add_folder_os_errors(
     # OSError(errno, ...) normally constructs a PermissionError automatically.
     # Set errno separately to cover raw OSError from other filesystem APIs too.
     failure.errno = os_errno
+    root = folder(tmp_path).resolve()
+    scandir = os.scandir
+
+    def denied(path):
+        if path == root:
+            raise failure
+        return scandir(path)
 
     async def scenario():
         async with client_app(tmp_path, monkeypatch) as (client, app, _):
-            monkeypatch.setattr(
-                app.state.local_search, "add_folder", AsyncMock(side_effect=failure)
-            )
+            monkeypatch.setattr(os, "scandir", denied)
             response = await client.post(
-                "/v1/local-search/folders", json={"path": str(tmp_path)}
+                "/v1/local-search/folders", json={"path": str(root)}
             )
             assert response.status_code == status
             assert response.json()["error"] == {
@@ -8370,5 +8434,6 @@ def test_add_folder_os_errors(
                 "code": code,
                 "param": "path",
             }
+            assert app.state.local_search.store.folders() == []
 
     asyncio.run(scenario())

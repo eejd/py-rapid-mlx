@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frozen local-search MVP wire contract; mounted only by the opt-in lifespan."""
 
-import errno
 import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from ..local_search.extraction import FolderAccessDeniedError
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..middleware.exception_handlers import register_request_model
 
@@ -83,14 +83,14 @@ async def add_folder(body: FolderRequest, request: Request, response: Response):
         folder, created = await get_service(request).add_folder(body.path)
     except ValueError as exc:
         error(str(exc), "invalid_folder_path", "path")
-    except OSError as exc:
-        if isinstance(exc, PermissionError) or exc.errno in (errno.EPERM, errno.EACCES):
-            error(
-                "Rapid-MLX isn't allowed to read this folder. Allow access in System Settings › Privacy & Security, then try again.",
-                "folder_permission_denied",
-                "path",
-                403,
-            )
+    except FolderAccessDeniedError:
+        error(
+            "Rapid-MLX isn't allowed to read this folder. Allow access in System Settings › Privacy & Security, then try again.",
+            "folder_permission_denied",
+            "path",
+            403,
+        )
+    except OSError:
         error(
             "path must be an existing absolute directory without '..', outside excluded directories, other than /",
             "invalid_folder_path",
