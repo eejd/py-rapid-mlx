@@ -264,6 +264,23 @@ runs:
         echo "::notice::sidecar provenance: RAPID_MLX_OFFICIAL_RELEASE=${RAPID_MLX_OFFICIAL_RELEASE}"
         bash scripts/build.sh
 
+    - name: Verify bundled Chat helper and notices
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${{ inputs.checkout_path }}/apps/rapid-mac"
+        APP="build/Rapid-MLX Desktop.app"
+        HELPER="$APP/Contents/Resources/Helpers/goose"
+        test -x "$HELPER"
+        codesign --verify --strict "$HELPER"
+        test -s "$APP/Contents/Resources/Licenses/goose-APACHE-2.0.txt"
+        test -s "$APP/Contents/Resources/Licenses/goose-third-party-licenses.txt"
+        test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")" = com.rapidmlx.rapid
+        if [[ "${{ inputs.signed }}" == "true" ]]; then
+          codesign -dv --verbose=4 "$HELPER" 2>&1 | grep -q 'flags=.*runtime'
+          codesign -dv --verbose=4 "$HELPER" 2>&1 | grep -q 'Authority=Developer ID Application'
+        fi
+
     # The stamp decides what every benchmark this app publishes claims about
     # its own origin, and it is written deep inside the sidecar build. Verify
     # it in the finished bundle rather than trusting that the env var arrived.

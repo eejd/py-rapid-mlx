@@ -460,16 +460,12 @@ struct RapidApp: App {
         .defaultSize(width: MainWindowDefaults.width, height: MainWindowDefaults.height)
         .windowResizability(.contentMinSize)
         .commands {
-            if WorkAgent.fullAccess && !WorkAgent.gooseChat {
-                CommandGroup(replacing: .newItem) {
-                    Button("New Chat") {
-                        WorkAgent.shared.beginNewChat()
-                        Task { try? await WorkAgent.shared.newSession() }
-                        NotificationCenter.default.post(name: .newWorkChat, object: nil)
-                        openWindow(id: "main")
-                    }
-                    .keyboardShortcut("n", modifiers: .command)
+            CommandGroup(replacing: .newItem) {
+                Button("New Chat") {
+                    AppDelegate.shared.chat?.newConversation()
+                    openWindow(id: "main")
                 }
+                .keyboardShortcut("n", modifiers: .command)
             }
             // Replace the system-default "About" item with our own.
             CommandGroup(replacing: .appInfo) {

@@ -2,6 +2,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONTENTS="$1"
+PHASE="${2:-all}"
+[[ "$PHASE" == stage || "$PHASE" == dependencies || "$PHASE" == all ]] || { echo "invalid helper build phase" >&2; exit 1; }
+if [[ "$PHASE" != dependencies ]]; then
 HELPERS="$CONTENTS/Resources/Helpers"
 mkdir -p "$HELPERS/local-documents" "$CONTENTS/Resources/Licenses"
 cp "$ROOT/Work/local-documents/SKILL.md" "$HELPERS/local-documents/SKILL.md"
@@ -24,14 +27,14 @@ cp "$ROOT/Work/work-inference-proxy.py" "$HELPERS/work-inference-proxy.py"
 cp "$ROOT/Work/work-helper-watchdog.py" "$HELPERS/work-helper-watchdog.py"
 curl -fLsS 'https://raw.githubusercontent.com/aaif-goose/goose/v1.54.0/LICENSE' \
     -o "$CONTENTS/Resources/Licenses/goose-APACHE-2.0.txt"
+cp "$ROOT/Resources/Licenses/goose-third-party-licenses.txt" "$CONTENTS/Resources/Licenses/"
+fi
+if [[ "$PHASE" != stage ]]; then
 PYTHON="$CONTENTS/Resources/rapid-mlx/python/bin/python3.12"
 SITE="$CONTENTS/Resources/rapid-mlx/site-packages"
-[[ -x "$PYTHON" && -d "$SITE" ]] || { echo "Work MVP needs the bundled Python sidecar" >&2; exit 1; }
-if [[ "${WORK_FULL:-0}" == "1" ]]; then
-    python3 -m pip download --disable-pip-version-check --no-deps --only-binary=:all: \
-        --dest "$HELPERS" 'pip==25.2'
-    mv "$HELPERS"/pip-25.2-py3-none-any.whl "$HELPERS/pip.whl"
-fi
+[[ -x "$PYTHON" && -d "$SITE" ]] || { echo "Goose Chat needs the bundled Python sidecar" >&2; exit 1; }
 python3 -m pip install --disable-pip-version-check --no-deps --target "$SITE" \
     'pypdf==6.1.3' 'openpyxl==3.1.5' 'et_xmlfile==2.0.0'
 PYTHONPATH="$SITE" "$PYTHON" -c 'import pypdf, openpyxl, csv, decimal'
+
+fi

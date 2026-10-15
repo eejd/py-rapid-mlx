@@ -11,13 +11,12 @@ enum SidebarSection: Hashable {
     case video
     case computerUse
     case launch
-    case work
     case benchmark
     case shareCompute
 
     static func initial(bundleIdentifier: String?, environment: [String: String]) -> SidebarSection {
         if let requested = harnessRequested(environment: environment) { return requested }
-        return bundleIdentifier == "com.rapidmlx.rapid.work-full" ? .work : .chat
+        return .chat
     }
 
     /// The surface a GUI harness asked the app to open on.
@@ -46,7 +45,6 @@ enum SidebarSection: Hashable {
         case "video": return .video
         case "computerUse": return .computerUse
         case "launch": return .launch
-        case "work": return .work
         case "benchmark": return .benchmark
         case "shareCompute": return .shareCompute
         default: return nil
@@ -172,12 +170,6 @@ struct SidebarView: View {
     /// resident-pool unload path.
     var onUnloadResidentModels: (() async -> Void)? = nil
 
-    private var workHelperAvailable: Bool {
-        guard let resources = Bundle.main.resourceURL else { return false }
-        return FileManager.default.isExecutableFile(
-            atPath: resources.appendingPathComponent("Helpers/goose").path)
-    }
-
     /// The "now" the date buckets are computed against. Rolled forward by
     /// ``dayBoundaryTicker`` at each midnight so an open, untouched sidebar
     /// re-labels yesterday's conversations instead of freezing on the day it
@@ -295,9 +287,6 @@ struct SidebarView: View {
     private var fullColumn: some View {
         VStack(alignment: .leading, spacing: 1) {
             brandLockup
-            if WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable {
-                workRow
-            }
             row(
                 title: String(localized: "New Chat"),
                 systemImage: "square.and.pencil",
@@ -327,7 +316,6 @@ struct SidebarView: View {
             )
             .accessibilityIdentifier("Sidebar.Launch")
             }
-            if !WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable { workRow }
 
             if computerUseEnabled && !WorkAgent.gooseChat {
                 if let cuaViewModel {
@@ -437,16 +425,6 @@ struct SidebarView: View {
         .padding(.horizontal, RapidTheme.Space.sm)
         .padding(.vertical, RapidTheme.Space.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    private var workRow: some View {
-        row(
-            title: WorkAgent.fullAccess ? "Work" : "Work (beta)",
-            systemImage: "folder.badge.gearshape",
-            isSelected: selection == .work,
-            action: { selection = .work }
-        )
-        .accessibilityIdentifier("Sidebar.Work")
     }
 
     var body: some View {
@@ -668,7 +646,6 @@ struct SidebarView: View {
                 .frame(width: 40, height: 1)
                 .accessibilityHidden(true)
 
-            if WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable { compactWorkItem }
 
             compactItem(
                 title: String(localized: "New Chat"),
@@ -699,7 +676,6 @@ struct SidebarView: View {
             )
             .accessibilityIdentifier("Sidebar.Launch")
             }
-            if !WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable { compactWorkItem }
 
             if videoGenerationEnabled {
                 compactItem(
@@ -755,16 +731,6 @@ struct SidebarView: View {
         .padding(.vertical, 18)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    private var compactWorkItem: some View {
-        compactItem(
-            title: WorkAgent.fullAccess ? "Work" : "Work (beta)",
-            systemImage: "folder.badge.gearshape",
-            isSelected: selection == .work,
-            action: { selection = .work }
-        )
-        .accessibilityIdentifier("Sidebar.Work")
     }
 
     private var compactBrandTile: some View {

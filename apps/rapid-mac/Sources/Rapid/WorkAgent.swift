@@ -37,8 +37,8 @@ struct WorkPermission: Identifiable {
 @MainActor @Observable
 final class WorkAgent {
     static let shared = WorkAgent()
-    static var gooseChat: Bool { Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat" }
-    static var fullAccess: Bool { gooseChat || Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" }
+    static var gooseChat: Bool { Bundle.main.bundleIdentifier == "com.rapidmlx.rapid" }
+    static var fullAccess: Bool { gooseChat }
     var onChatEvent: ((GooseChatEvent) -> Void)?
     var currentSessionID: String? { sessionID }
     private(set) var text = ""
@@ -50,7 +50,6 @@ final class WorkAgent {
     private(set) var conversationRevision = 0
     var error: String?
     var permission: WorkPermission?
-    var syntheticTestAutoApproval = false
     private var process: Process?
     private var proxyProcess: Process?
     private var port = 0
@@ -80,7 +79,7 @@ final class WorkAgent {
     }
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
-        guard !isPreparing else { throw WorkError.message("Work is already starting.") }
+        guard !isPreparing else { throw WorkError.message("Chat is already starting.") }
         let requestedRevision = conversationRevision
         let folder = folder.resolvingSymlinksInPath()
         let identity = "\(rapidPort):\(model):\(bearer)"
@@ -102,7 +101,7 @@ final class WorkAgent {
         let proxy = resources.appendingPathComponent("Helpers/work-inference-proxy.py")
         guard fileManager.isExecutableFile(atPath: goose.path),
               fileManager.fileExists(atPath: proxy.path) else {
-            throw WorkError.message("Work helper is missing from this build.")
+            throw WorkError.message("Chat helper is missing from this build.")
         }
         let python = resources.appendingPathComponent("rapid-mlx/python/bin")
         let pythonExecutable = python.appendingPathComponent("python3")
@@ -130,7 +129,7 @@ final class WorkAgent {
         let contextLimit = Self.fullAccess
             ? await Self.contextLimit(rapidPort: rapidPort, model: model, bearer: bearer)
             : 16384
-        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         let provider: [String: Any] = [
             "name": "custom_rapid_local", "engine": "openai", "display_name": "Rapid Local",
             "api_key_env": "RAPID_LOCAL_WORK_KEY",
@@ -228,9 +227,9 @@ final class WorkAgent {
                 + (Self.gooseChat ? ["--goose-chat"] : []),
             directory: support, environment: proxyEnv)
         guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
-            throw WorkError.message("The local Work inference gate did not start.")
+            throw WorkError.message("The local Chat inference gate did not start.")
         }
-        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         process = try Self.launchHelper(
             profile: Self.fullAccess ? nil : gooseProfileURL, python: pythonExecutable,
             executable: goose,
@@ -239,24 +238,24 @@ final class WorkAgent {
                         Self.builtinExtensions(gooseChat: Self.gooseChat, fullAccess: Self.fullAccess)],
             directory: folder, environment: env)
         guard await Self.waitForHealth(process: process!, port: port) else {
-            throw WorkError.message("The Work helper did not start under the privacy sandbox.")
+            throw WorkError.message("The Chat helper did not start.")
         }
-        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         isRunning = true
         let (initResult, response) = try await sendImmediate(method: "initialize", params: [
             "protocolVersion": 1,
             "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false]],
             "clientInfo": ["name": "Rapid Work", "version": "0.1"],
         ])
-        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         guard initResult["error"] == nil,
               let id = response.value(forHTTPHeaderField: "Acp-Connection-Id") else {
-            throw WorkError.message("The Work connection failed to initialize.")
+            throw WorkError.message("The Chat connection failed to initialize.")
         }
         connection = id
         openStream(session: nil)
         try await newSession()
-        guard conversationRevision == requestedRevision else { throw WorkError.message("Work start cancelled.") }
+        guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         completed = true
     }
 
@@ -275,7 +274,7 @@ final class WorkAgent {
         defer { if generation == sessionGeneration { isOpeningSession = false } }
         if let old = sessionID {
             try? await notify(method: "session/cancel", params: ["sessionId": old], session: old)
-            guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
+            guard generation == sessionGeneration else { throw WorkError.message("Chat stopped.") }
             streams.last?.cancel()
         }
         text = ""
@@ -287,15 +286,15 @@ final class WorkAgent {
             "cwd": folder.path, "mcpServers": [],
             "_meta": ["client": "Rapid Work"],
         ])
-        guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
+        guard generation == sessionGeneration else { throw WorkError.message("Chat stopped.") }
         guard let sid = result["sessionId"] as? String else {
-            throw WorkError.message("The Work session could not be created.")
+            throw WorkError.message("The Chat session could not be created.")
         }
         sessionID = sid
         onChatEvent?(.session(sid))
         openStream(session: sid)
         try await Task.sleep(for: .milliseconds(300))
-        guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
+        guard generation == sessionGeneration else { throw WorkError.message("Chat stopped.") }
     }
 
     func prompt(_ message: String) async {
@@ -434,7 +433,7 @@ final class WorkAgent {
         sessionID = nil
         secret = ""
         for (_, continuation) in waiters {
-            continuation.resume(throwing: WorkError.message("Work stopped."))
+            continuation.resume(throwing: WorkError.message("Chat stopped."))
         }
         waiters = [:]
     }
@@ -460,7 +459,7 @@ final class WorkAgent {
                     handle(message)
                 }
             } catch {
-                if !Task.isCancelled { self.error = "Work stream ended: \(error.localizedDescription)" }
+                if !Task.isCancelled { self.error = "Chat stream ended: \(error.localizedDescription)" }
             }
         })
     }
@@ -475,7 +474,7 @@ final class WorkAgent {
                 if let data = try? JSONSerialization.data(withJSONObject: result) {
                     continuation.resume(returning: data)
                 } else {
-                    continuation.resume(throwing: WorkError.message("Invalid Work response."))
+                    continuation.resume(throwing: WorkError.message("Invalid Chat response."))
                 }
             }
             return
@@ -498,7 +497,7 @@ final class WorkAgent {
                 else if decision.answer == .decline { answerPermission(request, allow: false) }
                 else if permission == nil { permission = request }
                 else { pendingPermissions.append(request) }
-            } else if syntheticTestAutoApproval || Self.fullAccess {
+            } else if Self.fullAccess {
                 answerPermission(request, allow: true)
             } else if permission == nil {
                 permission = request
@@ -578,11 +577,11 @@ final class WorkAgent {
             Task {
                 try? await Task.sleep(for: .seconds(timeout))
                 waiters.removeValue(forKey: String(id))?.resume(
-                    throwing: WorkError.message("Work request timed out: \(method)"))
+                    throwing: WorkError.message("Chat request timed out: \(method)"))
             }
         }
         guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw WorkError.message("Invalid Work response.")
+            throw WorkError.message("Invalid Chat response.")
         }
         return result
     }
@@ -596,7 +595,7 @@ final class WorkAgent {
         nextID += 1
         let (data, response) = try await postData(["jsonrpc": "2.0", "id": id, "method": method, "params": params], session: nil)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw WorkError.message("Invalid Work initialization response.")
+            throw WorkError.message("Invalid Chat initialization response.")
         }
         return (object, response)
     }
@@ -615,7 +614,7 @@ final class WorkAgent {
         request.setValue(session, forHTTPHeaderField: "Acp-Session-Id")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse, response.statusCode < 400 else {
-            throw WorkError.message("Work transport rejected a request.")
+            throw WorkError.message("Chat transport rejected a request.")
         }
         return (data, response)
     }
@@ -691,13 +690,7 @@ final class WorkAgent {
         child.currentDirectoryURL = directory
         child.environment = environment
         child.standardOutput = FileHandle.nullDevice
-        if ProcessInfo.processInfo.arguments.contains("--work-mvp-synthetic-test") {
-            let log = directory.appendingPathComponent("work-\(executable.lastPathComponent).log")
-            FileManager.default.createFile(atPath: log.path, contents: nil)
-            child.standardError = try FileHandle(forWritingTo: log)
-        } else {
-            child.standardError = FileHandle.nullDevice
-        }
+        child.standardError = FileHandle.nullDevice
         try child.run()
         for _ in 0..<100 {
             if getpgid(child.processIdentifier) == child.processIdentifier { return child }
@@ -705,7 +698,7 @@ final class WorkAgent {
             usleep(10_000)
         }
         if child.isRunning { child.terminate() }
-        throw WorkError.message("Could not isolate the Work helper process group.")
+        throw WorkError.message("Could not isolate the Chat helper process group.")
     }
 
     private static func waitForHealth(process: Process, port: Int) async -> Bool {

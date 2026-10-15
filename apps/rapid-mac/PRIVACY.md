@@ -4,15 +4,17 @@ Last updated: 2026-10-14.
 
 Rapid-MLX Desktop ("the App") is a local-first SwiftUI Mac client for the
 `rapid-mlx` inference server. We designed it so that your prompts,
-attachments, and model responses stay on your Mac during plain chat. Work
-uses its own permission mode and may access files, run commands, or use the
-network when you start a task there.
+attachments, and model responses are processed by the local model. Chat tools
+can access files, run commands, and use the internet when you allow them.
+YOLO mode runs tools without asking for each action. Tool outputs and files
+may be sent to services that an allowed tool contacts.
 
 ## What stays on your Mac
 
 * Chat history (conversations, messages, attachments, folders) — stored
   under `~/Library/Application Support/Rapid/conversations.json` and
-  never transmitted off-device.
+  stored locally by the App; allowed tools can still read or transmit their
+  contents.
 * Server settings, picker state, window layout — stored in
   UserDefaults under `com.rapidmlx.rapid`.
 * The engine's **prompt prefix cache** — the embedded `rapid-mlx` server
@@ -355,9 +357,9 @@ distributions are out of scope but we will help triage.
   download the DMG from the
   [GitHub Releases page](https://github.com/raullenchai/Rapid-MLX/releases/latest)
   and verify its origin yourself before installing.
-* **Work** — a Work task follows the permission mode shown in its workspace.
-  Its tools may read selected files or contact network services as the task
-  requires. Plain chat does not invoke those tools.
+* **Chat tools** — approved actions can read files, run commands, and contact
+  network services. YOLO mode runs those actions without individual prompts.
+  The model itself runs locally.
 
 ## Contact
 

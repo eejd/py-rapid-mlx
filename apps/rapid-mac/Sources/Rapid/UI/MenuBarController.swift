@@ -202,13 +202,7 @@ final class MenuBarController: NSObject {
         case .open:
             bringMainWindowForward()
         case .newChat:
-            if WorkAgent.fullAccess {
-                WorkAgent.shared.beginNewChat()
-                Task { try? await WorkAgent.shared.newSession() }
-                NotificationCenter.default.post(name: .newWorkChat, object: nil)
-            } else {
-                AppDelegate.shared.chat?.newConversation()
-            }
+            AppDelegate.shared.chat?.newConversation()
             bringMainWindowForward()
         case .update:
             if let sparkle = AppDelegate.shared.sparkleUpdater, sparkle.isEnabled {

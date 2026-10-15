@@ -26,14 +26,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/.build/release"
 APP="$ROOT/build/Rapid-MLX Desktop.app"
-if [[ "${WORK_FULL:-0}" == "1" ]]; then
-    [[ "${WORK_MVP:-0}" == "1" ]] || { echo "ERR: WORK_FULL requires WORK_MVP=1" >&2; exit 1; }
-    APP="$ROOT/build/Rapid-MLX Work Full.app"
-fi
-if [[ "${GOOSE_CHAT:-0}" == "1" ]]; then
-    [[ "${WORK_FULL:-0}" == "1" ]] || { echo "ERR: GOOSE_CHAT requires WORK_FULL=1" >&2; exit 1; }
-    APP="$ROOT/build/Rapid-MLX Goose Chat.app"
-fi
 CONTENTS="$APP/Contents"
 CUA_HELPER="$CONTENTS/Helpers/Rapid Computer Use.app"
 CUA_HELPER_EXECUTABLE="$CUA_HELPER/Contents/MacOS/RapidComputerUse"
@@ -211,48 +203,19 @@ if [[ "$PARALLEL_SIDECAR_BUILD" == "1" \
 fi
 
 cd "$ROOT"
-if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PREBUILT_RAPID:-}" ]]; then
-    [[ -x "$WORK_MVP_PREBUILT_RAPID" ]] || { echo "ERR: Work MVP executable missing" >&2; exit 1; }
-    echo "==> using prebuilt Work MVP Swift executable"
-    SWIFT_BUILD_SECONDS=0
-else
-    echo "==> swift build -c $CONFIG"
-    SWIFT_BUILD_STARTED=$SECONDS
-    if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PLUGIN_PATH:-}" ]]; then
-        swift build -c "$CONFIG" -Xswiftc -plugin-path -Xswiftc "$WORK_MVP_PLUGIN_PATH"
-    else
-        swift build -c "$CONFIG"
-    fi
-    SWIFT_BUILD_SECONDS=$((SECONDS - SWIFT_BUILD_STARTED))
-    echo "==> Swift compilation completed in ${SWIFT_BUILD_SECONDS}s"
-fi
+echo "==> swift build -c $CONFIG"
+SWIFT_BUILD_STARTED=$SECONDS
+swift build -c "$CONFIG"
+SWIFT_BUILD_SECONDS=$((SECONDS - SWIFT_BUILD_STARTED))
+echo "==> Swift compilation completed in ${SWIFT_BUILD_SECONDS}s"
 join_parallel_sidecar
 
 echo "==> assembling $(basename "$APP")"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$CONTENTS/Frameworks"
-RAPID_EXECUTABLE="$ROOT/.build/$CONFIG/Rapid"
-if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PREBUILT_RAPID:-}" ]]; then
-    RAPID_EXECUTABLE="$WORK_MVP_PREBUILT_RAPID"
-fi
-cp "$RAPID_EXECUTABLE" "$CONTENTS/MacOS/Rapid"
+cp "$ROOT/.build/$CONFIG/Rapid" "$CONTENTS/MacOS/Rapid"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
-if [[ "${WORK_MVP:-0}" == "1" ]]; then
-    if [[ "${GOOSE_CHAT:-0}" == "1" ]]; then
-        plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.goose-chat' "$CONTENTS/Info.plist"
-        plutil -replace CFBundleDisplayName -string 'Rapid-MLX Goose Chat' "$CONTENTS/Info.plist"
-        plutil -replace CFBundleName -string 'Rapid-MLX Goose Chat' "$CONTENTS/Info.plist"
-    elif [[ "${WORK_FULL:-0}" == "1" ]]; then
-        plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-full' "$CONTENTS/Info.plist"
-        plutil -replace CFBundleDisplayName -string 'Rapid-MLX Work Full' "$CONTENTS/Info.plist"
-        plutil -replace CFBundleName -string 'Rapid-MLX Work Full' "$CONTENTS/Info.plist"
-    else
-        plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-mvp' "$CONTENTS/Info.plist"
-    fi
-    # Finder launches this experimental bundle with the existing global
-    # opt-out honored by Desktop update checks and both telemetry gates.
-    plutil -insert LSEnvironment -json '{"DO_NOT_TRACK":"1"}' "$CONTENTS/Info.plist"
-fi
+bash "$ROOT/scripts/build-work-helper.sh" "$CONTENTS" stage
 
 # Browser domain enforcement reads only the selected browser's trusted active
 # tab API. Without the privacy purpose string macOS refuses the Apple Event
@@ -409,16 +372,12 @@ if [[ -f "$ROOT/Sources/Rapid/Resources/Localizable.xcstrings" ]]; then
     LOCALIZABLE_CATALOG="$ROOT/Sources/Rapid/Resources/Localizable.xcstrings"
     XCSTRINGSTOOL="$(xcrun --find xcstringstool 2>/dev/null || true)"
     if [[ -z "$XCSTRINGSTOOL" ]]; then
-        if [[ "${WORK_MVP:-0}" != "1" ]]; then
-            echo "ERR: xcstringstool is required to compile Desktop localizations" >&2
-            exit 1
-        fi
-        echo "warning: Work MVP CLT build keeps English source strings only"
-    else
-        "$XCSTRINGSTOOL" compile "$LOCALIZABLE_CATALOG" \
-            --output-directory "$CONTENTS/Resources" \
-            --serialization-format binary
+        echo "ERR: xcstringstool is required to compile Desktop localizations" >&2
+        exit 1
     fi
+    "$XCSTRINGSTOOL" compile "$LOCALIZABLE_CATALOG" \
+        --output-directory "$CONTENTS/Resources" \
+        --serialization-format binary
     cp "$LOCALIZABLE_CATALOG" "$CONTENTS/Resources/Localizable.xcstrings"
 else
     echo "ERR: Localizable.xcstrings missing — refusing to ship an English-only app" >&2
@@ -635,15 +594,6 @@ else
             SIDECAR_CACHE_HIT=0
         fi
     fi
-    # A one-night source snapshot on the leased build host has no Git
-    # metadata. Its already smoke-tested stage is still usable for this
-    # experimental bundle; keep the override explicit and MVP-only.
-    if [[ "${WORK_MVP:-0}" == "1" && "${WORK_MVP_REUSE_SIDECAR:-0}" == "1" \
-        && -x "$SIDECAR_STAGE/rapid-mlx/python/bin/python3.12" \
-        && -d "$SIDECAR_STAGE/rapid-mlx/site-packages/rapid_mlx" ]]; then
-        SIDECAR_CACHE_HIT=1
-    fi
-
     SIDECAR_ARGS=(--out "$SIDECAR_STAGE")
     if [[ "${CODESIGN_IDENTITY:--}" != "-" ]]; then
         # CI release path — use the Developer ID identity already
@@ -847,9 +797,7 @@ except Exception as e:
 fi
 
 # Signing: ad-hoc by default (local dev), real Developer ID when
-if [[ "${WORK_MVP:-0}" == "1" ]]; then
-    bash "$ROOT/scripts/build-work-helper.sh" "$CONTENTS"
-fi
+bash "$ROOT/scripts/build-work-helper.sh" "$CONTENTS" dependencies
 
 # Signing: ad-hoc by default (local dev), real Developer ID when
 # CODESIGN_IDENTITY is set (CI release). CODESIGN_IDENTITY can be the
@@ -864,6 +812,10 @@ if [[ "$SIGN_IDENTITY" == "-" ]]; then
             --identifier com.rapidmlx.rapid.computer-use \
             --sign - "$CUA_HELPER"
     fi
+    codesign --force --options runtime \
+        --entitlements "$ROOT/Resources/Rapid.entitlements" \
+        --identifier com.rapidmlx.rapid.goose --sign - "$CONTENTS/Resources/Helpers/goose"
+    codesign --verify --strict "$CONTENTS/Resources/Helpers/goose"
     codesign --force --deep \
         --entitlements "$ROOT/Resources/Rapid.entitlements" \
         --sign - "$APP"
@@ -894,6 +846,11 @@ else
             --sign "$SIGN_IDENTITY" "$CUA_HELPER"
         codesign --verify --strict "$CUA_HELPER"
     fi
+    codesign --force --options runtime --timestamp \
+        --entitlements "$ROOT/Resources/Rapid.entitlements" \
+        --identifier com.rapidmlx.rapid.goose \
+        --sign "$SIGN_IDENTITY" "$CONTENTS/Resources/Helpers/goose"
+    codesign --verify --strict "$CONTENTS/Resources/Helpers/goose"
     # No --deep: the sidecar's Mach-Os under Contents/Resources/rapid-mlx/
     # are already individually signed by build-sidecar.sh; this outer
     # (non-deep) codesign hashes their bytes into the .app's resource
@@ -926,6 +883,18 @@ else
     fi
     codesign -dv --verbose=4 "$APP" 2>&1 | grep -E 'Authority|TeamIdentifier|flags=' || true
 fi
+
+# Validate each nested code object independently. An outer bundle seal alone
+# does not establish that the Goose executable is signed for release.
+for nested in "$CONTENTS/Resources/Helpers/goose" "$CONTENTS/MacOS/Rapid"; do
+    codesign --verify --strict "$nested"
+done
+for notice in goose-APACHE-2.0.txt goose-third-party-licenses.txt; do
+    test -s "$CONTENTS/Resources/Licenses/$notice" || {
+        echo "ERROR: required Goose notice is missing: $notice" >&2
+        exit 1
+    }
+done
 
 # TCC belongs to the process that calls AX/CG. Assert the packaged executable
 # is the stable helper identity and still carries the runtime entitlements

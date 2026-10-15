@@ -94,7 +94,7 @@ enum GooseToolPresentation {
         if lower.contains("write") || lower.contains("create_file") { return String(localized: "Wrote \(subject)") }
         if lower.contains("edit") || lower.contains("patch") { return String(localized: "Edited \(subject)") }
         if lower.contains("shell") || lower.contains("command") || lower.contains("execute") || lower.contains("run") {
-            let command = (args["command"] as? String ?? args["cmd"] as? String ?? name)
+            let command = (args["command"] as? String ?? args["cmd"] as? String ?? String(localized: "command"))
                 .replacingOccurrences(of: "\n", with: " ")
                 .replacingOccurrences(of: folder, with: ".")
             return String(localized: "Ran `\(String(command.prefix(90)))`")
@@ -102,7 +102,8 @@ enum GooseToolPresentation {
         if lower.contains("list") { return String(localized: "Listed files") }
         if lower.contains("open") || lower.contains("browse") { return String(localized: "Opened \(subject)") }
         if lower.contains("read") { return String(localized: "Read \(subject)") }
-        let displayName = name.components(separatedBy: " · ").first ?? name
+        let displayName = (name.components(separatedBy: " · ").first ?? name)
+            .components(separatedBy: "__").last ?? name
         return relative.map { "\(displayName) · \($0)" } ?? displayName
     }
 

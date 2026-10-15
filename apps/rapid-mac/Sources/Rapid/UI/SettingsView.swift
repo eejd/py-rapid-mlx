@@ -663,7 +663,7 @@ struct SettingsView: View {
             }
             SectionHeader(
                 String(localized: "Privacy"),
-                subtitle: String(localized: "Rapid-MLX is local-first. Prompts, attachments, and model responses never leave your Mac. Anonymous metadata telemetry is on by default; turn it off here, with rapid-mlx telemetry off, or at https://rapidmlx.com/docs/telemetry."),
+                subtitle: String(localized: "Your model runs locally. Chat tools can access files, run commands, and use the internet when you allow them. YOLO mode runs tools without asking each time. Anonymous usage data is on by default; you can turn it off here."),
                 emphasis: .page
             )
 
@@ -671,7 +671,7 @@ struct SettingsView: View {
             Toggle(isOn: telemetryEnabledBinding) {
                 SettingsRowLabel(
                     title: String(localized: "Send anonymous usage data"),
-                    description: String(localized: "Versions, Mac hardware tier, public model and feature names, coarse performance, redacted crash diagnostics, and error categories. For each first successful text chat reply, dictation, or generated image, only the milestone name and “Desktop” are sent. This version does not send a vision-reply milestone. Rapid sends these metadata-only events: the app's to rapidmlx.com's telemetry service, the bundled engine's to PostHog Cloud (US)—never your IP or a per-person profile; the app's collector keeps only a coarse country code. Never prompts, responses, attachments, keys, account details, or unredacted user paths.")
+                    description: String(localized: "Versions, Mac hardware tier, public model and feature names, coarse performance, redacted crash diagnostics, and error categories. For each first successful text chat reply, dictation, or generated image, only the milestone name and “Desktop” are sent. This version does not send a vision-reply milestone. Rapid sends these metadata-only events: the app's to rapidmlx.com's telemetry service, the bundled engine's to its usage collector—never your IP or a per-person profile; the app's collector keeps only a coarse country code. Never prompts, responses, attachments, keys, account details, or unredacted user paths.")
                 )
             }
             .toggleStyle(TrailingSettingsToggleStyle())

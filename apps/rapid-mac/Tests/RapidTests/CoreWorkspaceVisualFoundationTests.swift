@@ -783,8 +783,8 @@ struct CoreWorkspaceVisualFoundationTests {
             "Palette visibility is a window session state, not a persisted preference."
         )
         #expect(
-            content.contains("privatefuncopenConversationSearch(){guard!WorkAgent.fullAccesselse{return}showCommandPalette=falseshowConversationSearch=true}"),
-            "Private Chat search must clear palette state; Full Work must not open legacy Chat search."
+            content.contains("privatefuncopenConversationSearch(){showCommandPalette=falseshowConversationSearch=true}"),
+            "Chat search must clear palette state."
         )
         #expect(
             app.contains("NSApp.activate(ignoringOtherApps:true)"),

@@ -44,8 +44,9 @@ open it, and drag **Rapid-MLX Desktop** to Applications.
   box as chat — pick an image model, prompt, and generate locally.
 - **Audio & voice tab.** Transcription, voice listing, and speech synthesis,
   driven by the sidecar's local OpenAI-compatible audio routes.
-- **Plain chat and Work.** Chat answers without running tools. Work handles
-  agent tasks through its separate Goose-powered session and permission mode.
+- **Chat with optional tools.** Chat uses your local model. When you allow a tool,
+  it can access files, run commands, or use the internet. YOLO mode runs tools
+  without asking for each action.
 - **Folders & export.** Organize conversations into folders in the sidebar and
   export a conversation to a file via a save panel.
 - **Custom instructions.** A persistent system-prompt preface applied across

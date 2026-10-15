@@ -341,9 +341,6 @@ struct ContentView: View {
         .onAppear {
             showCommandPaletteFromRequest(commandPaletteRequest.requestID)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .newWorkChat)) { _ in
-            if WorkAgent.fullAccess && !WorkAgent.gooseChat { section = .work }
-        }
         .lifecycleModifiers(
             of: self,
             displayedMemoryWarning: displayedMemoryWarning,
@@ -920,28 +917,11 @@ struct ContentView: View {
     }
 
     private func newChat() {
-        if WorkAgent.fullAccess && !WorkAgent.gooseChat {
-            section = .work
-            WorkAgent.shared.beginNewChat()
-            let revision = WorkAgent.shared.conversationRevision
-            let lifecycle = WorkAgent.shared.lifecycleGeneration
-            Task {
-                do { try await WorkAgent.shared.newSession() }
-                catch {
-                    if WorkAgent.shared.conversationRevision == revision,
-                       WorkAgent.shared.lifecycleGeneration == lifecycle {
-                        WorkAgent.shared.error = error.localizedDescription
-                    }
-                }
-            }
-        } else {
-            chat.newConversation()
-            section = .chat
-        }
+        chat.newConversation()
+        section = .chat
     }
 
     private func openConversationSearch() {
-        guard !WorkAgent.fullAccess || WorkAgent.gooseChat else { return }
         showCommandPalette = false
         showConversationSearch = true
     }
@@ -1312,7 +1292,7 @@ struct ContentView: View {
     private var detailArea: some View {
         switch section {
         case .chat:
-            if WorkAgent.fullAccess && !WorkAgent.gooseChat { workArea } else { mainArea }
+            mainArea
         case .search:
             if localSearchEnabled {
                 LocalSearchView(server: server, model: localSearch, onStartModel: {
@@ -1353,8 +1333,6 @@ struct ContentView: View {
                 readiness: readiness,
                 onReadinessAction: performReadinessAction
             )
-        case .work:
-            workArea
         case .benchmark:
             if communityBenchmarkEnabled {
                 CommunityBenchmarkView(
@@ -1420,19 +1398,6 @@ struct ContentView: View {
                 mainArea
             }
         }
-    }
-
-    private var workArea: some View {
-        WorkView(server: server, selectedSection: section,
-                 cachedModels: catalogEntries, startModel: startModel,
-                 startDefaultModel: {
-            if let target = ServerManager.lastServedAlias() {
-                startModel(target)
-            } else {
-                section = .chat
-                performReadinessAction(.chooseModel)
-            }
-        })
     }
 
     // MARK: - Main area
@@ -1571,7 +1536,6 @@ struct ContentView: View {
     /// different alias. Eligibility keys on app-owned state only (see
     /// ``QuickstartCoordinator.isEligible``), never the shared HF cache.
     private var quickstartVisible: Bool {
-        if WorkAgent.fullAccess && !WorkAgent.gooseChat { return false }
         // Quickstart is a Chat onboarding surface. Server/model transitions
         // inside Audio or Images must never interrupt those workflows with a
         // global onboarding sheet.
