@@ -1423,12 +1423,31 @@ final class ChatViewModel {
             gooseContextIDs = []
             return
         }
+        if let citation = Self.missingGooseQuoteCitation(
+            content: messages[placeholderIndex].content,
+            parts: messages[placeholderIndex].gooseParts) {
+            messages[placeholderIndex].content += citation
+            messages[placeholderIndex].gooseParts?.append(GooseTurnPart(text: citation))
+        }
         for index in messages.indices where messages[index].role == .assistant && messages[index].status == .streaming {
             messages[index].status = .complete
         }
         isStreaming = false
         inflight = nil
         gooseContextIDs = messages.map(\.id)
+    }
+
+    static func missingGooseQuoteCitation(content: String, parts: [GooseTurnPart]?) -> String? {
+        guard !content.isEmpty, !content.contains("https://www.google.com/finance/quote/") else { return nil }
+        for card in (parts ?? []).compactMap(\.tool) where card.input.contains("goose-finance-quote.py") {
+            guard let data = card.output.data(using: .utf8),
+                  let quote = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+                  let ticker = quote["ticker"], ["GOOGL", "GOOG"].contains(ticker),
+                  let url = quote["source_url"],
+                  url == "https://www.google.com/finance/quote/\(ticker):NASDAQ" else { continue }
+            return "\n\n[Google Finance](\(url))"
+        }
+        return nil
     }
 
     static func gooseReplay(_ prior: [ChatMessage]) -> String {

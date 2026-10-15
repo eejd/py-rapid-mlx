@@ -5,6 +5,23 @@ import Testing
 @MainActor
 @Suite("Goose Chat")
 struct GooseChatTests {
+    @Test("A verified quote tool output supplies a direct citation when the model omits it")
+    func quoteCitation() {
+        let card = GooseToolCard(id: "quote", name: "developer__shell",
+            input: #"{"command":"python3 goose-finance-quote.py GOOGL"}"#,
+            output: #"{"ticker":"GOOGL","price":"$349.08","source_url":"https://www.google.com/finance/quote/GOOGL:NASDAQ"}"#,
+            status: "completed")
+        let parts = [GooseTurnPart(tool: card)]
+        let citation = ChatViewModel.missingGooseQuoteCitation(content: "谷歌股价 $349.08", parts: parts)
+        #expect(citation == "\n\n[Google Finance](https://www.google.com/finance/quote/GOOGL:NASDAQ)")
+        #expect(ChatViewModel.missingGooseQuoteCitation(
+            content: "https://www.google.com/finance/quote/GOOGL:NASDAQ", parts: parts) == nil)
+        var unverified = card
+        unverified.output = #"{"ticker":"GOOGL","source_url":"https://example.com/quote"}"#
+        #expect(ChatViewModel.missingGooseQuoteCitation(
+            content: "谷歌股价 $349.08", parts: [GooseTurnPart(tool: unverified)]) == nil)
+    }
+
     @Test("Goose Chat isolates global skills and keeps a compact tool set")
     func isolatedHelperContext() {
         #expect(WorkAgent.helperHome(gooseChat: true, fullAccess: true,
