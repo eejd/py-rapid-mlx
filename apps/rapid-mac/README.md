@@ -67,7 +67,7 @@ open it, and drag **Rapid-MLX Desktop** to Applications.
   separate processor. Both use the same local preference and anonymous install ID so
   they never double-count an install. Paths are PII-redacted
   (`/Users/<name>/` scrubbed); chat content and attachments are never sent.
-- **Self-update.** Signed releases use Sparkle to check an EdDSA-signed appcast,
+- **Self-update.** Signed releases use the built-in updater to check an EdDSA-signed appcast,
   download updates in the background, and install them when Rapid-MLX quits.
   During the migration the existing six-hour version-status request remains;
   it sends only the app version and records aggregate counts without storing

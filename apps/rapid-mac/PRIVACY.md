@@ -309,8 +309,8 @@ distributions are out of scope but we will help triage.
 
 * **Usage data processors** — the app collector and the engine processor
   receive only the metadata described above.
-* **Auto-update channel** — signed production builds use Sparkle to poll
-  `https://dl.rapidmlx.com/appcast.xml` every six hours. Sparkle sends a
+* **Auto-update channel** — signed production builds use the signed updater to poll
+  `https://dl.rapidmlx.com/appcast.xml` every six hours. The updater sends a
   standard app/version user agent but no system profile
   (`SUSendsSystemProfile=false`), unique identifier, chat content, or usage
   data. It verifies every update archive with the Ed25519 public key embedded
@@ -319,15 +319,15 @@ distributions are out of scope but we will help triage.
 
   During the migration, ``UpdateChecker`` also polls
   `https://rapidmlx.com/api/desktop-update?v=<app-version>` on launch
-  and every 6 hours while running. This is a thin Cloudflare Worker
+  and every 6 hours while running. This is a small update endpoint
   that returns the **byte-identical** release manifest the public R2
   object (`https://dl.rapidmlx.com/latest.json`) serves, while also
   counting the poll as an aggregate active-install signal. **The only
   data the request sends is the app's own version** (the `?v=` query,
   the same value already in the `User-Agent: Rapid-Desktop/<version>`
   header) — no device fingerprint, no unique ID, nothing about your
-  usage. The Worker records only aggregate counts (version and
-  Cloudflare-derived country) and **never stores your IP address**.
+  usage. The endpoint records only aggregate counts (version and
+  coarse country) and **never stores your IP address**.
   You can turn the check off entirely: set the environment variable
   `RAPIDMLX_NO_UPDATE_CHECK=1` (or the cross-tool `DO_NOT_TRACK=1`),
   which skips the request completely — no poll, no signal. No GitHub
