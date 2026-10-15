@@ -2036,6 +2036,24 @@ private struct MessageRow: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            if message.status == .complete {
+                ForEach(producedFiles, id: \.path) { file in
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc")
+                        Text(file.lastPathComponent).fontWeight(.medium).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button("Open") { NSWorkspace.shared.open(file) }
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([file])
+                        }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.link)
+                    .padding(8)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityIdentifier("ChatView.ProducedFile.\(file.lastPathComponent)")
+                }
+            }
             if let stats = statsCaption {
                 Text(stats)
                     .font(.caption)
@@ -2046,6 +2064,12 @@ private struct MessageRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var producedFiles: [URL] {
+        let cards = (message.gooseParts ?? []).compactMap(\.tool) + (message.gooseTool.map { [$0] } ?? [])
+        return Array(Set(cards.compactMap { GooseToolPresentation.producedFile($0, folder: gooseFolderPath) }))
+            .sorted { $0.path < $1.path }
     }
 
     private var hasAssistantContent: Bool {

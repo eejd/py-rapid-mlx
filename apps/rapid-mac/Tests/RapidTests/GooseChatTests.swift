@@ -28,6 +28,19 @@ struct GooseChatTests {
         #expect(GooseToolPresentation.isFailure("failed"))
     }
 
+    @Test("Completed edits expose only files inside the conversation folder")
+    func producedFile() {
+        let card = GooseToolCard(id: "t", name: "developer__write_file",
+            input: #"{"path":"/tmp/chat/snake.html"}"#, status: "completed")
+        #expect(GooseToolPresentation.producedFile(card, folder: "/tmp/chat")?.path == "/tmp/chat/snake.html")
+        var running = card
+        running.status = "running"
+        #expect(GooseToolPresentation.producedFile(running, folder: "/tmp/chat") == nil)
+        var outside = card
+        outside.input = #"{"path":"/tmp/other/private.html"}"#
+        #expect(GooseToolPresentation.producedFile(outside, folder: "/tmp/chat") == nil)
+    }
+
     @Test("Permission policy keeps decisions in the app")
     func permissionPolicy() {
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer").answer == .ask)

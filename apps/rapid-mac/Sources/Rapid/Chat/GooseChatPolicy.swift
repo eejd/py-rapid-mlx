@@ -59,6 +59,20 @@ struct GooseToolCard: Codable, Equatable, Hashable {
 }
 
 enum GooseToolPresentation {
+    static func producedFile(_ card: GooseToolCard, folder: String) -> URL? {
+        let lower = card.name.lowercased()
+        guard (lower.contains("write") || lower.contains("edit") || lower.contains("patch")),
+              !isRunning(card.status), !isFailure(card.status),
+              let data = card.input.data(using: .utf8),
+              let args = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let path = ["path", "file_path", "filename", "file", "target_path"]
+                .compactMap({ args[$0] as? String }).first else { return nil }
+        let root = URL(fileURLWithPath: folder, isDirectory: true).standardizedFileURL
+        let file = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL
+        guard file.path.hasPrefix(root.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/") else { return nil }
+        return file
+    }
+
     static func title(name: String, input: String, folder: String) -> String {
         let args = (input.data(using: .utf8).flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
