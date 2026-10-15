@@ -793,7 +793,11 @@ def config_declares_linear_attention(config: dict | None) -> bool:
         return True
     layer_types = (
         language_config.get("layer_types")
-        or language_config.get("layers_block_type")
+        or (
+            language_config.get("layers_block_type")
+            if language_config.get("rapid_mlx_nemotron_h") is True
+            else None
+        )
         or []
     )
     if any(
