@@ -218,11 +218,11 @@ if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PREBUILT_RAPID:-}" ]]; then
 else
     echo "==> swift build -c $CONFIG"
     SWIFT_BUILD_STARTED=$SECONDS
-    SWIFT_BUILD_EXTRA=()
     if [[ "${WORK_MVP:-0}" == "1" && -n "${WORK_MVP_PLUGIN_PATH:-}" ]]; then
-        SWIFT_BUILD_EXTRA=(-Xswiftc -plugin-path -Xswiftc "$WORK_MVP_PLUGIN_PATH")
+        swift build -c "$CONFIG" -Xswiftc -plugin-path -Xswiftc "$WORK_MVP_PLUGIN_PATH"
+    else
+        swift build -c "$CONFIG"
     fi
-    swift build -c "$CONFIG" "${SWIFT_BUILD_EXTRA[@]}"
     SWIFT_BUILD_SECONDS=$((SECONDS - SWIFT_BUILD_STARTED))
     echo "==> Swift compilation completed in ${SWIFT_BUILD_SECONDS}s"
 fi
