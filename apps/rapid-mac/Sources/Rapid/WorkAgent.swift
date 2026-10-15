@@ -217,11 +217,13 @@ final class WorkAgent {
         proxyEnv.removeValue(forKey: "GOOSE_SERVER__SECRET_KEY")
         proxyEnv.removeValue(forKey: "RAPID_LOCAL_WORK_KEY")
         proxyEnv["WORK_PROXY_BEARER"] = bearer
+        proxyEnv["WORK_PROXY_METRICS_KEY"] = secret
         proxyProcess = try Self.launchHelper(
             profile: Self.fullAccess ? nil : proxyProfileURL, python: pythonExecutable,
             executable: pythonExecutable,
             arguments: ["-I", "-S", proxy.path, String(proxyPort), String(rapidPort), model]
-                + (Self.fullAccess ? ["--full-access"] : []),
+                + (Self.fullAccess ? ["--full-access"] : [])
+                + (Self.gooseChat ? ["--goose-chat"] : []),
             directory: support, environment: proxyEnv)
         guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
             throw WorkError.message("The local Work inference gate did not start.")
@@ -298,12 +300,13 @@ final class WorkAgent {
     func prompt(_ message: String) async {
         guard let sessionID else { return }
         let promptGeneration = generation
+        let metricSequence = Self.gooseChat ? await inferenceMetric()?.sequence : nil
         let previousTextCount = text.count
         let previousStepCount = steps.count
         isBusy = true
         error = nil
         do {
-            let instruction = Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
+            let instruction = Self.gooseChat ? Self.gooseChatBehavior + message : Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
                 "Read PDF with pypdf, CSV with csv.DictReader, XLSX with openpyxl. " +
                 "Use Decimal for money, verify totals, format currency with thousands separators and two decimal places, and write results in the folder. Put every total label and its amount on the same line. " +
                 "Do not install packages, use the network, or start background or detached processes. User request: " + message
@@ -320,6 +323,11 @@ final class WorkAgent {
                         "Continue from the existing files. Review failed tool calls and verify every requested input was processed. Repair incomplete outputs and finish the remaining checks or tests without repeating completed work."]],
                 ], session: sessionID, timeout: 900)
             }
+            if Self.gooseChat, generation == promptGeneration,
+               let metric = await inferenceMetric(), metric.sequence > (metricSequence ?? 0),
+               let rate = metric.rate, rate > 0 {
+                onChatEvent?(.throughput(rate))
+            }
         } catch {
             if generation == promptGeneration {
                 self.error = error.localizedDescription
@@ -328,6 +336,24 @@ final class WorkAgent {
         }
         if generation == promptGeneration { isBusy = false }
     }
+
+    private func inferenceMetric() async -> (sequence: Int, rate: Double?)? {
+        guard let url = URL(string: "http://127.0.0.1:\(proxyPort)/metrics") else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue(secret, forHTTPHeaderField: "X-Metrics-Key")
+        request.timeoutInterval = 2
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let metric = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sequence = metric["sequence"] as? Int else { return nil }
+        return (sequence, metric["tokensPerSecond"] as? Double)
+    }
+
+    static let gooseChatBehavior = """
+        Reply in the user's language. When the requested task is done, stop and summarize; do not re-run or re-verify completed work unless asked.
+        Prefer paths relative to the selected chat folder in replies.
+
+        """
 
     func cancel() {
         guard let sessionID else { return }

@@ -926,6 +926,8 @@ struct MessageStats: Codable, Equatable, Hashable {
     /// Optional for the same reason as ``timeToFirstTokenSeconds``: older
     /// transcripts have no such field and decode as ``nil``.
     var reasoningEmitted: Bool?
+    /// Decode rate measured by the Goose inference gate from engine usage.
+    var engineTokensPerSecond: Double? = nil
 
     /// ``reasoningEmitted`` with the legacy default. A transcript written
     /// before the field existed is treated as prose-only, which is what
@@ -1044,6 +1046,9 @@ struct MessageStats: Codable, Equatable, Hashable {
     /// so this accessor returns `nil` there instead of falling through to
     /// the whole-turn number.
     var reportedTokensPerSecond: Double? {
+        if let engineTokensPerSecond, engineTokensPerSecond > 0 {
+            return engineTokensPerSecond
+        }
         guard let completionTokens, completionTokens > 0,
               let decodeSeconds, decodeSeconds > 0.05 else { return nil }
         guard validTimeToFirstToken != nil else {

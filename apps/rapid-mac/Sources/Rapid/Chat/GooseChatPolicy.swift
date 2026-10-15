@@ -46,6 +46,7 @@ enum GooseChatEvent {
     case permission(WorkPermission, String, String)
     case error(String)
     case cancelled
+    case throughput(Double)
 }
 
 struct GooseToolCard: Codable, Equatable, Hashable {

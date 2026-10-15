@@ -10,6 +10,8 @@ import hmac
 import json
 import os
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,8 +20,50 @@ LISTEN_PORT = int(sys.argv[1])
 RAPID_PORT = int(sys.argv[2])
 MODEL = sys.argv[3]
 FULL_ACCESS = len(sys.argv) > 4 and sys.argv[4] == "--full-access"
+GOOSE_CHAT = "--goose-chat" in sys.argv[4:]
 BEARER = os.environ["WORK_PROXY_BEARER"]
+METRICS_KEY = os.environ.get("WORK_PROXY_METRICS_KEY", "")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+METRICS_LOCK = threading.Lock()
+LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
+
+
+class StreamRate:
+    """Observe the unchanged SSE bytes and pair engine usage with decode time."""
+
+    def __init__(self):
+        self.pending = b""
+        self.first_token_at = None
+        self.last_token_at = None
+        self.completion_tokens = None
+
+    def feed(self, chunk):
+        self.pending += chunk
+        while b"\n" in self.pending:
+            line, self.pending = self.pending.split(b"\n", 1)
+            if not line.startswith(b"data:"):
+                continue
+            try:
+                event = json.loads(line[5:])
+            except (ValueError, UnicodeDecodeError):
+                continue
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                self.completion_tokens = usage.get("completion_tokens")
+            for choice in event.get("choices", []):
+                delta = choice.get("delta", {})
+                if any(delta.get(key) for key in ("content", "reasoning_content", "tool_calls")):
+                    now = time.monotonic()
+                    if self.first_token_at is None:
+                        self.first_token_at = now
+                    self.last_token_at = now
+
+    def tokens_per_second(self):
+        count = self.completion_tokens
+        if not isinstance(count, int) or count <= 1 or self.first_token_at is None:
+            return None
+        duration = self.last_token_at - self.first_token_at
+        return (count - 1) / duration if duration > 0.05 else None
 
 
 def text_only(body):
@@ -71,6 +115,18 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == "/metrics" and GOOSE_CHAT:
+            if not hmac.compare_digest(self.headers.get("X-Metrics-Key", ""), METRICS_KEY):
+                self.send_error(401)
+                return
+            with METRICS_LOCK:
+                data = json.dumps(LATEST_METRIC).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if self.path != "/health":
             self.send_error(404)
             return
@@ -105,6 +161,11 @@ class Handler(BaseHTTPRequestHandler):
         if not FULL_ACCESS and not text_only(body):
             self.send_error(403, "Work allows text-only inference")
             return
+        if GOOSE_CHAT and body.get("stream") is True:
+            options = body.get("stream_options") or {}
+            options["include_usage"] = True
+            body["stream_options"] = options
+            raw = json.dumps(body).encode()
         request = urllib.request.Request(
             f"http://127.0.0.1:{RAPID_PORT}/v1/chat/completions",
             raw,
@@ -123,6 +184,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(502, "Local inference unavailable")
             return
         with response:
+            rate = StreamRate() if GOOSE_CHAT and response.status == 200 else None
             self.send_response(response.status)
             self.send_header(
                 "Content-Type", response.headers.get("Content-Type", "application/json")
@@ -131,10 +193,17 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             try:
                 while chunk := response.read1(16384):
+                    if rate is not None:
+                        rate.feed(chunk)
                     self.wfile.write(chunk)
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            finally:
+                if rate is not None:
+                    with METRICS_LOCK:
+                        LATEST_METRIC["sequence"] += 1
+                        LATEST_METRIC["tokensPerSecond"] = rate.tokens_per_second()
 
 
 ThreadingHTTPServer(("127.0.0.1", LISTEN_PORT), Handler).serve_forever()
