@@ -145,8 +145,8 @@ class ContinuousMTPRouterInstallDecision:
     reasons: tuple[str, ...] = ()
     live_token_delivery: bool = False
     # Operator-requested cohort depth and the depth the planner actually
-    # installed (clamped to the attested ``recursive_draft_depth``).  Both are
-    # ``None`` when the router was refused.
+    # installed (clamped to the backend ceiling, which the descriptor must
+    # attest).  Both are ``None`` when the router was refused.
     requested_draft_tokens: int | None = None
     draft_tokens: int | None = None
 
@@ -293,10 +293,16 @@ def plan_router_install(
 
     ``max_draft_tokens`` is the operator's requested cohort depth
     (``num_speculative_tokens``).  The planner is authoritative for the
-    installed depth: it clamps the request to the ``recursive_draft_depth``
-    the capability descriptor attests (``draft_tokens`` on the decision says
-    what was installed), and rejects a non-positive request.  ``plan_admission``
-    may still lower the depth per cycle under memory pressure, never raise it.
+    installed depth: it clamps the request to the backend ceiling
+    (``RAPID_CONTINUOUS_MTP_MAX_DRAFT_TOKENS``) and to the descriptor's
+    ``recursive_draft_depth`` (``draft_tokens`` on the decision says what was
+    installed), and rejects a non-positive request.  The descriptor itself must
+    attest at least the backend ceiling: the injected batched forward always
+    recurses that deep, so a family attesting shallower recursion is refused
+    (falls back) rather than run at a depth it never qualified.  A shallower
+    *request* (e.g. ``num_speculative_tokens=1``) is a supported K=1 cohort.
+    ``plan_admission`` may still lower the depth per cycle under memory
+    pressure, never raise it.
     """
     if isinstance(max_draft_tokens, bool) or not isinstance(max_draft_tokens, int):
         raise ValueError("max_draft_tokens must be a positive integer")
