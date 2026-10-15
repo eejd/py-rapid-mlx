@@ -410,3 +410,99 @@ Final disk check after serving: approximately **38.3 GiB free**
 No push or upload occurred. Phase B's local qualification is complete within the
 explicit HF-reference and M4-hardware limits. Atlas/coordinator owns publication
 ID assignment, catalog admission, and any broader quality or actual M4 testing.
+
+## Round 1 review correction and catalog admission
+
+Owner remains Vector on Studio, branch `vector/nemotron-35-bolt`. The original
+text-only scope and non-goals are unchanged. The owner authorized catalog
+admission with the publication repository IDs below, local commits only, and
+read-only use of the converted directories while they are being uploaded.
+No conversion, model-directory modification, push, or publication is part of
+this round.
+
+The right-padded SSM regression compares a 333-position batch against independent
+sequences of lengths (256, 300), (0, 256), and (255, 257), with a nonzero incoming
+state and slow decay. This exercises a 256-token boundary, an exhausted sequence,
+and a partial final chunk, both with and without an explicit mask. Valid
+outputs and final recurrent cache states must
+match; zero valid tokens must preserve the incoming state exactly.
+The top-one router regression uses zero logits and checks that normalized weights
+equal the routed scaling factor, while the unnormalized control retains the
+sigmoid probability times that factor.
+
+The installed shared `mlx_lm.models.ssm.ssm_attn` in mlx-lm 0.31.3 contains the
+same unmasked incoming-state cumulative decay and `lengths < 0` preservation
+condition copied into this vendored adapter. The ordinary `nemotron_h` mixer
+imports its `ssm_update`, so existing models using that shared path are also
+exposed to this right-padding defect when an incoming state or an earlier chunk
+exists. This is a pre-existing dependency defect, not a new effect on those
+models. **Follow-up owner: Vector** — reproduce against the shared dependency,
+fix it separately with batched cache regression coverage, and qualify other
+Nemotron-H models. This PR changes only the Bolt adapter.
+
+Catalog entries:
+
+| Alias | Hugging Face repository | Complete local artifact bytes |
+| --- | --- | ---: |
+| `nemotron-3.5-bolt` | `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-4bit` | 43,274,347,300 |
+| `nemotron-3.5-bolt-3bit` | `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-3bit` | 31,670,622,410 |
+
+These sizes sum every file in the corresponding existing local directory,
+including `README.md` (1,750 / 1,818 bytes) and `chat_template.jinja` (12,514
+bytes each). They supersede the payload-only size proposal above. The three-bit
+repository uses the mixed recipe already documented in Phase B. Both aliases
+select native tool/reasoning parsers, text-only hybrid/MoE safety, and disabled
+standard speculative decoding. Neither asserts a tested minimum Mac memory.
+
+### Round 1 verification and handoff
+
+The regressions were written and run against the unchanged implementation
+before applying fixes. Exact result: **7 failed, 1 passed, 13 deselected**.
+The normalized top-one test observed 2.5 instead of 5.0; all six padded-state
+variants failed. Raw output: `/private/tmp/rapid-mlx-bolt/round1-red.log`.
+The local fix derives the chunk mask from remaining lengths, applies that mask
+to incoming-state decay, and preserves incoming state when lengths are zero
+or negative. Deriving the mask also prevents padded state contributions when
+lengths are supplied without a separate mask. The top-one override normalizes
+before scaling, retaining the reference epsilon and unnormalized behavior.
+
+An isolated reproduction against the installed shared SSM (zero input, unit
+incoming state, 333 positions, timestep logits -5) returned final state values
+`[0.179222, 0.106863, 0.106863]` for lengths `[0, 256, 300]`, rather than
+`[1.000000, 0.179222, 0.133373]`. This confirms the separate shared-path follow-up;
+no non-Bolt code was patched.
+
+Final validation on this worktree:
+
+- **4,419 passed** in 67.88 s: Bolt, existing vendored/registration/tokenizer
+  contracts, preflight, metadata, aliases, sizes, atomic catalog, CLI and serving
+  snapshots, parser contracts, and Apple coverage-roster checks.
+- **21/21 Bolt tests passed** with `MLX_ENABLE_TF32=0` in 2.51 s, including exact
+  BF16 normalization, cached decode, and the new regressions.
+- Ruff check and format check passed for all changed Python files.
+- Changed-line coverage versus `origin/main` at
+  `6fb35fbb24c5b8bb151d4fe2a7d7858adfc6d146`: **314/314, 100%, zero missing**.
+- CLI and serving snapshots were regenerated and remained byte-identical.
+  Packaged catalog-schema checks passed; atomic catalog snapshots are built
+  dynamically from the alias and size sources and need no checked-in rewrite.
+
+Commands and logs are in `/private/tmp/rapid-mlx-bolt/round1_verify.sh`,
+`round1-validation.log`, `round1-fp32.log`, `round1-coverage.xml`, and
+`round1-diff-coverage.log`. The verification script ran as a child of one
+`lockf -k /var/tmp/rapid-mlx-large-model.lock /bin/zsh -f` session, released
+normally afterward. The converted directories remained read-only inputs.
+
+[The decode investigation](../performance/2026-10-15-nemotron-bolt-decode.md)
+records the layer profile, bytes-read bound, machine activity, and follow-ups.
+A quiet baseline measured 51–52 tok/s; compiling the existing FP32 normalization
+math locally produced 56.29 / 56.50 / 56.50 tok/s in the final implementation,
+about 9–10% faster than the matched baselines. MoE is the largest measured
+layer category, followed by Mamba; Python graph construction does not dominate.
+Larger expert/SSM kernel or graph-capture changes remain a Vector follow-up.
+
+Catalog and implementation changes are committed locally only. No push, upload,
+release, or PR publication is performed in this round. Harbor received the
+start FYI through Orca; Atlas/Pixel/Echo named mailboxes were unavailable.
+Full FYI payloads and delivery results are retained in private task notes for
+coordinator delivery. Atlas owns the next public review/push checkpoint; Vector
+owns the shared-path correctness and deeper performance follow-ups above.

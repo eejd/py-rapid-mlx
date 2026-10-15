@@ -200,6 +200,15 @@ class ModelArgs(BaseModelArgs):
         return layer_args
 
 
+@mx.compile
+def rms_norm_fp32(x, weight, eps):
+    input_dtype = x.dtype
+    x = x.astype(mx.float32)
+    variance = mx.mean(mx.square(x), axis=-1, keepdims=True)
+    x = x * mx.rsqrt(variance + eps)
+    return (weight.astype(mx.float32) * x).astype(input_dtype)
+
+
 class NemotronHRMSNorm(nn.Module):
     """Reference-compatible RMSNorm with float32 reduction and scaling."""
 
@@ -209,11 +218,7 @@ class NemotronHRMSNorm(nn.Module):
         self.weight = mx.ones(hidden_size)
 
     def __call__(self, x: mx.array) -> mx.array:
-        input_dtype = x.dtype
-        x = x.astype(mx.float32)
-        variance = mx.mean(mx.square(x), axis=-1, keepdims=True)
-        x = x * mx.rsqrt(variance + self.eps)
-        return (self.weight.astype(mx.float32) * x).astype(input_dtype)
+        return rms_norm_fp32(x, self.weight, self.eps)
 
 
 class NemotronHMamba2Mixer(base.NemotronHMamba2Mixer):
