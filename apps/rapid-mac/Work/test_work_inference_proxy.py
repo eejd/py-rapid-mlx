@@ -54,6 +54,8 @@ class StreamRateTests(unittest.TestCase):
         self.assertEqual([t["function"]["name"] for t in compact["tools"]],
                          ["shell", "tree", "write", "edit"])
         self.assertIn("current facts", compact["messages"][0]["content"])
+        self.assertIn("exact source URL", compact["messages"][0]["content"])
+        self.assertIn("GOOGL is Alphabet Class A", compact["messages"][0]["content"])
 
     def test_tool_arguments_contribute_to_live_rate(self):
         module = self.module
