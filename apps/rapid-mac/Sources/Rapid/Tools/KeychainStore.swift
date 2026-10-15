@@ -60,9 +60,14 @@ struct SecurityKeychainItems: KeychainItemAccessing {
         return keychain
     }
 
-    // File-based Keychain ACL and database dialogs do not honor LAContext's
-    // UI policy. Serialize our calls while temporarily suppressing legacy UI;
-    // restore the previous process policy for unrelated authentication flows.
+    // This is the sole application Keychain I/O entry point: provider, ledger,
+    // web-search and bearer credentials all use SystemKeychain -> this adapter.
+    // The production source-routing regression pins that centralization, so
+    // every app SecItem operation shares this lock and suppression scope.
+    // File-based database/ACL dialogs ignore LAContext; temporarily suppress
+    // legacy UI here and restore the caller's previous policy afterward.
+    // Code-signature inspection and random-byte generation do not authenticate
+    // Keychain items and do not require coordination with this I/O scope.
     private static let interactionLock = NSRecursiveLock()
 
     static func withoutUserInteraction<Result>(failure: Result, _ operation: () -> Result) -> Result {

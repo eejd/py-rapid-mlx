@@ -119,6 +119,31 @@ struct SettingsWebSearchKeyDraftTests {
         #expect(store.readWithoutUserInteraction(account: account) == .found("replacement-key"))
     }
 
+    @Test("Production Keychain operations all route through the coordinated adapter")
+    func productionKeychainRoutingIsCentralized() throws {
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources", isDirectory: true)
+        let files = try #require(FileManager.default.enumerator(
+            at: source, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        ))
+        let operations = [
+            "SecItemCopyMatching(", "SecItemUpdate(", "SecItemAdd(", "SecItemDelete(",
+            "SecKeychainFindGenericPassword(", "SecKeychainAddGenericPassword(",
+            "SecKeychainFindInternetPassword(", "SecKeychainAddInternetPassword(",
+            "SecKeychainItemCopyContent(", "SecKeychainItemModifyContent(", "SecKeychainItemDelete("
+        ]
+        for case let url as URL in files where url.pathExtension == "swift" {
+            guard url.path != source.appendingPathComponent("Rapid/Tools/KeychainStore.swift").path else { continue }
+            let code = SourceGuardSupport.canonicalSource(
+                try String(contentsOf: url, encoding: .utf8), literals: .erase
+            )
+            for operation in operations {
+                #expect(!code.contains(operation), "Uncoordinated Keychain operation in \(url.lastPathComponent): \(operation)")
+            }
+        }
+    }
+
     @Test("Legacy Keychain operations suppress authentication and restore the previous UI policy")
     func legacyAuthenticationPolicyIsScoped() {
         var original: DarwinBoolean = false
