@@ -477,6 +477,7 @@ def compress_request_tokens(
     cached_prefix_tokens: int = 0,
 ) -> tuple[list[int], dict[str, int | bool | str | float]]:
     """Compress request tokens and return compact metadata for logging/state."""
+    cached_prefix_tokens = max(0, min(int(cached_prefix_tokens), len(tokens)))
     result = compress_tokens(
         tokens,
         config,
@@ -493,7 +494,7 @@ def compress_request_tokens(
         "compression_ratio": result.compression_ratio,
         "middle_tokens_kept": result.middle_tokens_kept,
         "endpoints_only": result.endpoints_only,
-        "cached_prefix_tokens": int(cached_prefix_tokens),
+        "cached_prefix_tokens": cached_prefix_tokens,
     }
 
 

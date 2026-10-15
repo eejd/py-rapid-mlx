@@ -89,3 +89,12 @@ def test_metadata_and_args_wiring():
     assert config_from_args(args).threshold_basis == "uncached"
     del args.pflash_threshold_basis
     assert config_from_args(args).threshold_basis == "total"
+
+
+@pytest.mark.parametrize("reported, expected", [(-4, 0), (2000, 1500)])
+def test_metadata_clamps_cached_prefix_to_prompt(reported, expected):
+    cfg = PFlashConfig(**CFG, threshold_basis="uncached").validate()
+    _, metadata = compress_request_tokens(
+        _toks(1500), cfg, cached_prefix_tokens=reported
+    )
+    assert metadata["cached_prefix_tokens"] == expected

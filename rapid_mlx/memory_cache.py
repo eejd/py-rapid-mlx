@@ -1574,7 +1574,9 @@ def _has_deepseek_pooling(layer: Any) -> bool:
     )
 
 
-def _rewind_feasible(cache: list[Any], trim_by: int) -> bool:
+def _rewind_feasible(
+    cache: list[Any], trim_by: int, *, _inside_wrapper: bool = False
+) -> bool:
     """Metadata-only predicate: would ``_trim_cache_offset`` succeed on these
     KV layers for ``trim_by`` tokens?  Mirrors its refusal paths without copying
     or mutating cache state. Pooling caches expose amount-aware ``can_trim``;
@@ -1582,12 +1584,21 @@ def _rewind_feasible(cache: list[Any], trim_by: int) -> bool:
     ``is_trimmable`` only proves that one token can be removed."""
     if trim_by < 0:
         return False
+    from mlx_lm.models.cache import KVCache, RotatingKVCache
+
+    try:
+        from mlx_lm.models.cache import QuantizedKVCache
+    except ImportError:
+        QuantizedKVCache = None  # noqa: N806
+
     for layer in cache:
         if layer is None:
             continue
         children = getattr(layer, "caches", None)
         if children is not None:
-            if not _rewind_feasible(list(children), trim_by):
+            if not _has_deepseek_pooling(layer) or not _rewind_feasible(
+                list(children), trim_by, _inside_wrapper=True
+            ):
                 return False
             continue
         if _has_deepseek_pooling(layer):
@@ -1597,6 +1608,35 @@ def _rewind_feasible(cache: list[Any], trim_by: int) -> bool:
             continue
         is_trimmable = getattr(layer, "is_trimmable", None)
         if callable(is_trimmable) and not is_trimmable():
+            return False
+        offset = getattr(layer, "offset", None)
+        if QuantizedKVCache is not None and isinstance(layer, QuantizedKVCache):
+            if not isinstance(offset, int) or trim_by > max(0, offset):
+                return False
+            continue
+        if hasattr(layer, "values_compressed"):
+            # TurboQuant.trim mutates exactly to max(offset - n, 0), but returns
+            # None, so trim_wrapper_exact cannot attest it inside a wrapper.
+            if (
+                _inside_wrapper
+                or not isinstance(offset, int)
+                or trim_by > max(0, offset)
+            ):
+                return False
+            continue
+        if (
+            isinstance(offset, int)
+            and hasattr(layer, "keys")
+            and not isinstance(layer.keys, (list, tuple))
+        ):
+            if trim_by > max(0, offset):
+                return False
+            if _inside_wrapper and not isinstance(layer, (KVCache, RotatingKVCache)):
+                return False
+            continue
+        # Unknown leaves may report that some trim is possible, but the real
+        # dispatch only deep-copies them unchanged. Probe must fail closed.
+        if trim_by:
             return False
     return True
 

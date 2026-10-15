@@ -22,6 +22,7 @@ from rapid_mlx.memory_cache import (  # noqa: E402
     MemoryAwarePrefixCache,
     MemoryCacheConfig,
     PrefixProbe,
+    _rewind_feasible,
 )
 from rapid_mlx.pflash import PFlashConfig  # noqa: E402
 from rapid_mlx.request import Request, SamplingParams  # noqa: E402
@@ -40,16 +41,46 @@ class _Array:
 class _KV:
     """Plain KV layer double: trimmable, no recurrent state."""
 
-    def __init__(self, nbytes: int = 1000) -> None:
+    def __init__(self, nbytes: int = 1000, offset: int = 4096) -> None:
         self.keys = _Array(nbytes // 2)
         self.values = _Array(nbytes // 2)
-        self.offset = 0
+        self.offset = offset
 
     def is_trimmable(self) -> bool:
         return True
 
     def trim(self, n: int) -> int:
         return n
+
+
+class _AmountLimitedTrim:
+    """A leaf whose boolean gate proves one-token trim, not any amount."""
+
+    def is_trimmable(self) -> bool:
+        return True
+
+    def trim(self, n: int) -> int:
+        return min(n, 1)
+
+
+class _ClaimedAmountTrim(_AmountLimitedTrim):
+    def can_trim(self, n: int) -> bool:
+        return n <= 1
+
+
+class _TurboLike:
+    def __init__(self, offset: int) -> None:
+        self.keys = _Array(1)
+        self.values_compressed = (None, None, None)
+        self.offset = offset
+
+    def is_trimmable(self) -> bool:
+        return True
+
+
+class _Wrapper:
+    def __init__(self, *caches) -> None:
+        self.caches = caches
 
 
 class _DummyTokenizer:
@@ -228,6 +259,22 @@ class TestProbe:
         result, remaining = cache.fetch(requested)
         assert result is None
         assert remaining == requested
+
+    def test_rewind_feasibility_rejects_unknown_amount_limited_leaf(self):
+        layer = _AmountLimitedTrim()
+        assert layer.trim(1) == 1
+        assert layer.trim(2) == 1
+        assert not _rewind_feasible([layer], 2)
+
+    def test_rewind_feasibility_rejects_unknown_can_trim_claim(self):
+        assert not _rewind_feasible([_ClaimedAmountTrim()], 1)
+
+    def test_rewind_feasibility_checks_turbo_amount_before_plain_keys(self):
+        assert _rewind_feasible([_TurboLike(offset=2)], 2)
+        assert not _rewind_feasible([_TurboLike(offset=1)], 2)
+
+    def test_rewind_feasibility_rejects_non_pooling_wrapper(self):
+        assert not _rewind_feasible([_Wrapper(_KV(offset=4))], 2)
 
 
 # --------------------------------------------------------------------------
