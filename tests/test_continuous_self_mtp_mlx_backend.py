@@ -670,6 +670,8 @@ def test_long_prefill_threads_previous_hidden_into_recursive_draft():
     ("sampling", "num_draft", "message"),
     [
         (SelfMTPSampling(), 3, "1 <= K <= 2"),
+        (SelfMTPSampling(), True, "1 <= K <= 2"),
+        (SelfMTPSampling(), 1.5, "1 <= K <= 2"),
         (SelfMTPSampling(uses_xtc=True), 2, "XTC"),
         (SelfMTPSampling(temperature=0.5), 2, "greedy sampling only"),
         (SelfMTPSampling(has_logits_processors=True), 2, "injected hook"),
@@ -681,9 +683,11 @@ def test_prepare_refuses_unattested_sampling_and_depth(sampling, num_draft, mess
         uid=1,
         prompt=[1, 2],
         max_tokens=8,
-        num_draft=num_draft,
+        num_draft=num_draft if type(num_draft) is int else 2,
         sampling=sampling,
     )
+    if type(num_draft) is not int:
+        object.__setattr__(spec, "num_draft", num_draft)
     with pytest.raises(ContinuousSelfMTPUnsupported, match=message):
         runtime.compute.prepare(spec, runtime.forwards)
 

@@ -443,7 +443,10 @@ class RapidMLXSelfMTPBackend:
         # per cycle and skips the second recursion when the shared depth is 1
         # (the near-terminal path), so any depth up to the backend ceiling is
         # an attested cycle shape; deeper than the ceiling is not.
-        if not 1 <= spec.num_draft <= self.draft_depth:
+        if (
+            type(spec.num_draft) is not int
+            or not 1 <= spec.num_draft <= self.draft_depth
+        ):
             raise ContinuousSelfMTPUnsupported(
                 "Rapid continuous self-MTP supports draft depth 1 <= K <= "
                 f"{self.draft_depth}, got {spec.num_draft!r}"
