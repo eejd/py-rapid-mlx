@@ -54,12 +54,15 @@ class _Engine:
     supports_guided_generation = False
     tokenizer = None
 
+    def __init__(self, text=REJECTED):
+        self.text = text
+
     def build_prompt(self, messages, tools=None, enable_thinking=None):
         return "PROMPT"
 
     async def chat(self, messages, **kwargs):
         return GenerationOutput(
-            text=REJECTED,
+            text=self.text,
             prompt_tokens=4,
             completion_tokens=20,
             finished=True,
@@ -68,8 +71,8 @@ class _Engine:
 
     async def stream_chat(self, messages, **kwargs):
         yield GenerationOutput(
-            text=REJECTED,
-            new_text=REJECTED,
+            text=self.text,
+            new_text=self.text,
             prompt_tokens=4,
             completion_tokens=20,
             finished=True,
@@ -117,5 +120,78 @@ def test_chat_reply_after_rejected_only_call(stream):
             assert choice["finish_reason"] == "stop"
         assert content == NOTICE
         assert not any(calls) if stream else calls is None
+    finally:
+        reset_config()
+
+
+def test_streaming_rejected_call_after_reasoning_has_visible_notice():
+    cfg = reset_config()
+    cfg.engine = _Engine("<think>Need to search.</think>" + REJECTED)
+    cfg.model_name = "test-model"
+    cfg.model_registry = None
+    cfg.no_thinking = False
+    cfg.reasoning_parser_name = "qwen3"
+    cfg.enable_auto_tool_choice = True
+    cfg.tool_call_parser = "qwen3_coder_xml"
+    app = FastAPI()
+    app.include_router(chat_router)
+    try:
+        response = TestClient(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "stream": True,
+                "enable_thinking": True,
+                "messages": [{"role": "user", "content": "What's the price?"}],
+                "tools": TOOLS,
+            },
+        )
+        assert response.status_code == 200, response.text
+        choices = [
+            choice
+            for line in response.text.splitlines()
+            if line.startswith("data: {")
+            for choice in json.loads(line[6:])["choices"]
+        ]
+        assert "".join((c["delta"].get("content") or "") for c in choices) == NOTICE
+        assert choices[-1]["finish_reason"] == "stop"
+    finally:
+        reset_config()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_structured_output_does_not_receive_prose_notice(stream):
+    cfg = reset_config()
+    cfg.engine = _Engine()
+    cfg.model_name = "test-model"
+    cfg.model_registry = None
+    cfg.no_thinking = True
+    cfg.enable_auto_tool_choice = True
+    cfg.tool_call_parser = "qwen3_coder_xml"
+    app = FastAPI()
+    app.include_router(chat_router)
+    try:
+        response = TestClient(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "stream": stream,
+                "response_format": {"type": "json_object"},
+                "messages": [{"role": "user", "content": "Return JSON."}],
+                "tools": TOOLS,
+            },
+        )
+        assert response.status_code == 200, response.text
+        if stream:
+            choices = [
+                choice
+                for line in response.text.splitlines()
+                if line.startswith("data: {")
+                for choice in json.loads(line[6:])["choices"]
+            ]
+            content = "".join((c["delta"].get("content") or "") for c in choices)
+        else:
+            content = response.json()["choices"][0]["message"].get("content") or ""
+        assert content == ""
     finally:
         reset_config()

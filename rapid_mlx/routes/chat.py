@@ -8013,17 +8013,21 @@ async def stream_chat_completion(
             # at chat.py:~1285), because it depends on per-request
             # ``response_format`` which the rescue helper has no
             # access to.
-            already_streamed_content = bool(processor.accumulated_text)
+            already_streamed_content = bool(streamed_content)
             has_any_tool_calls = bool(fallback_tool_calls) or (
                 finish_event.finish_reason == "tool_calls"
             )
             structured_output_requested = _is_structured_output_requested(
                 request.response_format
             )
+            rejected_only_tool_call = bool(
+                getattr(processor.tool_parser, "_undeclared_dropped", 0)
+            )
             if (
                 not already_streamed_content
                 and not has_any_tool_calls
                 and not structured_output_requested
+                and not rejected_only_tool_call
             ):
                 # Pass ``terminal_content or None`` so the helper
                 # sees the same "empty vs whitespace vs real"
@@ -8243,7 +8247,7 @@ async def stream_chat_completion(
                 and not (terminal_content or "").strip()
                 and not has_any_tool_calls
                 and not structured_output_requested
-                and getattr(processor.tool_parser, "_undeclared_dropped", 0)
+                and rejected_only_tool_call
             ):
                 from ..tool_parsers.qwen3coder_tool_parser import (
                     UNAVAILABLE_TOOL_NOTICE,

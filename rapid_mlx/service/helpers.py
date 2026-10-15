@@ -3652,8 +3652,12 @@ def _run_tool_parser(
                 # The Qwen parser made an authoritative declared-name decision.
                 # Falling through to the generic parser would re-promote the
                 # exact undeclared/tool_choice=none span it rejected.
-                if not (result.content or "").strip() and getattr(
-                    parser, "_undeclared_dropped", 0
+                if (
+                    not (result.content or "").strip()
+                    and getattr(parser, "_undeclared_dropped", 0)
+                    and not _is_structured_output_requested(
+                        getattr(request, "response_format", None)
+                    )
                 ):
                     from ..tool_parsers.qwen3coder_tool_parser import (
                         UNAVAILABLE_TOOL_NOTICE,
