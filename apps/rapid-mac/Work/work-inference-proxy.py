@@ -27,44 +27,6 @@ METRICS_KEY = os.environ.get("WORK_PROXY_METRICS_KEY", "")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
-GOOSE_CHAT_SYSTEM = (
-    "You are Goose Chat, a local assistant. Use the available tools when needed. "
-    "For current facts, make your first action a general tool call to fetch a live source, "
-    "without a preamble. In the final answer, include a Markdown link to the "
-    "fetched source's exact URL and the retrieval time. "
-    "If the source fails, say so. "
-    "For requested local files, use the developer file tools. "
-    "For shell web requests, use curl -fsSL -A 'Mozilla/5.0' and check the response. "
-    "Never claim a tool ran unless it did."
-)
-
-
-def saved_goose_memories():
-    """Retain Goose's isolated global memories without importing global skills."""
-    root = os.environ.get("GOOSE_PATH_ROOT")
-    if not root:
-        return ""
-    directory = os.path.join(root, "config", "memory")
-    try:
-        entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
-    except OSError:
-        return ""
-    remaining = 4000
-    items = []
-    for entry in entries:
-        if not entry.name.endswith(".txt") or not entry.is_file(follow_symlinks=False):
-            continue
-        try:
-            with open(entry.path, encoding="utf-8") as handle:
-                content = handle.read(remaining).strip()
-        except (OSError, UnicodeError):
-            continue
-        if content:
-            items.append(f"{entry.name[:-4]}: {content}")
-            remaining -= len(content)
-            if remaining <= 0:
-                break
-    return "\nSaved memories:\n" + "\n".join(items) if items else ""
 
 
 def upstream_bearer():
@@ -79,49 +41,17 @@ def upstream_bearer():
 
 
 def compact_goose_request(body):
-    """Keep the local 27B's first-turn prefill small enough for live chat."""
+    """Keep the one-system-message contract without changing Goose's guidance."""
     messages = body.get("messages") or []
     desktop_system = body.pop("_rapid_desktop_system", False)
-    compact_system = GOOSE_CHAT_SYSTEM + saved_goose_memories()
     if desktop_system and messages and messages[0].get("role") == "system":
-        # This model's chat template accepts one leading system message.
-        # Keep Desktop's instruction and memory contract before Goose's rules.
-        messages[0]["content"] = messages[0]["content"] + "\n" + compact_system
+        # The local chat template accepts one leading system row. Append the
+        # complete Goose prompt after explicit Desktop instructions.
         for index in range(1, len(messages)):
             if messages[index].get("role") == "system":
+                messages[0]["content"] += "\n\n" + messages[index]["content"]
                 del messages[index]
                 break
-    else:
-        for message in messages:
-            if message.get("role") == "system":
-                message["content"] = compact_system
-                break
-
-    # Keep every built-in tool and its complete argument structure. Property
-    # descriptions duplicate names/types and dominate first-turn prefill.
-    def strip_parameter_descriptions(value, property_map=False):
-        if isinstance(value, dict):
-            return {
-                key: strip_parameter_descriptions(item, key == "properties")
-                for key, item in value.items()
-                if key != "description" or property_map
-            }
-        if isinstance(value, list):
-            return [strip_parameter_descriptions(item) for item in value]
-        return value
-
-    if isinstance(body.get("tools"), list):
-        # A focused inner tool call has little prefill cost and may need its
-        # parameter guidance to generate a valid response.
-        focused_call = len(body["tools"]) <= 3
-        for tool in body["tools"]:
-            function = tool.get("function", {})
-            if isinstance(function.get("description"), str):
-                function["description"] = function["description"][:40]
-            if "parameters" in function and not focused_call:
-                function["parameters"] = strip_parameter_descriptions(
-                    function["parameters"]
-                )
     return body
 
 

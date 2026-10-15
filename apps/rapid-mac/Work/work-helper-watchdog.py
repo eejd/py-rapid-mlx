@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 
-
 if len(sys.argv) > 1 and sys.argv[1] == "--credential-bridge":
     # The inference proxy owns the real engine bearer. Goose only gets a
     # per-launch token accepted here; tools inherit neither credential.
@@ -55,30 +54,43 @@ if len(sys.argv) > 1 and sys.argv[1] == "--credential-bridge":
                     messages.insert(0, {"role": "system", "content": system})
                     request["_rapid_desktop_system"] = True
                 request["messages"] = messages
-                request["temperature"] = contract["temperature"]
-                request["top_p"] = contract["top_p"]
-                request["max_tokens"] = contract["max_tokens"]
-                request["repetition_penalty"] = contract["repetition_penalty"]
-                request["frequency_penalty"] = 0.0
-                request["presence_penalty"] = 0.0
-                kwargs = request.get("chat_template_kwargs") or {}
-                if contract["enable_thinking"]:
-                    kwargs.pop("enable_thinking", None)
-                else:
-                    kwargs["enable_thinking"] = False
-                if kwargs:
-                    request["chat_template_kwargs"] = kwargs
-                else:
-                    request.pop("chat_template_kwargs", None)
+                if not contract.get("use_goose_sampling_defaults", False):
+                    request["temperature"] = contract["temperature"]
+                    request["top_p"] = contract["top_p"]
+                    request["max_tokens"] = contract["max_tokens"]
+                    request["repetition_penalty"] = contract["repetition_penalty"]
+                    request["frequency_penalty"] = 0.0
+                    request["presence_penalty"] = 0.0
+                    kwargs = request.get("chat_template_kwargs") or {}
+                    if contract["enable_thinking"]:
+                        kwargs.pop("enable_thinking", None)
+                    else:
+                        kwargs["enable_thinking"] = False
+                    if kwargs:
+                        request["chat_template_kwargs"] = kwargs
+                    else:
+                        request.pop("chat_template_kwargs", None)
                 body = json.dumps(request).encode("utf-8")
-                connection = http.client.HTTPConnection("127.0.0.1", upstream_port, timeout=900)
-                connection.request("POST", self.path, body,
-                                   {"Authorization": "Bearer " + upstream,
-                                    "Content-Type": "application/json"})
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", upstream_port, timeout=900
+                )
+                connection.request(
+                    "POST",
+                    self.path,
+                    body,
+                    {
+                        "Authorization": "Bearer " + upstream,
+                        "Content-Type": "application/json",
+                    },
+                )
                 response = connection.getresponse()
                 self.send_response(response.status)
                 for name, value in response.getheaders():
-                    if name.lower() not in {"connection", "transfer-encoding", "content-length"}:
+                    if name.lower() not in {
+                        "connection",
+                        "transfer-encoding",
+                        "content-length",
+                    }:
                         self.send_header(name, value)
                 self.end_headers()
                 while chunk := response.read1(16384):
@@ -94,9 +106,12 @@ if len(sys.argv) > 1 and sys.argv[1] == "--credential-bridge":
 # Goose invokes this executable as its shell. Remove helper credentials before
 # the command starts; a login shell would re-import the user's configuration.
 if len(sys.argv) > 1 and sys.argv[1] == "-c":
-    clean = {key: value for key, value in os.environ.items()
-             if key not in {"GOOSE_SERVER__SECRET_KEY", "RAPID_LOCAL_WORK_KEY"}
-             and not key.startswith("WORK_PROXY_")}
+    clean = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"GOOSE_SERVER__SECRET_KEY", "RAPID_LOCAL_WORK_KEY"}
+        and not key.startswith("WORK_PROXY_")
+    }
     os.execve("/bin/sh", ["/bin/sh", "-c", sys.argv[2]], clean)
 
 owner = int(sys.argv[1])
@@ -119,8 +134,12 @@ stopping = False
 def tree():
     """Add children of known PIDs even after they leave the process group."""
     global known
-    result = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,lstart="], capture_output=True,
-                            text=True, check=True)
+    result = subprocess.run(
+        ["/bin/ps", "-axo", "pid=,ppid=,lstart="],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     pairs = {}
     for line in result.stdout.splitlines():
         try:
@@ -132,8 +151,11 @@ def tree():
         known[root] = pairs[root][1]
     # A PID can be reused during a long turn. Never signal a process whose
     # start time differs from the one we observed in the helper tree.
-    known = {pid: stamp for pid, stamp in known.items()
-             if pid in pairs and pairs[pid][1] == stamp}
+    known = {
+        pid: stamp
+        for pid, stamp in known.items()
+        if pid in pairs and pairs[pid][1] == stamp
+    }
     changed = True
     while changed:
         changed = False
@@ -159,8 +181,12 @@ def token_descendants():
     token = os.environ.get("WORK_HELPER_OWNERSHIP_TOKEN")
     if not token:
         return set()
-    result = subprocess.run(["/bin/ps", "eww", "-axo", "pid=,command="],
-                            capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        ["/bin/ps", "eww", "-axo", "pid=,command="],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     marker = "WORK_HELPER_OWNERSHIP_TOKEN=" + token
     found = set()
     for line in result.stdout.splitlines():

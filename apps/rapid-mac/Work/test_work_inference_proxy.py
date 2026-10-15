@@ -8,8 +8,8 @@ import pathlib
 import socket
 import subprocess
 import sys
-import threading
 import tempfile
+import threading
 import unittest
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -42,7 +42,7 @@ class StreamRateTests(unittest.TestCase):
         rate.feed(b'data: {"choices":[],"usage":{"completion_tokens":11}}\n\n')
         self.assertEqual(rate.tokens_per_second(), 20.0)
 
-    def test_goose_request_removes_global_prompt_and_compacts_all_tool_schemas(self):
+    def test_goose_request_preserves_prompt_and_tool_schemas(self):
         original = {
             "model": "test-model",
             "stream": True,
@@ -86,9 +86,7 @@ class StreamRateTests(unittest.TestCase):
             ],
         }
         compact = self.module.compact_goose_request(json.loads(json.dumps(original)))
-        self.assertLess(len(json.dumps(compact)), 5500)
-        self.assertTrue(all(len(t["function"]["description"]) <= 40 for t in compact["tools"]))
-        self.assertEqual(compact["messages"][1], original["messages"][1])
+        self.assertEqual(compact, original)
         self.assertEqual(
             [t["function"]["name"] for t in compact["tools"]],
             [
@@ -111,13 +109,12 @@ class StreamRateTests(unittest.TestCase):
         parameters = compact["tools"][0]["function"]["parameters"]
         self.assertEqual(parameters["required"], ["input"])
         self.assertEqual(parameters["properties"]["input"]["enum"], ["text", "file"])
-        self.assertNotIn("description", parameters["properties"]["input"])
+        self.assertIn("description", parameters["properties"]["input"])
         self.assertIn("description", parameters["properties"])
-        self.assertEqual(parameters["properties"]["description"], {"type": "string"})
-        self.assertIn("current facts", compact["messages"][0]["content"])
-        self.assertIn("exact URL", compact["messages"][0]["content"])
-        self.assertIn("without a preamble", compact["messages"][0]["content"])
-        self.assertIn("developer file tools", compact["messages"][0]["content"])
+        self.assertEqual(
+            parameters["properties"]["description"]["description"],
+            "User-facing description",
+        )
 
     def test_focused_inner_tool_keeps_parameter_guidance(self):
         body = {
@@ -148,17 +145,26 @@ class StreamRateTests(unittest.TestCase):
             "Describe the app",
         )
 
-    def test_desktop_system_and_sampling_survive_goose_compaction(self):
-        request = {"_rapid_desktop_system": True, "temperature": 0.2,
-                   "top_p": 0.8, "max_tokens": 1234, "repetition_penalty": 1.05,
-                   "chat_template_kwargs": {"enable_thinking": False}, "messages": [
-                       {"role": "system", "content": "User memory and instructions"},
-                       {"role": "system", "content": "Goose long prompt"},
-                       {"role": "user", "content": "Hello"}]}
+    def test_desktop_system_merges_with_complete_goose_system(self):
+        request = {
+            "_rapid_desktop_system": True,
+            "temperature": 0.2,
+            "top_p": 0.8,
+            "max_tokens": 1234,
+            "repetition_penalty": 1.05,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "messages": [
+                {"role": "system", "content": "User memory and instructions"},
+                {"role": "system", "content": "Goose long prompt"},
+                {"role": "user", "content": "Hello"},
+            ],
+        }
         compact = self.module.compact_goose_request(request)
         self.assertEqual(len(compact["messages"]), 2)
-        self.assertTrue(compact["messages"][0]["content"].startswith("User memory and instructions\n"))
-        self.assertIn(self.module.GOOSE_CHAT_SYSTEM, compact["messages"][0]["content"])
+        self.assertEqual(
+            compact["messages"][0]["content"],
+            "User memory and instructions\n\nGoose long prompt",
+        )
         self.assertEqual(compact["messages"][1]["content"], "Hello")
         self.assertEqual(compact["temperature"], 0.2)
         self.assertEqual(compact["top_p"], 0.8)
@@ -175,7 +181,9 @@ class StreamRateTests(unittest.TestCase):
                 pass
 
             def do_POST(self):
-                received.update(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                received.update(
+                    json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                )
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"ok")
@@ -187,16 +195,36 @@ class StreamRateTests(unittest.TestCase):
             probe.bind(("127.0.0.1", 0))
             bridge_port = probe.getsockname()[1]
         with tempfile.TemporaryDirectory() as directory:
-            (pathlib.Path(directory) / "chat-contract.json").write_text(json.dumps({
-                "system_prompt": "Use Swift. Remember the project.",
-                "temperature": 0.19, "top_p": 0.77, "max_tokens": 768,
-                "repetition_penalty": 1.08, "enable_thinking": False}))
+            (pathlib.Path(directory) / "chat-contract.json").write_text(
+                json.dumps(
+                    {
+                        "system_prompt": "Use Swift. Remember the project.",
+                        "temperature": 0.19,
+                        "top_p": 0.77,
+                        "max_tokens": 768,
+                        "repetition_penalty": 1.08,
+                        "enable_thinking": False,
+                    }
+                )
+            )
             script = pathlib.Path(__file__).with_name("work-helper-watchdog.py")
-            bridge = subprocess.Popen([sys.executable, str(script), "--credential-bridge",
-                str(bridge_port), str(upstream.server_port)], cwd=directory,
-                env={**os.environ, "WORK_BRIDGE_SCOPED_KEY": "scoped",
-                     "WORK_BRIDGE_UPSTREAM_KEY": "upstream"},
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            bridge = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(script),
+                    "--credential-bridge",
+                    str(bridge_port),
+                    str(upstream.server_port),
+                ],
+                cwd=directory,
+                env={
+                    **os.environ,
+                    "WORK_BRIDGE_SCOPED_KEY": "scoped",
+                    "WORK_BRIDGE_UPSTREAM_KEY": "upstream",
+                },
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             try:
                 health = f"http://127.0.0.1:{bridge_port}/health"
                 for _ in range(100):
@@ -207,20 +235,54 @@ class StreamRateTests(unittest.TestCase):
                         threading.Event().wait(0.01)
                 request = urllib.request.Request(
                     f"http://127.0.0.1:{bridge_port}/v1/chat/completions",
-                    data=json.dumps({"messages": [{"role": "system", "content": "Goose"},
-                        {"role": "user", "content": "Hi"}], "temperature": 0.9,
-                        "max_tokens": 4000}).encode(),
-                    headers={"Authorization": "Bearer scoped", "Content-Type": "application/json"})
+                    data=json.dumps(
+                        {
+                            "messages": [
+                                {"role": "system", "content": "Goose"},
+                                {"role": "user", "content": "Hi"},
+                            ],
+                            "temperature": 0.9,
+                            "max_tokens": 4000,
+                        }
+                    ).encode(),
+                    headers={
+                        "Authorization": "Bearer scoped",
+                        "Content-Type": "application/json",
+                    },
+                )
                 with urllib.request.urlopen(request, timeout=2) as response:
                     self.assertEqual(response.read(), b"ok")
-                self.assertEqual(received["messages"][0]["content"],
-                                 "Use Swift. Remember the project.")
+                self.assertEqual(
+                    received["messages"][0]["content"],
+                    "Use Swift. Remember the project.",
+                )
                 self.assertEqual(received["messages"][1]["content"], "Goose")
                 self.assertEqual(received["temperature"], 0.19)
                 self.assertEqual(received["top_p"], 0.77)
                 self.assertEqual(received["max_tokens"], 768)
                 self.assertEqual(received["repetition_penalty"], 1.08)
-                self.assertEqual(received["chat_template_kwargs"], {"enable_thinking": False})
+                self.assertEqual(
+                    received["chat_template_kwargs"], {"enable_thinking": False}
+                )
+                (pathlib.Path(directory) / "chat-contract.json").write_text(
+                    json.dumps(
+                        {"system_prompt": "", "use_goose_sampling_defaults": True}
+                    )
+                )
+                received.clear()
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    self.assertEqual(response.read(), b"ok")
+                self.assertEqual(
+                    received["messages"],
+                    [
+                        {"role": "system", "content": "Goose"},
+                        {"role": "user", "content": "Hi"},
+                    ],
+                )
+                self.assertEqual(received["temperature"], 0.9)
+                self.assertEqual(received["max_tokens"], 4000)
+                self.assertNotIn("repetition_penalty", received)
+                self.assertNotIn("chat_template_kwargs", received)
             finally:
                 bridge.terminate()
                 bridge.wait(timeout=3)
@@ -237,27 +299,6 @@ class StreamRateTests(unittest.TestCase):
                 self.assertEqual(module.upstream_bearer(), "first")
                 key_file.write_text("rotated")
                 self.assertEqual(module.upstream_bearer(), "rotated")
-
-    def test_isolated_saved_memory_survives_compaction_and_removal(self):
-        with tempfile.TemporaryDirectory() as root:
-            directory = pathlib.Path(root) / "config" / "memory"
-            directory.mkdir(parents=True)
-            memory = directory / "preferences.txt"
-            memory.write_text("Reply concisely.")
-            with patch.dict(os.environ, {"GOOSE_PATH_ROOT": root}):
-                body = {
-                    "messages": [{"role": "system", "content": "global skills " * 1000}]
-                }
-                result = self.module.compact_goose_request(body)
-                self.assertIn(
-                    "preferences: Reply concisely.", result["messages"][0]["content"]
-                )
-                self.assertNotIn("global skills", result["messages"][0]["content"])
-                memory.unlink()
-                self.assertNotIn(
-                    "Saved memories",
-                    self.module.compact_goose_request(body)["messages"][0]["content"],
-                )
 
     def test_greetings_and_other_languages_retain_tool_schemas(self):
         body = {

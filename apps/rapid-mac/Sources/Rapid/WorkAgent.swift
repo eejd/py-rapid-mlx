@@ -441,7 +441,7 @@ final class WorkAgent {
         }
         defer { metricPoll.cancel() }
         do {
-            let instruction = Self.gooseChat ? Self.gooseChatBehavior + message : Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
+            let instruction = Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
                 "Read PDF with pypdf, CSV with csv.DictReader, XLSX with openpyxl. " +
                 "Use Decimal for money, verify totals, format currency with thousands separators and two decimal places, and write results in the folder. Put every total label and its amount on the same line. " +
                 "Do not install packages, use the network, or start background or detached processes. User request: " + message
@@ -486,12 +486,6 @@ final class WorkAgent {
               let sequence = metric["sequence"] as? Int else { return nil }
         return (sequence, metric["tokensPerSecond"] as? Double)
     }
-
-    static let gooseChatBehavior = """
-        Reply in the user's language. When the requested task is done, stop and summarize; do not re-run or re-verify completed work unless asked.
-        Prefer paths relative to the selected chat folder in replies.
-
-        """
 
     static func helperHome(gooseChat: Bool, fullAccess: Bool,
                            userHome: String, support: String) -> String {

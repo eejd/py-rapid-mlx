@@ -217,14 +217,8 @@ struct GooseChatTests {
         #expect(GooseToolPresentation.producedFile(outside, folder: "/tmp/chat") == nil)
     }
 
-    @Test("Goose behavior stays within two lines and ends with the user request")
-    func behaviorPrompt() {
-        let behavior = WorkAgent.gooseChatBehavior
-        #expect(behavior.split(separator: "\n").count == 2)
-        #expect(behavior.contains("Reply in the user's language"))
-        #expect(behavior.contains("do not re-run or re-verify"))
-        #expect(behavior.contains("paths relative to the selected chat folder"))
-        #expect((behavior + "請寫程式").hasSuffix("請寫程式"))
+    @Test("Goose only continues an output-limited turn")
+    func continuationPolicy() {
         let failed = [WorkStep(id: "tool", command: "write", status: "failed")]
         #expect(!WorkAgent.shouldContinue(gooseChat: true,
             result: ["stopReason": "end_turn"], newText: "Done", newSteps: failed))
@@ -575,7 +569,6 @@ struct GooseChatTests {
             maxTokens: 1536, repetitionPenalty: 1.1,
             repetitionPenaltyIsImplicitDefault: true, enableThinking: false)
         let expected = ChatViewModel.addingInstructionLayers(to: [],
-            dateContext: ChatViewModel.currentDateContext(now: date),
             memoryContext: "Remember the user's project", global: "Be concise",
             conversation: "Use Swift").first?.content
         let contract = ChatViewModel.gooseRequestContract(

@@ -975,9 +975,12 @@ final class ChatViewModel {
         let recordedFolders = recordedDirectories.map {
             URL(fileURLWithPath: $0).deletingLastPathComponent().deletingLastPathComponent().path
         }
-        let folders = Set((ownedSessions + (legacy.map { [$0] } ?? [])).map(\.folder)
-            + (stored?.gooseFolder.map { [$0] } ?? [])
-            + (id == activeConversationID ? [gooseFolder.path] : []) + recordedFolders)
+        var folderPaths = ownedSessions.map(\.folder)
+        if let legacy { folderPaths.append(legacy.folder) }
+        if let folder = stored?.gooseFolder { folderPaths.append(folder) }
+        if id == activeConversationID { folderPaths.append(gooseFolder.path) }
+        folderPaths += recordedFolders
+        let folders = Set(folderPaths)
         let ownedMessages = id == activeConversationID ? liveTree() : stored?.allMessages ?? []
         let legacyDirectories = folders.flatMap { folder in
             ownedMessages.filter { !$0.fileAttachments.isEmpty || !$0.imageAttachments.isEmpty }
@@ -1734,6 +1737,7 @@ final class ChatViewModel {
         var contract = Self.gooseRequestContract(globalInstruction: globalInstruction,
             conversationInstruction: conversationInstruction, memoryContext: memoryContext,
             sampling: sampling?.resolved(toolsEnabled: false), alias: alias, now: Date())
+        contract["use_goose_sampling_defaults"] = sampling?.isAtDefaults ?? true
         contract["turn_id"] = UUID().uuidString
         contract["conversation_id"] = activeConversationID.uuidString
         let digest = SHA256.hash(data: Data(gooseFolder.path.utf8))
@@ -1753,7 +1757,6 @@ final class ChatViewModel {
                                      memoryContext: String?,
                                      sampling: ResolvedSampling?, alias: String, now: Date) -> [String: Any] {
         let system = Self.addingInstructionLayers(to: [],
-            dateContext: Self.currentDateContext(now: now),
             memoryContext: memoryContext, global: globalInstruction,
             conversation: conversationInstruction).first?.content ?? ""
         let request = ChatStreamClient.Request(alias: alias, messages: [],
