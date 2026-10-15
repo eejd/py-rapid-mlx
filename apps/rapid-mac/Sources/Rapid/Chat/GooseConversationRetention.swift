@@ -99,6 +99,7 @@ enum GooseConversationRetention {
                 let file = try GooseToolPresentation.containedDestination(
                     directory.appendingPathComponent(name), root: root)
                 guard manager.fileExists(atPath: file.path),
+                      ((try file.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? Int.max) <= 100_000_000,
                       let data = try? Data(contentsOf: file) else { continue }
                 let actualHash = SHA256.hash(data: data)
                     .map { String(format: "%02x", $0) }.joined()

@@ -1586,8 +1586,8 @@ final class ChatViewModel {
             let destination = directory.appendingPathComponent(name)
             let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
             let exists = FileManager.default.fileExists(atPath: safe.path)
-            let existingHash = exists
-                ? await Task.detached { Self.sha256OfFile(safe) }.value : nil
+            var existingHash: String?
+            if exists { existingHash = await Task.detached { Self.sha256OfFile(safe) }.value }
             if exists && gooseAttachmentHashes[safe.path] != existingHash {
                 paths.append(destination.path)
                 continue
@@ -1601,8 +1601,8 @@ final class ChatViewModel {
             let destination = directory.appendingPathComponent(name)
             let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
             let exists = FileManager.default.fileExists(atPath: safe.path)
-            let existingHash = exists
-                ? await Task.detached { Self.sha256OfFile(safe) }.value : nil
+            var existingHash: String?
+            if exists { existingHash = await Task.detached { Self.sha256OfFile(safe) }.value }
             if exists && gooseAttachmentHashes[safe.path] != existingHash {
                 paths.append(destination.path)
                 continue
