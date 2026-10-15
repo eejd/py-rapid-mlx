@@ -36,6 +36,25 @@ class StreamRateTests(unittest.TestCase):
         rate.feed(b'data: {"choices":[],"usage":{"completion_tokens":11}}\n\n')
         self.assertEqual(rate.tokens_per_second(), 20.0)
 
+    def test_goose_request_removes_global_prompt_and_unused_tool_schemas(self):
+        original = {
+            "model": "test-model", "stream": True,
+            "messages": [
+                {"role": "system", "content": "global skills " * 2000},
+                {"role": "user", "content": "今天谷歌股价多少？"},
+            ],
+            "tools": [{"type": "function", "function": {"name": name,
+                       "description": "large schema " * 50}}
+                      for name in ("shell", "tree", "write", "edit", "apps__create_app",
+                                   "autovisualiser__show_chart")],
+        }
+        compact = self.module.compact_goose_request(json.loads(json.dumps(original)))
+        self.assertLess(len(json.dumps(compact)), 4000)
+        self.assertEqual(compact["messages"][1], original["messages"][1])
+        self.assertEqual([t["function"]["name"] for t in compact["tools"]],
+                         ["shell", "tree", "write", "edit"])
+        self.assertIn("current facts", compact["messages"][0]["content"])
+
     def test_tool_arguments_contribute_to_live_rate(self):
         module = self.module
         rate = module.StreamRate()

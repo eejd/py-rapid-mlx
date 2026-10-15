@@ -26,6 +26,30 @@ METRICS_KEY = os.environ.get("WORK_PROXY_METRICS_KEY", "")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
+GOOSE_CHAT_TOOLS = {"shell", "tree", "write", "edit"}
+GOOSE_CHAT_SYSTEM = (
+    "You are Goose Chat, a local assistant. Use the available tools when needed. "
+    "For current facts such as prices or news, use shell to fetch a live source "
+    "before answering; cite its URL and time. Work in the selected chat folder "
+    "by default. Answer in the user's language. Stop when the task is done. "
+    "Never claim a tool ran unless it did."
+)
+
+
+def compact_goose_request(body):
+    """Keep the local 27B's first-turn prefill small enough for live chat."""
+    messages = body.get("messages") or []
+    for message in messages:
+        if message.get("role") == "system":
+            message["content"] = GOOSE_CHAT_SYSTEM
+            break
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        selected = [tool for tool in tools
+                    if tool.get("function", {}).get("name") in GOOSE_CHAT_TOOLS]
+        if selected:
+            body["tools"] = selected
+    return body
 
 
 def publish_metric(sequence, rate):
@@ -185,6 +209,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403, "Work allows text-only inference")
             return
         if GOOSE_CHAT and body.get("stream") is True:
+            body = compact_goose_request(body)
             options = body.get("stream_options") or {}
             options["include_usage"] = True
             body["stream_options"] = options
