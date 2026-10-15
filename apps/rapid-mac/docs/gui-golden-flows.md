@@ -40,9 +40,13 @@ keys found by read-only `defaults read NSGlobalDomain`; neither global nor real
 app preferences are changed. Keep `persona_feature_defaults` aligned with the
 source feature configs and Settings panels when adding a preference.
 
-Settings and About use PID-targeted native AX menu actions and require the real
-window to appear. Chat-depth snapshots require both residency unload controls
-to remain enabled over four consecutive observations, including after restore.
+Settings retains the hosted-tested menu/Command-comma delivery path; About
+uses the PID-targeted native AX menu action. Both require the real window to
+appear through a complete AX window observation. Direct menu-item AXPress can
+report success without dispatching Settings on hosted runners, so an AX action
+acknowledgement alone is not proof of window delivery. Chat-depth snapshots
+require both residency unload controls to remain enabled over four consecutive
+observations, including after restore.
 
 **Journeys** — a user walking a path end to end:
 
