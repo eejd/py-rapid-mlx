@@ -5,11 +5,10 @@ import io
 import json
 import os
 import pathlib
-import tempfile
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
-
 
 PROXY = pathlib.Path(__file__).with_name("work-inference-proxy.py")
 
@@ -72,6 +71,20 @@ class StreamRateTests(unittest.TestCase):
                 self.assertEqual(module.upstream_bearer(), "first")
                 key_file.write_text("rotated")
                 self.assertEqual(module.upstream_bearer(), "rotated")
+
+    def test_isolated_saved_memory_survives_compaction_and_removal(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = pathlib.Path(root) / "config" / "memory"
+            directory.mkdir(parents=True)
+            memory = directory / "preferences.txt"
+            memory.write_text("Reply concisely.")
+            with patch.dict(os.environ, {"GOOSE_PATH_ROOT": root}):
+                body = {"messages": [{"role": "system", "content": "global skills " * 1000}]}
+                result = self.module.compact_goose_request(body)
+                self.assertIn("preferences: Reply concisely.", result["messages"][0]["content"])
+                self.assertNotIn("global skills", result["messages"][0]["content"])
+                memory.unlink()
+                self.assertNotIn("Saved memories", self.module.compact_goose_request(body)["messages"][0]["content"])
 
     def test_greetings_and_other_languages_retain_tool_schemas(self):
         body = {

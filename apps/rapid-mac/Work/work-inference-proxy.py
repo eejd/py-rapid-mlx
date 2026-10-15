@@ -35,6 +35,34 @@ GOOSE_CHAT_SYSTEM = (
 )
 
 
+def saved_goose_memories():
+    """Retain Goose's isolated global memories without importing global skills."""
+    root = os.environ.get("GOOSE_PATH_ROOT")
+    if not root:
+        return ""
+    directory = os.path.join(root, "config", "memory")
+    try:
+        entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+    except OSError:
+        return ""
+    remaining = 4000
+    items = []
+    for entry in entries:
+        if not entry.name.endswith(".txt") or not entry.is_file(follow_symlinks=False):
+            continue
+        try:
+            with open(entry.path, encoding="utf-8") as handle:
+                content = handle.read(remaining).strip()
+        except (OSError, UnicodeError):
+            continue
+        if content:
+            items.append(f"{entry.name[:-4]}: {content}")
+            remaining -= len(content)
+            if remaining <= 0:
+                break
+    return "\nSaved memories:\n" + "\n".join(items) if items else ""
+
+
 def upstream_bearer():
     """Allow a restarted local model server to rotate its key mid-turn."""
     if BEARER_FILE:
@@ -51,7 +79,7 @@ def compact_goose_request(body):
     messages = body.get("messages") or []
     for message in messages:
         if message.get("role") == "system":
-            message["content"] = GOOSE_CHAT_SYSTEM
+            message["content"] = GOOSE_CHAT_SYSTEM + saved_goose_memories()
             break
     # Keep every built-in tool and its argument schema. Long prose in Goose's
     # descriptions duplicates the compact behavior prompt on every turn.
