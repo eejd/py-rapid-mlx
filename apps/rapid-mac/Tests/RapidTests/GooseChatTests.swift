@@ -66,6 +66,8 @@ struct GooseChatTests {
             }
         }
         try await Task.sleep(for: .milliseconds(50))
+        try agent.handleWire(Data(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}}"#.utf8))
+        #expect(agent.text == "partial")
         let oldGeneration = agent.lifecycleGeneration
         agent.helperStreamEnded(generation: oldGeneration, session: "session-a")
         #expect(await pending.value)
@@ -113,6 +115,18 @@ struct GooseChatTests {
         try await Task.sleep(for: .milliseconds(50))
         agent.stop()
         #expect(await pending.value)
+        try agent.handleWire(Data(#"{"jsonrpc":"2.0","id":1,"result":{"sessionId":"old-session"}}"#.utf8))
+        #expect(agent.currentSessionID == nil)
+    }
+
+    @Test("Folder selection is frozen while a turn is starting")
+    func folderDuringTurn() {
+        let model = ChatViewModel(persistsConversations: false)
+        let original = model.gooseFolderPath
+        model.send("Build it", alias: "test-model")
+        model.setGooseFolder(URL(fileURLWithPath: "/tmp/other-goose-folder"))
+        #expect(model.gooseFolderPath == original)
+        model.stop()
     }
 
     @Test("Duplicate ACP permission RPC is queued once and Stop invalidates it")
