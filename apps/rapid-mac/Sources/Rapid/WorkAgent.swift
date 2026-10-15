@@ -303,7 +303,7 @@ final class WorkAgent {
         isBusy = true
         error = nil
         do {
-            let instruction = Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
+            let instruction = Self.gooseChat ? Self.gooseChatBehavior + message : Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
                 "Read PDF with pypdf, CSV with csv.DictReader, XLSX with openpyxl. " +
                 "Use Decimal for money, verify totals, format currency with thousands separators and two decimal places, and write results in the folder. Put every total label and its amount on the same line. " +
                 "Do not install packages, use the network, or start background or detached processes. User request: " + message
@@ -328,6 +328,12 @@ final class WorkAgent {
         }
         if generation == promptGeneration { isBusy = false }
     }
+
+    static let gooseChatBehavior = """
+        Reply in the user's language. When the requested task is done, stop and summarize; do not re-run or re-verify completed work unless asked.
+        Prefer paths relative to the selected chat folder in replies.
+
+        """
 
     func cancel() {
         guard let sessionID else { return }

@@ -5,6 +5,16 @@ import Testing
 @MainActor
 @Suite("Goose Chat")
 struct GooseChatTests {
+    @Test("Goose behavior stays within two lines and ends with the user request")
+    func behaviorPrompt() {
+        let behavior = WorkAgent.gooseChatBehavior
+        #expect(behavior.split(separator: "\n").count == 2)
+        #expect(behavior.contains("Reply in the user's language"))
+        #expect(behavior.contains("do not re-run or re-verify"))
+        #expect(behavior.contains("paths relative to the selected chat folder"))
+        #expect((behavior + "請寫程式").hasSuffix("請寫程式"))
+    }
+
     @Test("Permission policy keeps decisions in the app")
     func permissionPolicy() {
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer").answer == .ask)
