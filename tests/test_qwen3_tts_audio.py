@@ -530,17 +530,19 @@ def test_family_speed_handling(monkeypatch, family, speed, stream):
     else:
         outputs = [engine.generate("hello", speed=speed, ref_audio="reference.wav")]
     (call,) = calls
-    if family == "kokoro" or (stream and (speed == 1.0 or family == "indextts")):
+    if family == "kokoro":
         assert call["speed"] == speed
     else:
         assert "speed" not in call
-    expected = len(source) if stream and family == "indextts" else len(source) / speed
+    expected = len(source) / speed
     assert sum(len(out.audio) for out in outputs) == round(expected)
     assert sum(out.duration for out in outputs) == pytest.approx(expected / sample_rate)
-    if stream and family in {"qwen3_tts", "chatterbox"} and speed != 1.0:
+    if stream and family != "kokoro" and speed != 1.0:
+        # Post-stretched streams are buffered and stretched once.
         assert len(outputs) == 1
-    if stream and (family == "indextts" or (family == "qwen3_tts" and speed == 1.0)):
+    if stream and (family == "kokoro" or speed == 1.0):
         assert engine._loaded
         assert len(outputs) == 3
-        for output, chunk in zip(outputs, np.array_split(source, 3), strict=True):
-            np.testing.assert_array_equal(output.audio, chunk)
+        if family != "kokoro":
+            for output, chunk in zip(outputs, np.array_split(source, 3), strict=True):
+                np.testing.assert_array_equal(output.audio, chunk)

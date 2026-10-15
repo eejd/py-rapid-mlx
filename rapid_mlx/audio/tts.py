@@ -988,21 +988,18 @@ class TTSEngine:
             self.load()
 
         # WSOLA needs context across model chunks. For non-native tempo,
-        # assemble and stretch once rather than restarting at every boundary.
-        # This yields one complete clip and delays first audio until synthesis
-        # finishes. The HTTP speech route already uses assembled generation.
-        # IndexTTS keeps its existing streaming path: this API has no ref_audio.
-        if self._model_family in {"qwen3_tts", "chatterbox"} and speed != 1.0:
-            yield self.generate(text, voice=voice, speed=speed)
-            return
-
+        # buffer the model's own stream and stretch the assembled clip once
+        # rather than restarting at every boundary. This yields one complete
+        # clip and delays first audio until synthesis finishes.
+        post_stretch = self._model_family in _POST_STRETCH_FAMILIES
+        gen_kwargs = {"text": text, "voice": voice}
+        if not post_stretch:
+            gen_kwargs["speed"] = speed
+        buffer_for_stretch = post_stretch and speed != 1.0
+        buffered: list[np.ndarray] = []
         sample_rate = 24000
 
-        for result in self.model.generate(
-            text=text,
-            voice=voice,
-            speed=speed,
-        ):
+        for result in self.model.generate(**gen_kwargs):
             audio_data = result.audio
             if hasattr(result, "sample_rate"):
                 sample_rate = result.sample_rate
@@ -1012,6 +1009,17 @@ class TTSEngine:
             else:
                 audio_np = np.array(audio_data, dtype=np.float32)
 
+            if buffer_for_stretch:
+                buffered.append(audio_np)
+                continue
+            yield AudioOutput(
+                audio=audio_np,
+                sample_rate=sample_rate,
+                duration=len(audio_np) / sample_rate,
+            )
+
+        if buffered:
+            audio_np = time_stretch(np.concatenate(buffered), sample_rate, speed)
             yield AudioOutput(
                 audio=audio_np,
                 sample_rate=sample_rate,
