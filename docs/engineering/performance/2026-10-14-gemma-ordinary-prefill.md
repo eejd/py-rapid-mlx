@@ -105,6 +105,8 @@ and the next decode, including a trailing KV-sharing layer. Retained prefill
 logits are also bounded at absolute tolerance 0.002 / relative 0.0001:
 shape-dependent float32 differences were approximately 0.001 on M5 and below
 0.0000004 on M3. Exact cache and next-decode assertions remain stricter.
+The final M3 focused suite adds six uninspectable-signature cases (both standard
+inspection errors at all three model hops): 30/30 passed.
 
 The focused six-file suite produced 306 passed and three failures in existing
 chunked-prefill numerical assertions (`kv`, `rot:64`, `rot:16`). All three

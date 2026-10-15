@@ -206,6 +206,30 @@ def test_capability_is_checked_once_and_uninspectable_source_is_ineligible(monke
     assert gen._run_vision_encoding(_request(), [_Cache()]).shape == (1, 1, 2)
 
 
+@pytest.mark.parametrize("error", [TypeError, ValueError])
+@pytest.mark.parametrize("hop", ["wrapper", "language_model", "trunk"])
+def test_uninspectable_signature_keeps_full_forward(monkeypatch, error, hop):
+    import inspect
+
+    model = _model()
+    target = {
+        "wrapper": type(model).__call__,
+        "language_model": type(model.language_model).__call__,
+        "trunk": type(model.language_model.model).__call__,
+    }[hop]
+    original = inspect.signature
+
+    def signature(fn):
+        if fn is target:
+            raise error("signature unavailable")
+        return original(fn)
+
+    monkeypatch.setattr(inspect, "signature", signature)
+    output = _generator(model)._run_vision_encoding(_request(), [_Cache()])
+    assert output.shape == (1, 5, 2)
+    assert model.calls == [(5, {})]
+
+
 @pytest.fixture
 def preserved_random_state():
     state = mx.random.state
