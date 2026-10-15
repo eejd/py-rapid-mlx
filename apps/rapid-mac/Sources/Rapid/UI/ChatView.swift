@@ -396,9 +396,11 @@ struct ChatView: View {
     }
 
     private func prewarmGoose() {
-        guard WorkAgent.gooseChat, !viewModel.isStreaming,
+        guard WorkAgent.gooseChat,
               case .ready(let alias) = server.state,
               let bearer = server.activeBearer, server.activePort > 0 else { return }
+        WorkAgent.shared.updateProxyBearer(bearer)
+        guard !viewModel.isStreaming else { return }
         let folder = URL(fileURLWithPath: viewModel.gooseFolderPath, isDirectory: true)
         Task {
             try? await WorkAgent.shared.prepare(folder: folder, rapidPort: server.activePort,
@@ -801,6 +803,7 @@ struct ChatView: View {
                 .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity)
             } else if let error = viewModel.lastError,
+                      !(WorkAgent.gooseChat && viewModel.messages.last?.gooseErrorDetails != nil),
                       ModelReadiness.turnErrorApplies(
                           failureAlias: viewModel.lastFailureAlias,
                           selectedAlias: alias

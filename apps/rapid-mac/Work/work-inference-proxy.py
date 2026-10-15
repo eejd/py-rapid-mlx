@@ -22,6 +22,7 @@ MODEL = sys.argv[3]
 FULL_ACCESS = len(sys.argv) > 4 and sys.argv[4] == "--full-access"
 GOOSE_CHAT = "--goose-chat" in sys.argv[4:]
 BEARER = os.environ["WORK_PROXY_BEARER"]
+BEARER_FILE = os.environ.get("WORK_PROXY_BEARER_FILE", "")
 METRICS_KEY = os.environ.get("WORK_PROXY_METRICS_KEY", "")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 METRICS_LOCK = threading.Lock()
@@ -32,11 +33,25 @@ GOOSE_CHAT_SYSTEM = (
     "For current facts such as prices or news, use shell to fetch a live source "
     "before answering; cite the exact source URL and time. For stock quotes, "
     "identify the ticker and share class accurately (GOOGL is Alphabet Class A; "
-    "GOOG is Class C); do not guess a price if the source fails. "
+    "GOOG is Class C); for Alphabet try "
+    "https://www.google.com/finance/quote/GOOGL:NASDAQ first and read the "
+    "first span with jsname=Pdsbrc, not unrelated price snippets. "
+    "Do not guess a price if the source fails. "
     "Work in the selected chat folder "
     "by default. Answer in the user's language. Stop when the task is done. "
     "Never claim a tool ran unless it did."
 )
+
+
+def upstream_bearer():
+    """Allow a restarted local model server to rotate its key mid-turn."""
+    if BEARER_FILE:
+        try:
+            with open(BEARER_FILE, encoding="utf-8") as handle:
+                return handle.read().strip() or BEARER
+        except OSError:
+            pass
+    return BEARER
 
 
 def compact_goose_request(body):
@@ -221,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
             f"http://127.0.0.1:{RAPID_PORT}/v1/chat/completions",
             raw,
             {
-                "Authorization": "Bearer " + BEARER,
+                "Authorization": "Bearer " + upstream_bearer(),
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
             },

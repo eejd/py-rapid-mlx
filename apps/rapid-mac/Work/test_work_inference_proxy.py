@@ -5,6 +5,7 @@ import io
 import json
 import os
 import pathlib
+import tempfile
 import sys
 import unittest
 from unittest.mock import patch
@@ -56,6 +57,17 @@ class StreamRateTests(unittest.TestCase):
         self.assertIn("current facts", compact["messages"][0]["content"])
         self.assertIn("exact source URL", compact["messages"][0]["content"])
         self.assertIn("GOOGL is Alphabet Class A", compact["messages"][0]["content"])
+        self.assertIn("google.com/finance/quote/GOOGL:NASDAQ", compact["messages"][0]["content"])
+
+    def test_rotated_server_key_is_read_for_each_upstream_request(self):
+        module = self.module
+        with tempfile.TemporaryDirectory() as directory:
+            key_file = pathlib.Path(directory) / "key"
+            with patch.object(module, "BEARER_FILE", str(key_file)):
+                key_file.write_text("first")
+                self.assertEqual(module.upstream_bearer(), "first")
+                key_file.write_text("rotated")
+                self.assertEqual(module.upstream_bearer(), "rotated")
 
     def test_tool_arguments_contribute_to_live_rate(self):
         module = self.module
