@@ -537,7 +537,8 @@ def ssm_attn(
         y = mx.swapaxes(y, 1, 2)
 
         if lengths is not None:
-            pos = mx.maximum(mx.minimum(lengths, step) - 1, 0)
+            # Remaining cache lengths can exceed this call's final chunk.
+            pos = mx.maximum(mx.minimum(lengths, s) - 1, 0)
             pos = mx.expand_dims(pos, (1, 2, 3))
             decay = mx.take_along_axis(decay, pos, axis=2)
         else:

@@ -49,8 +49,9 @@ def test_unknown_puzzle_name_does_not_claim_bolt_contract(tmp_path):
 @pytest.mark.parametrize(
     "alias,bits,size",
     [
-        ("nemotron-3.5-bolt", 4, 43_274_347_300),
-        ("nemotron-3.5-bolt-3bit", 3, 31_670_622_410),
+        # scripts/gen_model_sizes.py payload totals, excluding README/.jinja.
+        ("nemotron-3.5-bolt", 4, 43_274_333_036),
+        ("nemotron-3.5-bolt-3bit", 3, 31_670_608_078),
     ],
 )
 def test_bolt_catalog_contract(alias, bits, size):

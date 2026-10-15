@@ -442,14 +442,17 @@ Nemotron-H models. This PR changes only the Bolt adapter.
 
 Catalog entries:
 
-| Alias | Hugging Face repository | Complete local artifact bytes |
+| Alias | Hugging Face repository | Manifest payload bytes |
 | --- | --- | ---: |
-| `nemotron-3.5-bolt` | `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-4bit` | 43,274,347,300 |
-| `nemotron-3.5-bolt-3bit` | `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-3bit` | 31,670,622,410 |
+| `nemotron-3.5-bolt` | `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-4bit` | 43,274,333,036 |
+| `nemotron-3.5-bolt-3bit` | `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-3bit` | 31,670,608,078 |
 
-These sizes sum every file in the corresponding existing local directory,
+The manifest records `scripts/gen_model_sizes.py` output: generator-counted
+weight and JSON/tokenizer files, excluding `README.md` and `.jinja`, consistent
+with the download-size estimator. These are not whole-directory totals.
+The complete local artifacts total 43,274,347,300 and 31,670,622,410 bytes,
 including `README.md` (1,750 / 1,818 bytes) and `chat_template.jinja` (12,514
-bytes each). They supersede the payload-only size proposal above. The three-bit
+bytes each). The three-bit
 repository uses the mixed recipe already documented in Phase B. Both aliases
 select native tool/reasoning parsers, text-only hybrid/MoE safety, and disabled
 standard speculative decoding. Neither asserts a tested minimum Mac memory.

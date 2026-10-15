@@ -364,6 +364,28 @@ class TestNemotronBolt:
             _assert_float32_parity(outputs[row, :length], expected[0])
             _assert_float32_parity(state[row], expected_state[0])
 
+    @pytest.mark.parametrize("use_mask", [True, False])
+    @pytest.mark.parametrize("size,length", [(128, 300), (333, 600)])
+    def test_cached_ssm_lengths_exceed_forward(self, size, length, use_mask):
+        module = self.module()
+        x = mx.random.normal((1, size, 2, 16))
+        b = mx.random.normal((1, size, 1, 32))
+        c = mx.random.normal((1, size, 1, 32))
+        dt = mx.full((1, size, 2), -5.0)
+        initial = mx.random.normal((1, 2, 16, 32))
+        args = (x, mx.zeros(2), b, c, mx.ones(2), dt, mx.zeros(2))
+        # A cached forward consumes only this call's tokens even when the
+        # cache's remaining length extends beyond the call or final chunk.
+        expected, expected_state = module.ssm_attn(*args, state=initial)
+        output, state = module.ssm_attn(
+            *args,
+            state=initial,
+            lengths=mx.array([length]),
+            mask=mx.ones((1, size), dtype=mx.bool_) if use_mask else None,
+        )
+        _assert_float32_parity(output, expected)
+        _assert_float32_parity(state, expected_state)
+
     def test_ssm_native_dt_and_chunked_reference(self):
         module = self.module()
         dt = mx.array([[-1.17, 0.23]], dtype=mx.bfloat16)
