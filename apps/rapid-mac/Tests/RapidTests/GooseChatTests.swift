@@ -265,6 +265,12 @@ struct GooseChatTests {
         try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
             folders: [folder.path], messages: [user], hashes: [owned.path: copiedHash])
         #expect(FileManager.default.fileExists(atPath: owned.path))
+        let legacyCopy = copies.appendingPathComponent("source.txt")
+        try "preview".write(to: legacyCopy, atomically: true, encoding: .utf8)
+        try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
+            folders: [folder.path], messages: [user])
+        #expect(!FileManager.default.fileExists(atPath: legacyCopy.path))
+        #expect(FileManager.default.fileExists(atPath: owned.path))
 
         let hash = SHA256.hash(data: Data(folder.path.utf8))
             .map { String(format: "%02x", $0) }.joined()
