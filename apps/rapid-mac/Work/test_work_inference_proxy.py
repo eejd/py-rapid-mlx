@@ -66,7 +66,8 @@ class StreamRateTests(unittest.TestCase):
 
     def test_desktop_system_and_sampling_survive_goose_compaction(self):
         request = {"_rapid_desktop_system": True, "temperature": 0.2,
-                   "max_tokens": 1234, "messages": [
+                   "top_p": 0.8, "max_tokens": 1234, "repetition_penalty": 1.05,
+                   "chat_template_kwargs": {"enable_thinking": False}, "messages": [
                        {"role": "system", "content": "User memory and instructions"},
                        {"role": "system", "content": "Goose long prompt"},
                        {"role": "user", "content": "Hello"}]}
@@ -74,7 +75,10 @@ class StreamRateTests(unittest.TestCase):
         self.assertEqual(compact["messages"][0]["content"], "User memory and instructions")
         self.assertEqual(compact["messages"][1]["content"], self.module.GOOSE_CHAT_SYSTEM)
         self.assertEqual(compact["temperature"], 0.2)
+        self.assertEqual(compact["top_p"], 0.8)
         self.assertEqual(compact["max_tokens"], 1234)
+        self.assertEqual(compact["repetition_penalty"], 1.05)
+        self.assertEqual(compact["chat_template_kwargs"], {"enable_thinking": False})
         self.assertNotIn("_rapid_desktop_system", compact)
 
     def test_bridge_applies_per_turn_contract(self):
@@ -99,7 +103,8 @@ class StreamRateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             (pathlib.Path(directory) / "chat-contract.json").write_text(json.dumps({
                 "system_prompt": "Use Swift. Remember the project.",
-                "temperature": 0.19, "max_tokens": 768}))
+                "temperature": 0.19, "top_p": 0.77, "max_tokens": 768,
+                "repetition_penalty": 1.08, "enable_thinking": False}))
             script = pathlib.Path(__file__).with_name("work-helper-watchdog.py")
             bridge = subprocess.Popen([sys.executable, str(script), "--credential-bridge",
                 str(bridge_port), str(upstream.server_port)], cwd=directory,
@@ -126,7 +131,10 @@ class StreamRateTests(unittest.TestCase):
                                  "Use Swift. Remember the project.")
                 self.assertEqual(received["messages"][1]["content"], "Goose")
                 self.assertEqual(received["temperature"], 0.19)
+                self.assertEqual(received["top_p"], 0.77)
                 self.assertEqual(received["max_tokens"], 768)
+                self.assertEqual(received["repetition_penalty"], 1.08)
+                self.assertEqual(received["chat_template_kwargs"], {"enable_thinking": False})
             finally:
                 bridge.terminate()
                 bridge.wait(timeout=3)

@@ -359,6 +359,37 @@ struct GooseChatTests {
             directory.appendingPathComponent(file.id.uuidString + ".txt").path))
     }
 
+    @Test("Replay stops before a second attachment after a conversation switch")
+    func replayStopsAfterSwitch() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-replay-switch-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let firstFile = try ChatFileAttachment(filename: "pending.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        let secondFile = try ChatFileAttachment(filename: "next.txt", kind: .txt,
+            extractedText: "preview", sourceByteCount: 7)
+        cache.put(firstFile.id, entry: DocumentContentCache.Entry(
+            filename: firstFile.filename, text: "full text", isComplete: true))
+        cache.beginPending(firstFile.id)
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let first = ChatMessage(role: .user, fileAttachments: [firstFile])
+        let second = ChatMessage(role: .user, fileAttachments: [secondFile])
+        let ownerID = model.activeConversationID
+        let task = Task { try await model.replayGooseAttachments([first, second], ownerID: ownerID) }
+        let firstDirectory = folder.appendingPathComponent("Attachments/\(first.id.uuidString)")
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: firstDirectory.path) {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        model.newConversation()
+        let nextOwnerID = model.activeConversationID
+        cache.finishPending(firstFile.id)
+        try await task.value
+        #expect(model.activeConversationID == nextOwnerID)
+        #expect(!FileManager.default.fileExists(atPath:
+            folder.appendingPathComponent("Attachments/\(second.id.uuidString)").path))
+    }
+
     @Test("An edit made during extraction is not overwritten")
     func editDuringExtraction() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-edit-\(UUID())")
@@ -394,10 +425,14 @@ struct GooseChatTests {
             conversation: "Use Swift").first?.content
         let contract = ChatViewModel.gooseRequestContract(
             globalInstruction: "Be concise", conversationInstruction: "Use Swift",
-            memoryContext: "Remember the user's project", sampling: sampling, now: date)
+            memoryContext: "Remember the user's project", sampling: sampling,
+            alias: "test-model", now: date)
         #expect(contract["system_prompt"] as? String == expected)
         #expect(contract["temperature"] as? Double == 0.23)
+        #expect(contract["top_p"] as? Double == 0.95)
         #expect(contract["max_tokens"] as? Int == 1536)
+        #expect(contract["repetition_penalty"] as? Double == 1.1)
+        #expect(contract["enable_thinking"] as? Bool == false)
     }
 
     @Test("A successful Goose reply delivers product value exactly once")

@@ -1462,9 +1462,7 @@ final class ChatViewModel {
         // Recreate owned copies after a relaunch or branch switch. Their names
         // are derived from persisted message and attachment IDs.
         if !reuseSession {
-            for message in previous where message.role == .user {
-                _ = try await gooseAttachmentNote(for: message)
-            }
+            try await replayGooseAttachments(previous, ownerID: activeConversationID)
         }
         guard epoch == conversationEpoch, !Task.isCancelled else {
             finishGooseCancellation(epoch: epoch)
@@ -1473,7 +1471,7 @@ final class ChatViewModel {
         let replay = reuseSession ? "" : Self.gooseReplay(previous)
         let user = messages[placeholderIndex - 1]
         let (contractURL, contractData) = try writeGooseRequestContract(globalInstruction: globalInstruction,
-            conversationInstruction: conversationInstruction, memoryContext: memoryContext)
+            conversationInstruction: conversationInstruction, memoryContext: memoryContext, alias: alias)
         defer {
             if (try? Data(contentsOf: contractURL)) == contractData {
                 try? FileManager.default.removeItem(at: contractURL)
@@ -1572,6 +1570,14 @@ final class ChatViewModel {
         gooseContextIDs = []
     }
 
+    func replayGooseAttachments(_ previous: [ChatMessage], ownerID: UUID) async throws {
+        for message in previous where message.role == .user {
+            guard activeConversationID == ownerID, !Task.isCancelled else { return }
+            _ = try await gooseAttachmentNote(for: message)
+            guard activeConversationID == ownerID, !Task.isCancelled else { return }
+        }
+    }
+
     func gooseAttachmentNote(for user: ChatMessage) async throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
         let ownerID = activeConversationID
@@ -1665,10 +1671,10 @@ final class ChatViewModel {
 
     private func writeGooseRequestContract(globalInstruction: String,
                                            conversationInstruction: String,
-                                           memoryContext: String?) throws -> (URL, Data) {
+                                           memoryContext: String?, alias: String) throws -> (URL, Data) {
         var contract = Self.gooseRequestContract(globalInstruction: globalInstruction,
             conversationInstruction: conversationInstruction, memoryContext: memoryContext,
-            sampling: sampling?.resolved(toolsEnabled: false), now: Date())
+            sampling: sampling?.resolved(toolsEnabled: false), alias: alias, now: Date())
         contract["turn_id"] = UUID().uuidString
         contract["conversation_id"] = activeConversationID.uuidString
         let digest = SHA256.hash(data: Data(gooseFolder.path.utf8))
@@ -1686,15 +1692,25 @@ final class ChatViewModel {
     static func gooseRequestContract(globalInstruction: String,
                                      conversationInstruction: String,
                                      memoryContext: String?,
-                                     sampling: ResolvedSampling?, now: Date) -> [String: Any] {
+                                     sampling: ResolvedSampling?, alias: String, now: Date) -> [String: Any] {
         let system = Self.addingInstructionLayers(to: [],
             dateContext: Self.currentDateContext(now: now),
             memoryContext: memoryContext, global: globalInstruction,
             conversation: conversationInstruction).first?.content ?? ""
+        let request = ChatStreamClient.Request(alias: alias, messages: [],
+            temperature: sampling?.temperature ?? SamplingConfig.temperatureDefault,
+            topP: sampling?.topP ?? SamplingConfig.topPDefault,
+            maxTokens: sampling?.maxTokens ?? SamplingConfig.maxTokensDefault,
+            repetitionPenalty: sampling?.repetitionPenalty ?? SamplingConfig.repetitionPenaltyDefault,
+            repetitionPenaltyIsImplicitDefault: sampling?.repetitionPenaltyIsImplicitDefault ?? true,
+            enableThinking: sampling?.enableThinking ?? SamplingConfig.enableThinkingDefault)
         return [
             "system_prompt": system,
-            "temperature": sampling?.temperature ?? SamplingConfig.temperatureDefault,
-            "max_tokens": sampling?.maxTokens ?? SamplingConfig.maxTokensDefault,
+            "temperature": request.temperature,
+            "top_p": request.topP,
+            "max_tokens": request.maxTokens,
+            "repetition_penalty": request.wireRepetitionPenalty,
+            "enable_thinking": request.enableThinking,
         ]
     }
 

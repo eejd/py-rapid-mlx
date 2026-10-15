@@ -56,7 +56,20 @@ if len(sys.argv) > 1 and sys.argv[1] == "--credential-bridge":
                     request["_rapid_desktop_system"] = True
                 request["messages"] = messages
                 request["temperature"] = contract["temperature"]
+                request["top_p"] = contract["top_p"]
                 request["max_tokens"] = contract["max_tokens"]
+                request["repetition_penalty"] = contract["repetition_penalty"]
+                request["frequency_penalty"] = 0.0
+                request["presence_penalty"] = 0.0
+                kwargs = request.get("chat_template_kwargs") or {}
+                if contract["enable_thinking"]:
+                    kwargs.pop("enable_thinking", None)
+                else:
+                    kwargs["enable_thinking"] = False
+                if kwargs:
+                    request["chat_template_kwargs"] = kwargs
+                else:
+                    request.pop("chat_template_kwargs", None)
                 body = json.dumps(request).encode("utf-8")
                 connection = http.client.HTTPConnection("127.0.0.1", upstream_port, timeout=900)
                 connection.request("POST", self.path, body,
