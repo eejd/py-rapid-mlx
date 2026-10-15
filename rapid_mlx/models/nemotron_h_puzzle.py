@@ -124,6 +124,11 @@ class ModelArgs(BaseModelArgs):
                 for value in self.time_step_limit
             )
         if self.time_step_limit is None:
+            # The reference Nemotron-H Puzzle implementation clamps dt only from
+            # below (its upper clamp to time_step_max is disabled), and its
+            # default limit is (0.0, inf). time_step_max is an initialization
+            # hyperparameter for dt_bias, not an inference bound, so the
+            # fallback upper bound is intentionally infinite.
             lower_limit = (
                 self.time_step_min
                 if self.model_type == "nemotron_h_puzzle"
