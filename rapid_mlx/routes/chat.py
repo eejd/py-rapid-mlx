@@ -8238,6 +8238,18 @@ async def stream_chat_completion(
                         "finish=length + reasoning present; surfacing "
                         "cutoff sentinel as content"
                     )
+            if (
+                not already_streamed_content
+                and not (terminal_content or "").strip()
+                and not has_any_tool_calls
+                and not structured_output_requested
+                and getattr(processor.tool_parser, "_undeclared_dropped", 0)
+            ):
+                from ..tool_parsers.qwen3coder_tool_parser import (
+                    UNAVAILABLE_TOOL_NOTICE,
+                )
+
+                terminal_content = UNAVAILABLE_TOOL_NOTICE
             final_chunk = ChatCompletionChunk(
                 id=response_id,
                 created=_sse_created,

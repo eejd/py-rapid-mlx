@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: Apache-2.0
+"""A rejected lone tool call must produce a visible, safe chat response."""
+
+import json
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from rapid_mlx.config import get_config, reset_config
+from rapid_mlx.engine.base import GenerationOutput
+from rapid_mlx.routes.chat import router as chat_router
+from rapid_mlx.service import helpers
+
+NOTICE = "I couldn't complete the request because a needed tool isn't available."
+
+REJECTED = (
+    "<tool_call>\n<function=web_search>\n"
+    "<parameter=query>today's price</parameter>\n"
+    "</function>\n</tool_call>"
+)
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write a file",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
+
+
+class _Request:
+    tools = TOOLS
+
+    def model_dump(self):
+        return {"tools": TOOLS}
+
+
+def test_nonstream_rejected_only_call_has_safe_content(monkeypatch):
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "enable_auto_tool_choice", True)
+    monkeypatch.setattr(cfg, "tool_call_parser", "qwen3_coder_xml")
+    content, calls = helpers._parse_tool_calls_with_parser(REJECTED, _Request())
+    assert calls is None
+    assert content == NOTICE
+    assert "web_search" not in content
+
+
+class _Engine:
+    preserve_native_tool_format = False
+    is_mllm = False
+    supports_guided_generation = False
+    tokenizer = None
+
+    def build_prompt(self, messages, tools=None, enable_thinking=None):
+        return "PROMPT"
+
+    async def chat(self, messages, **kwargs):
+        return GenerationOutput(
+            text=REJECTED,
+            prompt_tokens=4,
+            completion_tokens=20,
+            finished=True,
+            finish_reason="stop",
+        )
+
+    async def stream_chat(self, messages, **kwargs):
+        yield GenerationOutput(
+            text=REJECTED,
+            new_text=REJECTED,
+            prompt_tokens=4,
+            completion_tokens=20,
+            finished=True,
+            finish_reason="stop",
+            channel=None,
+        )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_chat_reply_after_rejected_only_call(stream):
+    cfg = reset_config()
+    cfg.engine = _Engine()
+    cfg.model_name = "test-model"
+    cfg.model_registry = None
+    cfg.no_thinking = True
+    cfg.enable_auto_tool_choice = True
+    cfg.tool_call_parser = "qwen3_coder_xml"
+    app = FastAPI()
+    app.include_router(chat_router)
+    try:
+        response = TestClient(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "stream": stream,
+                "messages": [{"role": "user", "content": "What's the price?"}],
+                "tools": TOOLS,
+            },
+        )
+        assert response.status_code == 200, response.text
+        if stream:
+            events = [
+                json.loads(line[6:])
+                for line in response.text.splitlines()
+                if line.startswith("data: {")
+            ]
+            choices = [choice for event in events for choice in event["choices"]]
+            content = "".join((c["delta"].get("content") or "") for c in choices)
+            calls = [c["delta"].get("tool_calls") for c in choices]
+            assert choices[-1]["finish_reason"] == "stop"
+        else:
+            choice = response.json()["choices"][0]
+            content = choice["message"]["content"]
+            calls = choice["message"].get("tool_calls")
+            assert choice["finish_reason"] == "stop"
+        assert content == NOTICE
+        assert not any(calls) if stream else calls is None
+    finally:
+        reset_config()
