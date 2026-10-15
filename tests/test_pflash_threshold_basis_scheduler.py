@@ -15,6 +15,8 @@ import pytest
 pytest.importorskip("mlx")
 pytestmark = pytest.mark.requires_mlx
 
+import mlx.core as mx  # noqa: E402
+
 from rapid_mlx.memory_cache import (  # noqa: E402
     MemoryAwarePrefixCache,
     MemoryCacheConfig,
@@ -168,6 +170,58 @@ class TestProbe:
         _, remaining = cache.fetch(requested)
         assert probe.match_type == "lcp"
         assert probe.matched_tokens == len(requested) - len(remaining) == 5
+
+    def test_probe_matches_rewindable_pooling_lcp_without_mutation(self, cache):
+        from mlx_lm.models.cache import CacheList, RotatingKVCache
+
+        from rapid_mlx.models.deepseek_v4_cache import PoolingCache
+
+        rotating = RotatingKVCache(max_size=128)
+        kv = mx.zeros((1, 1, 8, 4))
+        rotating.update_and_fetch(kv, kv)
+        pooling = PoolingCache(ratio=4)
+        pooled_kv, _, _ = pooling.accumulate_windows(
+            mx.zeros((1, 7, 4)), mx.zeros((1, 7, 2)), 0
+        )
+        pooling.update_and_fetch(pooled_kv)
+        cache.store(
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            [CacheList(rotating, pooling)],
+        )
+        requested = [1, 2, 3, 4, 5, 6, 20]
+        stored_pooling = next(iter(cache._entries.values())).cache[0].caches[1]
+        before = (stored_pooling.remainder, stored_pooling.buf_kv)
+
+        probe = cache.probe(requested)
+
+        assert probe == PrefixProbe(6, "lcp")
+        assert (stored_pooling.remainder, stored_pooling.buf_kv) == before
+        _, remaining = cache.fetch(requested)
+        assert remaining == [20]
+
+    def test_probe_rejects_pooling_lcp_beyond_rewind_window(self, cache):
+        from mlx_lm.models.cache import CacheList, RotatingKVCache
+
+        from rapid_mlx.models.deepseek_v4_cache import PoolingCache
+
+        rotating = RotatingKVCache(max_size=128)
+        kv = mx.zeros((1, 1, 8, 4))
+        rotating.update_and_fetch(kv, kv)
+        pooling = PoolingCache(ratio=4)
+        pooled_kv, _, _ = pooling.accumulate_windows(
+            mx.zeros((1, 7, 4)), mx.zeros((1, 7, 2)), 0
+        )
+        pooling.update_and_fetch(pooled_kv)
+        cache.store(
+            [1, 2, 3, 4, 5, 6, 7, 8],
+            [CacheList(rotating, pooling)],
+        )
+        requested = [1, 20, 21]
+
+        assert cache.probe(requested) == PrefixProbe(0, "miss")
+        result, remaining = cache.fetch(requested)
+        assert result is None
+        assert remaining == requested
 
 
 # --------------------------------------------------------------------------

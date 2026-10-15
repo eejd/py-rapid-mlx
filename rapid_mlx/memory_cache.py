@@ -1574,17 +1574,27 @@ def _has_deepseek_pooling(layer: Any) -> bool:
     )
 
 
-def _rewind_feasible(cache: list[Any]) -> bool:
+def _rewind_feasible(cache: list[Any], trim_by: int) -> bool:
     """Metadata-only predicate: would ``_trim_cache_offset`` succeed on these
-    KV layers?  Mirrors its refusal paths — a rotating window that has wrapped
-    (``is_trimmable()`` False) and a pooling wrapper whose exact rewind can only
-    be proven by trimming a copy — without copying anything.  Conservative: it
-    may say no where a real trim would succeed, never the reverse."""
+    KV layers for ``trim_by`` tokens?  Mirrors its refusal paths without copying
+    or mutating cache state. Pooling caches expose amount-aware ``can_trim``;
+    composite wrappers are checked recursively because their aggregate
+    ``is_trimmable`` only proves that one token can be removed."""
+    if trim_by < 0:
+        return False
     for layer in cache:
         if layer is None:
             continue
+        children = getattr(layer, "caches", None)
+        if children is not None:
+            if not _rewind_feasible(list(children), trim_by):
+                return False
+            continue
         if _has_deepseek_pooling(layer):
-            return False
+            can_trim = getattr(layer, "can_trim", None)
+            if not callable(can_trim) or not can_trim(trim_by):
+                return False
+            continue
         is_trimmable = getattr(layer, "is_trimmable", None)
         if callable(is_trimmable) and not is_trimmable():
             return False
@@ -1606,7 +1616,7 @@ def _snap_position(cache: list[Any], entry_len: int, target_len: int) -> int:
     if position <= 0:
         return 0
     kv_only = [None if is_recurrent_layer(layer) else layer for layer in cache]
-    if entry_len - position > 0 and not _rewind_feasible(kv_only):
+    if entry_len - position > 0 and not _rewind_feasible(kv_only, entry_len - position):
         return 0
     return position
 
@@ -2391,7 +2401,7 @@ class MemoryAwarePrefixCache:
                 if position > best_length:
                     return PrefixProbe(position, "supersequence")
             elif excess > 0:
-                if _rewind_feasible(best_super.cache):
+                if _rewind_feasible(best_super.cache, excess):
                     return PrefixProbe(n_requested, "supersequence")
             else:
                 return PrefixProbe(n_requested, "supersequence")
@@ -2405,7 +2415,10 @@ class MemoryAwarePrefixCache:
                 _layer_forbids_trim(lc) for lc in best_lcp_entry.cache
             )
             if not has_non_trimmable:
-                if _rewind_feasible(best_lcp_entry.cache):
+                if _rewind_feasible(
+                    best_lcp_entry.cache,
+                    len(best_lcp_entry.tokens) - best_lcp_length,
+                ):
                     return PrefixProbe(best_lcp_length, "lcp")
             else:
                 position = _snap_position(
