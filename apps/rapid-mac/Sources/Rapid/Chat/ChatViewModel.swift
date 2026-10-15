@@ -1430,8 +1430,7 @@ final class ChatViewModel {
             if WorkAgent.gooseChat && gooseFallback == nil {
                 do {
                     try await self.runGooseTurn(alias: alias, placeholderIndex: placeholderIndex, epoch: epoch,
-                        globalInstruction: globalInstruction, conversationInstruction: chatInstruction,
-                        memoryContext: memoryContext)
+                        globalInstruction: globalInstruction, conversationInstruction: chatInstruction)
                     return
                 } catch {
                     guard epoch == self.conversationEpoch, !Task.isCancelled else {
@@ -1463,8 +1462,7 @@ final class ChatViewModel {
     }
 
     private func runGooseTurn(alias: String, placeholderIndex: Int, epoch: Int,
-                              globalInstruction: String, conversationInstruction: String,
-                              memoryContext: String?) async throws {
+                              globalInstruction: String, conversationInstruction: String) async throws {
         guard let server, let bearer = server.activeBearer, server.activePort > 0 else {
             throw WorkError.message("The local model is unavailable.")
         }
@@ -1515,7 +1513,7 @@ final class ChatViewModel {
         let replay = reuseSession ? "" : Self.gooseReplay(previous)
         let user = messages[placeholderIndex - 1]
         let (contractURL, contractData) = try writeGooseRequestContract(globalInstruction: globalInstruction,
-            conversationInstruction: conversationInstruction, memoryContext: memoryContext, alias: alias)
+            conversationInstruction: conversationInstruction, alias: alias)
         defer {
             if (try? Data(contentsOf: contractURL)) == contractData {
                 try? FileManager.default.removeItem(at: contractURL)
@@ -1732,10 +1730,9 @@ final class ChatViewModel {
     }
 
     private func writeGooseRequestContract(globalInstruction: String,
-                                           conversationInstruction: String,
-                                           memoryContext: String?, alias: String) throws -> (URL, Data) {
+                                           conversationInstruction: String, alias: String) throws -> (URL, Data) {
         var contract = Self.gooseRequestContract(globalInstruction: globalInstruction,
-            conversationInstruction: conversationInstruction, memoryContext: memoryContext,
+            conversationInstruction: conversationInstruction,
             sampling: sampling?.resolved(toolsEnabled: false), alias: alias, now: Date())
         contract["use_goose_sampling_defaults"] = sampling?.isAtDefaults ?? true
         contract["turn_id"] = UUID().uuidString
@@ -1754,11 +1751,11 @@ final class ChatViewModel {
 
     static func gooseRequestContract(globalInstruction: String,
                                      conversationInstruction: String,
-                                     memoryContext: String?,
                                      sampling: ResolvedSampling?, alias: String, now: Date) -> [String: Any] {
+        // Goose has its own memory extension. Desktop's separate auto-memory
+        // summary can be stale and would silently change the stock guidance.
         let system = Self.addingInstructionLayers(to: [],
-            memoryContext: memoryContext, global: globalInstruction,
-            conversation: conversationInstruction).first?.content ?? ""
+            global: globalInstruction, conversation: conversationInstruction).first?.content ?? ""
         let request = ChatStreamClient.Request(alias: alias, messages: [],
             temperature: sampling?.temperature ?? SamplingConfig.temperatureDefault,
             topP: sampling?.topP ?? SamplingConfig.topPDefault,

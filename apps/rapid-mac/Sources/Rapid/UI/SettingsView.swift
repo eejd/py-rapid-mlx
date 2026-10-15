@@ -652,6 +652,7 @@ struct SettingsView: View {
                             confirmGooseYOLO = true
                         } else { gooseYOLODefault = enabled }
                     }))
+                    .accessibilityIdentifier("Settings.GooseYOLO")
                     Text("Approved tools run with your Mac user permissions and can access files outside the selected chat folder.")
                         .font(RapidFont.caption).foregroundStyle(.secondary)
                     ForEach(gooseAllowedTools, id: \.self) { tool in
@@ -662,6 +663,7 @@ struct SettingsView: View {
                                 gooseAllowedTools.removeAll { $0 == tool }
                                 UserDefaults.standard.set(gooseAllowedTools, forKey: GoosePermissionPolicy.allowedKey)
                             }
+                            .accessibilityIdentifier("Settings.GoosePermission.Remove.\(tool)")
                         }
                     }
                     Button("Reset all") {
@@ -673,6 +675,7 @@ struct SettingsView: View {
                         do { try WorkAgent.resetStoredNativePermissions() }
                         catch { goosePermissionResetError = true }
                     }
+                    .accessibilityIdentifier("Settings.GoosePermission.ResetAll")
                 }
                 .confirmationDialog("YOLO lets tools run without asking. They act with your Mac user permissions, including outside the selected folder.",
                                     isPresented: $confirmGooseYOLO) {
@@ -680,9 +683,11 @@ struct SettingsView: View {
                         UserDefaults.standard.set(true, forKey: "Rapid.GooseChat.yoloConfirmed")
                         gooseYOLODefault = true
                     }
+                    .accessibilityIdentifier("Settings.ConfirmGooseYOLO")
                 }
                 .alert("Couldn't reset tool permissions", isPresented: $goosePermissionResetError) {
                     Button("OK", role: .cancel) {}
+                        .accessibilityIdentifier("Settings.GoosePermission.ResetErrorOK")
                 } message: { Text("Try Reset all again before starting another chat.") }
                 .onAppear {
                     gooseAllowedTools = UserDefaults.standard.stringArray(forKey: GoosePermissionPolicy.allowedKey) ?? []

@@ -836,6 +836,7 @@ struct ChatView: View {
                 HStack {
                     Text(fallback).font(.caption)
                     Button("Retry") { viewModel.retryGoose() }
+                        .accessibilityIdentifier("ChatView.GooseRetry")
                 }
                 .frame(maxWidth: contentMaxWidth)
             } else if let attachmentNotice = attachmentDraft.notice {
@@ -938,6 +939,7 @@ struct ChatView: View {
                         UserDefaults.standard.set(true, forKey: "Rapid.GooseChat.yoloConfirmed")
                         gooseYOLO = true
                     }
+                    .accessibilityIdentifier("ChatView.ConfirmGooseYOLO")
                 }
             }
             if !WorkAgent.gooseChat {
@@ -1705,7 +1707,9 @@ private struct GooseToolCardView: View {
                     Text(GooseToolPresentation.outputPreview(card.output, expanded: showAllOutput))
                         .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                     if card.output.components(separatedBy: .newlines).count > 40 && !showAllOutput {
-                        Button("Show more") { showAllOutput = true }.buttonStyle(.link)
+                        Button("Show more") { showAllOutput = true }
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("ChatView.GooseTool.ShowMore.\(card.id)")
                     }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -1735,8 +1739,11 @@ private struct GooseToolCardView: View {
         if card.permissionState == "permission needed" {
             HStack {
                 Button("Allow once") { onDecision(card.id, true, false) }
+                    .accessibilityIdentifier("ChatView.GooseTool.AllowOnce.\(card.id)")
                 Button("Always allow") { onDecision(card.id, true, true) }
+                    .accessibilityIdentifier("ChatView.GooseTool.AlwaysAllow.\(card.id)")
                 Button("Decline") { onDecision(card.id, false, false) }
+                    .accessibilityIdentifier("ChatView.GooseTool.Decline.\(card.id)")
             }.controlSize(.small)
         }
     }
@@ -2080,9 +2087,11 @@ private struct MessageRow: View {
                         Text(file.lastPathComponent).fontWeight(.medium).lineLimit(1)
                         Spacer(minLength: 4)
                         Button("Open") { NSWorkspace.shared.open(file) }
+                            .accessibilityIdentifier("ChatView.ProducedFile.Open.\(file.lastPathComponent)")
                         Button("Reveal in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([file])
                         }
+                        .accessibilityIdentifier("ChatView.ProducedFile.Reveal.\(file.lastPathComponent)")
                     }
                     .font(.caption)
                     .buttonStyle(.link)

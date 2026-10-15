@@ -562,19 +562,17 @@ struct GooseChatTests {
         #expect(try String(contentsOf: exported, encoding: .utf8) == "user output")
     }
 
-    @Test("Goose contract carries direct-chat instructions, memory and sampling")
+    @Test("Goose contract carries explicit instructions and sampling, without Desktop memory")
     func requestContract() {
         let date = Date(timeIntervalSince1970: 1_700_000_000)
         let sampling = ResolvedSampling(temperature: 0.23, topP: 0.95,
             maxTokens: 1536, repetitionPenalty: 1.1,
             repetitionPenaltyIsImplicitDefault: true, enableThinking: false)
         let expected = ChatViewModel.addingInstructionLayers(to: [],
-            memoryContext: "Remember the user's project", global: "Be concise",
-            conversation: "Use Swift").first?.content
+            global: "Be concise", conversation: "Use Swift").first?.content
         let contract = ChatViewModel.gooseRequestContract(
             globalInstruction: "Be concise", conversationInstruction: "Use Swift",
-            memoryContext: "Remember the user's project", sampling: sampling,
-            alias: "test-model", now: date)
+            sampling: sampling, alias: "test-model", now: date)
         #expect(contract["system_prompt"] as? String == expected)
         #expect(contract["temperature"] as? Double == 0.23)
         #expect(contract["top_p"] as? Double == 0.95)
