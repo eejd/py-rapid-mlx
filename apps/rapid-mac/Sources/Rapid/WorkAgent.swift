@@ -305,6 +305,19 @@ final class WorkAgent {
         let previousStepCount = steps.count
         isBusy = true
         error = nil
+        let metricPoll = Task { [weak self] in
+            guard let self, Self.gooseChat else { return }
+            while !Task.isCancelled && generation == promptGeneration {
+                if let metric = await inferenceMetric(),
+                   metric.sequence > (metricSequence ?? 0),
+                   let rate = metric.rate, rate > 0,
+                   !Task.isCancelled, generation == promptGeneration {
+                    onChatEvent?(.throughput(rate))
+                }
+                try? await Task.sleep(for: .milliseconds(350))
+            }
+        }
+        defer { metricPoll.cancel() }
         do {
             let instruction = Self.gooseChat ? Self.gooseChatBehavior + message : Self.fullAccess ? message : "Use the local-documents skill. Stay inside the selected folder. " +
                 "Read PDF with pypdf, CSV with csv.DictReader, XLSX with openpyxl. " +

@@ -28,6 +28,12 @@ METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
 
 
+def publish_metric(sequence, rate):
+    with METRICS_LOCK:
+        if LATEST_METRIC["sequence"] == sequence:
+            LATEST_METRIC["tokensPerSecond"] = rate
+
+
 class StreamRate:
     """Observe the unchanged SSE bytes and pair engine usage with decode time."""
 
@@ -36,6 +42,7 @@ class StreamRate:
         self.first_token_at = None
         self.last_token_at = None
         self.completion_tokens = None
+        self.streamed_chars = 0
 
     def feed(self, chunk):
         self.pending += chunk
@@ -57,6 +64,22 @@ class StreamRate:
                     if self.first_token_at is None:
                         self.first_token_at = now
                     self.last_token_at = now
+                    self.streamed_chars += sum(
+                        len(delta.get(key) or "")
+                        for key in ("content", "reasoning_content")
+                    )
+                    for tool in delta.get("tool_calls") or []:
+                        function = tool.get("function") or {}
+                        self.streamed_chars += len(function.get("name") or "")
+                        self.streamed_chars += len(function.get("arguments") or "")
+
+    def live_tokens_per_second(self):
+        """Approximate decode rate until the terminal engine usage arrives."""
+        if self.first_token_at is None or self.last_token_at is None:
+            return None
+        duration = self.last_token_at - self.first_token_at
+        estimated_tokens = self.streamed_chars / 4
+        return (estimated_tokens - 1) / duration if estimated_tokens > 1 and duration > 0.05 else None
 
     def tokens_per_second(self):
         count = self.completion_tokens
@@ -185,6 +208,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         with response:
             rate = StreamRate() if GOOSE_CHAT and response.status == 200 else None
+            if rate is not None:
+                with METRICS_LOCK:
+                    LATEST_METRIC["sequence"] += 1
+                    LATEST_METRIC["tokensPerSecond"] = None
+                    metric_sequence = LATEST_METRIC["sequence"]
             self.send_response(response.status)
             self.send_header(
                 "Content-Type", response.headers.get("Content-Type", "application/json")
@@ -195,15 +223,18 @@ class Handler(BaseHTTPRequestHandler):
                 while chunk := response.read1(16384):
                     if rate is not None:
                         rate.feed(chunk)
+                        if rate.completion_tokens is not None:
+                            publish_metric(metric_sequence, rate.tokens_per_second())
+                        elif live_rate := rate.live_tokens_per_second():
+                            publish_metric(metric_sequence, live_rate)
                     self.wfile.write(chunk)
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass
             finally:
                 if rate is not None:
-                    with METRICS_LOCK:
-                        LATEST_METRIC["sequence"] += 1
-                        LATEST_METRIC["tokensPerSecond"] = rate.tokens_per_second()
+                    publish_metric(metric_sequence, rate.tokens_per_second())
 
 
-ThreadingHTTPServer(("127.0.0.1", LISTEN_PORT), Handler).serve_forever()
+if __name__ == "__main__":
+    ThreadingHTTPServer(("127.0.0.1", LISTEN_PORT), Handler).serve_forever()
