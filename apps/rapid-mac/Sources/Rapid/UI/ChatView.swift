@@ -386,8 +386,8 @@ struct ChatView: View {
             pruneAttachmentDrafts()
             photoCapabilityNotice.dismiss()
         }
+        .onChange(of: alias) { _, _ in photoCapabilityNotice.dismiss() }
         .onChange(of: alias) { _, _ in
-            photoCapabilityNotice.dismiss()
             if WorkAgent.gooseChat {
                 viewModel.selectedGooseModelChanged()
                 prewarmGoose()
