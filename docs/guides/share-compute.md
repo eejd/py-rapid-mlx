@@ -59,8 +59,8 @@ model startup, warm-up, pool connection, and local request activity. Keep the
 command running while online. Ctrl-C stops sharing and unloads its worker;
 run the same command to return online using the cached node, without a key
 prompt. `--reregister` repairs an expired or changed registration binding; it
-is not required for ordinary offline/online use. CLI account keys remain
-interactive or stdin-only; GUI Keychain settings are not imported into CLI.
+is not required for ordinary offline/online use. The recommended CLI flow uses the interactive prompt, keeping the key out of
+argv and shell history. GUI Keychain settings are not imported into CLI.
 The Qwen3.8 27B pool requires 48 GB+ unified memory and defaults to the qualified TensorFold runtime in both CLI
 and Desktop, including in-memory message-boundary prefix reuse. Desktop bundles
 that runtime. For a standalone Python install, install its qualified revision
