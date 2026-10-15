@@ -503,10 +503,12 @@ final class WorkAgent {
 
     func cancel() {
         guard let sessionID else { return }
+        let cancelledGeneration = generation
         onChatEvent?(.cancelled)
         Task {
+            guard generation == cancelledGeneration else { return }
             try? await notify(method: "session/cancel", params: ["sessionId": sessionID], session: sessionID)
-            stop()
+            if generation == cancelledGeneration { stop() }
         }
     }
 
@@ -731,7 +733,7 @@ final class WorkAgent {
             }
             steps[index].output = redact(rawToolOutputs[id] ?? "")
             let changedInput = (update["rawInput"] as? [String: Any]).map { Self.printJSON($0) } ?? ""
-            onChatEvent?(.tool(id: id, name: redact(update["title"] as? String ?? ""),
+            onChatEvent?(.tool(id: id, name: redact(update["title"] as? String ?? "Tool"),
                                input: redact(changedInput), status: steps[index].status, output: steps[index].output))
         default: break
         }
@@ -750,10 +752,15 @@ final class WorkAgent {
     func call(method: String, params: [String: Any], session: String? = nil,
                       timeout: TimeInterval = 90) async throws -> [String: Any] {
         let id = nextID
+        let requestGeneration = generation
         nextID += 1
         let data: Data = try await withCheckedThrowingContinuation { continuation in
             waiters[String(id)] = continuation
             Task {
+                guard generation == requestGeneration else {
+                    waiters.removeValue(forKey: String(id))?.resume(throwing: CancellationError())
+                    return
+                }
                 do {
                     try await post(["jsonrpc": "2.0", "id": id, "method": method, "params": params], session: session)
                 } catch {
