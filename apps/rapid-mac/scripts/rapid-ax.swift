@@ -117,7 +117,7 @@ if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "trust" {
 
 guard CommandLine.arguments.count >= 3,
       let pid = pid_t(CommandLine.arguments[2]) else {
-    fail("usage: rapid-ax <dump|press|select-menu-item|key|click-center|set-scroll-value|increment|decrement|set-value|paste-file|set-window-size|close-window|trust> <pid> [identifier-or-window-title] [value]")
+    fail("usage: rapid-ax <dump|press|app-menu|select-menu-item|key|click-center|set-scroll-value|increment|decrement|set-value|paste-file|set-window-size|close-window|trust> <pid> [identifier-or-window-title] [value]")
 }
 
 let command = CommandLine.arguments[1]
@@ -408,6 +408,37 @@ if command == "key" {
     usleep(150_000)
     print("{\"success\":true,\"key\":\"escape\",\"action\":\"key\"}")
     exit(0)
+}
+
+// App menu items are outside the window tree. Open the parent first: a
+// hidden menu item's AXPress can otherwise report success without delivery.
+// The caller must still prove the resulting window appeared via AX windows.
+if command == "app-menu" {
+    guard let title = wanted,
+          let rawBar = attribute(application, kAXMenuBarAttribute as CFString) else {
+        fail("app-menu requires a title and an accessible menu bar")
+    }
+    let bar = rawBar as! AXUIElement
+    func menuChildren(_ element: AXUIElement) -> [AXUIElement] {
+        attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
+    }
+    for parent in menuChildren(bar) {
+        for menu in menuChildren(parent) {
+            for item in menuChildren(menu) where string(item, kAXTitleAttribute as CFString) == title {
+                let opened = AXUIElementPerformAction(parent, kAXPressAction as CFString)
+                guard opened == .success else { fail("parent AXPress failed: \(opened.rawValue)") }
+                usleep(500_000)
+                let pressed = AXUIElementPerformAction(item, kAXPressAction as CFString)
+                guard pressed == .success else { fail("menu item AXPress failed: \(pressed.rawValue)") }
+                let payload: [String: Any] = ["success": true, "method": "native-pid-ax",
+                    "pid": pid, "title": title, "parent_ax_error": 0, "item_ax_error": 0]
+                let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+                print(String(data: data, encoding: .utf8)!)
+                exit(0)
+            }
+        }
+    }
+    fail("app-menu item not found: \(title)")
 }
 
 guard let identifier = wanted, let target = match else {
