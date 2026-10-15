@@ -73,6 +73,19 @@ struct GooseChatTests {
         #expect(agent.currentSessionID == "session-b")
     }
 
+    @Test("Idle helper EOF resets the session without failing the completed turn")
+    func idleEOF() {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        var failures = 0
+        agent.onChatEvent = { event in
+            if case .error = event { failures += 1 }
+        }
+        agent.helperStreamEnded(generation: agent.lifecycleGeneration, session: "session-a")
+        #expect(failures == 0)
+        #expect(agent.currentSessionID == nil)
+    }
+
     @Test("Stop invalidates an in-progress preparation generation")
     func preparationCancellation() throws {
         let agent = WorkAgent()

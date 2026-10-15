@@ -619,8 +619,9 @@ final class WorkAgent {
     func helperStreamEnded(generation expected: Int, session: String?) {
         guard generation == expected, session == sessionID else { return }
         let failure = "The Chat helper stopped unexpectedly."
+        let activeTurn = isBusy || isPreparing || isOpeningSession || !waiters.isEmpty
         error = failure
-        onChatEvent?(.error(failure))
+        if activeTurn { onChatEvent?(.error(failure)) }
         stop()
     }
 
