@@ -82,7 +82,10 @@ def load_items():
                 continue
             field = {"arena": "prompt", "simpleqa": "problem", "chinese": "question",
                      "ifeval": "prompt", "gaia": "Question", "gdpval": "prompt"}[name]
-            yield name, str(key), row[field], row
+            question = row[field]
+            if name == "gaia":
+                question += "\n\nEnd your reply with a separate line: Final answer: <concise answer>."
+            yield name, str(key), question, row
 
 
 class ACP:

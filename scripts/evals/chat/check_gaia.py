@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import pathlib
+import re
 import urllib.request
 
 REV = "9f133d71362e77b3539f1514f31b9c101a545fec"
@@ -37,7 +38,11 @@ def main():
         if row["benchmark"] != "gaia" or str(row["id"]) not in gold:
             continue
         key = f'gaia:{row["id"]}:{row["path"]}:{str(bool(row["web"])).lower()}'
-        labels[key] = "correct" if check(row["answer"].strip(), gold[row["id"]]) else "incorrect"
+        answer = row["answer"].strip()
+        matches = re.findall(r"(?im)^final answer:\s*(.+?)\s*$", answer)
+        if matches:
+            answer = matches[-1].strip()
+        labels[key] = "correct" if check(answer, gold[row["id"]]) else "incorrect"
     args.output.write_text(json.dumps(labels, indent=2) + "\n")
     print(f"Scored {len(labels)} GAIA responses with official scorer")
 
