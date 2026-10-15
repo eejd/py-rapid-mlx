@@ -127,6 +127,7 @@ enum PortSweep {
     @discardableResult
     static func sweep(port: Int) -> [Int32] {
         if Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" ||
+            Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat" ||
             ProcessInfo.processInfo.environment["RAPID_DESKTOP_NO_PORT_SWEEP"] != nil {
             return []
         }

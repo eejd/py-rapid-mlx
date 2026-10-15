@@ -17,10 +17,21 @@ struct WorkStep: Identifiable {
 
 struct WorkPermission: Identifiable {
     let id: String
+    let rpcID: Any
     let sessionID: String
     let toolCallID: String
     let command: String
     let options: [[String: Any]]
+
+    init(id: String, sessionID: String, toolCallID: String, command: String,
+         options: [[String: Any]], rpcID: Any? = nil) {
+        self.id = id
+        self.rpcID = rpcID ?? id
+        self.sessionID = sessionID
+        self.toolCallID = toolCallID
+        self.command = command
+        self.options = options
+    }
 }
 
 @MainActor @Observable
@@ -335,7 +346,7 @@ final class WorkAgent {
             permission = pendingPermissions.isEmpty ? nil : pendingPermissions.removeFirst()
         }
         Task {
-            try? await post(["jsonrpc": "2.0", "id": request.id,
+            try? await post(["jsonrpc": "2.0", "id": request.rpcID,
                              "result": ["outcome": ["outcome": "selected", "optionId": optionID]]],
                             session: request.sessionID)
         }
@@ -423,7 +434,7 @@ final class WorkAgent {
             let request = WorkPermission(id: String(describing: id), sessionID: sid,
                 toolCallID: tool["toolCallId"] as? String ?? String(describing: id),
                 command: input?["command"] as? String ?? tool["title"] as? String ?? "Unknown command",
-                options: params["options"] as? [[String: Any]] ?? [])
+                options: params["options"] as? [[String: Any]] ?? [], rpcID: id)
             if Self.gooseChat {
                 let name = tool["name"] as? String ?? tool["title"] as? String ?? "Tool"
                 let decision = GoosePermissionPolicy.decide(tool: name)

@@ -12,6 +12,8 @@ struct GooseChatTests {
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: ["developer"], tool: "developer").answer == .allow)
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer", userDecision: .allow).cardState == "allowed")
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer", userDecision: .decline).answer == .decline)
+        let request = WorkPermission(id: "42", sessionID: "s", toolCallID: "t", command: "run", options: [], rpcID: 42)
+        #expect(request.rpcID as? Int == 42)
     }
 
     @Test("ACP text, thinking, tool lifecycle and permission enter the transcript")

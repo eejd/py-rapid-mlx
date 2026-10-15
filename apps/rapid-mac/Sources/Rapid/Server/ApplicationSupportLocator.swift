@@ -75,6 +75,9 @@ enum ApplicationSupportLocator {
         if Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" {
             return root.appendingPathComponent("work-full-desktop", isDirectory: true)
         }
+        if Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat" {
+            return root.appendingPathComponent("goose-chat-desktop", isDirectory: true)
+        }
         return root
     }
 
