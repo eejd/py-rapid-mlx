@@ -35,9 +35,9 @@ struct TelemetryLifecycleWiringTests {
         let loop = try #require(chat.range(of: "private func runPlainChatTurn("))
         let body = String(chat[loop.lowerBound...])
 
-        #expect(body.contains("if !Task.isCancelled,"))
+        #expect(body.contains("isTextOnlyTurn, !Task.isCancelled,"))
         #expect(body.contains("delivered.status == .complete"))
-        #expect(body.contains("!delivered.content.trimmingCharacters"))
+        #expect(body.contains("delivered.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false"))
         #expect(body.contains("onProductValueDelivered(.chatReply)"))
     }
 
