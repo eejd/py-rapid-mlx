@@ -7,14 +7,12 @@ Local conversion and validation only; no push, PR, upload or release execution.
 ## Conversion and runtime boundary
 
 The source is `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`, revision
-`a1ccf94d69377bf82c4db39798aac28447d9c16f`. Its 88-file snapshot remains
-incomplete in the standard Hugging Face cache. The original downloader exited
-with a consistency-check failure on shard 9 (expected 3,980,237,344 bytes,
-received 3,810,009,575); 29 files, including 16 complete shards, are present.
-The coordinator must restore the download; this task has not restarted it or
-modified its cached files. The
-checkpoint index declares 248,906,833,960 tensor bytes. No second weight
-download is required.
+`a1ccf94d69377bf82c4db39798aac28447d9c16f`. The coordinator restored the
+original download. On resume, all **88 files** and **64 indexed weight shards**
+are present in the standard Hugging Face cache. Every safetensors shard's
+header-declared final tensor extent matches its physical file size. The
+snapshot totals 248,937,280,067 bytes; the checkpoint index declares
+248,906,833,960 tensor bytes. No second weight download was started by this task.
 
 The text converter hoists `llm_config`, derives the 88-layer count, removes
 remote-code selectors, and normalizes the encoded default infinite time-step
@@ -58,8 +56,9 @@ new serving API promise.
 
 Create the task-local Python 3.12 environment and install `-e '.[dev]'`.
 All model operations, including conversion and model tests, use
-`lockf -k /var/tmp/rapid-mlx-large-model.lock`. Wait for all 88 source files;
-the converter additionally rejects any missing indexed weight shard.
+`lockf -k /var/tmp/rapid-mlx-large-model.lock`. The complete 88-file source
+snapshot has been verified; the converter additionally rejects any missing
+indexed weight shard.
 
 ```sh
 source_snapshot="$HOME/.cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16/snapshots/a1ccf94d69377bf82c4db39798aac28447d9c16f"
@@ -78,8 +77,12 @@ The four-bit recipe uses affine/group-64 eligible projections and eight-bit
 embeddings. Mixed three-bit uses routed experts at three-bit/group-128, other
 eligible projections at four-bit/group-64, and eight-bit embeddings. Both
 preserve the output head, router and latent projections at source precision.
-The converter writes the model card and counts every output file, including
-README, excluding `.cache` directories.
+The converter writes the model card and reports every output file, including
+README, excluding `.cache` directories. Catalog sizing separately uses
+`rapid_mlx._download_gate._is_weight_file`, the same filename filter used by
+`scripts/gen_model_sizes.py`; it excludes README, LICENSE and the Jinja template.
+Model cards require Rapid-MLX PR #4679 and follow-up and recommend 96 GB+ memory;
+any shorter-context 64 GB suggestion is explicitly unqualified.
 
 Intended publication repositories, for human upload only:
 
@@ -101,28 +104,29 @@ and vision qualification remain pending.
 
 ## Evidence status
 
-Rebased onto completed Bolt head `b652c2265` (including padded incoming-state
-and routing corrections). The rebase preserves both architecture-specific
-metadata profiles. Rebased metadata, alias schema, size-manifest, CI and
-preflight contracts: **3,924 passed**. Three new configuration-only contracts
-also passed: extraction/native config compatibility, checked-loader opt-in and
-explicit-callback behavior, recurrent safety and parser selection. Ruff check,
-format check and diff checks pass.
+Stacked on completed Bolt head `b652c2265`. Before this resume, metadata,
+alias schema, size-manifest, CI and preflight contracts passed **3,924 tests**.
+On resume the three Super configuration-only contracts pass. Ruff check,
+format check and diff checks pass. Source completion is now independently
+verified as described above; no model download was initiated by this task.
 
-The five new tensor/conversion contracts remain unexecuted while the complete
-eight-test suite waits on the shared model lock behind unrelated PR validation.
-The separate tiny resident-versus-paged BF16 self-check is also queued. No
-full-checkpoint model run has started from this task. The existing source
-weight download failed; no new weight download, cache deletion or partial-file
-repair was attempted under the task's explicit download restriction.
+The first conversion, tensor/conversion regression suite and BF16 paging
+self-check are queued under the shared lock. The lock holder is the unrelated
+PR #4599 validator (`lockf` PID 56926), not a process owned by this task.
+The human's exclusive machine allocation has been relayed to Harbor and the
+coordinator. No other process has been stopped or modified.
 
-Full source completion, artifact conversion and measured sizes, quantized/BF16
-parity, serving transcripts, throughput and 100% changed-line coverage remain
-pending. Catalog entries must wait for working artifacts and final directory
-byte totals. This is **not a release gate** and makes no generation-quality,
-throughput or memory-qualification claim.
+Additional metadata checks exposed two inherited Bolt catalog-test failures:
+`tests/test_nemotron_bolt_metadata.py` expects 43,274,347,300 / 31,670,622,410
+bytes, while the base branch's generator-aligned manifest records
+43,274,333,036 / 31,670,608,078 bytes. The coordinator owns correcting these
+expectations in the Bolt branch. The other 40 metadata checks pass.
 
-Once the dependencies are restored, run focused tensor and conversion gates:
+No full-checkpoint generation has run yet. Conversion, measured artifact and
+catalog sizes, eight-prompt MLX BF16 parity, serving, 1K throughput and the
+100% changed-line coverage gate remain pending. This is not release approval.
+
+Run focused tensor and conversion gates:
 
 ```sh
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 lockf -k \
@@ -132,7 +136,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 lockf -k \
   tests/test_nemotron_tool_parser_fail_open.py \
   --cov=rapid_mlx --cov=scripts --cov-report=xml:coverage.xml -q
 .venv/bin/python -m diff_cover.diff_cover_tool coverage.xml \
-  --compare-branch b652c2265 --show-uncovered --fail-under 100
+  --compare-branch origin/vector/nemotron-35-bolt --show-uncovered --fail-under 100
 ```
 
 Use the documented conversion commands only after all 88 snapshot files exist.
@@ -143,14 +147,14 @@ BF16 paging implementation must first pass its tiny resident-model comparison;
 it copies exact selected source experts into the native switch MLP to avoid
 materializing a roughly 241 GB contiguous model. Run reference prompts under
 separate lock acquisitions to keep individual windows bounded. Serving and
-1K/8K performance scripts are prepared in the private evidence directory.
+1K performance scripts are prepared in the private evidence directory.
 
-Atlas/coordinator next action: restore the original failed download or amend
-the no-new-download instruction, and provide a shared model-lock window.
-Vector then owns fixing any tensor-contract failures, conversion, parity,
-stream/non-stream serving, throughput, exact catalog sizes and the final
-coverage gate. Vector owns the separate image-input follow-up. The human
-retains upload and release authorization.
+Harbor/coordinator next action: provide the already-authorized exclusive
+model-lock window and correct the inherited Bolt size-test expectations.
+Vector owns tensor-contract fixes, conversion, parity, stream/non-stream
+serving, throughput, local catalog sizing and the final coverage gate. Vision
+remains a feasibility-only report in this task; Vector owns its separate
+image-input follow-up. The human retains upload and release authorization.
 
 Private operational evidence is under `/private/tmp/nemotron-super-vl-evidence/`.
 Role start FYIs were attempted through Orca; Atlas, Pixel and Echo named

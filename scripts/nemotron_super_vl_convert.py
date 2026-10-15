@@ -78,11 +78,12 @@ Text conversion of [{BASE_MODEL}](https://huggingface.co/{BASE_MODEL}).
   {"64 GB Macs may try short contexts with other applications closed; this is not a 64 GB hardware qualification." if size <= 50e9 else "Allow headroom beyond the weights for prefill, caches, macOS and applications."}
 - Text only: the vision tower, image projector and unused MTP head are omitted.
 - Declared context limit: 1,048,576 tokens; this does not promise that the full
-  window fits the recommended memory. Validation covers 1K and 8K prompts.
+  window fits the recommended memory. Validation scope and measured results
+  are recorded in the Rapid-MLX handoff.
 
 ## Requirements
 
-Use the Rapid-MLX release containing Super VL support. The config retains
+Requires Rapid-MLX PR #4679 and follow-up. The config retains
 `nemotron_h` and opts into Rapid's reviewed precision adapter. Stock loaders
 do not apply that adapter; only Rapid-MLX is validated for this conversion.
 
