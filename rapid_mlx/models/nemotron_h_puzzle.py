@@ -192,6 +192,7 @@ class ModelArgs(BaseModelArgs):
         if block_config["block_type"] == "moe":
             if (
                 not layer_args.n_routed_experts
+                or layer_args.num_experts_per_tok is None
                 or not 0 < layer_args.num_experts_per_tok <= layer_args.n_routed_experts
             ):
                 raise ValueError(

@@ -150,6 +150,10 @@ class TestNemotronBolt:
         config["block_configs"][1]["n_routed_experts"] = 1
         with pytest.raises(ValueError, match="top-k"):
             module.ModelArgs.from_dict(config).for_layer(1)
+        config = self.config()
+        config["block_configs"][1]["num_experts_per_tok"] = None
+        with pytest.raises(ValueError, match="top-k"):
+            module.ModelArgs.from_dict(config).for_layer(1)
         args = module.ModelArgs.from_dict(
             self.config(
                 block_configs=None,
