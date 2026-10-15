@@ -69,6 +69,21 @@ class StreamRateTests(unittest.TestCase):
                 key_file.write_text("rotated")
                 self.assertEqual(module.upstream_bearer(), "rotated")
 
+    def test_exact_greeting_omits_tool_schemas(self):
+        body = {
+            "messages": [
+                {"role": "system", "content": "large prompt " * 2000},
+                {"role": "user", "content": "Reply in the user's language.\nhi\n<turn-context>time</turn-context>"},
+            ],
+            "tools": [{"type": "function", "function": {"name": "shell"}}],
+            "tool_choice": "auto",
+        }
+        compact = self.module.compact_goose_request(body)
+        self.assertNotIn("tools", compact)
+        self.assertNotIn("tool_choice", compact)
+        self.assertEqual(compact["messages"][1]["content"],
+                         "Reply in the user's language.\nhi\n<turn-context>time</turn-context>")
+
     def test_tool_arguments_contribute_to_live_rate(self):
         module = self.module
         rate = module.StreamRate()

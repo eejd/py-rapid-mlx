@@ -57,6 +57,12 @@ def upstream_bearer():
 def compact_goose_request(body):
     """Keep the local 27B's first-turn prefill small enough for live chat."""
     messages = body.get("messages") or []
+    latest_user = next((message.get("content", "") for message in reversed(messages)
+                        if message.get("role") == "user"), "")
+    # Goose prefixes the user text with its two-line behavior and appends
+    # <turn-context>. An exact greeting needs no file or shell schema.
+    request_line = (latest_user.split("<turn-context>", 1)[0].strip().splitlines() or [""])[-1]
+    greeting = request_line.strip().casefold().strip("!！.。 ") in {"hi", "hello", "hey", "你好", "嗨"}
     for message in messages:
         if message.get("role") == "system":
             message["content"] = GOOSE_CHAT_SYSTEM
@@ -67,6 +73,9 @@ def compact_goose_request(body):
                     if tool.get("function", {}).get("name") in GOOSE_CHAT_TOOLS]
         if selected:
             body["tools"] = selected
+    if greeting:
+        body.pop("tools", None)
+        body.pop("tool_choice", None)
     return body
 
 
