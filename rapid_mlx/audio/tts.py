@@ -997,7 +997,7 @@ class TTSEngine:
             gen_kwargs["speed"] = speed
         buffer_for_stretch = post_stretch and speed != 1.0
         buffered: list[np.ndarray] = []
-        sample_rate = 24000
+        sample_rate = buffered_rate = 24000
 
         for result in self.model.generate(**gen_kwargs):
             audio_data = result.audio
@@ -1010,6 +1010,9 @@ class TTSEngine:
                 audio_np = np.array(audio_data, dtype=np.float32)
 
             if buffer_for_stretch:
+                if buffered and sample_rate != buffered_rate:
+                    raise ValueError("TTS stream changed sample rate mid-clip")
+                buffered_rate = sample_rate
                 buffered.append(audio_np)
                 continue
             yield AudioOutput(

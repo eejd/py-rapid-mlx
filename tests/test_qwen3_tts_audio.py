@@ -546,3 +546,23 @@ def test_family_speed_handling(monkeypatch, family, speed, stream):
         if family != "kokoro":
             for output, chunk in zip(outputs, np.array_split(source, 3), strict=True):
                 np.testing.assert_array_equal(output.audio, chunk)
+
+
+def test_post_stretch_stream_rejects_mixed_sample_rates():
+    import numpy as np
+
+    from rapid_mlx.audio.tts import TTSEngine
+
+    class FakeModel:
+        def generate(self, **kwargs):
+            for rate in (24000, 16000):
+                yield types.SimpleNamespace(
+                    audio=np.zeros(4800, dtype=np.float32), sample_rate=rate
+                )
+
+    engine = TTSEngine(CUSTOMVOICE_BF16)
+    engine._model_family = "qwen3_tts"
+    engine._loaded = True
+    engine.model = FakeModel()
+    with pytest.raises(ValueError, match="sample rate"):
+        list(engine.stream_generate("hello", speed=2.0))

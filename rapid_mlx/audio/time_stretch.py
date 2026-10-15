@@ -28,8 +28,9 @@ from numpy.fft import irfft, rfft
 def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarray:
     """Change tempo by ``speed`` using 32 ms frames with 50% overlap.
 
-    Input and output are mono float32 samples. Non-empty clips shorter than
-    two frames use linear resampling; longer clips preserve pitch with WSOLA.
+    Input and output are mono float32 samples. Pitch is preserved with WSOLA
+    for clips of at least two frames (64 ms). Shorter non-empty clips are too
+    short to align, so they are linearly resampled (which shifts their pitch).
     Frame alignment follows audiotsm's correlation against the previous
     frame's natural progression; normalized Hann overlap-add joins the frames.
     """
