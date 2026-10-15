@@ -53,19 +53,20 @@ struct GooseChatTests {
         let response = HTTPURLResponse(url: URL(string: "http://127.0.0.1/acp")!, statusCode: 200,
                                        httpVersion: nil, headerFields: nil)!
         agent.transport = ACPTransport { _ in (Data(), response) }
-        let pending = Task {
-            try await agent.call(method: "session/prompt", params: ["sessionId": "session-a"],
-                                 session: "session-a", timeout: 900)
+        let pending = Task { () -> Bool in
+            do {
+                _ = try await agent.call(method: "session/prompt", params: ["sessionId": "session-a"],
+                                         session: "session-a", timeout: 900)
+                return false
+            } catch {
+                return true
+            }
         }
         try await Task.sleep(for: .milliseconds(50))
         let oldGeneration = agent.lifecycleGeneration
         agent.helperStreamEnded(generation: oldGeneration, session: "session-a")
-        do {
-            _ = try await pending.value
-            Issue.record("EOF should fail the pending call")
-        } catch {
-            #expect(agent.error == "The Chat helper stopped unexpectedly.")
-        }
+        #expect(await pending.value)
+        #expect(agent.error == "The Chat helper stopped unexpectedly.")
         agent.acceptSessionForTesting("session-b", folder: URL(fileURLWithPath: "/tmp/b"))
         #expect(agent.currentSessionID == "session-b")
         agent.helperStreamEnded(generation: oldGeneration, session: "session-a")

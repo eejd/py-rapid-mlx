@@ -58,20 +58,20 @@ final class WorkAgent {
     private var bridgePort = 0
     private var secret = ""
     private var connection: String?
-    private var sessionID: String?
+    private var sessionID: String? { turnOwner.sessionID }
     private var sessionHasPrompted = false
     private var pendingGooseChatSession: Task<Void, Error>?
     private var proxyBearerFileURL: URL?
     private var nextID = 1
     private var waiters: [String: CheckedContinuation<Data, Error>] = [:]
     private var streams: [Task<Void, Never>] = []
-    private var folder: URL?
+    private var folder: URL? { turnOwner.folder }
     private var serverIdentity: String?
     private var sandboxProfileURLs: [URL] = []
     private var pendingPermissions: [WorkPermission] = []
     private var toolIdentities: [String: String] = [:]
     private var rawToolOutputs: [String: String] = [:]
-    private var generation = 0
+    private var generation: Int { turnOwner.generation }
     private let turnOwner = GooseTurnOwner()
     var transport = ACPTransport.live
     var lifecycleGeneration: Int { generation }
@@ -79,8 +79,6 @@ final class WorkAgent {
     init() {}
 
     func acceptSessionForTesting(_ id: String, folder: URL) {
-        sessionID = id
-        self.folder = folder
         turnOwner.bind(sessionID: id, folder: folder)
     }
 
@@ -134,14 +132,13 @@ final class WorkAgent {
     }
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
-        let requestedGeneration = generation
         // A Send can arrive while ready-model prewarm is still opening Goose.
         for _ in 0..<200 {
-            try checkPreparation(requestedGeneration)
+            try Task.checkCancellation()
             if !isPreparing { break }
             try await Task.sleep(for: .milliseconds(50))
         }
-        try checkPreparation(requestedGeneration)
+        try Task.checkCancellation()
         guard !isPreparing else { throw WorkError.message("Chat is already starting.") }
         let requestedRevision = conversationRevision
         let folder = folder.resolvingSymlinksInPath()
@@ -153,7 +150,7 @@ final class WorkAgent {
         let prepareGeneration = generation
         var completed = false
         defer { if !completed && generation == prepareGeneration { stop() } }
-        self.folder = folder
+        turnOwner.setFolder(folder)
         serverIdentity = identity
         error = nil
         text = ""
@@ -386,6 +383,7 @@ final class WorkAgent {
             guard generation == sessionGeneration else { throw WorkError.message("Chat stopped.") }
             streams.last?.cancel()
         }
+        turnOwner.clearSession()
         text = ""
         steps = []
         error = nil
@@ -401,7 +399,6 @@ final class WorkAgent {
         guard let sid = result["sessionId"] as? String else {
             throw WorkError.message("The Chat session could not be created.")
         }
-        sessionID = sid
         turnOwner.bind(sessionID: sid, folder: folder)
         sessionHasPrompted = false
         onChatEvent?(.session(sid))
@@ -522,7 +519,6 @@ final class WorkAgent {
     }
 
     func stop() {
-        generation += 1
         turnOwner.reset()
         pendingGooseChatSession?.cancel()
         pendingGooseChatSession = nil
@@ -553,7 +549,6 @@ final class WorkAgent {
         toolIdentities = [:]
         rawToolOutputs = [:]
         connection = nil
-        sessionID = nil
         secret = ""
         for (_, continuation) in waiters {
             continuation.resume(throwing: WorkError.message("Chat stopped."))

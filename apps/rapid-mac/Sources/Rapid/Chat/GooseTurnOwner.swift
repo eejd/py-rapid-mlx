@@ -25,6 +25,16 @@ final class GooseTurnOwner {
         seenPermissions.removeAll()
     }
 
+    func setFolder(_ folder: URL) {
+        self.folder = folder
+    }
+
+    func clearSession() {
+        sessionID = nil
+        outstandingPermissions.removeAll()
+        seenPermissions.removeAll()
+    }
+
     func accepts(_ sessionID: String?, generation: Int) -> Bool {
         self.generation == generation && (sessionID == nil || self.sessionID == sessionID)
     }
