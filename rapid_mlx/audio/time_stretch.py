@@ -43,7 +43,8 @@ def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarra
     if speed == 1.0 or not len(audio):
         return audio
 
-    output_length = round(len(audio) / speed)
+    # Never drop non-empty audio (round(0.5) == 0).
+    output_length = max(1, round(len(audio) / speed))
     if len(audio) < frame_length:
         return np.interp(
             np.linspace(0, len(audio) - 1, output_length), np.arange(len(audio)), audio

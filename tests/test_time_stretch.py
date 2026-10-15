@@ -38,7 +38,7 @@ def test_identity(length, speed):
 def test_short_clips_resample(length, speed):
     audio = np.linspace(0.25, 0.75, length, dtype=np.float32)
     output = time_stretch(audio, 24000, speed)
-    expected_length = round(length / speed)
+    expected_length = max(1, round(length / speed))
     expected = np.linspace(audio[0], audio[-1], expected_length)
     assert len(output) == expected_length
     assert output.dtype == np.float32
