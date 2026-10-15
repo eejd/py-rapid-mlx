@@ -435,8 +435,9 @@ if command == "app-menu" {
     for parent in menuChildren(bar) {
         let opened = AXUIElementPerformAction(parent, kAXPressAction as CFString)
         guard opened == .success else {
+            // An unrelated parent may be non-actionable; keep searching.
             closeMenu()
-            fail("parent AXPress failed: \(opened.rawValue)")
+            continue
         }
         let deadline = Date().addingTimeInterval(1.0)
         repeat {
