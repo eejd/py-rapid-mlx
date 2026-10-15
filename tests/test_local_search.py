@@ -2,6 +2,7 @@
 """CPU-only local-search pilot contracts; no MLX/model/network required."""
 
 import asyncio
+import errno
 import io
 import os
 import sqlite3
@@ -6231,7 +6232,35 @@ def test_fusion_limit_fills_remaining_unreserved_results():
     assert [r[0] for r in result] == list(rows)
 
 
-def test_folder_route_unreadable_path_returns_validation_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize("os_errno", [errno.EPERM, errno.EACCES])
+def test_folder_route_scandir_permission_denied(tmp_path, monkeypatch, os_errno):
+    root = folder(tmp_path).resolve(strict=True)
+    assert root.is_dir()
+    scandir = os.scandir
+    probed = []
+
+    def denied(path):
+        if path == root:
+            probed.append(path)
+            raise PermissionError(os_errno, "access denied", str(path))
+        return scandir(path)
+
+    async def scenario():
+        async with client_app(tmp_path, monkeypatch) as (client, app, _):
+            monkeypatch.setattr(os, "scandir", denied)
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(root)}
+            )
+            assert probed == [root]
+            assert response.status_code == 403
+            assert response.json()["error"]["code"] == "folder_permission_denied"
+            status = (await client.get("/v1/local-search/status")).json()
+            assert status["folders"] == []
+
+    asyncio.run(scenario())
+
+
+def test_folder_route_unreadable_path_returns_permission_error(tmp_path, monkeypatch):
     async def scenario():
         async with client_app(tmp_path, monkeypatch) as (client, app, _):
 
@@ -6242,8 +6271,8 @@ def test_folder_route_unreadable_path_returns_validation_error(tmp_path, monkeyp
             response = await client.post(
                 "/v1/local-search/folders", json={"path": str(tmp_path)}
             )
-            assert response.status_code == 400
-            assert response.json()["error"]["code"] == "invalid_folder_path"
+            assert response.status_code == 403
+            assert response.json()["error"]["code"] == "folder_permission_denied"
 
     asyncio.run(scenario())
 
@@ -8289,5 +8318,57 @@ def test_model_recovers_when_worker_returns(tmp_path, monkeypatch, outage, media
             assert not search._attempted_checkpoints
         finally:
             await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "failure,os_errno,status,code,message",
+    [
+        (
+            failure,
+            os_errno,
+            403,
+            "folder_permission_denied",
+            "Rapid-MLX isn't allowed to read this folder. Allow access in System Settings › Privacy & Security, then try again.",
+        )
+        for failure, os_errno in (
+            (PermissionError("denied"), None),
+            (OSError("operation not permitted"), errno.EPERM),
+            (OSError("access denied"), errno.EACCES),
+        )
+    ]
+    + [
+        (
+            OSError("unavailable"),
+            errno.EIO,
+            400,
+            "invalid_folder_path",
+            "path must be an existing absolute directory without '..', outside excluded directories, other than /",
+        )
+    ],
+)
+def test_add_folder_os_errors(
+    tmp_path, monkeypatch, failure, os_errno, status, code, message
+):
+    # OSError(errno, ...) normally constructs a PermissionError automatically.
+    # Set errno separately to cover raw OSError from other filesystem APIs too.
+    failure.errno = os_errno
+
+    async def scenario():
+        async with client_app(tmp_path, monkeypatch) as (client, app, _):
+            monkeypatch.setattr(
+                app.state.local_search, "add_folder", AsyncMock(side_effect=failure)
+            )
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(tmp_path)}
+            )
+            assert response.status_code == status
+            assert response.json()["error"] == {
+                "message": message,
+                "type": "invalid_request_error",
+                "code": code,
+                "param": "path",
+            }
 
     asyncio.run(scenario())

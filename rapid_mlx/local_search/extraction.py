@@ -282,6 +282,9 @@ def validate_folder(value: str) -> Path:
     path = path.resolve(strict=True)
     if not path.is_dir():
         raise ValueError("path must be a directory")
+    # macOS privacy can allow stat on a folder while denying access to its entries.
+    with os.scandir(path):
+        pass
     if (
         excluded_location(path, path)
         or (path / "pyvenv.cfg").exists()

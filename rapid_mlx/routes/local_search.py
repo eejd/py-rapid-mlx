@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frozen local-search MVP wire contract; mounted only by the opt-in lifespan."""
 
+import errno
 import sqlite3
 from typing import Literal
 
@@ -82,7 +83,14 @@ async def add_folder(body: FolderRequest, request: Request, response: Response):
         folder, created = await get_service(request).add_folder(body.path)
     except ValueError as exc:
         error(str(exc), "invalid_folder_path", "path")
-    except OSError:
+    except OSError as exc:
+        if isinstance(exc, PermissionError) or exc.errno in (errno.EPERM, errno.EACCES):
+            error(
+                "Rapid-MLX isn't allowed to read this folder. Allow access in System Settings › Privacy & Security, then try again.",
+                "folder_permission_denied",
+                "path",
+                403,
+            )
         error(
             "path must be an existing absolute directory without '..', outside excluded directories, other than /",
             "invalid_folder_path",
