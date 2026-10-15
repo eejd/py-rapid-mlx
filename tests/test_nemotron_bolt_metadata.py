@@ -44,3 +44,26 @@ def test_unknown_puzzle_name_does_not_claim_bolt_contract(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"model_type": "other_puzzle"}))
     assert detect_model_config(str(tmp_path)) is None
     assert config_declares_linear_attention({"model_type": "other_puzzle"}) is False
+
+
+@pytest.mark.parametrize(
+    "alias,bits,size",
+    [
+        ("nemotron-3.5-bolt", 4, 43_274_347_300),
+        ("nemotron-3.5-bolt-3bit", 3, 31_670_622_410),
+    ],
+)
+def test_bolt_catalog_contract(alias, bits, size):
+    from rapid_mlx.model_aliases import list_profiles
+    from rapid_mlx.model_sizes import size_bytes
+
+    profile = list_profiles()[alias]
+    assert profile.hf_path == (
+        f"rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-{bits}bit"
+    )
+    assert profile.tool_call_parser == "nemotron"
+    assert profile.reasoning_parser == "qwen3"
+    assert profile.is_hybrid and profile.is_hybrid_explicit and profile.is_moe
+    assert profile.is_text_only
+    assert not profile.supports_spec_decode
+    assert size_bytes(profile.hf_path) == size
