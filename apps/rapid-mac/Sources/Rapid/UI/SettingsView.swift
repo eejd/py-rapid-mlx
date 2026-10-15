@@ -544,9 +544,17 @@ struct SettingsView: View {
                 .toggleStyle(TrailingSettingsToggleStyle())
                 .accessibilityIdentifier("Settings.Experimental.LocalSearchToggle")
                 .onChange(of: localSearchEnabled) { _, enabled in
-                    if let alias = LocalSearchFeatureConfig.restartAlias(enabling: enabled, state: server.state) {
-                        searchRestartAlias = alias
-                        confirmingSearchRestart = true
+                    if let alias = LocalSearchFeatureConfig.restartAlias(
+                        enabled: enabled,
+                        enabledAtSpawn: server.localSearchEnabledAtSpawn,
+                        state: server.state
+                    ) {
+                        if enabled {
+                            searchRestartAlias = alias
+                            confirmingSearchRestart = true
+                        } else {
+                            Task { _ = await server.restartForSpawnSettings(alias: alias) }
+                        }
                     }
                 }
                 .alert(String(localized: "Restart model to enable Search?"), isPresented: $confirmingSearchRestart) {

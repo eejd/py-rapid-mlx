@@ -32,6 +32,7 @@ from rapid_mlx.local_search.extraction import (
 from rapid_mlx.local_search.search import fuse, snippet
 from rapid_mlx.local_search.service import LocalSearch, ModelLoadError, local_model_path
 from rapid_mlx.local_search.store import Store
+from rapid_mlx.local_search_runtime import validate_exposure
 from rapid_mlx.middleware.exception_handlers import install_exception_handlers
 
 FIRST_ROUTES = [
@@ -43,6 +44,62 @@ FIRST_ROUTES = [
     ("POST", "/search", {"query": "apple"}),
     ("POST", "/search", {"query": "apple", "folder_ids": ["unknown"]}),
 ]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.23.4.5", "::1", "localhost"])
+def test_local_search_allows_unauthenticated_loopback(host):
+    validate_exposure(enabled=True, host=host, api_key=None)
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.20", "server.local"])
+def test_local_search_requires_authentication_off_loopback(host):
+    with pytest.raises(ValueError, match="requires API-key authentication"):
+        validate_exposure(enabled=True, host=host, api_key=None)
+    validate_exposure(enabled=True, host=host, api_key="secret")
+    validate_exposure(enabled=False, host=host, api_key=None)
+
+
+def test_local_search_requires_authentication_for_inherited_listener():
+    with pytest.raises(ValueError, match="--listen-fd requires API-key"):
+        validate_exposure(
+            enabled=True,
+            host="127.0.0.1",
+            api_key=None,
+            inherited_listener=True,
+        )
+    validate_exposure(
+        enabled=True,
+        host="127.0.0.1",
+        api_key="secret",
+        inherited_listener=True,
+    )
+
+
+def test_unified_cli_rejects_remote_local_search_before_model_resolution():
+    env = os.environ.copy()
+    env.pop("RAPID_MLX_API_KEY", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rapid_mlx.cli",
+            "serve",
+            "qwen3.5-4b-4bit",
+            "--host",
+            "0.0.0.0",
+            "--enable-local-search",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "non-loopback --host requires API-key authentication" in result.stderr
+    assert "Alias:" not in result.stdout
+    assert "Resolving" not in result.stderr
 
 
 @pytest.mark.parametrize("existing", [False, True])
