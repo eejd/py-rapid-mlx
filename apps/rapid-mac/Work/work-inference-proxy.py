@@ -117,7 +117,7 @@ def compact_goose_request(body):
         for tool in body["tools"]:
             function = tool.get("function", {})
             if isinstance(function.get("description"), str):
-                function["description"] = function["description"][:60]
+                function["description"] = function["description"][:40]
             if "parameters" in function and not focused_call:
                 function["parameters"] = strip_parameter_descriptions(
                     function["parameters"]

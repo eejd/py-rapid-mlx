@@ -87,7 +87,7 @@ class StreamRateTests(unittest.TestCase):
         }
         compact = self.module.compact_goose_request(json.loads(json.dumps(original)))
         self.assertLess(len(json.dumps(compact)), 5500)
-        self.assertTrue(all(len(t["function"]["description"]) <= 60 for t in compact["tools"]))
+        self.assertTrue(all(len(t["function"]["description"]) <= 40 for t in compact["tools"]))
         self.assertEqual(compact["messages"][1], original["messages"][1])
         self.assertEqual(
             [t["function"]["name"] for t in compact["tools"]],

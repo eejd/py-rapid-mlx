@@ -72,7 +72,7 @@ final class GooseTurnOwner {
             let (bytes, _) = try await URLSession.shared.bytes(for: request)
             for try await line in bytes.lines {
                 if Task.isCancelled { return }
-                onLine(line)
+                await MainActor.run { onLine(line) }
             }
         })
 }
