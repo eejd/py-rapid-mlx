@@ -83,6 +83,7 @@ _undeclared_tool_dropped_this_parse: ContextVar[bool] = ContextVar(
 def _was_undeclared_tool_dropped() -> bool:
     return _undeclared_tool_dropped_this_parse.get()
 
+
 # ── Fallback defaults ──────────────────────────────────────────────
 _FALLBACK_TEMPERATURE = 0.7
 _FALLBACK_TOP_P = 0.9
