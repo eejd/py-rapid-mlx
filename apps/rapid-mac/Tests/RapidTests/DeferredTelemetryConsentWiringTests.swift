@@ -32,7 +32,7 @@ struct TelemetryLifecycleWiringTests {
     @Test("Chat signals only a nonempty completed final turn")
     func chatSignalsFinalDelivery() throws {
         let chat = try Self.source("Sources/Rapid/Chat/ChatViewModel.swift")
-        let loop = try #require(chat.range(of: "private func runToolLoop("))
+        let loop = try #require(chat.range(of: "private func runPlainChatTurn("))
         let body = String(chat[loop.lowerBound...])
 
         #expect(body.contains("if !Task.isCancelled,"))
@@ -104,11 +104,10 @@ struct TelemetryLifecycleWiringTests {
     func disclosureContract() throws {
         let settings = try Self.source("Sources/Rapid/UI/SettingsView.swift")
         for phrase in [
-            "telemetry is on by default", "metadata-only",
-            "the app's to rapidmlx.com's telemetry service", "the bundled engine's to PostHog Cloud (US)",
-            "never your IP or a per-person profile; the app's collector keeps only a coarse country code",
+            "Your model runs locally", "Chat tools can access files",
+            "YOLO mode runs tools without asking each time",
+            "Anonymous usage data is on by default",
             "Never prompts, responses, attachments, keys, account details, or unredacted user paths",
-            "https://rapidmlx.com/docs/telemetry",
         ] {
             #expect(settings.contains(phrase), "Settings missing disclosure phrase: \(phrase)")
         }

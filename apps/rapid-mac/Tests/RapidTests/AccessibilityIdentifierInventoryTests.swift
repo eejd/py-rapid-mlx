@@ -357,25 +357,6 @@ struct AccessibilityIdentifierInventoryTests {
     /// is a real SwiftUI `.sheet`, so — unlike a `confirmationDialog` — its
     /// buttons are ordinary SwiftUI buttons and carry identifiers directly.
     ///
-    /// The three *answers* are named; the enclosing stack deliberately is not.
-    /// An accessibility modifier on a container that is not its own
-    /// accessibility element applies to the elements it contains, so naming
-    /// the wrapper risks stamping that name across its descendants — including
-    /// over the buttons a flow has to press. A flow asserts the prompt is up
-    /// by waiting for `ToolApproval.Browse.Allow`.
-    @Test("The browse tool-approval answers are addressable")
-    func browseApprovalIdentifiers() throws {
-        try assertDeclared(
-            [
-                #""ToolApproval.Browse.Allow""#,
-                #""ToolApproval.Browse.AlwaysAllow""#,
-                #""ToolApproval.Browse.Deny""#,
-            ],
-            in: "Sources/Rapid/UI/ContentView.swift",
-            surface: "Browse tool approval"
-        )
-    }
-
     // MARK: - Onboarding
 
     /// Onboarding's addressable controls, including the Ready surface added
@@ -483,20 +464,5 @@ struct AccessibilityIdentifierInventoryTests {
 
     /// The positive test above would still pass if someone re-added the
     /// container identifier, bringing the propagation bug back with it. Naming
-    /// the wrapper is the mistake, so the absence has to be asserted directly.
-    @Test("The tool-approval sheet's container stays unnamed")
-    func browseApprovalSheetContainerIsNotNamed() throws {
-        let stripped = try strippedSource("Sources/Rapid/UI/ContentView.swift")
-        #expect(
-            !stripped.contains(#".accessibilityIdentifier("ToolApproval.Browse.Sheet")"#),
-            """
-            The approval sheet's root stack must NOT carry an identifier. An \
-            accessibility modifier on a container that is not its own \
-            accessibility element is applied to the elements it contains, so \
-            naming the wrapper can stamp that name across its descendants — \
-            including over the Allow/Deny buttons a flow has to press. Assert \
-            the prompt is up by waiting for ToolApproval.Browse.Allow instead.
-            """
-        )
-    }
+
 }

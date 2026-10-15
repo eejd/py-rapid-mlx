@@ -1090,6 +1090,10 @@ final class ChatViewModel {
     /// error banner. The in-flight stream (if any) is cancelled first.
     func newConversation() {
         cancelInflightWork()
+        if WorkAgent.gooseChat {
+            WorkAgent.shared.beginNewChat()
+            Task { try? await WorkAgent.shared.newSession() }
+        }
         conversationEpoch &+= 1
         // Fix: without this a New Chat during a stream leaves the empty
         // chat stuck showing Stop (isStreaming never reset). Setting it
