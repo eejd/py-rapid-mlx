@@ -454,7 +454,8 @@ if command == "app-menu" {
                 print(String(data: data, encoding: .utf8)!)
                 exit(0)
             }
-            if !items.isEmpty { break }
+            // Keep polling until the deadline: a lazily populated menu can
+            // show some items before the target title appears.
         } while Date() < deadline
         closeMenu()
     }
