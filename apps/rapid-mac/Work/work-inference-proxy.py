@@ -82,12 +82,20 @@ def compact_goose_request(body):
     """Keep the local 27B's first-turn prefill small enough for live chat."""
     messages = body.get("messages") or []
     desktop_system = body.pop("_rapid_desktop_system", False)
-    for index, message in enumerate(messages):
-        if message.get("role") == "system":
-            if desktop_system and index == 0:
-                continue
-            message["content"] = GOOSE_CHAT_SYSTEM + saved_goose_memories()
-            break
+    compact_system = GOOSE_CHAT_SYSTEM + saved_goose_memories()
+    if desktop_system and messages and messages[0].get("role") == "system":
+        # This model's chat template accepts one leading system message.
+        # Keep Desktop's instruction and memory contract before Goose's rules.
+        messages[0]["content"] = messages[0]["content"] + "\n" + compact_system
+        for index in range(1, len(messages)):
+            if messages[index].get("role") == "system":
+                del messages[index]
+                break
+    else:
+        for message in messages:
+            if message.get("role") == "system":
+                message["content"] = compact_system
+                break
 
     # Keep every built-in tool and its complete argument structure. Property
     # descriptions duplicate names/types and dominate first-turn prefill.

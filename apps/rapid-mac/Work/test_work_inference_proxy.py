@@ -156,8 +156,10 @@ class StreamRateTests(unittest.TestCase):
                        {"role": "system", "content": "Goose long prompt"},
                        {"role": "user", "content": "Hello"}]}
         compact = self.module.compact_goose_request(request)
-        self.assertEqual(compact["messages"][0]["content"], "User memory and instructions")
-        self.assertEqual(compact["messages"][1]["content"], self.module.GOOSE_CHAT_SYSTEM)
+        self.assertEqual(len(compact["messages"]), 2)
+        self.assertTrue(compact["messages"][0]["content"].startswith("User memory and instructions\n"))
+        self.assertIn(self.module.GOOSE_CHAT_SYSTEM, compact["messages"][0]["content"])
+        self.assertEqual(compact["messages"][1]["content"], "Hello")
         self.assertEqual(compact["temperature"], 0.2)
         self.assertEqual(compact["top_p"], 0.8)
         self.assertEqual(compact["max_tokens"], 1234)
