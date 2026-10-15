@@ -9,6 +9,7 @@ the helper's behalf through its multimodal input handlers.
 import hmac
 import json
 import os
+import shlex
 import sys
 import threading
 import time
@@ -28,14 +29,16 @@ OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
 GOOSE_CHAT_TOOLS = {"shell", "tree", "write", "edit"}
+GOOSE_QUOTE_COMMAND = "python3 " + shlex.quote(os.path.join(
+    os.path.dirname(__file__), "goose-finance-quote.py"))
 GOOSE_CHAT_SYSTEM = (
     "You are Goose Chat, a local assistant. Use the available tools when needed. "
     "For current facts such as prices or news, use shell to fetch a live source "
     "before answering; cite the exact source URL and time. For stock quotes, "
     "identify the ticker and share class accurately (GOOGL is Alphabet Class A; "
-    "GOOG is Class C); for Alphabet try "
-    "https://www.google.com/finance/quote/GOOGL:NASDAQ first and read the "
-    "first span with jsname=Pdsbrc, not unrelated price snippets. "
+    "GOOG is Class C). For Alphabet quotes first run shell command `"
+    + GOOSE_QUOTE_COMMAND + " GOOGL` (or GOOG); it returns the price, "
+    "retrieval time, and exact source URL. Cite that URL. "
     "Do not guess a price if the source fails. "
     "Work in the selected chat folder "
     "by default. Answer in the user's language. Stop when the task is done. "

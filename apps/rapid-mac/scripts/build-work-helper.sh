@@ -21,6 +21,7 @@ GOOSE_BIN="$(find "$TMP" -type f -name goose -print -quit)"
 cp "$GOOSE_BIN" "$HELPERS/goose"
 chmod 755 "$HELPERS/goose"
 cp "$ROOT/Work/work-inference-proxy.py" "$HELPERS/work-inference-proxy.py"
+cp "$ROOT/Work/goose-finance-quote.py" "$HELPERS/goose-finance-quote.py"
 cp "$ROOT/Work/work-helper-watchdog.py" "$HELPERS/work-helper-watchdog.py"
 curl -fLsS 'https://raw.githubusercontent.com/aaif-goose/goose/v1.54.0/LICENSE' \
     -o "$CONTENTS/Resources/Licenses/goose-APACHE-2.0.txt"
