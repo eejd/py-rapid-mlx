@@ -32,3 +32,5 @@ python3 scripts/evals/chat/score.py scripts/evals/chat/results/run.jsonl
 ```
 
 The runner stops at 45 minutes and preserves partial results. It does not turn unscored rows into successes. A second run resumes missing rows. The current revision captures answers and artifacts but does not automate the official IFEval checker, GAIA normalization, or rubric grading; those scores must remain pending until checked.
+
+IFEval strict programmatic scoring uses Google's pinned reference code. In a separate evaluation environment install its requirements (`absl-py`, `langdetect`, `immutabledict`, `nltk`) and run `python3 scripts/evals/chat/check_ifeval.py scripts/evals/chat/results/run.jsonl --output scripts/evals/chat/results/ifeval-labels.json`, then pass that file to `score.py --labels`. The code is cached outside Git.
