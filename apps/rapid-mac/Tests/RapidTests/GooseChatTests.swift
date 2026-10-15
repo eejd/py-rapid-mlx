@@ -55,6 +55,13 @@ struct GooseChatTests {
         #expect(behavior.contains("do not re-run or re-verify"))
         #expect(behavior.contains("paths relative to the selected chat folder"))
         #expect((behavior + "請寫程式").hasSuffix("請寫程式"))
+        let failed = [WorkStep(id: "tool", command: "write", status: "failed")]
+        #expect(!WorkAgent.shouldContinue(gooseChat: true,
+            result: ["stopReason": "end_turn"], newText: "Done", newSteps: failed))
+        #expect(WorkAgent.shouldContinue(gooseChat: true,
+            result: ["stopReason": "max_tokens"], newText: "Partial", newSteps: []))
+        #expect(WorkAgent.shouldContinue(gooseChat: false,
+            result: ["stopReason": "end_turn"], newText: "Done", newSteps: failed))
     }
 
     @Test("Permission policy keeps decisions in the app")

@@ -2458,7 +2458,13 @@ enum ModelCatalog {
     ) -> [String: String] {
         var env = ambient
         env["DO_NOT_TRACK"] = "1"
-        if let hubCacheOverride {
+        // Goose Chat's catalog runs several commands besides the cached
+        // inventory. Give every probe the selected cache so a `models` or
+        // `info` probe never falls through to ~/.cache/huggingface, which
+        // may be a symlink to an unselected removable volume.
+        let selected = Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat"
+            ? ModelsFolderPreference.validatedOverrideURL() : nil
+        if let hubCacheOverride = hubCacheOverride ?? selected {
             env["HF_HUB_CACHE"] = hubCacheOverride.path
             // Issue #1718: scan both Hugging Face and external-runtime layouts.
             env[extraModelRootsEnvKey] = mergedExtraModelRoots(

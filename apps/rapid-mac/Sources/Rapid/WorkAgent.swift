@@ -315,12 +315,15 @@ final class WorkAgent {
                 "prompt": [["type": "text", "text": instruction]],
             ], session: sessionID, timeout: 900)
             if Self.fullAccess, generation == promptGeneration,
-               Self.needsFollowUp(result: result, newText: String(text.dropFirst(previousTextCount)),
-                                  newSteps: Array(steps.dropFirst(previousStepCount))) {
+               Self.shouldContinue(gooseChat: Self.gooseChat, result: result,
+                                   newText: String(text.dropFirst(previousTextCount)),
+                                   newSteps: Array(steps.dropFirst(previousStepCount))) {
                 _ = try await call(method: "session/prompt", params: [
                     "sessionId": sessionID,
                     "prompt": [["type": "text", "text":
-                        "Continue from the existing files. Review failed tool calls and verify every requested input was processed. Repair incomplete outputs and finish the remaining checks or tests without repeating completed work."]],
+                        Self.gooseChat
+                            ? "Continue the unfinished response without repeating completed work."
+                            : "Continue from the existing files. Review failed tool calls and verify every requested input was processed. Repair incomplete outputs and finish the remaining checks or tests without repeating completed work."]],
                 ], session: sessionID, timeout: 900)
             }
             if Self.gooseChat, generation == promptGeneration,
@@ -608,6 +611,12 @@ final class WorkAgent {
     static func needsFollowUp(result: [String: Any], newText: String, newSteps: [WorkStep]) -> Bool {
         needsContinuation(result: result, newText: newText) ||
             newSteps.contains { $0.status.lowercased() == "failed" }
+    }
+
+    static func shouldContinue(gooseChat: Bool, result: [String: Any], newText: String,
+                               newSteps: [WorkStep]) -> Bool {
+        gooseChat ? needsContinuation(result: result, newText: newText)
+            : needsFollowUp(result: result, newText: newText, newSteps: newSteps)
     }
 
     private static func contextLimit(rapidPort: Int, model: String, bearer: String) async -> Int {
