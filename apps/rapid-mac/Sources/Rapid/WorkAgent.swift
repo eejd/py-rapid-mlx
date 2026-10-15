@@ -494,8 +494,9 @@ final class WorkAgent {
                let chunks = params["chunks"] as? [[String: Any]] {
                 steps[index].output += chunks.compactMap { $0["output"] as? String }.joined()
             }
-            onChatEvent?(.tool(id: id, name: update["title"] as? String ?? "Tool",
-                               input: "", status: steps[index].status, output: steps[index].output))
+            let changedInput = (update["rawInput"] as? [String: Any]).map { Self.printJSON($0) } ?? ""
+            onChatEvent?(.tool(id: id, name: update["title"] as? String ?? steps[index].command,
+                               input: changedInput, status: steps[index].status, output: steps[index].output))
         default: break
         }
     }

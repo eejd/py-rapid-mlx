@@ -1680,6 +1680,10 @@ private struct GooseToolCardView: View {
                 if GooseToolPresentation.isRunning(card.status) { ProgressView().controlSize(.mini) }
                 else if GooseToolPresentation.isFailure(card.status) { Image(systemName: "xmark.circle").foregroundStyle(.red) }
                 else { Image(systemName: "checkmark.circle").foregroundStyle(.green) }
+                if GooseToolPresentation.isFailure(card.status), !card.output.isEmpty {
+                    Text(String((card.output.components(separatedBy: .newlines).first ?? card.status).prefix(90)))
+                        .lineLimit(1).foregroundStyle(.secondary)
+                }
                 if let permission = card.permissionState { Text(permission).font(.caption2).foregroundStyle(.secondary) }
             }.font(.caption)
         }
@@ -2007,6 +2011,17 @@ private struct MessageRow: View {
                     TextKitMarkdownView(content: message.content)
                 } else if showTypingIndicator {
                     typingIndicator
+                }
+            }
+            if WorkAgent.gooseChat && message.status == .streaming {
+                TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                    let card = message.gooseParts?.compactMap(\.tool).last
+                    let activeCard = card.flatMap { GooseToolPresentation.isRunning($0.status) ? $0 : nil }
+                    let start = activeCard?.startedAt ?? message.createdAt
+                    Text(GooseToolPresentation.progress(card: activeCard,
+                        elapsed: max(0, Int(timeline.date.timeIntervalSince(start))), folder: gooseFolderPath))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("ChatView.GooseProgress")
                 }
             }
             if message.status == .failed {

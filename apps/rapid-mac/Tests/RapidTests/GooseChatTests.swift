@@ -18,6 +18,16 @@ struct GooseChatTests {
         #expect(GooseToolPresentation.outputPreview((1...45).map(String.init).joined(separator: "\n"), expanded: false).components(separatedBy: .newlines).count == 40)
     }
 
+    @Test("Progress names the current step and advances through tool updates")
+    func progressMapping() {
+        #expect(GooseToolPresentation.progress(card: nil, elapsed: 45, folder: "/tmp/chat") == "Preparing response · 45 s")
+        let card = GooseToolCard(id: "t", name: "developer__write_file",
+            input: #"{"path":"/tmp/chat/snake.html","content":"hello"}"#, status: "running")
+        #expect(GooseToolPresentation.progress(card: card, elapsed: 12, folder: "/tmp/chat").contains("Writing snake.html"))
+        #expect(GooseToolPresentation.isRunning("in_progress"))
+        #expect(GooseToolPresentation.isFailure("failed"))
+    }
+
     @Test("Permission policy keeps decisions in the app")
     func permissionPolicy() {
         #expect(GoosePermissionPolicy.decide(yolo: false, alwaysAllowed: [], tool: "developer").answer == .ask)

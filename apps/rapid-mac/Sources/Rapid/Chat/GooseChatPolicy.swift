@@ -55,6 +55,7 @@ struct GooseToolCard: Codable, Equatable, Hashable {
     var output: String = ""
     var status: String = "running"
     var permissionState: String? = nil
+    var startedAt: Date? = Date()
 }
 
 enum GooseToolPresentation {
@@ -96,6 +97,29 @@ enum GooseToolPresentation {
     static func outputPreview(_ output: String, expanded: Bool) -> String {
         let lines = output.components(separatedBy: .newlines)
         return expanded ? output : lines.prefix(40).joined(separator: "\n")
+    }
+
+    static func progress(card: GooseToolCard?, elapsed: Int, folder: String) -> String {
+        let step: String
+        if let card {
+            let title = title(name: card.name, input: card.input, folder: folder)
+            step = title.hasPrefix("Wrote ") ? title.replacingOccurrences(of: "Wrote ", with: "Writing ")
+                : title.hasPrefix("Edited ") ? title.replacingOccurrences(of: "Edited ", with: "Editing ")
+                : title.hasPrefix("Ran ") ? title.replacingOccurrences(of: "Ran ", with: "Running ")
+                : title
+        } else {
+            step = String(localized: "Preparing response")
+        }
+        let size = card.flatMap { dataSize($0.input) }
+        return "\(step)\(size.map { " · \($0)" } ?? "") · \(elapsed) s"
+    }
+
+    private static func dataSize(_ input: String) -> String? {
+        guard let bytes = input.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let content = ["content", "text", "file_content"].compactMap({ object[$0] as? String }).first
+        else { return nil }
+        return String(format: "%.1f KB", Double(content.utf8.count) / 1024)
     }
 }
 
