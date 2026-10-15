@@ -142,10 +142,19 @@ final class ChatViewModel {
     private var gooseContextIDs: [UUID] = []
     private var goosePermissions: [String: (WorkPermission, String)] = [:]
     private var gooseFolder: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace", isDirectory: true)
+    private var activeGooseTurnFolder: URL?
     private(set) var gooseFallback: String?
     var gooseFolderPath: String { gooseFolder.path }
 
-    func setGooseFolder(_ url: URL) { gooseFolder = url.standardizedFileURL }
+    func setGooseFolder(_ url: URL) {
+        guard !isStreaming else { return }
+        let next = url.standardizedFileURL
+        guard next != gooseFolder else { return }
+        gooseFolder = next
+        WorkAgent.shared.stop()
+        gooseConversationID = nil
+        gooseContextIDs = []
+    }
     func retryGoose() { gooseFallback = nil; WorkAgent.shared.stop(); gooseConversationID = nil }
     func activateGooseFallback(_ error: Error) {
         gooseFallback = String(localized: "Tools are unavailable. Chat is using the direct model. Retry")
@@ -153,6 +162,9 @@ final class ChatViewModel {
     }
 
     func answerGoosePermission(_ request: WorkPermission, tool: String, allow: Bool, always: Bool = false) {
+        guard goosePermissions[request.toolCallID]?.0.id == request.id,
+              goosePermissions[request.toolCallID]?.0.sessionID == request.sessionID else { return }
+        goosePermissions[request.toolCallID] = nil
         if always && allow { GoosePermissionPolicy.alwaysAllow(tool) }
         WorkAgent.shared.answerPermission(request, allow: allow)
         if let index = messages.lastIndex(where: { $0.gooseParts?.contains(where: { $0.tool?.id == request.toolCallID }) == true }),
@@ -447,7 +459,10 @@ final class ChatViewModel {
     /// task would have made that six places to remember. The class of bug
     /// this removes is "somebody added a third task and missed site four".
     private func cancelInflightWork() {
-        if WorkAgent.gooseChat && isStreaming { WorkAgent.shared.stop() }
+        if WorkAgent.gooseChat && isStreaming {
+            WorkAgent.shared.stop()
+            terminalizeGooseCards(status: "cancelled")
+        }
         inflight?.cancel()
         inflight = nil
         backgroundAssist?.cancel()
@@ -1355,9 +1370,15 @@ final class ChatViewModel {
                         globalInstruction: globalInstruction, conversationInstruction: chatInstruction)
                     return
                 } catch {
+                    guard epoch == self.conversationEpoch, !Task.isCancelled else {
+                        self.finishGooseCancellation(epoch: epoch)
+                        return
+                    }
                     self.activateGooseFallback(error)
                 }
             }
+            guard epoch == self.conversationEpoch, !Task.isCancelled,
+                  self.messages.indices.contains(placeholderIndex) else { return }
             await self.runPlainChatTurn(
                 alias: alias,
                 initialPlaceholder: placeholderIndex,
@@ -1376,6 +1397,8 @@ final class ChatViewModel {
             throw WorkError.message("The local model is unavailable.")
         }
         try FileManager.default.createDirectory(at: gooseFolder, withIntermediateDirectories: true)
+        let turnFolder = gooseFolder
+        activeGooseTurnFolder = turnFolder
         let agent = WorkAgent.shared
         let priorIDs = Array(messages.prefix(placeholderIndex - 1)).map(\.id)
         let sessionBeforePrepare = agent.currentSessionID
@@ -1389,8 +1412,8 @@ final class ChatViewModel {
             guard let self, epoch == self.conversationEpoch else { return }
             self.applyGooseEvent(event, initialPlaceholder: placeholderIndex)
         }
-        try await agent.prepare(folder: gooseFolder, rapidPort: server.activePort,
-                                model: server.servingAlias ?? alias, bearer: bearer)
+        try await agent.prepare(folder: turnFolder, rapidPort: server.activePort,
+                                model: alias, bearer: bearer)
         guard epoch == conversationEpoch, !Task.isCancelled else {
             finishGooseCancellation(epoch: epoch)
             return
@@ -1399,6 +1422,11 @@ final class ChatViewModel {
         let reuseSession = canReuse && sameHelperSession
         if !reuseSession {
             if sameHelperSession { try await agent.ensureNewGooseChatSession() }
+            guard epoch == conversationEpoch, !Task.isCancelled,
+                  messages.indices.contains(placeholderIndex - 1) else {
+                finishGooseCancellation(epoch: epoch)
+                return
+            }
             gooseConversationID = activeConversationID
         }
         let previous = Array(messages.prefix(placeholderIndex - 1))
@@ -1407,13 +1435,14 @@ final class ChatViewModel {
         let instructions = [globalInstruction, conversationInstruction]
             .compactMap { Self.normalizedInstruction($0) }
         let instructionText = instructions.isEmpty ? "" : "Instructions for this chat:\n" + instructions.joined(separator: "\n") + "\n\n"
-        let prompt = instructionText + replay + user.content + (try gooseAttachmentNote(for: user))
+        let prompt = instructionText + replay + user.content + (try gooseAttachmentNote(for: user, folder: turnFolder))
         await agent.prompt(prompt)
         guard epoch == conversationEpoch else { return }
         if Task.isCancelled {
             finishGooseCancellation(epoch: epoch)
             return
         }
+        guard messages.indices.contains(placeholderIndex) else { return }
         if let error = agent.error {
             Self.clearGooseFailedText(&messages[placeholderIndex])
             messages[placeholderIndex].status = .failed
@@ -1424,6 +1453,7 @@ final class ChatViewModel {
             isStreaming = false
             inflight = nil
             gooseContextIDs = []
+            terminalizeGooseCards(status: "failed")
             return
         }
         for index in messages.indices where messages[index].role == .assistant && messages[index].status == .streaming {
@@ -1432,6 +1462,7 @@ final class ChatViewModel {
         isStreaming = false
         inflight = nil
         gooseContextIDs = messages.map(\.id)
+        terminalizeGooseCards(status: "completed")
     }
 
     static func gooseReplay(_ prior: [ChatMessage]) -> String {
@@ -1470,25 +1501,40 @@ final class ChatViewModel {
         isStreaming = false
         inflight = nil
         gooseContextIDs = []
+        terminalizeGooseCards(status: "cancelled")
     }
 
-    private func gooseAttachmentNote(for user: ChatMessage) throws -> String {
+    private func terminalizeGooseCards(status: String) {
+        goosePermissions.removeAll()
+        for index in messages.indices {
+            guard var parts = messages[index].gooseParts else { continue }
+            for part in parts.indices {
+                guard var card = parts[part].tool else { continue }
+                if card.permissionState == "permission needed" { card.permissionState = status }
+                if card.status == "running" { card.status = status }
+                parts[part].tool = card
+            }
+            messages[index].gooseParts = parts
+        }
+    }
+
+    private func gooseAttachmentNote(for user: ChatMessage, folder: URL) throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
-        let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
-        _ = try GooseToolPresentation.containedDestination(directory, root: gooseFolder)
+        let directory = folder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
+        _ = try GooseToolPresentation.containedDestination(directory, root: folder)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var paths: [String] = []
         for image in user.imageAttachments {
             let name = URL(fileURLWithPath: image.filename).lastPathComponent
             let destination = directory.appendingPathComponent(name)
-            let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
+            let safe = try GooseToolPresentation.containedDestination(destination, root: folder)
             try image.data.write(to: safe, options: .atomic)
             paths.append(destination.path)
         }
         for file in user.fileAttachments {
             let name = URL(fileURLWithPath: file.filename).deletingPathExtension().lastPathComponent + ".txt"
             let destination = directory.appendingPathComponent(name)
-            let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
+            let safe = try GooseToolPresentation.containedDestination(destination, root: folder)
             try file.extractedText.write(to: safe, atomically: true, encoding: .utf8)
             paths.append(destination.path)
         }
@@ -1532,15 +1578,18 @@ final class ChatViewModel {
                 if !name.isEmpty && name != "Tool" { card.name = name }
                 if !input.isEmpty { card.input = input }
                 if !output.isEmpty { card.output = String(output.prefix(12000)) }
-                card.status = status
+                if !WorkAgent.isTerminalToolStatus(card.status) {
+                    card.status = status
+                }
                 messages[initialPlaceholder].gooseParts?[part].tool = card
             } else {
                 messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(
                     tool: GooseToolCard(id: id, name: name, input: input,
                                         output: String(output.prefix(12000)), status: status,
-                                        folder: gooseFolder.path)))
+                                        folder: (activeGooseTurnFolder ?? gooseFolder).path)))
             }
         case .permission(let request, let name, let state):
+            guard goosePermissions[request.toolCallID] == nil else { break }
             goosePermissions[request.toolCallID] = (request, name)
             if messages[initialPlaceholder].gooseParts == nil { messages[initialPlaceholder].gooseParts = [] }
             if let part = messages[initialPlaceholder].gooseParts?.firstIndex(where: { $0.tool?.id == request.toolCallID }) {
@@ -1549,7 +1598,7 @@ final class ChatViewModel {
                 messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(
                     tool: GooseToolCard(id: request.toolCallID, name: name,
                                         input: request.command, permissionState: state,
-                                        folder: gooseFolder.path)))
+                                        folder: (activeGooseTurnFolder ?? gooseFolder).path)))
             }
         case .error(let message):
             lastError = Self.gooseFailureCopy
@@ -1557,6 +1606,7 @@ final class ChatViewModel {
             messages[initialPlaceholder].status = .failed
             messages[initialPlaceholder].errorMessage = Self.gooseFailureCopy
             messages[initialPlaceholder].gooseErrorDetails = message
+            terminalizeGooseCards(status: "failed")
         case .cancelled: break
         case .throughput(let rate):
             let message = messages[initialPlaceholder]

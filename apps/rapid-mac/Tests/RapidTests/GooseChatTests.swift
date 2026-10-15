@@ -5,6 +5,47 @@ import Testing
 @MainActor
 @Suite("Goose Chat")
 struct GooseChatTests {
+    @Test("ACP session identity rejects foreign updates and merges out-of-order tool cards")
+    func wireSessionAndTools() throws {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        var events: [GooseChatEvent] = []
+        agent.onChatEvent = { events.append($0) }
+        func wire(_ json: String) throws { try agent.handleWire(Data(json.utf8)) }
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-b","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"foreign"}}}}"#)
+        #expect(events.isEmpty)
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":{"stdout":"done"}}}}"#)
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Write","rawInput":{"path":"file.txt"}}}}"#)
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","content":[{"type":"text","text":"done"}]}}}"#)
+        let cards = events.compactMap { event -> (String, String)? in
+            if case let .tool(id, _, _, status, output) = event { return (status, output) }
+            return nil
+        }
+        #expect(cards.count == 3)
+        #expect(cards.allSatisfy { $0.0 == "completed" })
+        #expect(cards.last?.1 == "done")
+        agent.stop()
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"late"}}}}"#)
+        #expect(events.count == 3)
+    }
+
+    @Test("ACP permission identity is consumed once and reset with the turn")
+    func permissionOwner() {
+        let owner = GooseTurnOwner()
+        let folder = URL(fileURLWithPath: "/tmp/a")
+        owner.bind(sessionID: "session-a", folder: folder)
+        let request = WorkPermission(id: "42", sessionID: "session-a", toolCallID: "t1", command: "run", options: [])
+        #expect(owner.register(request))
+        #expect(!owner.register(request))
+        #expect(owner.consume(request))
+        #expect(!owner.consume(request))
+        owner.reset()
+        #expect(!owner.register(request))
+        #expect(!owner.accepts("session-a", generation: 0))
+        owner.bind(sessionID: "session-b", folder: folder)
+        #expect(!owner.register(request))
+    }
+
     @Test("Goose Chat isolates global skills and keeps a compact tool set")
     func isolatedHelperContext() {
         #expect(WorkAgent.helperHome(gooseChat: true, fullAccess: true,

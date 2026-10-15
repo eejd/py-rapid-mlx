@@ -906,6 +906,7 @@ struct ChatView: View {
                         .lineLimit(1).font(.caption)
                 }
                 .buttonStyle(.plain)
+                .disabled(viewModel.isStreaming)
                 .help(viewModel.gooseFolderPath)
                 .accessibilityIdentifier("ChatView.GooseFolder")
                 Toggle("YOLO", isOn: Binding(get: { gooseYOLO }, set: { value in

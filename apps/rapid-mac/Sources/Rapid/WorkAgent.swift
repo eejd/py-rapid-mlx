@@ -72,9 +72,24 @@ final class WorkAgent {
     private var toolIdentities: [String: String] = [:]
     private var rawToolOutputs: [String: String] = [:]
     private var generation = 0
+    private let turnOwner = GooseTurnOwner()
+    var transport = ACPTransport.live
     var lifecycleGeneration: Int { generation }
 
-    private init() {}
+    init() {}
+
+    func acceptSessionForTesting(_ id: String, folder: URL) {
+        sessionID = id
+        self.folder = folder
+        turnOwner.bind(sessionID: id, folder: folder)
+    }
+
+    func handleWire(_ data: Data) throws {
+        guard let message = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw WorkError.message("Invalid ACP message.")
+        }
+        handle(message)
+    }
 
     func beginNewChat() {
         conversationRevision += 1
@@ -119,11 +134,14 @@ final class WorkAgent {
     }
 
     func prepare(folder: URL, rapidPort: Int, model: String, bearer: String) async throws {
+        let requestedGeneration = generation
         // A Send can arrive while ready-model prewarm is still opening Goose.
         for _ in 0..<200 {
+            try checkPreparation(requestedGeneration)
             if !isPreparing { break }
             try await Task.sleep(for: .milliseconds(50))
         }
+        try checkPreparation(requestedGeneration)
         guard !isPreparing else { throw WorkError.message("Chat is already starting.") }
         let requestedRevision = conversationRevision
         let folder = folder.resolvingSymlinksInPath()
@@ -183,6 +201,7 @@ final class WorkAgent {
         let contextLimit = Self.fullAccess
             ? await Self.contextLimit(rapidPort: rapidPort, model: model, bearer: bearer)
             : 16384
+        try checkPreparation(prepareGeneration)
         guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         let provider: [String: Any] = [
             "name": "custom_rapid_local", "engine": "openai", "display_name": "Rapid Local",
@@ -278,6 +297,7 @@ final class WorkAgent {
         proxyEnv["WORK_PROXY_BEARER"] = bearer
         if let proxyBearerFileURL { proxyEnv["WORK_PROXY_BEARER_FILE"] = proxyBearerFileURL.path }
         proxyEnv["WORK_PROXY_METRICS_KEY"] = secret
+        try checkPreparation(prepareGeneration)
         proxyProcess = try Self.launchHelper(
             profile: Self.fullAccess ? nil : proxyProfileURL, python: pythonExecutable,
             executable: pythonExecutable,
@@ -285,9 +305,11 @@ final class WorkAgent {
                 + (Self.fullAccess ? ["--full-access"] : [])
                 + (Self.gooseChat ? ["--goose-chat"] : []),
             directory: support, environment: proxyEnv)
-        guard await Self.waitForHealth(process: proxyProcess!, port: proxyPort) else {
+        let startedProxy = proxyProcess!
+        guard await Self.waitForHealth(process: startedProxy, port: proxyPort) else {
             throw WorkError.message("The local Chat inference gate did not start.")
         }
+        try checkPreparation(prepareGeneration)
         if Self.gooseChat {
             var bridgeEnv = env
             bridgeEnv.removeValue(forKey: "GOOSE_SERVER__SECRET_KEY")
@@ -295,16 +317,20 @@ final class WorkAgent {
             bridgeEnv["WORK_BRIDGE_SCOPED_KEY"] = inferenceKey
             bridgeEnv["WORK_BRIDGE_UPSTREAM_KEY"] = bearer
             let watchdog = resources.appendingPathComponent("Helpers/work-helper-watchdog.py")
+            try checkPreparation(prepareGeneration)
             bridgeProcess = try Self.launchHelper(profile: nil, python: pythonExecutable,
                 executable: pythonExecutable,
                 arguments: ["-I", "-S", watchdog.path, "--credential-bridge",
                             String(bridgePort), String(proxyPort)],
                 directory: support, environment: bridgeEnv)
-            guard await Self.waitForHealth(process: bridgeProcess!, port: bridgePort) else {
+            let startedBridge = bridgeProcess!
+            guard await Self.waitForHealth(process: startedBridge, port: bridgePort) else {
                 throw WorkError.message("The local inference credential bridge did not start.")
             }
+            try checkPreparation(prepareGeneration)
         }
         guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
+        try checkPreparation(prepareGeneration)
         process = try Self.launchHelper(
             profile: Self.fullAccess ? nil : gooseProfileURL, python: pythonExecutable,
             executable: goose,
@@ -312,9 +338,11 @@ final class WorkAgent {
                         "--platform", Self.fullAccess ? "cli" : "desktop", "--with-builtin",
                         Self.builtinExtensions(gooseChat: Self.gooseChat, fullAccess: Self.fullAccess)],
             directory: folder, environment: env)
-        guard await Self.waitForHealth(process: process!, port: port) else {
+        let startedProcess = process!
+        guard await Self.waitForHealth(process: startedProcess, port: port) else {
             throw WorkError.message("The Chat helper did not start.")
         }
+        try checkPreparation(prepareGeneration)
         guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         isRunning = true
         let (initResult, response) = try await sendImmediate(method: "initialize", params: [
@@ -322,6 +350,7 @@ final class WorkAgent {
             "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false]],
             "clientInfo": ["name": "Rapid Work", "version": "0.1"],
         ])
+        try checkPreparation(prepareGeneration)
         guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         guard initResult["error"] == nil,
               let id = response.value(forHTTPHeaderField: "Acp-Connection-Id") else {
@@ -330,8 +359,13 @@ final class WorkAgent {
         connection = id
         openStream(session: nil)
         try await newSession()
+        try checkPreparation(prepareGeneration)
         guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         completed = true
+    }
+
+    private func checkPreparation(_ expected: Int) throws {
+        guard generation == expected, !Task.isCancelled else { throw CancellationError() }
     }
 
     func newSession() async throws {
@@ -368,6 +402,7 @@ final class WorkAgent {
             throw WorkError.message("The Chat session could not be created.")
         }
         sessionID = sid
+        turnOwner.bind(sessionID: sid, folder: folder)
         sessionHasPrompted = false
         onChatEvent?(.session(sid))
         openStream(session: sid)
@@ -472,6 +507,7 @@ final class WorkAgent {
     }
 
     func answerPermission(_ request: WorkPermission, allow: Bool) {
+        guard turnOwner.consume(request) else { return }
         let kind = allow ? "allow_once" : "reject_once"
         guard let option = request.options.first(where: { $0["kind"] as? String == kind }),
               let optionID = option["optionId"] as? String else { return }
@@ -487,6 +523,7 @@ final class WorkAgent {
 
     func stop() {
         generation += 1
+        turnOwner.reset()
         pendingGooseChatSession?.cancel()
         pendingGooseChatSession = nil
         sessionHasPrompted = false
@@ -555,6 +592,7 @@ final class WorkAgent {
     }
 
     private func openStream(session: String?) {
+        let streamGeneration = generation
         let connection = self.connection
         let port = self.port
         let secret = self.secret
@@ -572,12 +610,22 @@ final class WorkAgent {
                     guard line.hasPrefix("data:"),
                           let data = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces).data(using: .utf8),
                           let message = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                    guard generation == streamGeneration else { return }
                     handle(message)
                 }
+                if !Task.isCancelled { helperStreamEnded(generation: streamGeneration, session: session) }
             } catch {
-                if !Task.isCancelled { self.error = redact("Chat stream ended: \(error.localizedDescription)") }
+                if !Task.isCancelled { helperStreamEnded(generation: streamGeneration, session: session) }
             }
         })
+    }
+
+    private func helperStreamEnded(generation expected: Int, session: String?) {
+        guard generation == expected, session == sessionID else { return }
+        let failure = "The Chat helper stopped unexpectedly."
+        error = failure
+        onChatEvent?(.error(failure))
+        stop()
     }
 
     private func handle(_ message: [String: Any]) {
@@ -600,11 +648,13 @@ final class WorkAgent {
            let id = message["id"],
            let sid = params["sessionId"] as? String,
            let tool = params["toolCall"] as? [String: Any] {
+            guard turnOwner.accepts(sid, generation: generation) else { return }
             let input = tool["rawInput"] as? [String: Any]
             let request = WorkPermission(id: String(describing: id), sessionID: sid,
                 toolCallID: tool["toolCallId"] as? String ?? String(describing: id),
                 command: input?["command"] as? String ?? tool["title"] as? String ?? "Unknown command",
                 options: params["options"] as? [[String: Any]] ?? [], rpcID: id)
+            guard turnOwner.register(request) else { return }
             if Self.gooseChat {
                 let name = toolIdentities[request.toolCallID]
                     ?? GoosePermissionPolicy.toolIdentity(tool) ?? "unknown"
@@ -625,6 +675,8 @@ final class WorkAgent {
         }
         guard message["method"] as? String == "session/update",
               let params = message["params"] as? [String: Any],
+              let updateSession = params["sessionId"] as? String,
+              turnOwner.accepts(updateSession, generation: generation),
               let update = params["update"] as? [String: Any],
               let kind = update["sessionUpdate"] as? String else { return }
         switch kind {
@@ -641,15 +693,20 @@ final class WorkAgent {
         case "tool_call":
             let id = update["toolCallId"] as? String ?? UUID().uuidString
             if let identity = GoosePermissionPolicy.toolIdentity(update) { toolIdentities[id] = identity }
-            rawToolOutputs[id] = ""
             let input = update["rawInput"] as? [String: Any]
-            steps.append(WorkStep(id: id, command: redact(input?["command"] as? String ?? update["title"] as? String ?? "Tool"), status: "Running"))
+            if !steps.contains(where: { $0.id == id }) {
+                steps.append(WorkStep(id: id, command: redact(input?["command"] as? String ?? update["title"] as? String ?? "Tool"), status: "running"))
+            }
             onChatEvent?(.tool(id: id, name: redact(update["title"] as? String ?? "Tool"),
-                               input: redact(input.map { Self.printJSON($0) } ?? ""), status: "running", output: ""))
+                               input: redact(input.map { Self.printJSON($0) } ?? ""), status: steps.first(where: { $0.id == id })?.status ?? "running", output: ""))
         case "tool_call_update":
-            guard let id = update["toolCallId"] as? String,
-                  let index = steps.firstIndex(where: { $0.id == id }) else { return }
-            steps[index].status = update["status"] as? String ?? "Updated"
+            guard let id = update["toolCallId"] as? String else { return }
+            if !steps.contains(where: { $0.id == id }) {
+                steps.append(WorkStep(id: id, command: "Tool", status: "running"))
+            }
+            guard let index = steps.firstIndex(where: { $0.id == id }) else { return }
+            if let next = update["status"] as? String,
+               !Self.isTerminalToolStatus(steps[index].status) { steps[index].status = next }
             if let raw = update["rawOutput"] as? [String: Any] {
                 rawToolOutputs[id] = (raw["stdout"] as? String ?? "") + (raw["stderr"] as? String ?? "")
             }
@@ -674,6 +731,10 @@ final class WorkAgent {
                                input: redact(changedInput), status: steps[index].status, output: steps[index].output))
         default: break
         }
+    }
+
+    static func isTerminalToolStatus(_ status: String) -> Bool {
+        ["completed", "failed", "cancelled", "canceled", "error"].contains(status.lowercased())
     }
 
     private static func printJSON(_ object: [String: Any]) -> String {
@@ -733,7 +794,7 @@ final class WorkAgent {
         request.setValue(secret, forHTTPHeaderField: "X-Secret-Key")
         request.setValue(connection, forHTTPHeaderField: "Acp-Connection-Id")
         request.setValue(session, forHTTPHeaderField: "Acp-Session-Id")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await transport.send(request)
         guard let response = response as? HTTPURLResponse, response.statusCode < 400 else {
             throw WorkError.message("Chat transport rejected a request.")
         }
