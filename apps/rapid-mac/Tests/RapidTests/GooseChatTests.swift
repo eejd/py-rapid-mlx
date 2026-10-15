@@ -5,6 +5,15 @@ import Testing
 @MainActor
 @Suite("Goose Chat")
 struct GooseChatTests {
+    @Test("Goose Chat isolates global skills and keeps a compact tool set")
+    func isolatedHelperContext() {
+        #expect(WorkAgent.helperHome(gooseChat: true, fullAccess: true,
+            userHome: "/Users/test", support: "/tmp/chat-support") == "/tmp/chat-support")
+        #expect(WorkAgent.builtinExtensions(gooseChat: true, fullAccess: true) == "developer")
+        #expect(WorkAgent.helperHome(gooseChat: false, fullAccess: true,
+            userHome: "/Users/test", support: "/tmp/chat-support") == "/Users/test")
+    }
+
     @Test("Tool titles use verbs and paths relative to the chat folder")
     func toolTitles() {
         let folder = "/tmp/chat"

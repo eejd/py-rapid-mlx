@@ -166,7 +166,9 @@ final class WorkAgent {
         // Start from an allowlist: the shell tool must not inherit the app's
         // unrelated credentials or proxy configuration.
         var env: [String: String] = [
-            "HOME": Self.fullAccess ? fileManager.homeDirectoryForCurrentUser.path : support.path,
+            "HOME": Self.helperHome(gooseChat: Self.gooseChat, fullAccess: Self.fullAccess,
+                                     userHome: fileManager.homeDirectoryForCurrentUser.path,
+                                     support: support.path),
             "USER": NSUserName(),
             "LOGNAME": NSUserName(),
             "LANG": "en_US.UTF-8",
@@ -233,9 +235,8 @@ final class WorkAgent {
             profile: Self.fullAccess ? nil : gooseProfileURL, python: pythonExecutable,
             executable: goose,
             arguments: ["serve", "--host", "127.0.0.1", "--port", String(port),
-                        "--platform", Self.fullAccess ? "cli" : "desktop", "--with-builtin", Self.fullAccess
-                            ? "developer,computercontroller,memory,autovisualiser,tutorial"
-                            : "developer"],
+                        "--platform", Self.fullAccess ? "cli" : "desktop", "--with-builtin",
+                        Self.builtinExtensions(gooseChat: Self.gooseChat, fullAccess: Self.fullAccess)],
             directory: folder, environment: env)
         guard await Self.waitForHealth(process: process!, port: port) else {
             throw WorkError.message("The Work helper did not start under the privacy sandbox.")
@@ -370,6 +371,18 @@ final class WorkAgent {
         Prefer paths relative to the selected chat folder in replies.
 
         """
+
+    static func helperHome(gooseChat: Bool, fullAccess: Bool,
+                           userHome: String, support: String) -> String {
+        // Goose Chat must not import the user's global agent skills into every
+        // conversation. They can add thousands of tokens and change tool use.
+        gooseChat ? support : (fullAccess ? userHome : support)
+    }
+
+    static func builtinExtensions(gooseChat: Bool, fullAccess: Bool) -> String {
+        gooseChat ? "developer" : (fullAccess
+            ? "developer,computercontroller,memory,autovisualiser,tutorial" : "developer")
+    }
 
     func cancel() {
         guard let sessionID else { return }
