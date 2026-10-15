@@ -1614,13 +1614,21 @@ def test_4663_stream_terminal_does_not_replay_truncated_wire(chunk_size, narrati
     ]
     assert data[-1] == "[DONE]"
     visible = ""
+    streamed_calls = {}
     for line in data[:-1]:
         for choice in json.loads(line).get("choices", []):
             delta = choice.get("delta", {})
             visible += (delta.get("content") or "") + (
                 delta.get("reasoning_content") or ""
             )
+            for call in delta.get("tool_calls", []):
+                function = streamed_calls.setdefault(
+                    call["index"], {"name": "", "arguments": ""}
+                )
+                for key in function:
+                    function[key] += call.get("function", {}).get(key) or ""
     assert visible.strip() == narration.strip(), visible
+    assert streamed_calls == {0: {"name": "add_numbers", "arguments": "{}"}}
 
 
 def test_4663_forced_truncated_wire_in_reasoning_preserves_narration():
