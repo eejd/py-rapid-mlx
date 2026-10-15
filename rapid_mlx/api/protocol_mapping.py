@@ -6,7 +6,7 @@ ENGINE_CANCELLATION_FINISH_REASON = "cancelled"
 def public_finish_reason(reason: str | None, error_kind: str | None) -> str | None:
     """Keep a repetition abort inside the protocol's standard length reason."""
 
-    return "length" if error_kind == "repetition" else reason
+    return "length" if reason is not None and error_kind == "repetition" else reason
 
 
 def is_cancellation_finish_reason(finish_reason: str | None) -> bool:

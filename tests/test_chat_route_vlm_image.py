@@ -38,6 +38,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from rapid_mlx.api.protocol_mapping import public_finish_reason
 from rapid_mlx.config import reset_config
 from rapid_mlx.engine.base import GenerationOutput
 from rapid_mlx.middleware.exception_handlers import (
@@ -553,6 +554,11 @@ def test_repetition_stop_keeps_standard_finish_reason(stream):
         choice = response.json()["choices"][0]
         assert choice["finish_reason"] == "length"
         assert choice["message"]["content"] == "A blue background."
+
+
+def test_repetition_tag_does_not_finish_an_unfinished_tool_delta():
+    assert public_finish_reason(None, "repetition") is None
+    assert public_finish_reason("tool_calls", "repetition") == "length"
 
 
 def test_repetition_stop_with_inline_tool_call_uses_length():
