@@ -10,6 +10,7 @@ struct GooseChatTests {
         let folder = "/tmp/chat"
         #expect(GooseToolPresentation.title(name: "developer__write_file", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Wrote snake.html")
         #expect(GooseToolPresentation.title(name: "developer__write_file", input: #"{"path":"/tmp/chat/games/snake.html"}"#, folder: folder) == "Wrote games/snake.html")
+        #expect(GooseToolPresentation.title(name: "write · /tmp/chat/games/snake.html", input: #"{"content":"hi"}"#, folder: folder) == "Wrote games/snake.html")
         #expect(GooseToolPresentation.title(name: "developer__edit_file", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Edited snake.html")
         #expect(GooseToolPresentation.title(name: "developer__shell", input: #"{"command":"python3 hello.py"}"#, folder: folder) == "Ran `python3 hello.py`")
         #expect(GooseToolPresentation.title(name: "developer__list", input: "{}", folder: folder) == "Listed files")
@@ -34,6 +35,10 @@ struct GooseChatTests {
         let card = GooseToolCard(id: "t", name: "developer__write_file",
             input: #"{"path":"/tmp/chat/snake.html"}"#, status: "completed")
         #expect(GooseToolPresentation.producedFile(card, folder: "/tmp/chat")?.path == "/tmp/chat/snake.html")
+        var titled = card
+        titled.name = "write · /tmp/chat/games/snake.html"
+        titled.input = #"{"content":"hi"}"#
+        #expect(GooseToolPresentation.producedFile(titled, folder: "/tmp/chat")?.path == "/tmp/chat/games/snake.html")
         var running = card
         running.status = "running"
         #expect(GooseToolPresentation.producedFile(running, folder: "/tmp/chat") == nil)

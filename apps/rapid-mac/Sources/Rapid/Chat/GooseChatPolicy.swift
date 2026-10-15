@@ -65,8 +65,7 @@ enum GooseToolPresentation {
               !isRunning(card.status), !isFailure(card.status),
               let data = card.input.data(using: .utf8),
               let args = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let path = ["path", "file_path", "filename", "file", "target_path"]
-                .compactMap({ args[$0] as? String }).first else { return nil }
+              let path = path(name: card.name, args: args) else { return nil }
         let root = URL(fileURLWithPath: folder, isDirectory: true).standardizedFileURL
         let file = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL
         guard file.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/") else { return nil }
@@ -78,8 +77,7 @@ enum GooseToolPresentation {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         }) ?? [:]
         let lower = name.lowercased()
-        let path = ["path", "file_path", "filename", "file", "target_path", "url"]
-            .compactMap { args[$0] as? String }.first
+        let path = path(name: name, args: args)
         let relative: String? = path.map { value in
             let root = URL(fileURLWithPath: folder).standardizedFileURL.path
             let prefix = root.hasSuffix("/") ? root : root + "/"
@@ -92,12 +90,14 @@ enum GooseToolPresentation {
         if lower.contains("shell") || lower.contains("command") || lower.contains("execute") || lower.contains("run") {
             let command = (args["command"] as? String ?? args["cmd"] as? String ?? name)
                 .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: folder, with: ".")
             return String(localized: "Ran `\(String(command.prefix(90)))`")
         }
         if lower.contains("list") { return String(localized: "Listed files") }
         if lower.contains("open") || lower.contains("browse") { return String(localized: "Opened \(subject)") }
         if lower.contains("read") { return String(localized: "Read \(subject)") }
-        return relative.map { "\(name) · \($0)" } ?? name
+        let displayName = name.components(separatedBy: " · ").first ?? name
+        return relative.map { "\(displayName) · \($0)" } ?? displayName
     }
 
     static func isRunning(_ status: String) -> Bool {
@@ -135,6 +135,17 @@ enum GooseToolPresentation {
               let content = ["content", "text", "file_content"].compactMap({ object[$0] as? String }).first
         else { return nil }
         return String(format: "%.1f KB", Double(content.utf8.count) / 1024)
+    }
+
+    private static func path(name: String, args: [String: Any]) -> String? {
+        if let value = ["path", "file_path", "filename", "file", "target_path", "url"]
+            .compactMap({ args[$0] as? String }).first { return value }
+        // Goose's ACP title is often "write · /absolute/path" while rawInput
+        // contains only the file content. Keep the path out of the collapsed row.
+        if let tail = name.components(separatedBy: " · ").last, tail.hasPrefix("/") {
+            return tail
+        }
+        return nil
     }
 }
 
