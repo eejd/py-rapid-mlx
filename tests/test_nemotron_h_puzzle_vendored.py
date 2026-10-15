@@ -165,6 +165,10 @@ class TestNemotronBolt:
         )
         assert args.num_hidden_layers == 2 and args.for_layer(0) is args
         assert args.time_step_limit == (0.002, float("inf"))
+        # Reference semantics: time_step_max never becomes an inference bound.
+        assert module.ModelArgs.from_dict(
+            self.config(time_step_limit=None, time_step_min=0.002, time_step_max=0.1)
+        ).time_step_limit == (0.002, float("inf"))
         assert (
             module.ModelArgs.from_dict(
                 self.config(time_step_limit=None)
