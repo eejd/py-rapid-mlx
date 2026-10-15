@@ -10,6 +10,22 @@ struct GooseOwnedSession: Codable, Equatable {
 }
 
 enum GooseConversationRetention {
+    static func deleteContractsOwned(by conversationID: UUID, folders: [String],
+                                     root: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Rapid/agent-goose-chat/workspaces")) throws {
+        for folder in Set(folders) {
+            let digest = SHA256.hash(data: Data(folder.utf8))
+                .map { String(format: "%02x", $0) }.joined()
+            let contract = root.appendingPathComponent(digest).appendingPathComponent("chat-contract.json")
+            guard FileManager.default.fileExists(atPath: contract.path) else { continue }
+            let safe = try GooseToolPresentation.containedDestination(contract, root: root)
+            guard let data = try? Data(contentsOf: safe),
+                  let values = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  values["conversation_id"] as? String == conversationID.uuidString else { continue }
+            try FileManager.default.removeItem(at: safe)
+        }
+    }
+
     /// Goose stores one SQLite database per selected workspace. Its pinned
     /// session manager deletes message and usage rows before the session row.
     static func deleteSessions(_ sessions: [GooseOwnedSession], root: URL = FileManager.default.homeDirectoryForCurrentUser

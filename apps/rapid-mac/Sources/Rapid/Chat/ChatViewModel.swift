@@ -966,6 +966,7 @@ final class ChatViewModel {
             try GooseConversationRetention.deleteSessions(ownedSessions + (legacy.map { [$0] } ?? []))
             try GooseConversationRetention.deleteAttachmentDirectories(
                 ownedDirectories, folders: Array(folders), messages: ownedMessages)
+            try GooseConversationRetention.deleteContractsOwned(by: id, folders: Array(folders))
         } catch {
             lastError = "Could not remove all Chat helper data: \(error.localizedDescription)"
             return
@@ -1453,8 +1454,12 @@ final class ChatViewModel {
         // are derived from persisted message and attachment IDs.
         if !reuseSession {
             for message in previous where message.role == .user {
-                _ = try gooseAttachmentNote(for: message)
+                _ = try await gooseAttachmentNote(for: message)
             }
+        }
+        guard epoch == conversationEpoch, !Task.isCancelled else {
+            finishGooseCancellation(epoch: epoch)
+            return
         }
         let replay = reuseSession ? "" : Self.gooseReplay(previous)
         let user = messages[placeholderIndex - 1]
@@ -1465,7 +1470,12 @@ final class ChatViewModel {
                 try? FileManager.default.removeItem(at: contractURL)
             }
         }
-        let prompt = replay + user.content + (try gooseAttachmentNote(for: user))
+        let attachmentNote = try await gooseAttachmentNote(for: user)
+        guard epoch == conversationEpoch, !Task.isCancelled else {
+            finishGooseCancellation(epoch: epoch)
+            return
+        }
+        let prompt = replay + user.content + attachmentNote
         await agent.prompt(prompt)
         guard epoch == conversationEpoch else { return }
         if Task.isCancelled {
@@ -1553,7 +1563,7 @@ final class ChatViewModel {
         gooseContextIDs = []
     }
 
-    func gooseAttachmentNote(for user: ChatMessage) throws -> String {
+    func gooseAttachmentNote(for user: ChatMessage) async throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
         let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
         _ = try GooseToolPresentation.containedDestination(directory, root: gooseFolder)
@@ -1573,7 +1583,16 @@ final class ChatViewModel {
             let name = file.id.uuidString + ".txt"
             let destination = directory.appendingPathComponent(name)
             let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
-            let retained = documentCache.getAwaitingCompletionStatus(file.id)
+            let cache = documentCache
+            let id = file.id
+            let retained = await Task.detached(priority: .userInitiated) {
+                cache.getAwaitingCompletionStatus(id)
+            }.value
+            if FileManager.default.fileExists(atPath: safe.path),
+               retained?.entry.isComplete != true {
+                paths.append(destination.path)
+                continue
+            }
             let text = retained?.entry.text ?? file.extractedText
             let status = retained == nil ? "preview only; retained extract unavailable"
                 : retained!.extractionPending ? "extraction pending"
@@ -1604,6 +1623,7 @@ final class ChatViewModel {
             conversationInstruction: conversationInstruction, memoryContext: memoryContext,
             sampling: sampling?.resolved(toolsEnabled: false), now: Date())
         contract["turn_id"] = UUID().uuidString
+        contract["conversation_id"] = activeConversationID.uuidString
         let digest = SHA256.hash(data: Data(gooseFolder.path.utf8))
             .map { String(format: "%02x", $0) }.joined()
         let root = FileManager.default.homeDirectoryForCurrentUser

@@ -283,10 +283,20 @@ struct GooseChatTests {
         #expect(sqlite3_step(statement) == SQLITE_ROW)
         #expect(sqlite3_column_int(statement, 0) == 1)
         sqlite3_finalize(statement)
+        let contract = root.appendingPathComponent("databases/\(hash)/chat-contract.json")
+        let conversationID = UUID()
+        try JSONSerialization.data(withJSONObject: ["conversation_id": conversationID.uuidString,
+            "system_prompt": "private memory"]).write(to: contract)
+        try GooseConversationRetention.deleteContractsOwned(by: UUID(),
+            folders: [folder.path], root: root.appendingPathComponent("databases"))
+        #expect(FileManager.default.fileExists(atPath: contract.path))
+        try GooseConversationRetention.deleteContractsOwned(by: conversationID,
+            folders: [folder.path], root: root.appendingPathComponent("databases"))
+        #expect(!FileManager.default.fileExists(atPath: contract.path))
     }
 
     @Test("Goose exports the retained extract and replays attachment-only rows")
-    func retainedAttachment() throws {
+    func retainedAttachment() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-extract-\(UUID())")
         defer { try? FileManager.default.removeItem(at: folder) }
         let cache = DocumentContentCache(diskDirectory: nil)
@@ -297,13 +307,16 @@ struct GooseChatTests {
         let model = ChatViewModel(persistsConversations: false, documentCache: cache)
         model.setGooseFolder(folder)
         let user = ChatMessage(role: .user, fileAttachments: [file])
-        let note = try model.gooseAttachmentNote(for: user)
+        let note = try await model.gooseAttachmentNote(for: user)
         let exported = folder.appendingPathComponent("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt")
         #expect(note.contains(exported.path))
         #expect(try String(contentsOf: exported, encoding: .utf8).contains("Extraction status: complete"))
         #expect(try String(contentsOf: exported, encoding: .utf8).contains("final row,42"))
         let replay = ChatViewModel.gooseReplay([user])
         #expect(replay.contains("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt"))
+        cache.remove(file.id)
+        _ = try await model.gooseAttachmentNote(for: user)
+        #expect(try String(contentsOf: exported, encoding: .utf8).contains("final row,42"))
     }
 
     @Test("Goose contract carries direct-chat instructions, memory and sampling")
