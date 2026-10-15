@@ -126,6 +126,14 @@ struct GooseChatTests {
         #expect(model.messages[1].gooseErrorDetails?.contains("502 Bad Gateway") == true)
         #expect(model.messages.last?.status == .failed)
         model.applyGooseEvent(.cancelled, initialPlaceholder: 1)
+        let textError = ChatViewModel(persistsConversations: false)
+        textError.devSeedMessages([ChatMessage(role: .user, content: "hi"),
+                                   ChatMessage(role: .assistant, status: .streaming)])
+        textError.applyGooseEvent(.text("Ran into this error: Server error"), initialPlaceholder: 1)
+        textError.applyGooseEvent(.text(" (502 Bad Gateway) at http://127.0.0.1:57718"), initialPlaceholder: 1)
+        #expect(textError.messages[1].content.isEmpty)
+        #expect(textError.messages[1].status == .failed)
+        #expect(textError.messages[1].gooseErrorDetails?.contains("57718") == true)
     }
 
     @Test("Stored conversation retains session and folder; replay is bounded")
@@ -145,6 +153,13 @@ struct GooseChatTests {
         #expect(repaired.content.isEmpty)
         #expect(repaired.errorMessage == ChatViewModel.gooseFailureCopy)
         #expect(repaired.gooseErrorDetails?.contains("57718") == true)
+        legacy.branches = [legacy.messages.last!]
+        #expect(ChatViewModel.repairGooseTitles([legacy])[0].branches.first?.content.isEmpty == true)
+        var quoted = decoded
+        quoted.messages.append(ChatMessage(role: .assistant,
+            content: "Ran into this error: please check your input"))
+        #expect(ChatViewModel.repairGooseTitles([quoted])[0].messages.last?.content
+            == "Ran into this error: please check your input")
         #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User: first"))
         let toolOnly = ChatMessage(role: .assistant, gooseParts: [
             GooseTurnPart(tool: GooseToolCard(id: "t", name: "write · snake.html",
