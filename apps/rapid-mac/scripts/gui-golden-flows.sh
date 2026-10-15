@@ -3725,11 +3725,11 @@ wait_residency_idle() {
     local destination="$1" stable=0
     for _ in {1..120}; do
         see_main "$destination"
-        if jq -e '[.data.ui_elements[]? | select(
-            .identifier == "Sidebar.Residency.Unload" or
-            .identifier == "ChatView.Residency.Unload")]
-            | length == 2 and all(.[]; .enabled == true
-                and .help != "Stop the active response before unloading models")' \
+        if jq -e '.data.ui_elements as $elements
+            | all("Sidebar.Residency.Unload", "ChatView.Residency.Unload";
+                . as $id | [$elements[]? | select(.identifier == $id)]
+                | length == 1 and all(.[]; .enabled == true
+                    and .help != "Stop the active response before unloading models"))' \
             "$destination" >/dev/null; then
             stable=$((stable + 1))
             [[ "$stable" -ge 4 ]] && return 0

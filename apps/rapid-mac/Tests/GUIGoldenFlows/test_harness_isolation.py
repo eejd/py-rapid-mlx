@@ -84,12 +84,21 @@ class HarnessIsolationTests(unittest.TestCase):
                             **(
                                 {}
                                 if state == "unreadable"
-                                else {"enabled": state == "ready"}
+                                else {
+                                    "enabled": state
+                                    in ("ready", "duplicate_sidebar", "duplicate_chat")
+                                }
                             ),
                         }
                         for identifier in (
-                            "Sidebar.Residency.Unload",
-                            "ChatView.Residency.Unload",
+                            ("Sidebar.Residency.Unload",) * 2
+                            if state == "duplicate_sidebar"
+                            else ("ChatView.Residency.Unload",) * 2
+                            if state == "duplicate_chat"
+                            else (
+                                "Sidebar.Residency.Unload",
+                                "ChatView.Residency.Unload",
+                            )
                         )
                     ]
                 )
@@ -147,6 +156,13 @@ echo "$index"
             result = self.run_wait([state])
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("did not settle enabled", result.stderr)
+
+    def test_duplicate_identifier_cannot_replace_the_missing_control(self):
+        for state in ("duplicate_sidebar", "duplicate_chat"):
+            with self.subTest(state=state):
+                result = self.run_wait([state])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("did not settle enabled", result.stderr)
 
 
 if __name__ == "__main__":
