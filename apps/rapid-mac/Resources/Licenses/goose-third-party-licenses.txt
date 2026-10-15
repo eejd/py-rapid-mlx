@@ -3,6 +3,16 @@ https://github.com/aaif-goose/goose/releases/tag/v1.54.0
 Source lockfile: https://github.com/aaif-goose/goose/blob/v1.54.0/Cargo.lock
 Cargo.lock SHA-256: ca83de283bab2099eb696786fafdca59eb597d9ed65eaf9e6041e9abdc67e016
 
+The app also bundles pypdf (BSD-3-Clause), openpyxl 3.1.5 (MIT), and
+et_xmlfile 2.0.0 (MIT) for local document reading. Their wheel license
+notices are shipped beside this inventory in Resources/Licenses.
+
+The LGPL-3.0-or-later crate ansi_colours and the MPL-2.0/MPL-2.0+ crates
+listed below are used unmodified. Their corresponding source is available
+at crates.io at the listed versions. Goose source, including Cargo.lock,
+is available at https://github.com/aaif-goose/goose/tree/v1.54.0 so users
+can rebuild and relink the application with modified versions of those crates.
+
 Scope: 929 unique crates in the aarch64-apple-darwin normal dependency
 closure of `cargo build --release -p goose-cli --bin goose` at v1.54.0.
 Crate versions come from the tagged Cargo.lock and `cargo tree --locked
@@ -10,10 +20,11 @@ Crate versions come from the tagged Cargo.lock and `cargo tree --locked
 come from `cargo license --json --avoid-dev-deps --avoid-build-deps
 --filter-platform aarch64-apple-darwin --manifest-path
 crates/goose-cli/Cargo.toml` on studio-max. License expressions are copied
-as declared; OR choices have not been selected or inferred. This inventory
+as declared, except v8 is resolved from its versioned upstream Cargo.toml;
+OR choices have not been selected or inferred. This inventory
 includes normal-dependency proc-macro crates, though those are build-time tools.
 
-Flagged license declarations (LGPL/MPL/unknown):
+Flagged license declarations (LGPL/MPL):
   ansi_colours 1.2.3 — LGPL-3.0-or-later
   colored 3.1.1 — MPL-2.0
   cooked-waker 5.0.0 — MPL-2.0
@@ -32,14 +43,15 @@ Flagged license declarations (LGPL/MPL/unknown):
   symphonia-format-mkv 0.6.1 — MPL-2.0
   symphonia-format-riff 0.6.1 — MPL-2.0
   symphonia-metadata 0.6.1 — MPL-2.0
-  v8 145.0.0 — UNKNOWN
+
+Resolved upstream declaration: v8 145.0.0 — MIT (rusty_v8 v145.0.0).
 
 Other nonstandard declaration requiring review:
   libbz2-rs-sys 0.2.5 — bzip2-1.0.6
 
 Counts by declared license expression:
   436  Apache-2.0 OR MIT
-  247  MIT
+  248  MIT
   122  Apache-2.0
    25  Unicode-3.0
    18  Apache-2.0 OR MIT OR Zlib
@@ -71,7 +83,6 @@ Counts by declared license expression:
     1  LGPL-3.0-or-later
     1  MIT-0
     1  MPL-2.0+
-    1  UNKNOWN
     1  bzip2-1.0.6
 
 Crate inventory (name | version | declared license expression):
@@ -952,7 +963,7 @@ utoipa | 5.5.0 | Apache-2.0 OR MIT
 utoipa-gen | 5.5.0 | Apache-2.0 OR MIT
 uuid | 1.26.1 | Apache-2.0 OR MIT
 uuid-simd | 0.8.0 | MIT
-v8 | 145.0.0 | UNKNOWN
+v8 | 145.0.0 | MIT
 v8-goose | 145.0.2 | MIT
 v_escape-base | 0.1.0 | Apache-2.0 OR MIT
 v_htmlescape | 0.17.0 | Apache-2.0 OR MIT
@@ -26977,6 +26988,33 @@ have been licensed under extremely permissive terms.
 ------------------------------------------------------------------------------
 
 Copyright notices are retained in src/* files where relevant.
+
+==============================================================================
+Upstream license for v8 145.0.0 (rusty_v8)
+Cargo.toml: https://github.com/denoland/rusty_v8/blob/v145.0.0/Cargo.toml
+Source: https://github.com/denoland/rusty_v8/blob/v145.0.0/LICENSE
+==============================================================================
+MIT License
+
+Copyright (c) 2018-2019 the Deno authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 Packages with synthesized standard text and no standalone top-level
 license/notice file in the lock-pinned crate package (47):

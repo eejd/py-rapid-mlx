@@ -35,7 +35,19 @@ PYTHON="$CONTENTS/Resources/rapid-mlx/python/bin/python3.12"
 SITE="$CONTENTS/Resources/rapid-mlx/site-packages"
 [[ -x "$PYTHON" && -d "$SITE" ]] || { echo "Goose Chat needs the bundled Python sidecar" >&2; exit 1; }
 python3 -m pip install --disable-pip-version-check --no-deps --target "$SITE" \
-    'pypdf==6.1.3' 'openpyxl==3.1.5' 'et_xmlfile==2.0.0'
+    'openpyxl==3.1.5' 'et_xmlfile==2.0.0'
 PYTHONPATH="$SITE" "$PYTHON" -c 'import pypdf, openpyxl, csv, decimal'
+# The sidecar already bundles pypdf. Preserve its tested version and ship the
+# exact wheel notices for the helper's document readers.
+for entry in \
+    "$SITE"/pypdf-*.dist-info/licenses/LICENSE \
+    "$SITE"/openpyxl-3.1.5.dist-info/LICENCE.rst \
+    "$SITE"/et_xmlfile-2.0.0.dist-info/LICENCE.rst \
+    "$SITE"/et_xmlfile-2.0.0.dist-info/LICENCE.python; do
+    [[ -s "$entry" ]] || { echo "missing Python dependency notice: $entry" >&2; exit 1; }
+    package="$(basename "$(dirname "$entry")")"
+    if [[ "$package" == licenses ]]; then package="$(basename "$(dirname "$(dirname "$entry")")")"; fi
+    cp "$entry" "$CONTENTS/Resources/Licenses/${package}-$(basename "$entry")"
+done
 
 fi
