@@ -1827,7 +1827,8 @@ final class ServerManager {
         )
         let speculativeRequested = Self.speculativeDecodingRequested(
             defaultPreset: provenCatalogEntry?.speculativeDecodingPreset,
-            userOverrides: requestedPerformanceFlags
+            userOverrides: requestedPerformanceFlags,
+            toolsEnabled: WorkAgent.gooseChat
         )
         let speculativeApplied = hasAppliedSpeculativeDecoding(forAlias: trimmed)
         let speculativeSettingChanged = speculativeRequested != speculativeApplied
@@ -2992,7 +2993,8 @@ final class ServerManager {
         )
         let compatibleUserOverrides = Self.speculativeSafePerformanceOverrides(
             defaultPreset: catalogEntry?.speculativeDecodingPreset,
-            userOverrides: safeUserOverrides
+            userOverrides: safeUserOverrides,
+            toolsEnabled: WorkAgent.gooseChat
         )
         let mergedPerformanceFlags = Self.mergedPerformanceFlags(
             recommended: desktopDefaults,
@@ -3001,7 +3003,8 @@ final class ServerManager {
         let performanceFlags = Self.speculativeTextLaneFlags(
             requested: Self.speculativeDecodingRequested(
                 defaultPreset: catalogEntry?.speculativeDecodingPreset,
-                userOverrides: compatibleUserOverrides
+                userOverrides: compatibleUserOverrides,
+                toolsEnabled: WorkAgent.gooseChat
             ),
             supportsImageInput: catalogSupportsImageInput,
             userOverrides: safeUserOverrides,
@@ -4657,7 +4660,7 @@ final class ServerManager {
     nonisolated internal static func speculativeDecodingRequested(
         defaultPreset: SpeculativeDecodingPreset?,
         userOverrides: [String],
-        toolsEnabled: Bool = WorkAgent.gooseChat
+        toolsEnabled: Bool = false
     ) -> Bool {
         if toolsEnabled && dflashRequested(defaultPreset: defaultPreset, userOverrides: userOverrides) {
             return false
@@ -4681,7 +4684,7 @@ final class ServerManager {
     nonisolated internal static func speculativeSafePerformanceOverrides(
         defaultPreset: SpeculativeDecodingPreset?,
         userOverrides: [String],
-        toolsEnabled: Bool = WorkAgent.gooseChat
+        toolsEnabled: Bool = false
     ) -> [String] {
         if toolsEnabled && dflashRequested(defaultPreset: defaultPreset, userOverrides: userOverrides) {
             var resolved: [String] = []

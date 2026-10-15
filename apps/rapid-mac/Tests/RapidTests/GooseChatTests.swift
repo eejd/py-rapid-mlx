@@ -255,10 +255,16 @@ struct GooseChatTests {
         let userOutput = copies.appendingPathComponent("my-result.txt")
         try "copy".write(to: owned, atomically: true, encoding: .utf8)
         try "keep".write(to: userOutput, atomically: true, encoding: .utf8)
+        let copiedHash = SHA256.hash(data: Data("copy".utf8))
+            .map { String(format: "%02x", $0) }.joined()
         try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
-            folders: [folder.path], messages: [user])
+            folders: [folder.path], messages: [user], hashes: [owned.path: copiedHash])
         #expect(!FileManager.default.fileExists(atPath: owned.path))
         #expect(FileManager.default.fileExists(atPath: userOutput.path))
+        try "changed by user".write(to: owned, atomically: true, encoding: .utf8)
+        try GooseConversationRetention.deleteAttachmentDirectories([copies.path],
+            folders: [folder.path], messages: [user], hashes: [owned.path: copiedHash])
+        #expect(FileManager.default.fileExists(atPath: owned.path))
 
         let hash = SHA256.hash(data: Data(folder.path.utf8))
             .map { String(format: "%02x", $0) }.joined()
@@ -317,6 +323,9 @@ struct GooseChatTests {
         cache.remove(file.id)
         _ = try await model.gooseAttachmentNote(for: user)
         #expect(try String(contentsOf: exported, encoding: .utf8).contains("final row,42"))
+        try "user changed this copy".write(to: exported, atomically: true, encoding: .utf8)
+        _ = try await model.gooseAttachmentNote(for: user)
+        #expect(try String(contentsOf: exported, encoding: .utf8) == "user changed this copy")
     }
 
     @Test("Goose contract carries direct-chat instructions, memory and sampling")

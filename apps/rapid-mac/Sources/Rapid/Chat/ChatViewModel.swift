@@ -142,6 +142,7 @@ final class ChatViewModel {
     private var gooseSessionID: String?
     private var gooseOwnedSessions: [GooseOwnedSession] = []
     private var gooseAttachmentDirectories: [String] = []
+    private var gooseAttachmentHashes: [String: String] = [:]
     private var gooseContextIDs: [UUID] = []
     private var goosePermissions: [String: (WorkPermission, String)] = [:]
     private var gooseFolder: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace", isDirectory: true)
@@ -421,6 +422,7 @@ final class ChatViewModel {
                 conversation.gooseFolder = gooseFolder.path
                 conversation.gooseOwnedSessions = gooseOwnedSessions
                 conversation.gooseAttachmentDirectories = gooseAttachmentDirectories
+                conversation.gooseAttachmentHashes = gooseAttachmentHashes
             }
         } else {
             conversations.insert(
@@ -437,7 +439,8 @@ final class ChatViewModel {
                     gooseSessionID: gooseSessionID,
                     gooseFolder: gooseFolder.path,
                     gooseOwnedSessions: gooseOwnedSessions,
-                    gooseAttachmentDirectories: gooseAttachmentDirectories
+                    gooseAttachmentDirectories: gooseAttachmentDirectories,
+                    gooseAttachmentHashes: gooseAttachmentHashes
                 ),
                 at: 0
             )
@@ -923,6 +926,7 @@ final class ChatViewModel {
         gooseSessionID = conv.gooseSessionID
         gooseOwnedSessions = conv.gooseOwnedSessions
         gooseAttachmentDirectories = conv.gooseAttachmentDirectories
+        gooseAttachmentHashes = conv.gooseAttachmentHashes
         gooseFolder = URL(fileURLWithPath: conv.gooseFolder ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace").path)
         activeConversationID = id
         lastError = nil
@@ -960,12 +964,15 @@ final class ChatViewModel {
                     .appendingPathComponent("Attachments/\($0.id.uuidString)").path }
         }
         let ownedDirectories = recordedDirectories + legacyDirectories
+        let ownedHashes = id == activeConversationID
+            ? gooseAttachmentHashes : stored?.gooseAttachmentHashes ?? [:]
 
         if id == activeConversationID { cancelInflightWork() }
         do {
             try GooseConversationRetention.deleteSessions(ownedSessions + (legacy.map { [$0] } ?? []))
             try GooseConversationRetention.deleteAttachmentDirectories(
-                ownedDirectories, folders: Array(folders), messages: ownedMessages)
+                ownedDirectories, folders: Array(folders), messages: ownedMessages,
+                hashes: ownedHashes)
             try GooseConversationRetention.deleteContractsOwned(by: id, folders: Array(folders))
         } catch {
             lastError = "Could not remove all Chat helper data: \(error.localizedDescription)"
@@ -990,6 +997,7 @@ final class ChatViewModel {
             lastFailureAlias = nil
             gooseOwnedSessions = []
             gooseAttachmentDirectories = []
+            gooseAttachmentHashes = [:]
         }
         conversations.removeAll { $0.id == id }
         saveConversations()
@@ -1154,6 +1162,7 @@ final class ChatViewModel {
         gooseSessionID = nil
         gooseOwnedSessions = []
         gooseAttachmentDirectories = []
+        gooseAttachmentHashes = [:]
         locallyCreatedConversationID = activeConversationID
         if WorkAgent.gooseChat { WorkAgent.shared.preopenGooseChatSession() }
         lastError = nil
@@ -1576,13 +1585,28 @@ final class ChatViewModel {
             let name = image.id.uuidString + "-" + URL(fileURLWithPath: image.filename).lastPathComponent
             let destination = directory.appendingPathComponent(name)
             let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
+            let exists = FileManager.default.fileExists(atPath: safe.path)
+            let existingHash = exists
+                ? await Task.detached { Self.sha256OfFile(safe) }.value : nil
+            if exists && gooseAttachmentHashes[safe.path] != existingHash {
+                paths.append(destination.path)
+                continue
+            }
             try image.data.write(to: safe, options: .atomic)
+            gooseAttachmentHashes[safe.path] = Self.sha256(image.data)
             paths.append(destination.path)
         }
         for file in user.fileAttachments {
             let name = file.id.uuidString + ".txt"
             let destination = directory.appendingPathComponent(name)
             let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
+            let exists = FileManager.default.fileExists(atPath: safe.path)
+            let existingHash = exists
+                ? await Task.detached { Self.sha256OfFile(safe) }.value : nil
+            if exists && gooseAttachmentHashes[safe.path] != existingHash {
+                paths.append(destination.path)
+                continue
+            }
             let cache = documentCache
             let id = file.id
             let retained = await Task.detached(priority: .userInitiated) {
@@ -1598,12 +1622,23 @@ final class ChatViewModel {
                 : retained!.extractionPending ? "extraction pending"
                 : retained!.entry.hitSizeCeiling ? "truncated at retention limit"
                 : retained!.entry.isComplete ? "complete" : "incomplete extraction"
-            try ("Extraction status: \(status)\nSource: \(file.filename)\n\n" + text)
-                .write(to: safe, atomically: true, encoding: .utf8)
+            let exported = "Extraction status: \(status)\nSource: \(file.filename)\n\n" + text
+            let data = Data(exported.utf8)
+            try data.write(to: safe, options: .atomic)
+            gooseAttachmentHashes[safe.path] = Self.sha256(data)
             paths.append(destination.path)
         }
         persistActive(touching: false)
         return "\nAttached files copied into this conversation folder:\n" + paths.joined(separator: "\n")
+    }
+
+    nonisolated private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated private static func sha256OfFile(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return sha256(data)
     }
 
     private static func gooseAttachmentReferences(for user: ChatMessage) -> String {

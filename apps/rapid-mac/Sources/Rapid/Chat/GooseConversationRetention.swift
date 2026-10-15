@@ -74,7 +74,8 @@ enum GooseConversationRetention {
         }
     }
 
-    static func deleteAttachmentDirectories(_ paths: [String], folders: [String], messages: [ChatMessage]) throws {
+    static func deleteAttachmentDirectories(_ paths: [String], folders: [String],
+                                            messages: [ChatMessage], hashes: [String: String] = [:]) throws {
         let manager = FileManager.default
         for path in Set(paths) {
             let directory = URL(fileURLWithPath: path, isDirectory: true)
@@ -97,7 +98,27 @@ enum GooseConversationRetention {
             for name in filenames {
                 let file = try GooseToolPresentation.containedDestination(
                     directory.appendingPathComponent(name), root: root)
-                if manager.fileExists(atPath: file.path) { try manager.removeItem(at: file) }
+                guard manager.fileExists(atPath: file.path),
+                      let data = try? Data(contentsOf: file) else { continue }
+                let actualHash = SHA256.hash(data: data)
+                    .map { String(format: "%02x", $0) }.joined()
+                let legacyData: Data?
+                if let image = message.imageAttachments.first(where: {
+                    URL(fileURLWithPath: $0.filename).lastPathComponent == name
+                }) {
+                    legacyData = image.data
+                } else if let document = message.fileAttachments.first(where: {
+                    URL(fileURLWithPath: $0.filename).deletingPathExtension().lastPathComponent + ".txt" == name
+                }) {
+                    legacyData = Data(document.extractedText.utf8)
+                } else {
+                    legacyData = nil
+                }
+                let legacyHash = legacyData.map {
+                    SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined()
+                }
+                guard actualHash == hashes[file.path] || actualHash == legacyHash else { continue }
+                try manager.removeItem(at: file)
             }
             if try manager.contentsOfDirectory(atPath: directory.path).isEmpty {
                 try manager.removeItem(at: directory)

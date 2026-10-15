@@ -96,6 +96,8 @@ struct ChatConversation: Identifiable, Codable, Equatable {
     var gooseFolder: String? = nil
     var gooseOwnedSessions: [GooseOwnedSession] = []
     var gooseAttachmentDirectories: [String] = []
+    /// Path → SHA-256 of bytes Desktop wrote. Modified files belong to the user.
+    var gooseAttachmentHashes: [String: String] = [:]
 
     init(
         id: UUID,
@@ -115,7 +117,8 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         gooseSessionID: String? = nil,
         gooseFolder: String? = nil,
         gooseOwnedSessions: [GooseOwnedSession] = [],
-        gooseAttachmentDirectories: [String] = []
+        gooseAttachmentDirectories: [String] = [],
+        gooseAttachmentHashes: [String: String] = [:]
     ) {
         self.id = id
         self.title = title
@@ -147,6 +150,7 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         self.gooseFolder = gooseFolder
         self.gooseOwnedSessions = gooseOwnedSessions
         self.gooseAttachmentDirectories = gooseAttachmentDirectories
+        self.gooseAttachmentHashes = gooseAttachmentHashes
     }
 
     /// Hand-written so a history file written before pin/archive shipped
@@ -160,7 +164,7 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         case id, title, messages, branches, activeLeafID, branchChoices
         case createdAt, updatedAt, isPinned, isArchived, hasCustomTitle
         case hasGeneratedTitle
-        case customInstructions, folderID, gooseSessionID, gooseFolder, gooseOwnedSessions, gooseAttachmentDirectories
+        case customInstructions, folderID, gooseSessionID, gooseFolder, gooseOwnedSessions, gooseAttachmentDirectories, gooseAttachmentHashes
     }
 
     /// Hand-written to match ``init(from:)``'s string-keyed
@@ -209,6 +213,7 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(gooseFolder, forKey: .gooseFolder)
         if !gooseOwnedSessions.isEmpty { try c.encode(gooseOwnedSessions, forKey: .gooseOwnedSessions) }
         if !gooseAttachmentDirectories.isEmpty { try c.encode(gooseAttachmentDirectories, forKey: .gooseAttachmentDirectories) }
+        if !gooseAttachmentHashes.isEmpty { try c.encode(gooseAttachmentHashes, forKey: .gooseAttachmentHashes) }
     }
 
     init(from decoder: Decoder) throws {
@@ -258,6 +263,7 @@ struct ChatConversation: Identifiable, Codable, Equatable {
         gooseSessionID = try c.decodeIfPresent(String.self, forKey: .gooseSessionID)
         gooseOwnedSessions = try c.decodeIfPresent([GooseOwnedSession].self, forKey: .gooseOwnedSessions) ?? []
         gooseAttachmentDirectories = try c.decodeIfPresent([String].self, forKey: .gooseAttachmentDirectories) ?? []
+        gooseAttachmentHashes = try c.decodeIfPresent([String: String].self, forKey: .gooseAttachmentHashes) ?? [:]
         gooseFolder = try c.decodeIfPresent(String.self, forKey: .gooseFolder)
     }
 }
