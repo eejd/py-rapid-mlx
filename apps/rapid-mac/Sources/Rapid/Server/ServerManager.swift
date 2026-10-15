@@ -4656,8 +4656,12 @@ final class ServerManager {
     /// then an explicit preset, then the exact-artifact registry default.
     nonisolated internal static func speculativeDecodingRequested(
         defaultPreset: SpeculativeDecodingPreset?,
-        userOverrides: [String]
+        userOverrides: [String],
+        toolsEnabled: Bool = WorkAgent.gooseChat
     ) -> Bool {
+        if toolsEnabled && dflashRequested(defaultPreset: defaultPreset, userOverrides: userOverrides) {
+            return false
+        }
         if userOverrides.contains("--no-spec-decode") { return false }
         if continuousMTPRequested(
             defaultPreset: defaultPreset,
@@ -4676,8 +4680,26 @@ final class ServerManager {
     /// Engine default/BF16 automatically restores the qualified MTP default.
     nonisolated internal static func speculativeSafePerformanceOverrides(
         defaultPreset: SpeculativeDecodingPreset?,
-        userOverrides: [String]
+        userOverrides: [String],
+        toolsEnabled: Bool = WorkAgent.gooseChat
     ) -> [String] {
+        if toolsEnabled && dflashRequested(defaultPreset: defaultPreset, userOverrides: userOverrides) {
+            var resolved: [String] = []
+            var index = userOverrides.startIndex
+            while index < userOverrides.endIndex {
+                if userOverrides[index] == "--speculative-config" {
+                    index += 1
+                    if index < userOverrides.endIndex, !userOverrides[index].hasPrefix("--") {
+                        index += 1
+                    }
+                    continue
+                }
+                resolved.append(userOverrides[index])
+                index += 1
+            }
+            if !resolved.contains("--no-spec-decode") { resolved.append("--no-spec-decode") }
+            return resolved
+        }
         guard !userOverrides.contains("--no-spec-decode"),
               continuousMTPRequested(
                   defaultPreset: defaultPreset,
@@ -4704,6 +4726,19 @@ final class ServerManager {
         }
         resolved.append("--no-spec-decode")
         return resolved
+    }
+
+    nonisolated private static func dflashRequested(
+        defaultPreset: SpeculativeDecodingPreset?, userOverrides: [String]
+    ) -> Bool {
+        if let index = userOverrides.firstIndex(of: "--speculative-config"),
+           userOverrides.indices.contains(index + 1),
+           let data = userOverrides[index + 1].data(using: .utf8),
+           let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let method = payload["method"] as? String {
+            return method == "dflash"
+        }
+        return defaultPreset?.method == .dflash && defaultPreset?.isDefaultEnabled == true
     }
 
     nonisolated private static func continuousMTPRequested(

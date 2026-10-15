@@ -342,7 +342,9 @@ struct SettingsPerformancePanel: View {
                                 ? String(localized: "Enabled by default for this qualified model. It accelerates text generation; turn it off and restart to use photo input.")
                                 : String(localized: "MTP accelerates text generation on this model; turn it off and restart to use photo input.")
                             : preset?.method == .dflash
-                                ? String(localized: "Off by default. This qualified text-only mode uses a paired draft model and one request at a time.")
+                                ? WorkAgent.gooseChat
+                                    ? String(localized: "DFlash does not support Chat tools. Chat turns it off automatically while tools are available.")
+                                    : String(localized: "Off by default. This qualified text-only mode uses a paired draft model and one request at a time.")
                                 : String(localized: "Off by default. It can improve generation speed on some Macs, but may be slower on others; accepted output remains token-exact."),
                     warns: false
                 )
