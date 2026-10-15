@@ -2040,7 +2040,7 @@ private struct MessageRow: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            if message.status == .complete {
+            if message.status != .streaming {
                 ForEach(producedFiles, id: \.path) { file in
                     HStack(spacing: 8) {
                         Image(systemName: "doc")
