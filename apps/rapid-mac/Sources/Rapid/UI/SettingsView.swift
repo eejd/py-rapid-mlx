@@ -575,6 +575,12 @@ struct SettingsView: View {
                     if !enabled { shareCompute.leave() }
                 }
             }
+            if shareComputeEnabled {
+                SettingsSection(String(localized: "Share Compute")) {
+                    ShareComputeProviderSettings(manager: shareCompute)
+                }
+            }
+            }
         }
     }
 
