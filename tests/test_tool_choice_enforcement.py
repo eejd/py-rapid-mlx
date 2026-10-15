@@ -1560,6 +1560,7 @@ def test_4663_forced_truncated_payload_does_not_leak_to_content(choice, narratio
     message = response.json()["choices"][0]["message"]
     assert (message.get("content") or "").strip() == narration.strip(), message
     assert not message.get("reasoning_content"), message
+    assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0]["function"] == {
         "name": "add_numbers",
         "arguments": "{}",
@@ -1653,9 +1654,13 @@ def test_4663_forced_truncated_wire_in_reasoning_preserves_narration():
     )
     assert response.status_code == 200, response.text
     message = response.json()["choices"][0]["message"]
-    assert message["tool_calls"]
-    assert "Need to call the tool." in (message.get("reasoning_content") or "")
-    assert "<tool_call>" not in (message.get("reasoning_content") or "")
+    assert len(message["tool_calls"]) == 1
+    assert message["tool_calls"][0]["function"] == {
+        "name": "add_numbers",
+        "arguments": "{}",
+    }
+    assert (message.get("content") or "").strip() == "Need to call the tool."
+    assert (message.get("reasoning_content") or "").strip() == "Need to call the tool."
 
 
 def test_codex_r11_broad_scrub_does_not_cross_family_strip_marker_prose():
