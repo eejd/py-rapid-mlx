@@ -153,6 +153,16 @@ def test_unified_cli_runs_exposure_gate_immediately_after_parse(monkeypatch):
     assert observed == [("serve", True, "0.0.0.0")]
 
 
+def test_standalone_server_parser_rejects_inherited_listener(capsys):
+    from rapid_mlx import server
+
+    with pytest.raises(SystemExit) as exc_info:
+        server._build_parser().parse_args(["--model", "test", "--listen-fd", "3"])
+
+    assert exc_info.value.code == 2
+    assert "unrecognized arguments: --listen-fd 3" in capsys.readouterr().err
+
+
 def test_standalone_server_rejects_remote_local_search_after_parse(monkeypatch, capsys):
     from rapid_mlx import server
 

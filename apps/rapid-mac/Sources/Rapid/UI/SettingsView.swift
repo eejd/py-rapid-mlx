@@ -553,14 +553,22 @@ struct SettingsView: View {
                             searchRestartAlias = alias
                             confirmingSearchRestart = true
                         } else {
-                            Task { _ = await server.restartForSpawnSettings(alias: alias) }
+                            Task {
+                                if !(await server.restartForSpawnSettings(alias: alias)) {
+                                    server.appendLogLines(["Could not restart the model after disabling Local Search. Local Search remains disabled."])
+                                }
+                            }
                         }
                     }
                 }
                 .alert(String(localized: "Restart model to enable Search?"), isPresented: $confirmingSearchRestart) {
                     Button(String(localized: "Restart and enable Search")) {
                         if let alias = searchRestartAlias {
-                            Task { _ = await server.restartForSpawnSettings(alias: alias) }
+                            Task {
+                                if !(await server.restartForSpawnSettings(alias: alias)) {
+                                    server.appendLogLines(["Could not restart the model to enable Local Search. See the server status and Startup Log for details."])
+                                }
+                            }
                         }
                     }.accessibilityIdentifier("Settings.Experimental.LocalSearch.Restart")
                     Button(String(localized: "Cancel"), role: .cancel) { localSearchEnabled = false }

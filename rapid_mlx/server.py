@@ -4047,6 +4047,7 @@ def main():
             enabled=getattr(args, "enable_local_search", False),
             host=getattr(args, "host", "127.0.0.1"),
             api_key=_resolve_api_key(getattr(args, "api_key", None)),
+            inherited_listener=getattr(args, "listen_fd", None) is not None,
         )
     except ValueError as exc:
         parser.error(str(exc))
