@@ -123,6 +123,48 @@ and the fresh-prompt launch gate remain separate facts. A definitive comparison
 requires the same leased M4, exact weights, identical prompts and TTFT definition
 across fresh, identical-repeat and follow-up cases.
 
+### Latency disposition after deeper review
+
+For this single-request M4 Pro / 16 GPU / 48 GB configuration, the measured
+7.8-second first-content latency is consistent with normal fresh-prompt
+processing. It is not demonstrated to be a Rapid regression. This is an
+engineering assessment from the existing receipts and source audit, not a new
+same-machine oMLX A/B or a claim of a hardware performance ceiling.
+
+- All three fresh requests had 780/780/782 total prompt tokens and zero visible
+  reasoning characters; model loading and warmup happened before timing.
+  TTFT ranged from 7.8031 to 7.8122 seconds (9.1 ms spread). Requests were
+  sequential and used localhost, removing the public relay and concurrent
+  request queue from this timing. There is no archived GPU trace to exclude
+  every possible device-level contention or kernel inefficiency.
+- `prompt_tokens / TTFT` is 99.8-100.2 tok/s. This is an effective request rate,
+  not an instrumented GPU prefill rate: the usage receipts did not record the
+  actual cached-token count, and TTFT includes first-token work and text
+  emission. The preceding short opening was 54-56 tokens.
+- The 0.2138-second identical-repeat median and 0.3505-second follow-up median
+  demonstrate working reuse and rule out a universal seven-second frontend
+  or streaming wait. Short openings had a 0.6438-second median.
+- The pinned adapter uses the actual TensorFold family, 4-bit drafter packing,
+  one lane and the message-aware prefill plan. It submits token jobs and emits
+  incoming chunks; it does not perform model loading in the per-request path.
+  The inspected scheduler's idle queue wait is 20 ms, and adapter queue reads
+  wake on arrival (their 50 ms timeout is not a fixed per-chunk sleep).
+- Another same-hardware DFlash recipe reports 103.2 tok/s at 4K:
+  [oMLX reference](https://omlx.ai/benchmarks/performance/unjqi1po).
+  At the observed 95.9-103.2 tok/s reference rates, processing 780 tokens
+  estimates 7.56-8.13 seconds before separately modeling cache and first-token
+  overhead. Our 7.81 seconds is within that rough envelope. The recipes differ
+  in prompts, model revisions and some settings; this is not a speedup claim.
+
+Disposition: if the product accepts this hardware's fresh-prompt latency, do
+not hold release solely to pursue an arbitrary subsecond fresh-prompt target.
+Proceed to release acceptance for the signed/notarized artifact and contributor
+settlement. This does not certify full launch readiness. Do not claim industry
+best performance, negligible remaining optimization headroom, or that long
+prompts / concurrent users will have the same 7.8-second latency. The repeated
+synthetic prompt and short output do not qualify representative production
+workloads. Future prefill tuning remains separate from this release assessment.
+
 ## Limits and handoff
 
 Real API replies contained usage/cost fields, but no contributor read key was
@@ -137,10 +179,12 @@ original owning app succeeded, and both development slots subsequently returned
 `errSecItemNotFound`. Changed-signature/denied-ACL failure bounds remain a focused
 follow-up for Pixel/Atlas before making an unconditional nonblocking claim.
 
-Vector should profile the fresh M4 TensorFold prefill path: the stable local
-7.8-second result separates it from public routing overhead and from the working
-prefix cache. Atlas should retain the fresh-prompt latency launch gate. Harbor
-still needs final signed-package and contributor-ledger acceptance.
+Vector can profile the fresh M4 TensorFold prefill path as follow-up work: the
+stable local 7.8-second result separates it from public routing overhead and
+from the working prefix cache. Following the latency disposition above, Atlas
+should record acceptance of the expected fresh-prompt experience rather than
+treating this measurement alone as a demonstrated regression. Harbor still
+needs final signed-package and contributor-ledger acceptance.
 
 Private screenshots, the real-time CLI video and sanitized measurements are
 retained separately. No credentials, private machine endpoints or recordings are
