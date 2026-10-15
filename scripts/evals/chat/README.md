@@ -16,3 +16,19 @@ GAIA: after accepting the dataset terms with your own Hugging Face account, plac
 Each result record should include `benchmark`, `id`, `path` (`goose` or `direct`), `web` (true/false), `answer`, `first_visible_s`, `total_s`, `tool_calls`, `permission_prompts`, `failure`, and `empty`. Keep raw outputs in an ignored local results directory. Score Arena from blinded, position-swapped comparisons, with ties and unresolved disagreements counted separately. Use the official IFEval checker for its programmatic pass rate. Report SimpleQA labels as correct, incorrect, and not-attempted; human review is required for semantic aliases. GAIA uses its official exact-answer normalization. GDPval deliverables require the public rubrics and gold artifacts for review; existence alone is not a quality score.
 
 A 45-minute run on the 27B is a time budget, not a reason to truncate silently. Report how many records finished under that budget and mark missing scores as unmeasured. Include model revision, MTP setting, host, prompt-token count, and the command used with every summary.
+
+## Runner
+
+Launch an **isolated** 27B MTP engine, the app's `work-inference-proxy.py --goose-chat`, and a Goose `serve` helper with `--with-builtin developer,computercontroller,memory,autovisualiser,tutorial`, using the same provider JSON and environment fields as `WorkAgent.swift`. Use fresh HOME, workspace, and ports; keep Work Full and the installed app untouched. Pass the helper and engine URLs to `run.py`. The runner opens ACP sessions, supplies the bundled `chat-web-mcp.py` for web-on cases, answers permission requests once (eval YOLO), and writes resumable JSONL records. Direct baseline calls the same engine without tools. Put helper and engine secrets in `GOOSE_QA_ACP_SECRET` and `GOOSE_QA_ENGINE_BEARER` environment variables; they are never written to result files.
+
+```sh
+python3 scripts/evals/chat/run.py \
+  --acp http://127.0.0.1:<own-goose-port> \
+  --engine http://127.0.0.1:<own-engine-port> \
+  --web-script apps/rapid-mac/Work/chat-web-mcp.py \
+  --output scripts/evals/chat/results/run.jsonl \
+  --workspaces /tmp/goose-qa-workspaces
+python3 scripts/evals/chat/score.py scripts/evals/chat/results/run.jsonl
+```
+
+The runner stops at 45 minutes and preserves partial results. It does not turn unscored rows into successes. A second run resumes missing rows. The current revision captures answers and artifacts but does not automate the official IFEval checker, GAIA normalization, or rubric grading; those scores must remain pending until checked.

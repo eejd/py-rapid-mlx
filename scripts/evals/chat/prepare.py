@@ -25,13 +25,17 @@ def ranked(rows, key, count):
 
 def prepare():
     CACHE.mkdir(parents=True, exist_ok=True)
+    existing = json.loads((ROOT / "subset.json").read_text()) if (ROOT / "subset.json").exists() else None
     manifest = {"seed": "goose-chat-qa-20261015", "sources": {}, "ids": {}}
     for name, url in SOURCES.items():
         path = CACHE / (name + (".parquet" if name == "gdpval" else ".csv" if name == "simpleqa" else ".jsonl"))
         if not path.exists():
             with urllib.request.urlopen(url, timeout=60) as response:
                 path.write_bytes(response.read())
-        manifest["sources"][name] = {"url": url, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if existing and existing["sources"][name]["sha256"] != digest:
+            raise RuntimeError(f"Source changed: {name}; review before updating the fixed subset")
+        manifest["sources"][name] = {"url": url, "sha256": digest}
         if name == "gdpval":
             import pyarrow.parquet as pq
             rows = pq.read_table(path).to_pylist()
