@@ -137,6 +137,37 @@ final class ChatViewModel {
     /// outlives a switch can't bleed tokens into, or persist over, the
     /// conversation the user moved to (codex BLOCKING).
     private var conversationEpoch = 0
+    private var gooseConversationID: UUID?
+    private var gooseSessionID: String?
+    private var goosePermissions: [String: (WorkPermission, String)] = [:]
+    private var gooseFolder: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace", isDirectory: true)
+    private(set) var gooseFallback: String?
+    var gooseFolderPath: String { gooseFolder.path }
+
+    func setGooseFolder(_ url: URL) { gooseFolder = url.standardizedFileURL }
+    func retryGoose() { gooseFallback = nil; WorkAgent.shared.stop(); gooseConversationID = nil }
+    func activateGooseFallback(_ error: Error) {
+        gooseFallback = "Tools are unavailable. Chat is using the direct model. Retry"
+        WorkAgent.shared.stop()
+    }
+
+    func answerGoosePermission(_ request: WorkPermission, tool: String, allow: Bool, always: Bool = false) {
+        if always && allow { GoosePermissionPolicy.alwaysAllow(tool) }
+        WorkAgent.shared.answerPermission(request, allow: allow)
+        if let index = messages.lastIndex(where: { $0.gooseTool?.id == request.toolCallID }),
+           var card = messages[index].gooseTool {
+            card.permissionState = allow ? (always ? "always allowed" : "allowed") : "declined"
+            messages[index].gooseTool = card
+        }
+    }
+    func goosePermission(for id: String) -> (WorkPermission, String)? { goosePermissions[id] }
+    func allowPendingGoosePermissions() {
+        for (request, tool) in goosePermissions.values {
+            if messages.contains(where: { $0.gooseTool?.id == request.toolCallID && $0.gooseTool?.permissionState == "permission needed" }) {
+                answerGoosePermission(request, tool: tool, allow: true)
+            }
+        }
+    }
 
     /// ``var`` not ``let`` because ``ChatStreamClient`` is a struct
     /// and ``send()`` re-targets ``client.baseURL`` to track
@@ -350,6 +381,8 @@ final class ChatViewModel {
                 conversation.customInstructions = Self.normalizedInstruction(
                     conversationInstructions
                 )
+                conversation.gooseSessionID = gooseSessionID
+                conversation.gooseFolder = gooseFolder.path
             }
         } else {
             conversations.insert(
@@ -362,7 +395,9 @@ final class ChatViewModel {
                     branchChoices: branchChoices,
                     createdAt: now,
                     updatedAt: now,
-                    customInstructions: Self.normalizedInstruction(conversationInstructions)
+                    customInstructions: Self.normalizedInstruction(conversationInstructions),
+                    gooseSessionID: gooseSessionID,
+                    gooseFolder: gooseFolder.path
                 ),
                 at: 0
             )
@@ -380,6 +415,7 @@ final class ChatViewModel {
     /// task would have made that six places to remember. The class of bug
     /// this removes is "somebody added a third task and missed site four".
     private func cancelInflightWork() {
+        if WorkAgent.gooseChat && isStreaming { WorkAgent.shared.cancel() }
         inflight?.cancel()
         inflight = nil
         backgroundAssist?.cancel()
@@ -842,6 +878,8 @@ final class ChatViewModel {
         branchChoices = conv.branchChoices
         adoptTree(conv.allMessages, activeLeafID: conv.activeLeafID ?? conv.messages.last?.id)
         conversationInstructions = conv.customInstructions ?? ""
+        gooseSessionID = conv.gooseSessionID
+        gooseFolder = URL(fileURLWithPath: conv.gooseFolder ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace").path)
         activeConversationID = id
         lastError = nil
         lastFailureKind = nil
@@ -1033,6 +1071,7 @@ final class ChatViewModel {
         branchChoices.removeAll()
         conversationInstructions = ""
         activeConversationID = UUID()
+        gooseSessionID = nil
         locallyCreatedConversationID = activeConversationID
         lastError = nil
         lastFailureKind = nil
@@ -1272,6 +1311,14 @@ final class ChatViewModel {
                 client.baseURL = ChatStreamClient.loopbackURL(port: server.activePort)
             }
 
+            if WorkAgent.gooseChat && gooseFallback == nil {
+                do {
+                    try await self.runGooseTurn(alias: alias, placeholderIndex: placeholderIndex, epoch: epoch)
+                    return
+                } catch {
+                    self.activateGooseFallback(error)
+                }
+            }
             await self.runPlainChatTurn(
                 alias: alias,
                 initialPlaceholder: placeholderIndex,
@@ -1281,6 +1328,109 @@ final class ChatViewModel {
                 conversationInstruction: chatInstruction,
                 memoryContext: memoryContext
             )
+        }
+    }
+
+    private func runGooseTurn(alias: String, placeholderIndex: Int, epoch: Int) async throws {
+        guard let server, let bearer = server.activeBearer, server.activePort > 0 else {
+            throw WorkError.message("The local model is unavailable.")
+        }
+        try FileManager.default.createDirectory(at: gooseFolder, withIntermediateDirectories: true)
+        let agent = WorkAgent.shared
+        let existingConversation = gooseConversationID == activeConversationID
+        agent.onChatEvent = { [weak self] event in
+            guard let self, epoch == self.conversationEpoch else { return }
+            self.applyGooseEvent(event, initialPlaceholder: placeholderIndex)
+        }
+        try await agent.prepare(folder: gooseFolder, rapidPort: server.activePort,
+                                model: server.servingAlias ?? alias, bearer: bearer)
+        guard epoch == conversationEpoch, !Task.isCancelled else { return }
+        if !existingConversation {
+            if gooseConversationID != nil { try await agent.newSession() }
+            gooseConversationID = activeConversationID
+        }
+        let previous = Array(messages.prefix(placeholderIndex - 1))
+        let replay = existingConversation ? "" : Self.gooseReplay(previous)
+        let user = messages[placeholderIndex - 1]
+        let prompt = replay + user.content + (try gooseAttachmentNote(for: user))
+        await agent.prompt(prompt)
+        guard epoch == conversationEpoch else { return }
+        if let error = agent.error { throw WorkError.message(error) }
+        for index in messages.indices where messages[index].role == .assistant && messages[index].status == .streaming {
+            messages[index].status = .complete
+        }
+        isStreaming = false
+        inflight = nil
+    }
+
+    static func gooseReplay(_ prior: [ChatMessage]) -> String {
+        let turns = prior.filter { ($0.role == .user || $0.role == .assistant) && !$0.content.isEmpty }
+            .suffix(8).map { "\($0.role == .user ? "User" : "Assistant"): \(String($0.content.prefix(1200)))" }
+        guard !turns.isEmpty else { return "" }
+        return "Conversation so far (for context):\n" + turns.joined(separator: "\n") + "\n\nCurrent request: "
+    }
+
+    private func gooseAttachmentNote(for user: ChatMessage) throws -> String {
+        guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
+        let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var paths: [String] = []
+        for image in user.imageAttachments {
+            let name = URL(fileURLWithPath: image.filename).lastPathComponent
+            let destination = directory.appendingPathComponent(name)
+            try image.data.write(to: destination, options: .atomic)
+            paths.append(destination.path)
+        }
+        for file in user.fileAttachments {
+            let name = URL(fileURLWithPath: file.filename).deletingPathExtension().lastPathComponent + ".txt"
+            let destination = directory.appendingPathComponent(name)
+            try file.extractedText.write(to: destination, atomically: true, encoding: .utf8)
+            paths.append(destination.path)
+        }
+        return "\nAttached files copied into this conversation folder:\n" + paths.joined(separator: "\n")
+    }
+
+    func applyGooseEvent(_ event: GooseChatEvent, initialPlaceholder: Int) {
+        switch event {
+        case .session(let id): gooseSessionID = id
+        case .text(let chunk):
+            let index: Int
+            if let last = messages.indices.last, messages[last].role == .assistant,
+               messages[last].gooseTool == nil, messages[last].status == .streaming {
+                index = last
+            } else {
+                index = appendMessage(ChatMessage(role: .assistant, status: .streaming))
+            }
+            messages[index].content += chunk
+        case .thinking(let chunk):
+            if let last = messages.indices.last, messages[last].role == .assistant,
+               messages[last].gooseTool == nil, messages[last].status == .streaming {
+                messages[last].reasoning += chunk
+            }
+        case .tool(let id, let name, let input, let status, let output):
+            if let index = messages.lastIndex(where: { $0.gooseTool?.id == id }) {
+                var card = messages[index].gooseTool!
+                if !input.isEmpty { card.input = input }
+                if !output.isEmpty { card.output = String(output.prefix(12000)) }
+                card.status = status
+                messages[index].gooseTool = card
+            } else {
+                if let last = messages.indices.last, messages[last].status == .streaming {
+                    messages[last].status = .complete
+                }
+                appendMessage(ChatMessage(role: .assistant, status: .complete,
+                    gooseTool: GooseToolCard(id: id, name: name, input: input, status: status)))
+            }
+        case .permission(let request, let name, let state):
+            goosePermissions[request.toolCallID] = (request, name)
+            if let index = messages.lastIndex(where: { $0.gooseTool?.id == request.toolCallID }) {
+                messages[index].gooseTool?.permissionState = state
+            } else {
+                appendMessage(ChatMessage(role: .assistant, status: .complete,
+                    gooseTool: GooseToolCard(id: request.toolCallID, name: name,
+                        input: request.command, permissionState: state)))
+            }
+        case .cancelled: break
         }
     }
 

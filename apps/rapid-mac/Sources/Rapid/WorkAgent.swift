@@ -18,6 +18,7 @@ struct WorkStep: Identifiable {
 struct WorkPermission: Identifiable {
     let id: String
     let sessionID: String
+    let toolCallID: String
     let command: String
     let options: [[String: Any]]
 }
@@ -25,7 +26,10 @@ struct WorkPermission: Identifiable {
 @MainActor @Observable
 final class WorkAgent {
     static let shared = WorkAgent()
-    static var fullAccess: Bool { Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" }
+    static var gooseChat: Bool { Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat" }
+    static var fullAccess: Bool { gooseChat || Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.work-full" }
+    var onChatEvent: ((GooseChatEvent) -> Void)?
+    var currentSessionID: String? { sessionID }
     private(set) var text = ""
     private(set) var steps: [WorkStep] = []
     private(set) var isRunning = false
@@ -92,7 +96,7 @@ final class WorkAgent {
         let python = resources.appendingPathComponent("rapid-mlx/python/bin")
         let pythonExecutable = python.appendingPathComponent("python3")
         let rootSupport = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(Self.fullAccess ? "Library/Application Support/Rapid/agent-full" : "Library/Application Support/Rapid/agent", isDirectory: true)
+            .appendingPathComponent(Self.gooseChat ? "Library/Application Support/Rapid/agent-goose-chat" : (Self.fullAccess ? "Library/Application Support/Rapid/agent-full" : "Library/Application Support/Rapid/agent"), isDirectory: true)
         let folderHash = SHA256.hash(data: Data(folder.path.utf8))
             .map { String(format: "%02x", $0) }.joined()
         let support = rootSupport.appendingPathComponent("workspaces/\(folderHash)", isDirectory: true)
@@ -164,7 +168,7 @@ final class WorkAgent {
         env["GOOSE_DISABLE_KEYRING"] = "1"
         env["GOOSE_PROVIDER"] = "custom_rapid_local"
         env["GOOSE_MODEL"] = model
-        env["GOOSE_MODE"] = Self.fullAccess ? "auto" : "approve"
+        env["GOOSE_MODE"] = Self.gooseChat ? "approve" : (Self.fullAccess ? "auto" : "approve")
         env["RAPID_LOCAL_WORK_KEY"] = bearer
         env["PATH"] = python.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
         env["PYTHONPATH"] = resources.appendingPathComponent("rapid-mlx/site-packages").path
@@ -274,6 +278,7 @@ final class WorkAgent {
             throw WorkError.message("The Work session could not be created.")
         }
         sessionID = sid
+        onChatEvent?(.session(sid))
         openStream(session: sid)
         try await Task.sleep(for: .milliseconds(300))
         guard generation == sessionGeneration else { throw WorkError.message("Work stopped.") }
@@ -312,6 +317,7 @@ final class WorkAgent {
 
     func cancel() {
         guard let sessionID else { return }
+        onChatEvent?(.cancelled)
         Task {
             try? await notify(method: "session/cancel", params: ["sessionId": sessionID], session: sessionID)
             stop()
@@ -412,9 +418,18 @@ final class WorkAgent {
            let tool = params["toolCall"] as? [String: Any] {
             let input = tool["rawInput"] as? [String: Any]
             let request = WorkPermission(id: String(describing: id), sessionID: sid,
+                toolCallID: tool["toolCallId"] as? String ?? String(describing: id),
                 command: input?["command"] as? String ?? tool["title"] as? String ?? "Unknown command",
                 options: params["options"] as? [[String: Any]] ?? [])
-            if syntheticTestAutoApproval || Self.fullAccess {
+            if Self.gooseChat {
+                let name = tool["name"] as? String ?? tool["title"] as? String ?? "Tool"
+                let decision = GoosePermissionPolicy.decide(tool: name)
+                onChatEvent?(.permission(request, name, decision.cardState))
+                if decision.answer == .allow { answerPermission(request, allow: true) }
+                else if decision.answer == .decline { answerPermission(request, allow: false) }
+                else if permission == nil { permission = request }
+                else { pendingPermissions.append(request) }
+            } else if syntheticTestAutoApproval || Self.fullAccess {
                 answerPermission(request, allow: true)
             } else if permission == nil {
                 permission = request
@@ -432,11 +447,17 @@ final class WorkAgent {
             if let content = update["content"] as? [String: Any],
                content["type"] as? String == "text", let chunk = content["text"] as? String {
                 text += chunk
+                onChatEvent?(.text(chunk))
             }
+        case "agent_thought_chunk":
+            if let content = update["content"] as? [String: Any],
+               let chunk = content["text"] as? String { onChatEvent?(.thinking(chunk)) }
         case "tool_call":
             let id = update["toolCallId"] as? String ?? UUID().uuidString
             let input = update["rawInput"] as? [String: Any]
             steps.append(WorkStep(id: id, command: input?["command"] as? String ?? update["title"] as? String ?? "Tool", status: "Running"))
+            onChatEvent?(.tool(id: id, name: update["title"] as? String ?? "Tool",
+                               input: input.map { Self.printJSON($0) } ?? "", status: "running", output: ""))
         case "tool_call_update":
             guard let id = update["toolCallId"] as? String,
                   let index = steps.firstIndex(where: { $0.id == id }) else { return }
@@ -459,8 +480,16 @@ final class WorkAgent {
                let chunks = params["chunks"] as? [[String: Any]] {
                 steps[index].output += chunks.compactMap { $0["output"] as? String }.joined()
             }
+            onChatEvent?(.tool(id: id, name: update["title"] as? String ?? "Tool",
+                               input: "", status: steps[index].status, output: steps[index].output))
         default: break
         }
+    }
+
+    private static func printJSON(_ object: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return "" }
+        return text
     }
 
     private func call(method: String, params: [String: Any], session: String? = nil,

@@ -39,6 +39,8 @@ struct SettingsView: View {
     @State private var searchRestartAlias: String?
     @State private var confirmingSetupRestart = false
     @State private var restartingSetup = false
+    @AppStorage(GoosePermissionPolicy.yoloKey) private var gooseYOLODefault = false
+    @State private var gooseAllowedTools: [String] = []
     @AppStorage(LocalSearchFeatureConfig.enabledKey)
     private var localSearchEnabled = LocalSearchFeatureConfig.defaultEnabled
     @AppStorage(VideoFeatureConfig.enabledKey)
@@ -636,6 +638,29 @@ struct SettingsView: View {
     @ViewBuilder
     private var privacyPanel: some View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.xl) {
+            if WorkAgent.gooseChat {
+                SettingsSection("Tool permissions") {
+                    Toggle("YOLO default", isOn: $gooseYOLODefault)
+                    ForEach(gooseAllowedTools, id: \.self) { tool in
+                        HStack {
+                            Text(tool)
+                            Spacer()
+                            Button("Remove") {
+                                gooseAllowedTools.removeAll { $0 == tool }
+                                UserDefaults.standard.set(gooseAllowedTools, forKey: GoosePermissionPolicy.allowedKey)
+                            }
+                        }
+                    }
+                    Button("Reset all") {
+                        gooseAllowedTools = []
+                        UserDefaults.standard.removeObject(forKey: GoosePermissionPolicy.allowedKey)
+                    }
+                    .disabled(gooseAllowedTools.isEmpty)
+                }
+                .onAppear {
+                    gooseAllowedTools = UserDefaults.standard.stringArray(forKey: GoosePermissionPolicy.allowedKey) ?? []
+                }
+            }
             SectionHeader(
                 String(localized: "Privacy"),
                 subtitle: String(localized: "Rapid-MLX is local-first. Prompts, attachments, and model responses never leave your Mac. Anonymous metadata telemetry is on by default; turn it off here, with rapid-mlx telemetry off, or at https://rapidmlx.com/docs/telemetry."),

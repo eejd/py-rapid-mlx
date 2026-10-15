@@ -342,7 +342,7 @@ struct ContentView: View {
             showCommandPaletteFromRequest(commandPaletteRequest.requestID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newWorkChat)) { _ in
-            if WorkAgent.fullAccess { section = .work }
+            if WorkAgent.fullAccess && !WorkAgent.gooseChat { section = .work }
         }
         .lifecycleModifiers(
             of: self,
@@ -920,7 +920,7 @@ struct ContentView: View {
     }
 
     private func newChat() {
-        if WorkAgent.fullAccess {
+        if WorkAgent.fullAccess && !WorkAgent.gooseChat {
             section = .work
             WorkAgent.shared.beginNewChat()
             let revision = WorkAgent.shared.conversationRevision
@@ -941,7 +941,7 @@ struct ContentView: View {
     }
 
     private func openConversationSearch() {
-        guard !WorkAgent.fullAccess else { return }
+        guard !WorkAgent.fullAccess || WorkAgent.gooseChat else { return }
         showCommandPalette = false
         showConversationSearch = true
     }
@@ -1312,7 +1312,7 @@ struct ContentView: View {
     private var detailArea: some View {
         switch section {
         case .chat:
-            if WorkAgent.fullAccess { workArea } else { mainArea }
+            if WorkAgent.fullAccess && !WorkAgent.gooseChat { workArea } else { mainArea }
         case .search:
             if localSearchEnabled {
                 LocalSearchView(server: server, model: localSearch, onStartModel: {
@@ -1571,7 +1571,7 @@ struct ContentView: View {
     /// different alias. Eligibility keys on app-owned state only (see
     /// ``QuickstartCoordinator.isEligible``), never the shared HF cache.
     private var quickstartVisible: Bool {
-        if WorkAgent.fullAccess { return false }
+        if WorkAgent.fullAccess && !WorkAgent.gooseChat { return false }
         // Quickstart is a Chat onboarding surface. Server/model transitions
         // inside Audio or Images must never interrupt those workflows with a
         // global onboarding sheet.

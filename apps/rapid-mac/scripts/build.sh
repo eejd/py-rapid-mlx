@@ -30,6 +30,10 @@ if [[ "${WORK_FULL:-0}" == "1" ]]; then
     [[ "${WORK_MVP:-0}" == "1" ]] || { echo "ERR: WORK_FULL requires WORK_MVP=1" >&2; exit 1; }
     APP="$ROOT/build/Rapid-MLX Work Full.app"
 fi
+if [[ "${GOOSE_CHAT:-0}" == "1" ]]; then
+    [[ "${WORK_FULL:-0}" == "1" ]] || { echo "ERR: GOOSE_CHAT requires WORK_FULL=1" >&2; exit 1; }
+    APP="$ROOT/build/Rapid-MLX Goose Chat.app"
+fi
 CONTENTS="$APP/Contents"
 CUA_HELPER="$CONTENTS/Helpers/Rapid Computer Use.app"
 CUA_HELPER_EXECUTABLE="$CUA_HELPER/Contents/MacOS/RapidComputerUse"
@@ -234,7 +238,11 @@ fi
 cp "$RAPID_EXECUTABLE" "$CONTENTS/MacOS/Rapid"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 if [[ "${WORK_MVP:-0}" == "1" ]]; then
-    if [[ "${WORK_FULL:-0}" == "1" ]]; then
+    if [[ "${GOOSE_CHAT:-0}" == "1" ]]; then
+        plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.goose-chat' "$CONTENTS/Info.plist"
+        plutil -replace CFBundleDisplayName -string 'Rapid-MLX Goose Chat' "$CONTENTS/Info.plist"
+        plutil -replace CFBundleName -string 'Rapid-MLX Goose Chat' "$CONTENTS/Info.plist"
+    elif [[ "${WORK_FULL:-0}" == "1" ]]; then
         plutil -replace CFBundleIdentifier -string 'com.rapidmlx.rapid.work-full' "$CONTENTS/Info.plist"
         plutil -replace CFBundleDisplayName -string 'Rapid-MLX Work Full' "$CONTENTS/Info.plist"
         plutil -replace CFBundleName -string 'Rapid-MLX Work Full' "$CONTENTS/Info.plist"

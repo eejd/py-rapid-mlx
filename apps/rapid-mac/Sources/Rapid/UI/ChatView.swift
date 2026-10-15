@@ -264,6 +264,8 @@ struct ChatView: View {
 
     @State private var draft: String = ""
     @State private var attachmentDrafts = ChatAttachmentDraftStore()
+    @AppStorage(GoosePermissionPolicy.yoloKey) private var gooseYOLO = false
+    @State private var showYOLOConfirmation = false
     /// A rejected photo is a capability explanation, not an attachment
     /// failure. Keep it outside the conversation-keyed attachment draft so it
     /// can use an informational treatment and disappear as soon as the user
@@ -384,6 +386,9 @@ struct ChatView: View {
             photoCapabilityNotice.reconcile(with: availability)
         }
         .onChange(of: draft) { _, _ in photoCapabilityNotice.dismiss() }
+        .onChange(of: gooseYOLO) { _, enabled in
+            if enabled { viewModel.allowPendingGoosePermissions() }
+        }
     }
 
     // MARK: - Transcript
@@ -611,6 +616,11 @@ struct ChatView: View {
                         deletionImpact: viewModel.deletionImpact(of: message.id),
                         onDelete: {
                             _ = viewModel.deleteMessage(id: message.id)
+                        },
+                        onGooseDecision: { id, allow, always in
+                            if let (request, tool) = viewModel.goosePermission(for: id) {
+                                viewModel.answerGoosePermission(request, tool: tool, allow: allow, always: always)
+                            }
                         }
                     )
                     .frame(maxWidth: contentMaxWidth, alignment: .leading)
@@ -788,6 +798,12 @@ struct ChatView: View {
                 InlineNotice(message: error, tone: .error)
                     .frame(maxWidth: contentMaxWidth)
                     .frame(maxWidth: .infinity)
+            } else if let fallback = viewModel.gooseFallback {
+                HStack {
+                    Text(fallback).font(.caption)
+                    Button("Retry") { viewModel.retryGoose() }
+                }
+                .frame(maxWidth: contentMaxWidth)
             } else if let attachmentNotice = attachmentDraft.notice {
                 InlineNotice(message: attachmentNotice, tone: .error)
                     .frame(maxWidth: contentMaxWidth)
@@ -860,6 +876,36 @@ struct ChatView: View {
     /// right, then the send/stop button — Ollama's `model ▾  ⬆` cluster.
     private var composerControls: some View {
         HStack(spacing: RapidTheme.Space.sm) {
+            if WorkAgent.gooseChat {
+                Button {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    if panel.runModal() == .OK, let url = panel.url { viewModel.setGooseFolder(url) }
+                } label: {
+                    Label(URL(fileURLWithPath: viewModel.gooseFolderPath).lastPathComponent, systemImage: "folder")
+                        .lineLimit(1).font(.caption)
+                }
+                .buttonStyle(.plain)
+                .help(viewModel.gooseFolderPath)
+                .accessibilityIdentifier("ChatView.GooseFolder")
+                Toggle("YOLO", isOn: Binding(get: { gooseYOLO }, set: { value in
+                    if value && !UserDefaults.standard.bool(forKey: "Rapid.GooseChat.yoloConfirmed") {
+                        showYOLOConfirmation = true
+                    } else { gooseYOLO = value }
+                }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .accessibilityIdentifier("ChatView.GooseYOLO")
+                .confirmationDialog("YOLO: the assistant runs commands, edits files and uses the internet without asking. Don't use it with private documents.",
+                                    isPresented: $showYOLOConfirmation) {
+                    Button("Turn on YOLO") {
+                        UserDefaults.standard.set(true, forKey: "Rapid.GooseChat.yoloConfirmed")
+                        gooseYOLO = true
+                    }
+                }
+            }
+            if !WorkAgent.gooseChat {
             Button {
                 showsAttachmentMenu.toggle()
             } label: {
@@ -924,6 +970,7 @@ struct ChatView: View {
                 }
                 .padding(RapidTheme.Space.sm)
                 .frame(width: 190)
+            }
             }
             Button {
                 conversationInstructionsDraft = viewModel.conversationInstructions
@@ -1602,6 +1649,44 @@ struct ChatView: View {
 /// One transcript row — a user prompt bubble, an assistant answer
 /// (markdown + optional reasoning disclosure + stats/error captions),
 /// or a neutral system note.
+private struct GooseToolCardView: View {
+    let card: GooseToolCard
+    let onDecision: (String, Bool, Bool) -> Void
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(card.input).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                if !card.output.isEmpty {
+                    Divider()
+                    Text(String(card.output.prefix(4000)))
+                        .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "hammer")
+                Text(card.name).fontWeight(.medium)
+                Text(card.input.components(separatedBy: .newlines).first.map { String($0.prefix(100)) } ?? "")
+                    .lineLimit(1).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text(card.status == "running" ? "◌" : card.status.lowercased().contains("fail") ? "✗" : "✓")
+                if let permission = card.permissionState { Text(permission).font(.caption2).foregroundStyle(.secondary) }
+            }.font(.caption)
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("ChatView.GooseTool.\(card.id)")
+        if card.permissionState == "permission needed" {
+            HStack {
+                Button("Allow once") { onDecision(card.id, true, false) }
+                Button("Always allow") { onDecision(card.id, true, true) }
+                Button("Decline") { onDecision(card.id, false, false) }
+            }.controlSize(.small)
+        }
+    }
+}
+
 private struct MessageRow: View {
     let message: ChatMessage
     let isStreaming: Bool
@@ -1636,6 +1721,7 @@ private struct MessageRow: View {
     /// Delete this message and its whole subtree. Called only after the
     /// confirmation below is accepted.
     var onDelete: () -> Void = {}
+    var onGooseDecision: (String, Bool, Bool) -> Void = { _, _, _ in }
 
     @State private var reasoningExpanded: Bool = false
     @State private var isEditing: Bool = false
@@ -1881,6 +1967,9 @@ private struct MessageRow: View {
 
     private var assistantBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let card = message.gooseTool {
+                GooseToolCardView(card: card, onDecision: onGooseDecision)
+            }
             if !message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 reasoningDisclosure
             }

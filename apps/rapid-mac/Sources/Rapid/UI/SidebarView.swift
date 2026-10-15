@@ -295,7 +295,7 @@ struct SidebarView: View {
     private var fullColumn: some View {
         VStack(alignment: .leading, spacing: 1) {
             brandLockup
-            if WorkAgent.fullAccess && workHelperAvailable {
+            if WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable {
                 workRow
             }
             row(
@@ -319,16 +319,17 @@ struct SidebarView: View {
                 action: { selection = .audio }
             )
             .accessibilityIdentifier("Sidebar.Audio")
-            row(
+            if !WorkAgent.gooseChat { row(
                 title: String(localized: "Agent"),
                 systemImage: "network",
                 isSelected: selection == .launch,
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
-            if !WorkAgent.fullAccess && workHelperAvailable { workRow }
+            }
+            if !WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable { workRow }
 
-            if computerUseEnabled {
+            if computerUseEnabled && !WorkAgent.gooseChat {
                 if let cuaViewModel {
                     CUASidebarRow(
                         isSelected: selection == .computerUse,
@@ -666,7 +667,7 @@ struct SidebarView: View {
                 .frame(width: 40, height: 1)
                 .accessibilityHidden(true)
 
-            if WorkAgent.fullAccess && workHelperAvailable { compactWorkItem }
+            if WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable { compactWorkItem }
 
             compactItem(
                 title: String(localized: "New Chat"),
@@ -689,14 +690,15 @@ struct SidebarView: View {
                 action: { selection = .audio }
             )
             .accessibilityIdentifier("Sidebar.Audio")
-            compactItem(
+            if !WorkAgent.gooseChat { compactItem(
                 title: String(localized: "Launch"),
                 systemImage: "paperplane",
                 isSelected: selection == .launch,
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
-            if !WorkAgent.fullAccess && workHelperAvailable { compactWorkItem }
+            }
+            if !WorkAgent.fullAccess && !WorkAgent.gooseChat && workHelperAvailable { compactWorkItem }
 
             if videoGenerationEnabled {
                 compactItem(
@@ -717,7 +719,7 @@ struct SidebarView: View {
                 .accessibilityIdentifier("Sidebar.Search")
                 .keyboardShortcut("f", modifiers: [.command, .shift])
             }
-            if computerUseEnabled {
+            if computerUseEnabled && !WorkAgent.gooseChat {
                 compactItem(
                     title: String(localized: "Computer Use"),
                     systemImage: "macwindow.on.rectangle",

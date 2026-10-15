@@ -459,7 +459,7 @@ struct RapidApp: App {
         .defaultSize(width: MainWindowDefaults.width, height: MainWindowDefaults.height)
         .windowResizability(.contentMinSize)
         .commands {
-            if WorkAgent.fullAccess {
+            if WorkAgent.fullAccess && !WorkAgent.gooseChat {
                 CommandGroup(replacing: .newItem) {
                     Button("New Chat") {
                         WorkAgent.shared.beginNewChat()
