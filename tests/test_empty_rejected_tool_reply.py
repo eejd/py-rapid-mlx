@@ -42,10 +42,13 @@ def test_nonstream_rejected_only_call_has_safe_content(monkeypatch):
     cfg = get_config()
     monkeypatch.setattr(cfg, "enable_auto_tool_choice", True)
     monkeypatch.setattr(cfg, "tool_call_parser", "qwen3_coder_xml")
-    content, calls = helpers._parse_tool_calls_with_parser(REJECTED, _Request())
+    metadata = {}
+    content, calls = helpers._parse_tool_calls_with_parser(
+        REJECTED, _Request(), parse_metadata=metadata
+    )
     assert calls is None
-    assert content == NOTICE
-    assert "web_search" not in content
+    assert content == ""
+    assert metadata == {"undeclared_tool_dropped": True}
 
 
 class _Engine:
@@ -54,8 +57,9 @@ class _Engine:
     supports_guided_generation = False
     tokenizer = None
 
-    def __init__(self, text=REJECTED):
+    def __init__(self, text=REJECTED, deltas=None):
         self.text = text
+        self.deltas = deltas or [text]
 
     def build_prompt(self, messages, tools=None, enable_thinking=None):
         return "PROMPT"
@@ -70,15 +74,19 @@ class _Engine:
         )
 
     async def stream_chat(self, messages, **kwargs):
-        yield GenerationOutput(
-            text=self.text,
-            new_text=self.text,
-            prompt_tokens=4,
-            completion_tokens=20,
-            finished=True,
-            finish_reason="stop",
-            channel=None,
-        )
+        accumulated = ""
+        for i, delta in enumerate(self.deltas):
+            accumulated += delta
+            last = i == len(self.deltas) - 1
+            yield GenerationOutput(
+                text=accumulated,
+                new_text=delta,
+                prompt_tokens=4,
+                completion_tokens=i + 1,
+                finished=last,
+                finish_reason="stop" if last else None,
+                channel=None,
+            )
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -124,7 +132,8 @@ def test_chat_reply_after_rejected_only_call(stream):
         reset_config()
 
 
-def test_streaming_rejected_call_after_reasoning_has_visible_notice():
+@pytest.mark.parametrize("stream", [False, True])
+def test_rejected_call_after_reasoning_has_visible_notice(stream):
     cfg = reset_config()
     cfg.engine = _Engine("<think>Need to search.</think>" + REJECTED)
     cfg.model_name = "test-model"
@@ -140,8 +149,47 @@ def test_streaming_rejected_call_after_reasoning_has_visible_notice():
             "/v1/chat/completions",
             json={
                 "model": "test-model",
-                "stream": True,
+                "stream": stream,
                 "enable_thinking": True,
+                "messages": [{"role": "user", "content": "What's the price?"}],
+                "tools": TOOLS,
+            },
+        )
+        assert response.status_code == 200, response.text
+        if stream:
+            choices = [
+                choice
+                for line in response.text.splitlines()
+                if line.startswith("data: {")
+                for choice in json.loads(line[6:])["choices"]
+            ]
+            content = "".join((c["delta"].get("content") or "") for c in choices)
+            assert choices[-1]["finish_reason"] == "stop"
+        else:
+            choice = response.json()["choices"][0]
+            content = choice["message"]["content"]
+            assert choice["finish_reason"] == "stop"
+        assert content == NOTICE
+    finally:
+        reset_config()
+
+
+def test_streamed_whitespace_before_rejected_call_still_gets_notice():
+    cfg = reset_config()
+    cfg.engine = _Engine(deltas=[" \n", REJECTED])
+    cfg.model_name = "test-model"
+    cfg.model_registry = None
+    cfg.no_thinking = True
+    cfg.enable_auto_tool_choice = True
+    cfg.tool_call_parser = "qwen3_coder_xml"
+    app = FastAPI()
+    app.include_router(chat_router)
+    try:
+        response = TestClient(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "stream": True,
                 "messages": [{"role": "user", "content": "What's the price?"}],
                 "tools": TOOLS,
             },
@@ -153,8 +201,49 @@ def test_streaming_rejected_call_after_reasoning_has_visible_notice():
             if line.startswith("data: {")
             for choice in json.loads(line[6:])["choices"]
         ]
-        assert "".join((c["delta"].get("content") or "") for c in choices) == NOTICE
-        assert choices[-1]["finish_reason"] == "stop"
+        content = "".join((c["delta"].get("content") or "") for c in choices)
+        assert content.strip() == NOTICE
+    finally:
+        reset_config()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_required_tool_recovery_does_not_include_failure_notice(stream):
+    cfg = reset_config()
+    cfg.engine = _Engine()
+    cfg.model_name = "test-model"
+    cfg.model_registry = None
+    cfg.no_thinking = True
+    cfg.enable_auto_tool_choice = True
+    cfg.tool_call_parser = "qwen3_coder_xml"
+    app = FastAPI()
+    app.include_router(chat_router)
+    try:
+        response = TestClient(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "stream": stream,
+                "tool_choice": "required",
+                "messages": [{"role": "user", "content": "Use a tool."}],
+                "tools": TOOLS,
+            },
+        )
+        assert response.status_code == 200, response.text
+        if stream:
+            choices = [
+                choice
+                for line in response.text.splitlines()
+                if line.startswith("data: {")
+                for choice in json.loads(line[6:])["choices"]
+            ]
+            content = "".join((c["delta"].get("content") or "") for c in choices)
+            assert any(c["delta"].get("tool_calls") for c in choices)
+        else:
+            choice = response.json()["choices"][0]
+            content = choice["message"].get("content") or ""
+            assert choice["message"].get("tool_calls")
+        assert NOTICE not in content
     finally:
         reset_config()
 

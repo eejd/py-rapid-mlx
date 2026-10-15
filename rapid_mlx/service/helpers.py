@@ -3522,6 +3522,7 @@ def _parse_tool_calls_with_parser(
     request=None,
     *,
     structured_tool_calls: list[dict] | None = None,
+    parse_metadata: dict[str, bool] | None = None,
 ) -> tuple[str, list | None]:
     """Parse tool calls, then honor ``tool_choice="none"`` by dropping them.
 
@@ -3536,7 +3537,10 @@ def _parse_tool_calls_with_parser(
     is preserved unchanged.
     """
     content, tool_calls = _run_tool_parser(
-        output_text, request, structured_tool_calls=structured_tool_calls
+        output_text,
+        request,
+        structured_tool_calls=structured_tool_calls,
+        parse_metadata=parse_metadata,
     )
     if tool_choice_is_none(request):
         return content, None
@@ -3548,6 +3552,7 @@ def _run_tool_parser(
     request=None,
     *,
     structured_tool_calls: list[dict] | None = None,
+    parse_metadata: dict[str, bool] | None = None,
 ) -> tuple[str, list | None]:
     """Parse tool calls from model output using the configured parser.
 
@@ -3634,6 +3639,10 @@ def _run_tool_parser(
     try:
         parser.reset()
         result = parser.extract_tool_calls(output_text, request_dict)
+        if parse_metadata is not None and cfg.tool_call_parser == "qwen3_coder_xml":
+            parse_metadata["undeclared_tool_dropped"] = bool(
+                getattr(parser, "_undeclared_dropped", 0)
+            )
         if result.tools_called:
             tool_calls = [
                 ToolCall(
@@ -3652,18 +3661,6 @@ def _run_tool_parser(
                 # The Qwen parser made an authoritative declared-name decision.
                 # Falling through to the generic parser would re-promote the
                 # exact undeclared/tool_choice=none span it rejected.
-                if (
-                    not (result.content or "").strip()
-                    and getattr(parser, "_undeclared_dropped", 0)
-                    and not _is_structured_output_requested(
-                        getattr(request, "response_format", None)
-                    )
-                ):
-                    from ..tool_parsers.qwen3coder_tool_parser import (
-                        UNAVAILABLE_TOOL_NOTICE,
-                    )
-
-                    return UNAVAILABLE_TOOL_NOTICE, None
                 return result.content or "", None
             return parse_tool_calls(output_text, request_dict)
     except Exception as e:
