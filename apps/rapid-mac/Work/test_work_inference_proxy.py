@@ -110,6 +110,7 @@ class StreamRateTests(unittest.TestCase):
         self.assertEqual(parameters["properties"]["description"], {"type": "string"})
         self.assertIn("current facts", compact["messages"][0]["content"])
         self.assertIn("exact URL", compact["messages"][0]["content"])
+        self.assertIn("without a preamble", compact["messages"][0]["content"])
         self.assertIn("developer file tools", compact["messages"][0]["content"])
 
     def test_focused_inner_tool_keeps_parameter_guidance(self):

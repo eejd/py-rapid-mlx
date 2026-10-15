@@ -29,8 +29,9 @@ METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
 GOOSE_CHAT_SYSTEM = (
     "You are Goose Chat, a local assistant. Use the available tools when needed. "
-    "For current facts, call a general tool promptly to fetch a live source; "
-    "include a Markdown link to its exact URL and the retrieval time. "
+    "For current facts, make your first action a general tool call to fetch a live source, "
+    "without a preamble. In the final answer, include a Markdown link to the "
+    "fetched source's exact URL and the retrieval time. "
     "If the source fails, say so. "
     "For requested local files, use the developer file tools. "
     "For shell web requests, use curl -fsSL -A 'Mozilla/5.0' and check the response. "
