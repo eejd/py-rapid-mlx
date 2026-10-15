@@ -285,6 +285,45 @@ struct GooseChatTests {
         sqlite3_finalize(statement)
     }
 
+    @Test("Goose exports the retained extract and replays attachment-only rows")
+    func retainedAttachment() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("goose-extract-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cache = DocumentContentCache(diskDirectory: nil)
+        let file = try ChatFileAttachment(filename: "large.csv", kind: .csv,
+            extractedText: "opening preview", sourceByteCount: 100, totalCharacterCount: 28)
+        cache.put(file.id, entry: DocumentContentCache.Entry(
+            filename: file.filename, text: "opening preview\nfinal row,42", isComplete: true))
+        let model = ChatViewModel(persistsConversations: false, documentCache: cache)
+        model.setGooseFolder(folder)
+        let user = ChatMessage(role: .user, fileAttachments: [file])
+        let note = try model.gooseAttachmentNote(for: user)
+        let exported = folder.appendingPathComponent("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt")
+        #expect(note.contains(exported.path))
+        #expect(try String(contentsOf: exported, encoding: .utf8).contains("Extraction status: complete"))
+        #expect(try String(contentsOf: exported, encoding: .utf8).contains("final row,42"))
+        let replay = ChatViewModel.gooseReplay([user])
+        #expect(replay.contains("Attachments/\(user.id.uuidString)/\(file.id.uuidString).txt"))
+    }
+
+    @Test("Goose contract carries direct-chat instructions, memory and sampling")
+    func requestContract() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let sampling = ResolvedSampling(temperature: 0.23, topP: 0.95,
+            maxTokens: 1536, repetitionPenalty: 1.1,
+            repetitionPenaltyIsImplicitDefault: true, enableThinking: false)
+        let expected = ChatViewModel.addingInstructionLayers(to: [],
+            dateContext: ChatViewModel.currentDateContext(now: date),
+            memoryContext: "Remember the user's project", global: "Be concise",
+            conversation: "Use Swift").first?.content
+        let contract = ChatViewModel.gooseRequestContract(
+            globalInstruction: "Be concise", conversationInstruction: "Use Swift",
+            memoryContext: "Remember the user's project", sampling: sampling, now: date)
+        #expect(contract["system_prompt"] as? String == expected)
+        #expect(contract["temperature"] as? Double == 0.23)
+        #expect(contract["max_tokens"] as? Int == 1536)
+    }
+
     @Test("Goose chats appear newest first and reopen their saved transcript")
     func historyList() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("goose-history-\(UUID())")

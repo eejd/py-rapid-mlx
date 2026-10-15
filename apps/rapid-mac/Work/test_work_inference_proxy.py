@@ -59,6 +59,19 @@ class StreamRateTests(unittest.TestCase):
         self.assertIn("GOOGL is Alphabet Class A", compact["messages"][0]["content"])
         self.assertIn("google.com/finance/quote/GOOGL:NASDAQ", compact["messages"][0]["content"])
 
+    def test_desktop_system_and_sampling_survive_goose_compaction(self):
+        request = {"_rapid_desktop_system": True, "temperature": 0.2,
+                   "max_tokens": 1234, "messages": [
+                       {"role": "system", "content": "User memory and instructions"},
+                       {"role": "system", "content": "Goose long prompt"},
+                       {"role": "user", "content": "Hello"}]}
+        compact = self.module.compact_goose_request(request)
+        self.assertEqual(compact["messages"][0]["content"], "User memory and instructions")
+        self.assertEqual(compact["messages"][1]["content"], self.module.GOOSE_CHAT_SYSTEM)
+        self.assertEqual(compact["temperature"], 0.2)
+        self.assertEqual(compact["max_tokens"], 1234)
+        self.assertNotIn("_rapid_desktop_system", compact)
+
     def test_rotated_server_key_is_read_for_each_upstream_request(self):
         module = self.module
         with tempfile.TemporaryDirectory() as directory:

@@ -944,10 +944,14 @@ final class ChatViewModel {
             guard let session = conversation.gooseSessionID, let folder = conversation.gooseFolder else { return nil }
             return GooseOwnedSession(id: session, folder: folder)
         }
-        let folders = Set((ownedSessions + (legacy.map { [$0] } ?? [])).map(\.folder)
-            + (stored?.gooseFolder.map { [$0] } ?? []) + (id == activeConversationID ? [gooseFolder.path] : []))
         let recordedDirectories = id == activeConversationID
             ? gooseAttachmentDirectories : stored?.gooseAttachmentDirectories ?? []
+        let recordedFolders = recordedDirectories.map {
+            URL(fileURLWithPath: $0).deletingLastPathComponent().deletingLastPathComponent().path
+        }
+        let folders = Set((ownedSessions + (legacy.map { [$0] } ?? [])).map(\.folder)
+            + (stored?.gooseFolder.map { [$0] } ?? [])
+            + (id == activeConversationID ? [gooseFolder.path] : []) + recordedFolders)
         let ownedMessages = id == activeConversationID ? liveTree() : stored?.allMessages ?? []
         let legacyDirectories = folders.flatMap { folder in
             ownedMessages.filter { !$0.fileAttachments.isEmpty || !$0.imageAttachments.isEmpty }
@@ -1537,7 +1541,7 @@ final class ChatViewModel {
         gooseContextIDs = []
     }
 
-    private func gooseAttachmentNote(for user: ChatMessage) throws -> String {
+    func gooseAttachmentNote(for user: ChatMessage) throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
         let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
         _ = try GooseToolPresentation.containedDestination(directory, root: gooseFolder)
@@ -1584,16 +1588,9 @@ final class ChatViewModel {
     private func writeGooseRequestContract(globalInstruction: String,
                                            conversationInstruction: String,
                                            memoryContext: String?) throws {
-        let system = Self.addingInstructionLayers(to: [],
-            dateContext: Self.currentDateContext(now: Date()),
-            memoryContext: memoryContext, global: globalInstruction,
-            conversation: conversationInstruction).first?.content ?? ""
-        let resolved = sampling?.resolved(toolsEnabled: false)
-        let contract: [String: Any] = [
-            "system_prompt": system,
-            "temperature": resolved?.temperature ?? SamplingConfig.temperatureDefault,
-            "max_tokens": resolved?.maxTokens ?? SamplingConfig.maxTokensDefault,
-        ]
+        let contract = Self.gooseRequestContract(globalInstruction: globalInstruction,
+            conversationInstruction: conversationInstruction, memoryContext: memoryContext,
+            sampling: sampling?.resolved(toolsEnabled: false), now: Date())
         let digest = SHA256.hash(data: Data(gooseFolder.path.utf8))
             .map { String(format: "%02x", $0) }.joined()
         let root = FileManager.default.homeDirectoryForCurrentUser
@@ -1601,6 +1598,21 @@ final class ChatViewModel {
         let destination = root.appendingPathComponent(digest).appendingPathComponent("chat-contract.json")
         let safe = try GooseToolPresentation.containedDestination(destination, root: root)
         try JSONSerialization.data(withJSONObject: contract).write(to: safe, options: .atomic)
+    }
+
+    static func gooseRequestContract(globalInstruction: String,
+                                     conversationInstruction: String,
+                                     memoryContext: String?,
+                                     sampling: ResolvedSampling?, now: Date) -> [String: Any] {
+        let system = Self.addingInstructionLayers(to: [],
+            dateContext: Self.currentDateContext(now: now),
+            memoryContext: memoryContext, global: globalInstruction,
+            conversation: conversationInstruction).first?.content ?? ""
+        return [
+            "system_prompt": system,
+            "temperature": sampling?.temperature ?? SamplingConfig.temperatureDefault,
+            "max_tokens": sampling?.maxTokens ?? SamplingConfig.maxTokensDefault,
+        ]
     }
 
     func applyGooseEvent(_ event: GooseChatEvent, initialPlaceholder: Int) {

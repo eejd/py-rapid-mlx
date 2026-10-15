@@ -52,10 +52,8 @@ if len(sys.argv) > 1 and sys.argv[1] == "--credential-bridge":
                 messages = request.get("messages", [])
                 system = contract.get("system_prompt", "")
                 if system:
-                    if messages and messages[0].get("role") == "system":
-                        messages[0]["content"] = system + "\n\n" + str(messages[0].get("content", ""))
-                    else:
-                        messages.insert(0, {"role": "system", "content": system})
+                    messages.insert(0, {"role": "system", "content": system})
+                    request["_rapid_desktop_system"] = True
                 request["messages"] = messages
                 request["temperature"] = contract["temperature"]
                 request["max_tokens"] = contract["max_tokens"]
