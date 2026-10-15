@@ -69,7 +69,7 @@ enum GooseToolPresentation {
                 .compactMap({ args[$0] as? String }).first else { return nil }
         let root = URL(fileURLWithPath: folder, isDirectory: true).standardizedFileURL
         let file = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL
-        guard file.path.hasPrefix(root.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/") else { return nil }
+        guard file.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/") else { return nil }
         return file
     }
 
@@ -81,7 +81,8 @@ enum GooseToolPresentation {
         let path = ["path", "file_path", "filename", "file", "target_path", "url"]
             .compactMap { args[$0] as? String }.first
         let relative: String? = path.map { value in
-            let prefix = URL(fileURLWithPath: folder).standardizedFileURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+            let root = URL(fileURLWithPath: folder).standardizedFileURL.path
+            let prefix = root.hasSuffix("/") ? root : root + "/"
             if value.hasPrefix(prefix) { return String(value.dropFirst(prefix.count)) }
             return value.hasPrefix("/") ? URL(fileURLWithPath: value).lastPathComponent : value
         }

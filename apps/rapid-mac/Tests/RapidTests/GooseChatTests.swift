@@ -9,6 +9,7 @@ struct GooseChatTests {
     func toolTitles() {
         let folder = "/tmp/chat"
         #expect(GooseToolPresentation.title(name: "developer__write_file", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Wrote snake.html")
+        #expect(GooseToolPresentation.title(name: "developer__write_file", input: #"{"path":"/tmp/chat/games/snake.html"}"#, folder: folder) == "Wrote games/snake.html")
         #expect(GooseToolPresentation.title(name: "developer__edit_file", input: #"{"path":"/tmp/chat/snake.html"}"#, folder: folder) == "Edited snake.html")
         #expect(GooseToolPresentation.title(name: "developer__shell", input: #"{"command":"python3 hello.py"}"#, folder: folder) == "Ran `python3 hello.py`")
         #expect(GooseToolPresentation.title(name: "developer__list", input: "{}", folder: folder) == "Listed files")
