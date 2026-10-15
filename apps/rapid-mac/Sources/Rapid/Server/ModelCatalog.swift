@@ -2373,6 +2373,15 @@ enum ModelCatalog {
             try? stderr.fileHandleForWriting.close()
             processBox.terminateIfCancelled()
             processRegistry.terminateIfShuttingDown(task)
+            // Goose Chat can still start a manually chosen, cached model when
+            // the host's large cache inventory blocks in a filesystem probe.
+            // Bound only this experimental bundle's catalog children; the
+            // existing Chat catalog behavior stays unchanged elsewhere.
+            if Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat" {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20) {
+                    processBox.cancel()
+                }
+            }
             }
         } onCancel: {
             processBox.cancel()
