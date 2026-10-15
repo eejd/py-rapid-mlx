@@ -278,7 +278,8 @@ def _model_supports_gemma4_last_position(model: nn.Module) -> bool:
             and parameter.kind
             in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
             and all(
-                any(
+                call is not None
+                and any(
                     key in inspect.getsource(call)
                     for key in ('"logits_to_keep"', "'logits_to_keep'")
                 )

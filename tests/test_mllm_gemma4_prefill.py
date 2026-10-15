@@ -247,8 +247,9 @@ def test_real_language_model_retains_cache_and_next_decode(preserved_random_stat
     )
     assert kept.shape == (1, 1, 32)
     # Different query lengths can select different GPU reduction kernels.
-    # Pin the sampled token and exact producer state rather than bit-identical
-    # prefill logits, then verify the next decode against the full prefill.
+    # M5 showed ~1e-3 shape-dependent float32 error; M3 was below 4e-7.
+    # Bound every retained logit as well as the sampled token and exact cache.
+    assert bool(mx.allclose(kept, baseline[:, -1:, :], atol=2e-3, rtol=1e-4))
     assert bool(mx.array_equal(mx.argmax(kept, -1), mx.argmax(baseline[:, -1:, :], -1)))
     for before, after in zip(full_cache, kept_cache, strict=True):
         assert before.offset == after.offset == 5

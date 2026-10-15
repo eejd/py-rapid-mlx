@@ -101,7 +101,10 @@ Pool the six measured requests per variant/shape and compare medians.
 `tests/test_mllm_gemma4_prefill.py`: 24 passed on M5. Disabling the new
 `logits_to_keep=1` assignment made the ordinary text and image tests fail.
 The real tiny Gemma test verifies complete producer cache, selected token,
-and the next decode, including a trailing KV-sharing layer.
+and the next decode, including a trailing KV-sharing layer. Retained prefill
+logits are also bounded at absolute tolerance 0.002 / relative 0.0001:
+shape-dependent float32 differences were approximately 0.001 on M5 and below
+0.0000004 on M3. Exact cache and next-decode assertions remain stricter.
 
 The focused six-file suite produced 306 passed and three failures in existing
 chunked-prefill numerical assertions (`kv`, `rot:64`, `rot:16`). All three
