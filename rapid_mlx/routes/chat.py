@@ -6739,9 +6739,7 @@ async def _create_chat_completion_impl(
         json_mode=_is_structured_output_requested(response_format),
     )
     if _should_scrub_visible_wire(cleaned_text, allow_raw_context=False):
-        cleaned_text = _scrub_visible_tool_wire_leaks(
-            cleaned_text, allow_truncated=True
-        )
+        cleaned_text = _scrub_visible_tool_wire_leaks(cleaned_text)
     if _should_scrub_visible_wire(reasoning_text) and reasoning_text:
         reasoning_text = _scrub_visible_tool_wire_leaks(
             reasoning_text, allow_truncated=True
