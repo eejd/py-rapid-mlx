@@ -1095,7 +1095,6 @@ final class ChatViewModel {
         cancelInflightWork()
         if WorkAgent.gooseChat {
             WorkAgent.shared.beginNewChat()
-            Task { try? await WorkAgent.shared.newSession() }
         }
         conversationEpoch &+= 1
         // Fix: without this a New Chat during a stream leaves the empty
