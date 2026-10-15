@@ -91,6 +91,9 @@ struct GooseChatTests {
         #expect(model.messages[1].content == "HelloDone")
         #expect(model.messages[1].gooseParts?.count == 3)
         #expect(model.messages[1].gooseParts?[2].text == "Done")
+        #expect(model.messages[1].gooseParts?.allSatisfy {
+            $0.tool != nil || $0.text?.isEmpty == false
+        } == true)
         model.applyGooseEvent(.error("tool failed"), initialPlaceholder: 1)
         #expect(model.lastError == "tool failed")
         #expect(model.messages.last?.status == .failed)
