@@ -5,6 +5,161 @@ import Testing
 @MainActor
 @Suite("Goose Chat")
 struct GooseChatTests {
+    @Test("ACP session identity rejects foreign updates and merges out-of-order tool cards")
+    func wireSessionAndTools() throws {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        var events: [GooseChatEvent] = []
+        agent.onChatEvent = { events.append($0) }
+        func wire(_ json: String) throws { try agent.handleWire(Data(json.utf8)) }
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-b","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"foreign"}}}}"#)
+        #expect(events.isEmpty)
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":{"stdout":"done"}}}}"#)
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Write","rawInput":{"path":"file.txt"}}}}"#)
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"tool_call_update","toolCallId":"t1","content":[{"type":"text","text":"done"}]}}}"#)
+        let cards = events.compactMap { event -> (String, String)? in
+            if case let .tool(id, _, _, status, output) = event { return (status, output) }
+            return nil
+        }
+        #expect(cards.count == 3)
+        #expect(cards.allSatisfy { $0.0 == "completed" })
+        #expect(cards.last?.1 == "done")
+        agent.stop()
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"late"}}}}"#)
+        #expect(events.count == 3)
+        agent.acceptSessionForTesting("session-b", folder: URL(fileURLWithPath: "/tmp/b"))
+        try wire(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"old session"}}}}"#)
+        #expect(events.count == 3)
+    }
+
+    @Test("ACP permission identity is consumed once and reset with the turn")
+    func permissionOwner() {
+        let owner = GooseTurnOwner()
+        let folder = URL(fileURLWithPath: "/tmp/a")
+        owner.bind(sessionID: "session-a", folder: folder)
+        let request = WorkPermission(id: "42", sessionID: "session-a", toolCallID: "t1", command: "run", options: [])
+        #expect(owner.register(request))
+        #expect(!owner.register(request))
+        #expect(owner.consume(request))
+        #expect(!owner.consume(request))
+        owner.reset()
+        #expect(!owner.register(request))
+        #expect(!owner.accepts("session-a", generation: 0))
+        owner.bind(sessionID: "session-b", folder: folder)
+        #expect(!owner.register(request))
+    }
+
+    @Test("ACP EOF fails an in-flight RPC immediately and the next session can bind")
+    func wireEOF() async throws {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        let response = HTTPURLResponse(url: URL(string: "http://127.0.0.1/acp")!, statusCode: 200,
+                                       httpVersion: nil, headerFields: nil)!
+        agent.transport = ACPTransport(send: { _ in (Data(), response) })
+        let pending = Task { () -> Bool in
+            do {
+                _ = try await agent.call(method: "session/prompt", params: ["sessionId": "session-a"],
+                                         session: "session-a", timeout: 900)
+                return false
+            } catch {
+                return true
+            }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        try agent.handleWire(Data(#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-a","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}}"#.utf8))
+        #expect(agent.text == "partial")
+        let oldGeneration = agent.lifecycleGeneration
+        agent.helperStreamEnded(generation: oldGeneration, session: "session-a")
+        #expect(await pending.value)
+        #expect(agent.error == "The Chat helper stopped unexpectedly.")
+        agent.acceptSessionForTesting("session-b", folder: URL(fileURLWithPath: "/tmp/b"))
+        #expect(agent.currentSessionID == "session-b")
+        agent.helperStreamEnded(generation: oldGeneration, session: "session-a")
+        #expect(agent.currentSessionID == "session-b")
+    }
+
+    @Test("Idle helper EOF resets the session without failing the completed turn")
+    func idleEOF() {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        var failures = 0
+        agent.onChatEvent = { event in
+            if case .error = event { failures += 1 }
+        }
+        agent.helperStreamEnded(generation: agent.lifecycleGeneration, session: "session-a")
+        #expect(failures == 0)
+        #expect(agent.currentSessionID == nil)
+    }
+
+    @Test("Stop invalidates an in-progress preparation generation")
+    func preparationCancellation() throws {
+        let agent = WorkAgent()
+        let generation = agent.lifecycleGeneration
+        try agent.checkPreparation(generation)
+        agent.stop()
+        #expect(throws: CancellationError.self) { try agent.checkPreparation(generation) }
+    }
+
+    @Test("Stop releases a pending ACP session/new waiter")
+    func stopDuringSessionOpen() async throws {
+        let agent = WorkAgent()
+        let response = HTTPURLResponse(url: URL(string: "http://127.0.0.1/acp")!, statusCode: 200,
+                                       httpVersion: nil, headerFields: nil)!
+        agent.transport = ACPTransport(send: { _ in (Data(), response) })
+        let pending = Task { () -> Bool in
+            do {
+                _ = try await agent.call(method: "session/new", params: ["cwd": "/tmp/a"], timeout: 90)
+                return false
+            } catch { return true }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        agent.stop()
+        #expect(await pending.value)
+        try agent.handleWire(Data(#"{"jsonrpc":"2.0","id":1,"result":{"sessionId":"old-session"}}"#.utf8))
+        #expect(agent.currentSessionID == nil)
+    }
+
+    @Test("Folder selection is frozen while a turn is starting")
+    func folderDuringTurn() {
+        let model = ChatViewModel(persistsConversations: false)
+        let original = model.gooseFolderPath
+        model.send("Build it", alias: "test-model")
+        model.setGooseFolder(URL(fileURLWithPath: "/tmp/other-goose-folder"))
+        #expect(model.gooseFolderPath == original)
+        model.stop()
+    }
+
+    @Test("Duplicate ACP permission RPC is queued once and Stop invalidates it")
+    func wirePermission() throws {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        let packet = #"{"jsonrpc":"2.0","id":42,"method":"session/request_permission","params":{"sessionId":"session-a","toolCall":{"toolCallId":"t1","title":"Run command","rawInput":{"command":"echo hi"}},"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"reject_once","optionId":"no"}]}}"#
+        try agent.handleWire(Data(packet.utf8))
+        try agent.handleWire(Data(packet.utf8))
+        #expect(agent.permission?.id == "42")
+        agent.stop()
+        #expect(agent.permission == nil)
+        try agent.handleWire(Data(packet.utf8))
+        #expect(agent.permission == nil)
+    }
+
+    @Test("Switching models closes a pending approval card")
+    func modelSwitchWithApproval() {
+        let model = ChatViewModel(persistsConversations: false)
+        model.devSeedMessages([ChatMessage(role: .user, content: "Run it", status: .complete),
+                               ChatMessage(role: .assistant, status: .streaming)])
+        let request = WorkPermission(id: "42", sessionID: "old-session", toolCallID: "t1",
+                                     command: "echo hi", options: [])
+        model.applyGooseEvent(.tool(id: "t1", name: "developer__shell", input: "echo hi",
+                                    status: "in_progress", output: ""), initialPlaceholder: 1)
+        model.applyGooseEvent(.permission(request, "developer__shell", "permission needed"), initialPlaceholder: 1)
+        #expect(model.goosePermission(for: "t1") != nil)
+        model.selectedGooseModelChanged()
+        #expect(model.goosePermission(for: "t1") == nil)
+        #expect(model.messages[1].gooseParts?.first?.tool?.permissionState == "cancelled")
+        #expect(model.messages[1].gooseParts?.first?.tool?.status == "cancelled")
+    }
+
     @Test("Goose Chat isolates global skills and keeps a compact tool set")
     func isolatedHelperContext() {
         #expect(WorkAgent.helperHome(gooseChat: true, fullAccess: true,

@@ -282,6 +282,7 @@ struct ChatView: View {
     /// check, before ``ServerManager`` enters its own operating state.
     @State private var isUnloadingResidentModels = false
     @State private var residentUnloadNotice: String?
+    @State private var goosePrewarmTask: Task<Void, Never>?
     /// Refreshed from the active conversation every time the popover opens.
     /// SwiftUI may otherwise reuse the popover's old local `@State` when the
     /// same conversation closes and reopens it.
@@ -386,6 +387,19 @@ struct ChatView: View {
             photoCapabilityNotice.dismiss()
         }
         .onChange(of: alias) { _, _ in photoCapabilityNotice.dismiss() }
+        .onChange(of: alias) { _, _ in
+            if WorkAgent.gooseChat {
+                viewModel.selectedGooseModelChanged()
+                prewarmGoose()
+            }
+        }
+        .onChange(of: server.isModelResident(alias)) { wasResident, isResident in
+            if WorkAgent.gooseChat, wasResident && !isResident {
+                goosePrewarmTask?.cancel()
+                goosePrewarmTask = nil
+                viewModel.selectedGooseModelChanged()
+            }
+        }
         .onChange(of: photoAvailability) { _, availability in
             photoCapabilityNotice.reconcile(with: availability)
         }
@@ -396,15 +410,18 @@ struct ChatView: View {
     }
 
     private func prewarmGoose() {
+        goosePrewarmTask?.cancel()
+        goosePrewarmTask = nil
         guard WorkAgent.gooseChat,
-              case .ready(let alias) = server.state,
+              case .ready = server.state,
+              server.isModelResident(alias),
               let bearer = server.activeBearer, server.activePort > 0 else { return }
         WorkAgent.shared.updateProxyBearer(bearer)
         guard !viewModel.isStreaming else { return }
         let folder = URL(fileURLWithPath: viewModel.gooseFolderPath, isDirectory: true)
-        Task {
+        goosePrewarmTask = Task {
             try? await WorkAgent.shared.prepare(folder: folder, rapidPort: server.activePort,
-                model: server.servingAlias ?? alias, bearer: bearer)
+                model: alias, bearer: bearer)
         }
     }
 
@@ -906,6 +923,7 @@ struct ChatView: View {
                         .lineLimit(1).font(.caption)
                 }
                 .buttonStyle(.plain)
+                .disabled(viewModel.isStreaming)
                 .help(viewModel.gooseFolderPath)
                 .accessibilityIdentifier("ChatView.GooseFolder")
                 Toggle("YOLO", isOn: Binding(get: { gooseYOLO }, set: { value in
@@ -1082,9 +1100,13 @@ struct ChatView: View {
                 if let onUnloadResidentModels {
                     await onUnloadResidentModels()
                 } else {
+                    let outcome = await server.unloadResidentModelsIfIdle()
                     residentUnloadNotice = SidebarView.residentUnloadMessage(
-                        for: await server.unloadResidentModelsIfIdle()
+                        for: outcome
                     )
+                    if outcome == .stopped, WorkAgent.gooseChat {
+                        viewModel.selectedGooseModelChanged()
+                    }
                 }
             }
         } label: {
