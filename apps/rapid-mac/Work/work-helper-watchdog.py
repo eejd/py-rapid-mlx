@@ -13,6 +13,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--credential-bridge":
     # per-launch token accepted here; tools inherit neither credential.
     import hmac
     import http.client
+    import json
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     listen_port, upstream_port = map(int, sys.argv[2:4])
@@ -42,6 +43,23 @@ if len(sys.argv) > 1 and sys.argv[1] == "--credential-bridge":
                     self.send_error(413)
                     return
                 body = self.rfile.read(length)
+                # Desktop owns these per-turn settings. Goose may append its
+                # own tool instructions, but cannot silently replace the user
+                # instruction/memory layer or sampling controls.
+                with open("chat-contract.json", encoding="utf-8") as contract_file:
+                    contract = json.load(contract_file)
+                request = json.loads(body)
+                messages = request.get("messages", [])
+                system = contract.get("system_prompt", "")
+                if system:
+                    if messages and messages[0].get("role") == "system":
+                        messages[0]["content"] = system + "\n\n" + str(messages[0].get("content", ""))
+                    else:
+                        messages.insert(0, {"role": "system", "content": system})
+                request["messages"] = messages
+                request["temperature"] = contract["temperature"]
+                request["max_tokens"] = contract["max_tokens"]
+                body = json.dumps(request).encode("utf-8")
                 connection = http.client.HTTPConnection("127.0.0.1", upstream_port, timeout=900)
                 connection.request("POST", self.path, body,
                                    {"Authorization": "Bearer " + upstream,

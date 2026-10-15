@@ -565,7 +565,7 @@ struct ChatView: View {
         // chrome. Its Markdown child reads the incremental store directly.
         VStack(alignment: .leading, spacing: RapidTheme.Space.lg) {
             ForEach(messages) { message in
-                if message.role != .tool {
+                if true {
                     let usesIncrementalMarkdown = message.role == .assistant
                         && (
                             message.status == .streaming
@@ -2005,9 +2005,6 @@ private struct MessageRow: View {
         VStack(alignment: .leading, spacing: 8) {
             if let parts = message.gooseParts, !parts.isEmpty {
                 ForEach(parts) { part in
-                    if let text = part.text, !text.isEmpty {
-                        TextKitMarkdownView(content: text)
-                    }
                     if let card = part.tool {
                         GooseToolCardView(card: card, folder: card.folder ?? gooseFolderPath, onDecision: onGooseDecision)
                     }
@@ -2018,8 +2015,7 @@ private struct MessageRow: View {
             if !message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 reasoningDisclosure
             }
-            if message.gooseParts?.isEmpty != false {
-                if hasAssistantContent, let streamingMarkdown {
+            if hasAssistantContent, let streamingMarkdown {
                     // The same child remains mounted when status changes from
                     // streaming to complete. Its final mutable tail is
                     // committed in place; actions and stats appear below it
@@ -2028,11 +2024,10 @@ private struct MessageRow: View {
                         store: streamingMarkdown,
                         messageID: message.id
                     )
-                } else if hasAssistantContent {
-                    TextKitMarkdownView(content: message.content)
-                } else if showTypingIndicator {
-                    typingIndicator
-                }
+            } else if hasAssistantContent {
+                TextKitMarkdownView(content: message.content)
+            } else if showTypingIndicator {
+                typingIndicator
             }
             if WorkAgent.gooseChat && message.status == .streaming {
                 TimelineView(.periodic(from: .now, by: 1)) { timeline in
@@ -2435,7 +2430,7 @@ private struct MessageRow: View {
     // MARK: System
 
     private var systemNote: some View {
-        Text(message.content)
+        Text(message.role == .tool ? "Tool result: \(message.content)" : message.content)
             .font(.footnote)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .center)

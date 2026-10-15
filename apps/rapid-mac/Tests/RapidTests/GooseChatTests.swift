@@ -160,17 +160,16 @@ struct GooseChatTests {
         model.applyGooseEvent(.tool(id: "t1", name: "write · /tmp/chat/report.txt", input: "", status: "completed", output: ""), initialPlaceholder: 1)
         model.applyGooseEvent(.tool(id: "t1", name: "", input: "", status: "completed", output: ""), initialPlaceholder: 1)
         #expect(model.messages.count == 2)
-        #expect(model.messages[1].gooseParts?.count == 2)
-        #expect(model.messages[1].gooseParts?[1].tool?.output == "done")
-        #expect(model.messages[1].gooseParts?[1].tool?.name == "write · /tmp/chat/report.txt")
-        #expect(model.messages[1].gooseParts?[1].tool?.permissionState == "permission needed")
+        #expect(model.messages[1].gooseParts?.count == 1)
+        #expect(model.messages[1].gooseParts?[0].tool?.output == "done")
+        #expect(model.messages[1].gooseParts?[0].tool?.name == "write · /tmp/chat/report.txt")
+        #expect(model.messages[1].gooseParts?[0].tool?.permissionState == "permission needed")
         model.applyGooseEvent(.text("Done"), initialPlaceholder: 1)
         model.applyGooseEvent(.throughput(42.5), initialPlaceholder: 1)
         #expect(model.messages[1].stats?.reportedTokensPerSecond == 42.5)
         #expect(model.messages.count == 2)
         #expect(model.messages[1].content == "HelloDone")
-        #expect(model.messages[1].gooseParts?.count == 3)
-        #expect(model.messages[1].gooseParts?[2].text == "Done")
+        #expect(model.messages[1].gooseParts?.count == 1)
         #expect(model.messages[1].gooseParts?.allSatisfy {
             $0.tool != nil || $0.text?.isEmpty == false
         } == true)
@@ -214,7 +213,7 @@ struct GooseChatTests {
             content: "Ran into this error: please check your input"))
         #expect(ChatViewModel.repairGooseTitles([quoted])[0].messages.last?.content
             == "Ran into this error: please check your input")
-        #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User: first"))
+        #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User [completed]: first"))
         let toolOnly = ChatMessage(role: .assistant, gooseParts: [
             GooseTurnPart(tool: GooseToolCard(id: "t", name: "write · snake.html",
                 input: "{}", output: "created", status: "completed"))])
