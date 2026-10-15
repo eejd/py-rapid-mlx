@@ -23,6 +23,12 @@ from pathlib import Path
 
 import numpy as np
 
+from .time_stretch import time_stretch
+
+# These mlx-audio families accept but ignore speed, or lack a native tempo
+# control. All other families (including Kokoro and F5) keep native handling.
+_POST_STRETCH_FAMILIES = frozenset({"qwen3_tts", "chatterbox", "indextts"})
+
 logger = logging.getLogger(__name__)
 
 _QWEN_SAMPLER_PATCH_LOCK = threading.RLock()
@@ -827,6 +833,8 @@ class TTSEngine:
                 if len(audio_chunks) > 1
                 else audio_chunks[0]
             )
+            if self._model_family in _POST_STRETCH_FAMILIES:
+                full_audio = time_stretch(full_audio, sample_rate, speed)
             duration = len(full_audio) / sample_rate
 
             return AudioOutput(
@@ -975,6 +983,14 @@ class TTSEngine:
         """
         if not self._loaded:
             self.load()
+
+        # WSOLA needs context across model chunks. For non-native tempo,
+        # assemble and stretch once rather than restarting at every boundary.
+        # This yields one complete clip and delays first audio until synthesis
+        # finishes. The HTTP speech route already uses assembled generation.
+        if self._model_family in _POST_STRETCH_FAMILIES and speed != 1.0:
+            yield self.generate(text, voice=voice, speed=speed)
+            return
 
         sample_rate = 24000
 
