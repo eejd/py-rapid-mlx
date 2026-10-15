@@ -102,13 +102,13 @@ implementation does not consume or apply this module. Language config also
 requires the derived layer count and numeric time-step bound. A direct type
 rename is insufficient; image support requires an adapted projector and
 language precision path plus real-image validation. Text artifacts deliberately
-contain no image tower or image processor assets. Full-load compatibility
-and vision qualification remain pending.
+contain no image tower or image processor assets. Full multimodal loading
+and image qualification remain pending.
 
 ## Evidence status
 
-Stacked on Bolt head `7118aaf72`, including the current-chunk SSM gather bound
-and generator-aligned catalog expectations. All 88 source files pass content
+Based on Bolt `d0ee60130`, including the current-chunk SSM gather bound,
+generator-aligned catalog expectations and optional-top-k validation guard. All 88 source files pass content
 hashes. Conversion succeeds in 321.02 seconds; the text artifact loads and
 completes eight greedy smoke prompts plus two 1K generator benchmarks.
 
@@ -127,28 +127,40 @@ Super/shared-model/parser suite. The converter also removes unused null model
 selectors and tokenizer processor selectors from saved text metadata.
 
 The evaluation-only paged BF16 reference passes its tiny full/cached resident
-comparison bit-exactly. Full-checkpoint BF16 parity and HTTP serving are still
-pending the shared lock. Quantized smoke outputs include Paris, 391, Buenos
-días, primary light colors red/green/blue, and Ada name recall. Direct generator
-throughput is 466.12–467.59 prompt tokens/s and 48.39–48.56 decode tokens/s for
-1,024 prompt / 64 generation tokens, with a 72.68 GB process peak.
-[Reproduction, environment and raw evidence](../performance/2026-10-15-nemotron-super-vl-text.md).
+comparison bit-exactly. Full-checkpoint comparison completes on eight prompts:
+strict greedy first-token agreement **6/8**, tie-aware agreement **8/8**,
+first-token top-10 overlap **74/80**, and **5/8** identical sampled greedy
+sequences (up to 16 tokens). The two first-token differences choose another
+BF16-tied maximum. Remaining differences are wording or bold formatting.
+This establishes a short quantization comparison, not independent NVIDIA
+runtime parity or complete-function code correctness.
+
+All seven HTTP serving requests pass: name/color recall across turns, reasoning
+on/off, XML tool calls and tool-result follow-ups in stream and non-stream
+responses, proper finish reasons, and no leaked control tokens. Examples:
+`Your name is Ada, and your favorite color is teal.`, `17 × 23 = **391**`,
+`get_weather({"city":"Paris"})`, and a sunny/18°C follow-up. The harness exits
+zero and its own server stops cleanly; no other process is stopped by this task.
+
+Direct generator throughput is 466.12–467.59 prompt tokens/s and 48.39–48.56
+decode tokens/s for 1,024 prompt / 64 generation tokens, with a 72.68 GB process
+peak. [Environment, commands, parity table and evidence](../performance/2026-10-15-nemotron-super-vl-text.md).
 
 The four-bit catalog alias `nemotron-3.5-super-vl`, exact filtered footprint,
-README alias totals and model table pass **3,774 tests**. The 42 Bolt/general
-metadata tests also pass. Ruff and diff checks pass. A 100% changed-line result
-was obtained before the final tokenizer-asset cleanup; the fresh 95-test suite
-and final coverage gate for the current code remain queued and are not claimed
-complete. The three-bit artifact has not started and has no catalog entry.
+README totals (273 aliases) and model table pass **3,774 tests**. The final
+Super/shared-model/parser/metadata suite passes **95 tests**. Ruff, format and
+diff checks pass. Changed-line coverage against
+`origin/vector/nemotron-35-bolt` is **141/141 lines, 100%**.
 
-The unrelated PR #4599 validator held the lock until approximately 19:50 UTC.
-The task yielded its waiting positions to Bolt's short check, then converted
-and sampled four-bit. A second unrelated validator, PR #4672 (`lockf` PID 57383),
-acquired the lock around 20:00 UTC. The queued fresh regressions, BF16 parity
-and serving gates are blocked behind it. Harbor and the coordinator received
-high-priority FYIs; the exclusive window was also requested through the user
-input channel. No foreign process was stopped or modified. This is not release
-approval; full-model parity, serving and final coverage remain required.
+The unrelated PR #4599 validator held the shared lock until approximately
+19:50 UTC. After a brief conversion/sampling window, unrelated PR #4672 and
+then already-queued PR #4682 held the lock until coordinator intervention.
+The final regressions, full BF16 reference and HTTP serving then completed.
+Roughly 70 minutes of the original time budget went to lock waits. The task
+never bypassed the lock or stopped a foreign process. Mixed three-bit was
+deferred before conversion to preserve the primary four-bit gates; its output
+directory and catalog entry do not exist. Four-bit qualification is local only;
+there was no push, upload or release action.
 
 Run focused tensor and conversion gates:
 
@@ -175,14 +187,15 @@ materializing a roughly 241 GB contiguous model. Reference prompts run together
 inside the exclusive window; every invocation holds the shared lock. Serving and
 1K performance scripts are prepared in the private evidence directory.
 
-Harbor/coordinator next action: provide the already-authorized exclusive
-model-lock window and defer another full validator until qualification ends.
-The inherited Bolt catalog-test mismatch is resolved by the committed
-dependency rebase. Vector owns the queued final regressions/coverage,
-full-checkpoint BF16 parity, stream/non-stream serving, then mixed-three-bit
-conversion with its corresponding gates, catalog size and README total update.
+Vector next action: convert mixed three-bit into
+`/Volumes/RTL-2T/scratch-archive/rapid-mlx/super-vl-120b/text-3bit-mixed`,
+reuse the archived eight-prompt BF16 reference, run shorter quantized sampling
+and the same HTTP gates, then add its measured catalog footprint and update
+README totals. Harbor/coordinator must provide a real exclusive model-lock
+window for that work and defer full validators until it completes. The current
+four-bit artifact, catalog and source changes are ready for local review.
 Vision remains feasibility-only; Vector owns a separate image-input follow-up.
-The human retains upload and release authorization.
+The human retains publication and release authorization.
 
 Private operational scratch is under `/private/tmp/nemotron-super-vl-evidence/`;
 completed measurements and harnesses are archived under
