@@ -501,7 +501,7 @@ final class WorkAgent {
     }
 
     static func builtinExtensions(gooseChat: Bool, fullAccess: Bool) -> String {
-        gooseChat ? "developer" : (fullAccess
+        gooseChat ? "developer,computercontroller,memory,autovisualiser,tutorial" : (fullAccess
             ? "developer,computercontroller,memory,autovisualiser,tutorial" : "developer")
     }
 

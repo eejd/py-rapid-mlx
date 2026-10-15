@@ -27,20 +27,44 @@ METRICS_KEY = os.environ.get("WORK_PROXY_METRICS_KEY", "")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 METRICS_LOCK = threading.Lock()
 LATEST_METRIC = {"sequence": 0, "tokensPerSecond": None}
-GOOSE_CHAT_TOOLS = {"shell", "tree", "write", "edit"}
 GOOSE_CHAT_SYSTEM = (
     "You are Goose Chat, a local assistant. Use the available tools when needed. "
-    "For current facts such as prices or news, use shell to fetch a live source "
-    "before answering; cite the exact source URL and time. For stock quotes, "
-    "identify the ticker and share class accurately (GOOGL is Alphabet Class A; "
-    "GOOG is Class C); for Alphabet try "
-    "https://www.google.com/finance/quote/GOOGL:NASDAQ first and read the "
-    "first span with jsname=Pdsbrc, not unrelated price snippets. "
-    "Do not guess a price if the source fails. "
-    "Work in the selected chat folder "
-    "by default. Answer in the user's language. Stop when the task is done. "
+    "For current facts, make your first action a general tool call to fetch a live source, "
+    "without a preamble. In the final answer, include a Markdown link to the "
+    "fetched source's exact URL and the retrieval time. "
+    "If the source fails, say so. "
+    "For requested local files, use the developer file tools. "
+    "For shell web requests, use curl -fsSL -A 'Mozilla/5.0' and check the response. "
     "Never claim a tool ran unless it did."
 )
+
+
+def saved_goose_memories():
+    """Retain Goose's isolated global memories without importing global skills."""
+    root = os.environ.get("GOOSE_PATH_ROOT")
+    if not root:
+        return ""
+    directory = os.path.join(root, "config", "memory")
+    try:
+        entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+    except OSError:
+        return ""
+    remaining = 4000
+    items = []
+    for entry in entries:
+        if not entry.name.endswith(".txt") or not entry.is_file(follow_symlinks=False):
+            continue
+        try:
+            with open(entry.path, encoding="utf-8") as handle:
+                content = handle.read(remaining).strip()
+        except (OSError, UnicodeError):
+            continue
+        if content:
+            items.append(f"{entry.name[:-4]}: {content}")
+            remaining -= len(content)
+            if remaining <= 0:
+                break
+    return "\nSaved memories:\n" + "\n".join(items) if items else ""
 
 
 def upstream_bearer():
@@ -62,14 +86,34 @@ def compact_goose_request(body):
         if message.get("role") == "system":
             if desktop_system and index == 0:
                 continue
-            message["content"] = GOOSE_CHAT_SYSTEM
+            message["content"] = GOOSE_CHAT_SYSTEM + saved_goose_memories()
             break
-    tools = body.get("tools")
-    if isinstance(tools, list):
-        selected = [tool for tool in tools
-                    if tool.get("function", {}).get("name") in GOOSE_CHAT_TOOLS]
-        if selected:
-            body["tools"] = selected
+
+    # Keep every built-in tool and its complete argument structure. Property
+    # descriptions duplicate names/types and dominate first-turn prefill.
+    def strip_parameter_descriptions(value, property_map=False):
+        if isinstance(value, dict):
+            return {
+                key: strip_parameter_descriptions(item, key == "properties")
+                for key, item in value.items()
+                if key != "description" or property_map
+            }
+        if isinstance(value, list):
+            return [strip_parameter_descriptions(item) for item in value]
+        return value
+
+    if isinstance(body.get("tools"), list):
+        # A focused inner tool call has little prefill cost and may need its
+        # parameter guidance to generate a valid response.
+        focused_call = len(body["tools"]) <= 3
+        for tool in body["tools"]:
+            function = tool.get("function", {})
+            if isinstance(function.get("description"), str):
+                function["description"] = function["description"][:60]
+            if "parameters" in function and not focused_call:
+                function["parameters"] = strip_parameter_descriptions(
+                    function["parameters"]
+                )
     return body
 
 
@@ -104,7 +148,10 @@ class StreamRate:
                 self.completion_tokens = usage.get("completion_tokens")
             for choice in event.get("choices", []):
                 delta = choice.get("delta", {})
-                if any(delta.get(key) for key in ("content", "reasoning_content", "tool_calls")):
+                if any(
+                    delta.get(key)
+                    for key in ("content", "reasoning_content", "tool_calls")
+                ):
                     now = time.monotonic()
                     if self.first_token_at is None:
                         self.first_token_at = now
@@ -124,7 +171,11 @@ class StreamRate:
             return None
         duration = self.last_token_at - self.first_token_at
         estimated_tokens = self.streamed_chars / 4
-        return (estimated_tokens - 1) / duration if estimated_tokens > 1 and duration > 0.05 else None
+        return (
+            (estimated_tokens - 1) / duration
+            if estimated_tokens > 1 and duration > 0.05
+            else None
+        )
 
     def tokens_per_second(self):
         count = self.completion_tokens
@@ -184,7 +235,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/metrics" and GOOSE_CHAT:
-            if not hmac.compare_digest(self.headers.get("X-Metrics-Key", ""), METRICS_KEY):
+            if not hmac.compare_digest(
+                self.headers.get("X-Metrics-Key", ""), METRICS_KEY
+            ):
                 self.send_error(401)
                 return
             with METRICS_LOCK:
