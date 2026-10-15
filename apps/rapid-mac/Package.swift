@@ -69,7 +69,7 @@ let package = Package(
             // The release assembler compiles the app icon catalog with
             // actool. SwiftPM does not consume it, so exclude it from target
             // discovery while leaving it available to scripts/build.sh.
-            exclude: ["Resources/Assets.xcassets"] + (workMVP ? ["Resources/Localizable.xcstrings"] : []),
+            exclude: ["Resources/Assets.xcassets"],
             // Brand cheetah PNGs + the per-alias benchmark scores + the
             // localizable strings table. Loaded at runtime via
             // ``Bundle.main`` (flat files in the production .app).
