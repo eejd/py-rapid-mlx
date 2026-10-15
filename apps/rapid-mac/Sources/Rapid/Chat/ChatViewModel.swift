@@ -1475,18 +1475,21 @@ final class ChatViewModel {
     private func gooseAttachmentNote(for user: ChatMessage) throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
         let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
+        _ = try GooseToolPresentation.containedDestination(directory, root: gooseFolder)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var paths: [String] = []
         for image in user.imageAttachments {
             let name = URL(fileURLWithPath: image.filename).lastPathComponent
             let destination = directory.appendingPathComponent(name)
-            try image.data.write(to: destination, options: .atomic)
+            let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
+            try image.data.write(to: safe, options: .atomic)
             paths.append(destination.path)
         }
         for file in user.fileAttachments {
             let name = URL(fileURLWithPath: file.filename).deletingPathExtension().lastPathComponent + ".txt"
             let destination = directory.appendingPathComponent(name)
-            try file.extractedText.write(to: destination, atomically: true, encoding: .utf8)
+            let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
+            try file.extractedText.write(to: safe, atomically: true, encoding: .utf8)
             paths.append(destination.path)
         }
         return "\nAttached files copied into this conversation folder:\n" + paths.joined(separator: "\n")

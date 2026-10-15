@@ -14,6 +14,35 @@ struct GoosePermissionDecision: Equatable {
 enum GoosePermissionPolicy {
     static let yoloKey = "Rapid.GooseChat.yoloDefault"
     static let allowedKey = "Rapid.GooseChat.alwaysAllowed"
+    static let lockedNativePolicy = "user:\n  always_allow: []\n  ask_before: []\n  never_allow: []\n"
+
+    static func resetNativePolicy(in support: URL) throws {
+        let config = support.appendingPathComponent("config", isDirectory: true)
+        _ = try GooseToolPresentation.containedDestination(config, root: support)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        let policy = config.appendingPathComponent("permission.yaml")
+        // An old tool may have replaced the file with a symlink. Atomic write
+        // replaces that entry rather than following it into another directory.
+        try lockedNativePolicy.write(to: policy, atomically: true, encoding: .utf8)
+    }
+
+    static func scope(_ tool: String) -> String {
+        switch tool {
+        case "developer__shell": return String(localized: "Run shell commands")
+        case "developer__write", "developer__edit", "developer__write_file", "developer__edit_file":
+            return String(localized: "Write files")
+        case "developer__tree": return String(localized: "List files")
+        case "developer__read_image": return String(localized: "Read images")
+        default: return tool.replacingOccurrences(of: "__", with: ": ").replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    static func toolIdentity(_ call: [String: Any]) -> String? {
+        let meta = call["_meta"] as? [String: Any]
+        let goose = meta?["goose"] as? [String: Any]
+        let identity = goose?["toolCall"] as? [String: Any]
+        return identity?["toolName"] as? String
+    }
 
     static func resetYOLOForLaunch(defaults: UserDefaults = .standard) {
         defaults.set(false, forKey: yoloKey)
@@ -22,7 +51,7 @@ enum GoosePermissionPolicy {
     static func decide(yolo: Bool, alwaysAllowed: Set<String>, tool: String,
                        userDecision: GoosePermissionAnswer? = nil) -> GoosePermissionDecision {
         if yolo { return .init(answer: .allow, cardState: "auto-allowed") }
-        if alwaysAllowed.contains(tool) { return .init(answer: .allow, cardState: "auto-allowed") }
+        if tool.contains("__") && alwaysAllowed.contains(tool) { return .init(answer: .allow, cardState: "auto-allowed") }
         switch userDecision {
         case .allow: return .init(answer: .allow, cardState: "allowed")
         case .decline: return .init(answer: .decline, cardState: "declined")
@@ -36,6 +65,7 @@ enum GoosePermissionPolicy {
     }
 
     static func alwaysAllow(_ tool: String, defaults: UserDefaults = .standard) {
+        guard tool.contains("__") else { return }
         var names = Set(defaults.stringArray(forKey: allowedKey) ?? [])
         names.insert(tool)
         defaults.set(names.sorted(), forKey: allowedKey)
@@ -65,6 +95,25 @@ struct GooseToolCard: Codable, Equatable, Hashable {
 }
 
 enum GooseToolPresentation {
+    static func containedDestination(_ destination: URL, root: URL) throws -> URL {
+        let base = root.resolvingSymlinksInPath().standardizedFileURL
+        var ancestor = destination.standardizedFileURL
+        var missing: [String] = []
+        while !FileManager.default.fileExists(atPath: ancestor.path) {
+            guard ancestor.path != "/" else { break }
+            missing.append(ancestor.lastPathComponent)
+            ancestor.deleteLastPathComponent()
+        }
+        let resolved = missing.reversed().reduce(ancestor.resolvingSymlinksInPath()) {
+            $0.appendingPathComponent($1)
+        }.standardizedFileURL
+        let prefix = base.path.hasSuffix("/") ? base.path : base.path + "/"
+        guard resolved.path.hasPrefix(prefix) else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        return resolved
+    }
+
     static func producedFile(_ card: GooseToolCard, folder: String) -> URL? {
         let lower = card.name.lowercased()
         guard (lower.contains("write") || lower.contains("edit") || lower.contains("patch")),
@@ -72,10 +121,9 @@ enum GooseToolPresentation {
               let data = card.input.data(using: .utf8),
               let args = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let path = path(name: card.name, args: args) else { return nil }
-        let root = URL(fileURLWithPath: folder, isDirectory: true).standardizedFileURL
-        let file = (path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)).standardizedFileURL
-        guard file.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/") else { return nil }
-        return file
+        let root = URL(fileURLWithPath: folder, isDirectory: true)
+        let file = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
+        return try? containedDestination(file, root: root)
     }
 
     static func title(name: String, input: String, folder: String) -> String {
