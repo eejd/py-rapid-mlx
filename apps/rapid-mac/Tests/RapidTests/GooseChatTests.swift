@@ -40,6 +40,13 @@ struct GooseChatTests {
         #expect(decoded.gooseSessionID == "session-1")
         #expect(decoded.gooseFolder == "/tmp/scratch")
         #expect(ChatViewModel.gooseReplay(decoded.messages).contains("User: first"))
+        let visible = decoded.messages.map(\.id)
+        #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
+            sessionConversationID: nil, currentContextIDs: visible, visibleContextIDs: visible, sessionID: nil))
+        #expect(ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
+            sessionConversationID: decoded.id, currentContextIDs: visible, visibleContextIDs: visible, sessionID: "s"))
+        #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
+            sessionConversationID: decoded.id, currentContextIDs: visible, visibleContextIDs: [UUID()], sessionID: "s"))
     }
 
     @Test("Helper failure activates direct chat fallback and Retry clears it")

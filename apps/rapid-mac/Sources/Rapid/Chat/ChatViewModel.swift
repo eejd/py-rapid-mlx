@@ -139,6 +139,7 @@ final class ChatViewModel {
     private var conversationEpoch = 0
     private var gooseConversationID: UUID?
     private var gooseSessionID: String?
+    private var gooseContextIDs: [UUID] = []
     private var goosePermissions: [String: (WorkPermission, String)] = [:]
     private var gooseFolder: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Rapid-MLX Workspace", isDirectory: true)
     private(set) var gooseFallback: String?
@@ -415,7 +416,7 @@ final class ChatViewModel {
     /// task would have made that six places to remember. The class of bug
     /// this removes is "somebody added a third task and missed site four".
     private func cancelInflightWork() {
-        if WorkAgent.gooseChat && isStreaming { WorkAgent.shared.cancel() }
+        if WorkAgent.gooseChat && isStreaming { WorkAgent.shared.stop() }
         inflight?.cancel()
         inflight = nil
         backgroundAssist?.cancel()
@@ -1313,7 +1314,8 @@ final class ChatViewModel {
 
             if WorkAgent.gooseChat && gooseFallback == nil {
                 do {
-                    try await self.runGooseTurn(alias: alias, placeholderIndex: placeholderIndex, epoch: epoch)
+                    try await self.runGooseTurn(alias: alias, placeholderIndex: placeholderIndex, epoch: epoch,
+                        globalInstruction: globalInstruction, conversationInstruction: chatInstruction)
                     return
                 } catch {
                     self.activateGooseFallback(error)
@@ -1331,36 +1333,57 @@ final class ChatViewModel {
         }
     }
 
-    private func runGooseTurn(alias: String, placeholderIndex: Int, epoch: Int) async throws {
+    private func runGooseTurn(alias: String, placeholderIndex: Int, epoch: Int,
+                              globalInstruction: String, conversationInstruction: String) async throws {
         guard let server, let bearer = server.activeBearer, server.activePort > 0 else {
             throw WorkError.message("The local model is unavailable.")
         }
         try FileManager.default.createDirectory(at: gooseFolder, withIntermediateDirectories: true)
         let agent = WorkAgent.shared
-        let existingConversation = gooseConversationID == activeConversationID
+        let priorIDs = Array(messages.prefix(placeholderIndex - 1)).map(\.id)
+        let sessionBeforePrepare = agent.currentSessionID
+        let canReuse = Self.canReuseGooseSession(
+            activeConversationID: activeConversationID,
+            sessionConversationID: gooseConversationID,
+            currentContextIDs: gooseContextIDs,
+            visibleContextIDs: priorIDs,
+            sessionID: sessionBeforePrepare)
         agent.onChatEvent = { [weak self] event in
             guard let self, epoch == self.conversationEpoch else { return }
             self.applyGooseEvent(event, initialPlaceholder: placeholderIndex)
         }
         try await agent.prepare(folder: gooseFolder, rapidPort: server.activePort,
                                 model: server.servingAlias ?? alias, bearer: bearer)
-        guard epoch == conversationEpoch, !Task.isCancelled else { return }
-        if !existingConversation {
-            if gooseConversationID != nil { try await agent.newSession() }
+        guard epoch == conversationEpoch, !Task.isCancelled else {
+            finishGooseCancellation(epoch: epoch)
+            return
+        }
+        let sameHelperSession = agent.currentSessionID == sessionBeforePrepare
+        let reuseSession = canReuse && sameHelperSession
+        if !reuseSession {
+            if sameHelperSession { try await agent.newSession() }
             gooseConversationID = activeConversationID
         }
         let previous = Array(messages.prefix(placeholderIndex - 1))
-        let replay = existingConversation ? "" : Self.gooseReplay(previous)
+        let replay = reuseSession ? "" : Self.gooseReplay(previous)
         let user = messages[placeholderIndex - 1]
-        let prompt = replay + user.content + (try gooseAttachmentNote(for: user))
+        let instructions = [globalInstruction, conversationInstruction]
+            .compactMap { Self.normalizedInstruction($0) }
+        let instructionText = instructions.isEmpty ? "" : "Instructions for this chat:\n" + instructions.joined(separator: "\n") + "\n\n"
+        let prompt = instructionText + replay + user.content + (try gooseAttachmentNote(for: user))
         await agent.prompt(prompt)
         guard epoch == conversationEpoch else { return }
+        if Task.isCancelled {
+            finishGooseCancellation(epoch: epoch)
+            return
+        }
         if let error = agent.error { throw WorkError.message(error) }
         for index in messages.indices where messages[index].role == .assistant && messages[index].status == .streaming {
             messages[index].status = .complete
         }
         isStreaming = false
         inflight = nil
+        gooseContextIDs = messages.map(\.id)
     }
 
     static func gooseReplay(_ prior: [ChatMessage]) -> String {
@@ -1368,6 +1391,25 @@ final class ChatViewModel {
             .suffix(8).map { "\($0.role == .user ? "User" : "Assistant"): \(String($0.content.prefix(1200)))" }
         guard !turns.isEmpty else { return "" }
         return "Conversation so far (for context):\n" + turns.joined(separator: "\n") + "\n\nCurrent request: "
+    }
+
+    static func canReuseGooseSession(activeConversationID: UUID, sessionConversationID: UUID?,
+                                     currentContextIDs: [UUID], visibleContextIDs: [UUID],
+                                     sessionID: String?) -> Bool {
+        sessionID != nil && sessionConversationID == activeConversationID
+            && currentContextIDs == visibleContextIDs
+    }
+
+    private func finishGooseCancellation(epoch: Int) {
+        guard epoch == conversationEpoch else { return }
+        for index in messages.indices where messages[index].role == .assistant && messages[index].status == .streaming {
+            var message = messages[index]
+            Self.finaliseCancellation(message: &message)
+            messages[index] = message
+        }
+        isStreaming = false
+        inflight = nil
+        gooseContextIDs = []
     }
 
     private func gooseAttachmentNote(for user: ChatMessage) throws -> String {
