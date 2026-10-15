@@ -46,6 +46,41 @@ struct GooseChatTests {
         #expect(!owner.register(request))
     }
 
+    @Test("ACP EOF fails an in-flight RPC immediately and the next session can bind")
+    func wireEOF() async throws {
+        let agent = WorkAgent()
+        agent.acceptSessionForTesting("session-a", folder: URL(fileURLWithPath: "/tmp/a"))
+        let response = HTTPURLResponse(url: URL(string: "http://127.0.0.1/acp")!, statusCode: 200,
+                                       httpVersion: nil, headerFields: nil)!
+        agent.transport = ACPTransport { _ in (Data(), response) }
+        let pending = Task {
+            try await agent.call(method: "session/prompt", params: ["sessionId": "session-a"],
+                                 session: "session-a", timeout: 900)
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let oldGeneration = agent.lifecycleGeneration
+        agent.helperStreamEnded(generation: oldGeneration, session: "session-a")
+        do {
+            _ = try await pending.value
+            Issue.record("EOF should fail the pending call")
+        } catch {
+            #expect(agent.error == "The Chat helper stopped unexpectedly.")
+        }
+        agent.acceptSessionForTesting("session-b", folder: URL(fileURLWithPath: "/tmp/b"))
+        #expect(agent.currentSessionID == "session-b")
+        agent.helperStreamEnded(generation: oldGeneration, session: "session-a")
+        #expect(agent.currentSessionID == "session-b")
+    }
+
+    @Test("Stop invalidates an in-progress preparation generation")
+    func preparationCancellation() throws {
+        let agent = WorkAgent()
+        let generation = agent.lifecycleGeneration
+        try agent.checkPreparation(generation)
+        agent.stop()
+        #expect(throws: CancellationError.self) { try agent.checkPreparation(generation) }
+    }
+
     @Test("Goose Chat isolates global skills and keeps a compact tool set")
     func isolatedHelperContext() {
         #expect(WorkAgent.helperHome(gooseChat: true, fullAccess: true,

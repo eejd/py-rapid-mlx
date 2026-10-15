@@ -364,7 +364,7 @@ final class WorkAgent {
         completed = true
     }
 
-    private func checkPreparation(_ expected: Int) throws {
+    func checkPreparation(_ expected: Int) throws {
         guard generation == expected, !Task.isCancelled else { throw CancellationError() }
     }
 
@@ -620,7 +620,7 @@ final class WorkAgent {
         })
     }
 
-    private func helperStreamEnded(generation expected: Int, session: String?) {
+    func helperStreamEnded(generation expected: Int, session: String?) {
         guard generation == expected, session == sessionID else { return }
         let failure = "The Chat helper stopped unexpectedly."
         error = failure
@@ -743,7 +743,7 @@ final class WorkAgent {
         return text
     }
 
-    private func call(method: String, params: [String: Any], session: String? = nil,
+    func call(method: String, params: [String: Any], session: String? = nil,
                       timeout: TimeInterval = 90) async throws -> [String: Any] {
         let id = nextID
         nextID += 1

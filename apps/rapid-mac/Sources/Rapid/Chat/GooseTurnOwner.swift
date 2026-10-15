@@ -47,7 +47,7 @@ final class GooseTurnOwner {
 }
 
 /// Small seam for wire fixtures and the live URLSession implementation.
-struct ACPTransport {
+@MainActor struct ACPTransport {
     var send: (URLRequest) async throws -> (Data, URLResponse)
     static let live = ACPTransport { try await URLSession.shared.data(for: $0) }
 }
