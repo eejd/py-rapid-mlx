@@ -119,10 +119,19 @@ enum GooseToolPresentation {
         let step: String
         if let card {
             let title = title(name: card.name, input: card.input, folder: folder)
-            step = title.hasPrefix("Wrote ") ? title.replacingOccurrences(of: "Wrote ", with: "Writing ")
-                : title.hasPrefix("Edited ") ? title.replacingOccurrences(of: "Edited ", with: "Editing ")
-                : title.hasPrefix("Ran ") ? title.replacingOccurrences(of: "Ran ", with: "Running ")
-                : title
+            let args = (card.input.data(using: .utf8).flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+            }) ?? [:]
+            let rawPath = path(name: card.name, args: args)
+            let root = URL(fileURLWithPath: folder).standardizedFileURL.path
+            let prefix = root.hasSuffix("/") ? root : root + "/"
+            let subject = rawPath.map { $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : URL(fileURLWithPath: $0).lastPathComponent }
+                ?? String(localized: "file")
+            let lower = card.name.lowercased()
+            if lower.contains("write") || lower.contains("create_file") { step = String(localized: "Writing \(subject)") }
+            else if lower.contains("edit") || lower.contains("patch") { step = String(localized: "Editing \(subject)") }
+            else if lower.contains("shell") || lower.contains("command") || lower.contains("run") { step = String(localized: "Running command") }
+            else { step = title }
         } else {
             step = String(localized: "Preparing response")
         }

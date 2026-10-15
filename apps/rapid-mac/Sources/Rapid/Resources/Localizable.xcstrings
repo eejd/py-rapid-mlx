@@ -2,6 +2,18 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "Wrote %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已写入 %@" } } } },
+    "Edited %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已编辑 %@" } } } },
+    "Ran `%@`" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "运行了 `%@`" } } } },
+    "Listed files" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "列出了文件" } } } },
+    "Opened %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已打开 %@" } } } },
+    "Read %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已读取 %@" } } } },
+    "Writing %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在写入 %@" } } } },
+    "Editing %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在编辑 %@" } } } },
+    "Running command" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在运行命令" } } } },
+    "Preparing response" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在准备回复" } } } },
+    "Show more" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示更多" } } } },
+    "file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件" } } } },
     "Unsupported file type": {
       "localizations": {
         "zh-Hans": {
