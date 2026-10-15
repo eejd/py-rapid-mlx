@@ -43,6 +43,8 @@ struct GooseChatTests {
         #expect(model.messages[1].gooseParts?[1].tool?.output == "done")
         #expect(model.messages[1].gooseParts?[1].tool?.permissionState == "permission needed")
         model.applyGooseEvent(.text("Done"), initialPlaceholder: 1)
+        model.applyGooseEvent(.throughput(42.5), initialPlaceholder: 1)
+        #expect(model.messages[1].stats?.reportedTokensPerSecond == 42.5)
         #expect(model.messages.count == 2)
         #expect(model.messages[1].content == "HelloDone")
         #expect(model.messages[1].gooseParts?.count == 3)

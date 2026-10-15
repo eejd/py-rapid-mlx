@@ -46,6 +46,7 @@ enum GooseChatEvent {
     case permission(WorkPermission, String, String)
     case error(String)
     case cancelled
+    case throughput(Double)
 }
 
 struct GooseToolCard: Codable, Equatable, Hashable {
@@ -59,7 +60,7 @@ struct GooseToolCard: Codable, Equatable, Hashable {
 
 /// Ordered pieces of one ACP assistant turn. A tool updates its existing
 /// piece, while text after the tool starts a new piece in the same message.
-struct GooseTurnPart: Codable, Equatable, Identifiable {
+struct GooseTurnPart: Codable, Equatable, Hashable, Identifiable {
     let id: UUID
     var text: String?
     var tool: GooseToolCard?

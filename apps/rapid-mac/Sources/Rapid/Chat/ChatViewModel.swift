@@ -1485,6 +1485,17 @@ final class ChatViewModel {
             messages[initialPlaceholder].status = .failed
             messages[initialPlaceholder].errorMessage = message
         case .cancelled: break
+        case .throughput(let rate):
+            let message = messages[initialPlaceholder]
+            messages[initialPlaceholder].stats = MessageStats(
+                elapsedSeconds: max(0.1, Date().timeIntervalSince(message.createdAt)),
+                charCount: message.content.count,
+                promptTokens: nil,
+                completionTokens: nil,
+                timeToFirstTokenSeconds: nil,
+                reasoningEmitted: !message.reasoning.isEmpty,
+                engineTokensPerSecond: rate
+            )
         }
     }
 
