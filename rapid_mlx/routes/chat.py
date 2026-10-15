@@ -119,6 +119,7 @@ from ..service.helpers import (
     _should_start_in_thinking,
     _tool_use_required_named_suffix,
     _uses_deepseek_v4_reasoning,
+    _was_undeclared_tool_dropped,
     _validate_model_name,
     _validate_response_format,
     _validate_tool_call_params,
@@ -6344,13 +6345,11 @@ async def _create_chat_completion_impl(
     # hermes) never engage line①. ``_line1_split_reasoning_for_tool_parse`` FAILS
     # CLOSED (never returns the raw text), so an engaged gate never re-exposes the
     # think span even on a reasoning-parser error (codex r5 #3).
-    parse_metadata: dict[str, bool] = {}
     if _line1_gate_engaged and engine_tool_calls is None:
         cleaned_text, tool_calls = _parse_tool_calls_with_parser(
             _line1_split_reasoning_for_tool_parse(cfg.reasoning_parser, output.text),
             request,
             structured_tool_calls=engine_tool_calls,
-            parse_metadata=parse_metadata,
         )
         if not tool_calls:
             # No forced call recovered from the post-``</think>`` remainder. Blank
@@ -6363,8 +6362,8 @@ async def _create_chat_completion_impl(
             output.text,
             request,
             structured_tool_calls=engine_tool_calls,
-            parse_metadata=parse_metadata,
         )
+    undeclared_tool_dropped = _was_undeclared_tool_dropped()
 
     # r7-A R7-H1: UI-TARS chat-lane coordinate-key parity. The parser
     # emits canonical ``point`` / ``start_point`` / ``end_point``; the
@@ -6831,9 +6830,7 @@ async def _create_chat_completion_impl(
             and reasoning_text
             and not final_content
         )
-        if not deepseek_v4_mid_think and not parse_metadata.get(
-            "undeclared_tool_dropped"
-        ):
+        if not deepseek_v4_mid_think and not undeclared_tool_dropped:
             final_content = _rescue_silent_drop_from_reasoning(
                 final_content,
                 reasoning_text,
@@ -6869,7 +6866,7 @@ async def _create_chat_completion_impl(
         )
 
     if (
-        parse_metadata.get("undeclared_tool_dropped")
+        undeclared_tool_dropped
         and not (final_content or "").strip()
         and not tool_calls
         and not _is_structured_output_requested(response_format)
@@ -8030,7 +8027,8 @@ async def stream_chat_completion(
             # at chat.py:~1285), because it depends on per-request
             # ``response_format`` which the rescue helper has no
             # access to.
-            already_streamed_content = bool(streamed_content.strip())
+            already_streamed_content = bool(processor.accumulated_text)
+            visible_content_streamed = bool(streamed_content.strip())
             has_any_tool_calls = bool(fallback_tool_calls) or (
                 finish_event.finish_reason == "tool_calls"
             )
@@ -8260,7 +8258,7 @@ async def stream_chat_completion(
                         "cutoff sentinel as content"
                     )
             if (
-                not already_streamed_content
+                not visible_content_streamed
                 and not (terminal_content or "").strip()
                 and not has_any_tool_calls
                 and not structured_output_requested

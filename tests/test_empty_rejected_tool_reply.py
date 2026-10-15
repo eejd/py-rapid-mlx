@@ -42,13 +42,12 @@ def test_nonstream_rejected_only_call_has_safe_content(monkeypatch):
     cfg = get_config()
     monkeypatch.setattr(cfg, "enable_auto_tool_choice", True)
     monkeypatch.setattr(cfg, "tool_call_parser", "qwen3_coder_xml")
-    metadata = {}
-    content, calls = helpers._parse_tool_calls_with_parser(
-        REJECTED, _Request(), parse_metadata=metadata
-    )
+    content, calls = helpers._parse_tool_calls_with_parser(REJECTED, _Request())
     assert calls is None
     assert content == ""
-    assert metadata == {"undeclared_tool_dropped": True}
+    assert helpers._was_undeclared_tool_dropped()
+    helpers._parse_tool_calls_with_parser("Hello", _Request())
+    assert not helpers._was_undeclared_tool_dropped()
 
 
 class _Engine:

@@ -72,6 +72,17 @@ from ..utils.chat_template import (
 
 logger = logging.getLogger(__name__)
 
+# The chat route needs the parser's rejection decision after reasoning and
+# forced-tool recovery. ContextVar keeps concurrent requests independent while
+# preserving the parser helper's two-value return contract.
+_undeclared_tool_dropped_this_parse: ContextVar[bool] = ContextVar(
+    "undeclared_tool_dropped_this_parse", default=False
+)
+
+
+def _was_undeclared_tool_dropped() -> bool:
+    return _undeclared_tool_dropped_this_parse.get()
+
 # ── Fallback defaults ──────────────────────────────────────────────
 _FALLBACK_TEMPERATURE = 0.7
 _FALLBACK_TOP_P = 0.9
@@ -3522,7 +3533,6 @@ def _parse_tool_calls_with_parser(
     request=None,
     *,
     structured_tool_calls: list[dict] | None = None,
-    parse_metadata: dict[str, bool] | None = None,
 ) -> tuple[str, list | None]:
     """Parse tool calls, then honor ``tool_choice="none"`` by dropping them.
 
@@ -3536,11 +3546,9 @@ def _parse_tool_calls_with_parser(
     structured harmony/gemma4 channel. The cleaned content (markup removed)
     is preserved unchanged.
     """
+    _undeclared_tool_dropped_this_parse.set(False)
     content, tool_calls = _run_tool_parser(
-        output_text,
-        request,
-        structured_tool_calls=structured_tool_calls,
-        parse_metadata=parse_metadata,
+        output_text, request, structured_tool_calls=structured_tool_calls
     )
     if tool_choice_is_none(request):
         return content, None
@@ -3552,7 +3560,6 @@ def _run_tool_parser(
     request=None,
     *,
     structured_tool_calls: list[dict] | None = None,
-    parse_metadata: dict[str, bool] | None = None,
 ) -> tuple[str, list | None]:
     """Parse tool calls from model output using the configured parser.
 
@@ -3639,9 +3646,9 @@ def _run_tool_parser(
     try:
         parser.reset()
         result = parser.extract_tool_calls(output_text, request_dict)
-        if parse_metadata is not None and cfg.tool_call_parser == "qwen3_coder_xml":
-            parse_metadata["undeclared_tool_dropped"] = bool(
-                getattr(parser, "_undeclared_dropped", 0)
+        if cfg.tool_call_parser == "qwen3_coder_xml":
+            _undeclared_tool_dropped_this_parse.set(
+                bool(getattr(parser, "_undeclared_dropped", 0))
             )
         if result.tools_called:
             tool_calls = [
