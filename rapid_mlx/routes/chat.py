@@ -6741,7 +6741,10 @@ async def _create_chat_completion_impl(
             logger.warning(f"JSON output parsing failed: {e}")
 
     # Determine finish reason
-    finish_reason = "tool_calls" if tool_calls else output.finish_reason
+    finish_reason = public_finish_reason(
+        "tool_calls" if tool_calls else output.finish_reason,
+        getattr(output, "error_kind", None),
+    )
     if is_cancellation_finish_reason(finish_reason):
         return Response(status_code=499)
 
@@ -6859,7 +6862,6 @@ async def _create_chat_completion_impl(
             tool_calls,
             finish_reason,
             include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
-            error_kind=getattr(output, "error_kind", None),
         )
 
     # Build logprobs for response if requested.
@@ -6886,9 +6888,7 @@ async def _create_chat_completion_impl(
                     reasoning_content=reasoning_text,
                     tool_calls=tool_calls,
                 ),
-                finish_reason=public_finish_reason(
-                    finish_reason, getattr(output, "error_kind", None)
-                ),
+                finish_reason=finish_reason,
                 logprobs=choice_logprobs,
             )
         ],
@@ -7009,10 +7009,7 @@ async def _stream_buffered_chat_response(
 
     terminal = outputs[-1]
     terminal.finished = True
-    terminal.finish_reason = (
-        "length" if choice.finish_reason == "repetition" else choice.finish_reason
-    )
-    terminal.error_kind = "repetition" if choice.finish_reason == "repetition" else None
+    terminal.finish_reason = choice.finish_reason
     terminal.prompt_tokens = response.usage.prompt_tokens
     terminal.completion_tokens = response.usage.completion_tokens
     if response.metrics is not None:
@@ -8239,7 +8236,6 @@ async def stream_chat_completion(
                     include_reasoning_tail=not _uses_deepseek_v4_reasoning(
                         cfg, processor.reasoning_parser
                     ),
-                    error_kind=getattr(finish_output, "error_kind", None),
                 )
                 if cutoff_content and cutoff_content != (terminal_content or None):
                     terminal_content = cutoff_content
@@ -8261,13 +8257,11 @@ async def stream_chat_completion(
                                 fallback_tool_calls if fallback_tool_calls else None
                             ),
                         ),
-                        finish_reason=(
-                            public_finish_reason(
-                                "tool_calls"
-                                if fallback_tool_calls
-                                else finish_event.finish_reason,
-                                getattr(finish_output, "error_kind", None),
-                            )
+                        finish_reason=public_finish_reason(
+                            "tool_calls"
+                            if fallback_tool_calls
+                            else finish_event.finish_reason,
+                            getattr(finish_output, "error_kind", None),
                         ),
                         logprobs=_build_chunk_logprobs(finish_output),
                     )

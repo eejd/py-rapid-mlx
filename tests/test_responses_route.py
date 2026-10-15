@@ -2614,7 +2614,7 @@ def test_responses_terminal_carries_request_timing(responses_client, stream):
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_repetition_stop_is_incomplete_with_its_own_reason(responses_client, stream):
+def test_repetition_stop_uses_spec_incomplete_reason(responses_client, stream):
     _install_repetition_stop(responses_client.engine)
     response = responses_client.client.post(
         "/v1/responses",
@@ -2630,10 +2630,10 @@ def test_repetition_stop_is_incomplete_with_its_own_reason(responses_client, str
     else:
         payload = response.json()
     assert payload["status"] == "incomplete"
-    assert payload["incomplete_details"] == {"reason": "repetition"}
+    assert payload["incomplete_details"] == {"reason": "max_output_tokens"}
 
 
-def test_buffered_responses_replay_preserves_repetition_cause(monkeypatch):
+def test_buffered_responses_replay_keeps_standard_reason(monkeypatch):
     from rapid_mlx.routes import responses as route
 
     observed = []
@@ -2650,7 +2650,7 @@ def test_buffered_responses_replay_preserves_repetition_cause(monkeypatch):
             {
                 "model": "test-model",
                 "status": "incomplete",
-                "incomplete_details": {"reason": "repetition"},
+                "incomplete_details": {"reason": "max_output_tokens"},
                 "output": [],
             }
         ).encode()
@@ -2662,4 +2662,3 @@ def test_buffered_responses_replay_preserves_repetition_cause(monkeypatch):
 
     assert asyncio.run(collect()) == ["data: [DONE]\\n\\n"]
     assert observed[-1].finish_reason == "length"
-    assert observed[-1].error_kind == "repetition"

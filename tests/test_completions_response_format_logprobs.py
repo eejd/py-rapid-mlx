@@ -267,7 +267,7 @@ def test_stream_response_format_without_logprobs_strips_fences_in_buffered_chunk
     ("stream", "json_mode"),
     [(False, False), (True, False), (True, True)],
 )
-def test_repetition_stop_has_truthful_completion_reason(stream, json_mode):
+def test_repetition_stop_keeps_standard_completion_reason(stream, json_mode):
     client = _make_client(_RepetitionCompletionEngine())
     payload = {
         "model": "test-model",
@@ -289,4 +289,4 @@ def test_repetition_stop_has_truthful_completion_reason(stream, json_mode):
         )
     else:
         finish_reason = response.json()["choices"][0]["finish_reason"]
-    assert finish_reason == "repetition"
+    assert finish_reason == "length"

@@ -2382,7 +2382,10 @@ async def _non_stream(
         if rf is not None and final_content:
             final_content = extract_json_from_response(final_content)
 
-    finish_reason = "tool_calls" if tool_calls else output.finish_reason
+    finish_reason = public_finish_reason(
+        "tool_calls" if tool_calls else output.finish_reason,
+        getattr(output, "error_kind", None),
+    )
     if is_cancellation_finish_reason(finish_reason):
         return Response(status_code=499)
 
@@ -2403,7 +2406,6 @@ async def _non_stream(
         tool_calls,
         finish_reason,
         include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
-        error_kind=getattr(output, "error_kind", None),
     )
 
     if (
@@ -2445,9 +2447,7 @@ async def _non_stream(
                     reasoning_content=reasoning_text,
                     tool_calls=tool_calls,
                 ),
-                finish_reason=public_finish_reason(
-                    finish_reason, getattr(output, "error_kind", None)
-                ),
+                finish_reason=finish_reason,
             )
         ],
         usage=_build_usage(
@@ -2588,11 +2588,6 @@ async def _stream_buffered_responses_response(
     terminal.finished = True
     terminal.finish_reason = (
         "length" if response.get("status") == "incomplete" else "stop"
-    )
-    terminal.error_kind = (
-        "repetition"
-        if (response.get("incomplete_details") or {}).get("reason") == "repetition"
-        else None
     )
     usage = response.get("usage") or {}
     terminal.prompt_tokens = int(usage.get("input_tokens") or 0)
@@ -3270,7 +3265,6 @@ async def _stream_responses(
         # cover legitimate immediate-stop / zero-budget /
         # stop-sequence turns whose ``finish_reason`` is ``"stop"``).
         last_finish_reason: str | None = None
-        last_error_kind: str | None = None
         last_response_metrics = None
         tool_filter = StreamingToolCallFilter()
 
@@ -3895,8 +3889,9 @@ async def _stream_responses(
             # can narrow itself to the ``"length"`` abort signature.
             _frx = getattr(output, "finish_reason", None)
             if _frx is not None:
-                last_finish_reason = _frx
-                last_error_kind = getattr(output, "error_kind", None)
+                last_finish_reason = public_finish_reason(
+                    _frx, getattr(output, "error_kind", None)
+                )
             chunk_is_terminal = bool(getattr(output, "finished", False) or _frx)
             if chunk_is_terminal:
                 last_response_metrics = _build_response_metrics(
@@ -5031,7 +5026,6 @@ async def _stream_responses(
                 tool_calls=None,
                 finish_reason=last_finish_reason,
                 include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
-                error_kind=last_error_kind,
             )
             if rescue_text:
                 rescue_output_index = len(completed_output)
@@ -5334,13 +5328,7 @@ async def _stream_responses(
 
         if last_finish_reason == "length":
             completed_status = "incomplete"
-            incomplete_details: dict | None = {
-                "reason": (
-                    "repetition"
-                    if last_error_kind == "repetition"
-                    else "max_output_tokens"
-                )
-            }
+            incomplete_details: dict | None = {"reason": "max_output_tokens"}
         else:
             completed_status = "completed"
             incomplete_details = None

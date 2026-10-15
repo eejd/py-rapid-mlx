@@ -973,10 +973,7 @@ def openai_to_responses(
             )
             reasoning_item_status = (
                 "incomplete"
-                if (
-                    choice.finish_reason in ("length", "repetition")
-                    and not downstream_output_seen
-                )
+                if (choice.finish_reason == "length" and not downstream_output_seen)
                 else "completed"
             )
             output.append(
@@ -1026,8 +1023,7 @@ def openai_to_responses(
                 _build_tool_call_output_item(tc, uses_computer_use, namespace_by_tool)
             )
 
-    choice_finish_reason = choice.finish_reason if choice else None
-    status = _convert_status(choice_finish_reason)
+    status = _convert_status(choice.finish_reason if choice else None)
 
     usage = _build_responses_usage(response)
 
@@ -1039,13 +1035,7 @@ def openai_to_responses(
     # Pre-R11 the non-stream path emitted ``status="incomplete"`` only.
     incomplete_details: dict | None = None
     if status == "incomplete":
-        incomplete_details = {
-            "reason": (
-                "repetition"
-                if choice_finish_reason == "repetition"
-                else "max_output_tokens"
-            )
-        }
+        incomplete_details = {"reason": "max_output_tokens"}
 
     return ResponsesResponse(
         created_at=created_at,
@@ -1523,7 +1513,7 @@ def _convert_status(openai_finish_reason: str | None) -> str:
     """
     if openai_finish_reason == "cancelled":
         return "failed"
-    if openai_finish_reason in ("length", "repetition"):
+    if openai_finish_reason == "length":
         return "incomplete"
     return "completed"
 

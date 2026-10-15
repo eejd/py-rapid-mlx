@@ -1168,8 +1168,8 @@ class MLLMScheduler:
                         )
                     self.batch_generator.remove([response.uid])
                     logger.warning(
-                        "Stopping multimodal request %s after exact token loop "
-                        "(period_tokens=%d repeats=%d completion_tokens=%d)",
+                        "repetition_guard_stop request_id=%s "
+                        "period_tokens=%d copies=%d completion_tokens=%d",
                         request_id,
                         repetition_match.period_tokens,
                         repetition_match.repeats,

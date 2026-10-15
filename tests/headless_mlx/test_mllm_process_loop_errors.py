@@ -58,7 +58,7 @@ def _repeating_mllm_request(scheduler: MLLMScheduler) -> MLLMRequest:
     return request
 
 
-def test_mllm_repetition_stop_retires_live_row_without_mlx() -> None:
+def test_mllm_repetition_stop_retires_live_row_without_mlx(caplog) -> None:
     scheduler = _repetition_scheduler()
     request = _repeating_mllm_request(scheduler)
     response = MLLMBatchResponse(
@@ -69,7 +69,8 @@ def test_mllm_repetition_stop_retires_live_row_without_mlx() -> None:
         finish_reason=None,
     )
 
-    outputs, finished = scheduler._process_batch_responses([response])
+    with caplog.at_level(logging.WARNING):
+        outputs, finished = scheduler._process_batch_responses([response])
 
     assert finished == {request.request_id}
     assert request.status == RequestStatus.FINISHED_ABORTED
@@ -78,6 +79,13 @@ def test_mllm_repetition_stop_retires_live_row_without_mlx() -> None:
     assert "period_tokens=61" in (outputs[0].error or "")
     scheduler.batch_generator.remove.assert_called_once_with([7])
     assert scheduler.num_repetition_loop_stops == 1
+    assert any(
+        record.message
+        == "repetition_guard_stop request_id=vision-repeat period_tokens=61 "
+        "copies=3 completion_tokens=184"
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    )
 
 
 def test_mllm_repetition_stop_refuses_unowned_batch_row() -> None:

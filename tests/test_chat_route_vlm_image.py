@@ -129,16 +129,17 @@ class _StubRepetitionEngine(_StubMLLMEngine):
 
 class _StubRepetitionToolEngine(_StubMLLMEngine):
     async def stream_chat(self, messages, **kwargs):
-        yield GenerationOutput(
+        output = GenerationOutput(
             text="",
             new_text="",
             prompt_tokens=20,
             completion_tokens=80,
             finished=True,
             finish_reason="length",
-            error_kind="repetition",
             tool_calls=[{"id": "call_test", "name": "ping", "arguments": "{}"}],
         )
+        output.error_kind = "repetition"
+        yield output
 
 
 class _StubRetryableFailureEngine(_StubMLLMEngine):
@@ -525,7 +526,7 @@ def test_chat_route_maps_image_fetch_error_to_http_400_still_works():
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_repetition_stop_reports_its_cause_after_partial_output(stream):
+def test_repetition_stop_keeps_standard_finish_reason(stream):
     client = _make_client(_StubRepetitionEngine())
     response = client.post(
         "/v1/chat/completions",
@@ -547,14 +548,14 @@ def test_repetition_stop_reports_its_cause_after_partial_output(stream):
             for chunk in chunks
             if chunk.get("choices") and chunk["choices"][0].get("finish_reason")
         )
-        assert choice["finish_reason"] == "repetition"
+        assert choice["finish_reason"] == "length"
     else:
         choice = response.json()["choices"][0]
-        assert choice["finish_reason"] == "repetition"
+        assert choice["finish_reason"] == "length"
         assert choice["message"]["content"] == "A blue background."
 
 
-def test_repetition_stop_with_inline_tool_call_reports_repetition():
+def test_repetition_stop_with_inline_tool_call_uses_length():
     client = _make_client(_StubRepetitionToolEngine())
     response = client.post(
         "/v1/chat/completions",
@@ -582,7 +583,7 @@ def test_repetition_stop_with_inline_tool_call_reports_repetition():
         for choice in chunk.get("choices", [])
         if choice.get("finish_reason")
     ]
-    assert finishes == ["repetition"]
+    assert finishes == ["length"]
 
 
 if __name__ == "__main__":

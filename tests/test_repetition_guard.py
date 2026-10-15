@@ -7,6 +7,7 @@ pytest.importorskip("mlx")
 pytestmark = pytest.mark.requires_mlx
 
 
+import logging
 from unittest.mock import MagicMock
 
 import mlx.core as mx
@@ -147,8 +148,9 @@ def _drive_repeating_request(*, has_tools: bool):
     return scheduler, req, outputs[0], finished
 
 
-def test_scheduler_fails_exact_loop_for_tool_request():
-    scheduler, req, output, finished = _drive_repeating_request(has_tools=True)
+def test_scheduler_fails_exact_loop_for_tool_request(caplog):
+    with caplog.at_level(logging.WARNING):
+        scheduler, req, output, finished = _drive_repeating_request(has_tools=True)
     assert finished == {req.request_id}
     assert req.status == RequestStatus.FINISHED_ABORTED
     assert output.finished is True
@@ -161,6 +163,12 @@ def test_scheduler_fails_exact_loop_for_tool_request():
     assert output.error_kind == "repetition"
     assert scheduler.num_repetition_loop_stops == 1
     assert scheduler.get_stats()["num_repetition_loop_stops"] == 1
+    assert any(
+        record.message == "repetition_guard_stop request_id=repeat period_tokens=12 "
+        "copies=6 completion_tokens=72"
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    )
 
 
 def test_scheduler_does_not_change_plain_chat_semantics():

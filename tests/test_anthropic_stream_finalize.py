@@ -40,6 +40,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from rapid_mlx.config import reset_config
+from rapid_mlx.engine.base import GenerationOutput
 from rapid_mlx.routes.anthropic import (
     _split_tool_input_json,
     router,
@@ -189,6 +190,20 @@ class _ToolCallEngine:
         self._args = json.dumps(tool_input)
         self._finish_reason = finish_reason
         self._error_kind = error_kind
+
+    async def chat(self, *, messages, **kwargs):
+        return GenerationOutput(
+            text="",
+            new_text="",
+            prompt_tokens=20,
+            completion_tokens=8,
+            finished=True,
+            finish_reason=self._finish_reason,
+            error_kind=self._error_kind,
+            tool_calls=[
+                {"id": "call_test_1", "name": "computer", "arguments": self._args}
+            ],
+        )
 
     async def stream_chat(self, messages, **kwargs):
         yield SimpleNamespace(
@@ -597,7 +612,7 @@ def test_r06_stop_reason_max_tokens_on_length_finish():
     assert message_delta["delta"]["stop_reason"] == "max_tokens", message_delta
 
 
-def test_repetition_stop_pauses_turn_without_exposing_mid_thought_text():
+def test_repetition_stop_uses_max_tokens_without_exposing_mid_thought_text():
     engine = _ThinkingTruncatedEngine(["Still", " thinking"], error_kind="repetition")
     response = _make_client(engine, reasoning_parser_name="qwen3").post(
         "/v1/messages",
@@ -611,7 +626,7 @@ def test_repetition_stop_pauses_turn_without_exposing_mid_thought_text():
     assert response.status_code == 200
     events = _parse_sse(response.text)
     delta = next(data for _, data in events if data.get("type") == "message_delta")
-    assert delta["delta"]["stop_reason"] == "pause_turn"
+    assert delta["delta"]["stop_reason"] == "max_tokens"
     assert not any(
         data.get("content_block", {}).get("type") == "text"
         and "thinking" in data["content_block"].get("text", "")
@@ -619,7 +634,8 @@ def test_repetition_stop_pauses_turn_without_exposing_mid_thought_text():
     )
 
 
-def test_repetition_stop_with_parsed_tool_call_pauses_turn():
+@pytest.mark.parametrize("stream", [False, True])
+def test_repetition_stop_with_parsed_tool_call_uses_max_tokens(stream):
     engine = _ToolCallEngine(
         {"x": 500, "y": 300}, finish_reason="length", error_kind="repetition"
     )
@@ -628,7 +644,7 @@ def test_repetition_stop_with_parsed_tool_call_pauses_turn():
         json={
             "model": "test-model",
             "max_tokens": 64,
-            "stream": True,
+            "stream": stream,
             "tools": [
                 {
                     "name": "computer",
@@ -647,9 +663,13 @@ def test_repetition_stop_with_parsed_tool_call_pauses_turn():
         },
     )
     assert response.status_code == 200
-    events = _parse_sse(response.text)
-    delta = next(data for _, data in events if data.get("type") == "message_delta")
-    assert delta["delta"]["stop_reason"] == "pause_turn"
+    if stream:
+        events = _parse_sse(response.text)
+        delta = next(data for _, data in events if data.get("type") == "message_delta")
+        stop_reason = delta["delta"]["stop_reason"]
+    else:
+        stop_reason = response.json()["stop_reason"]
+    assert stop_reason == "max_tokens"
 
 
 def test_r06_stop_reason_end_turn_on_natural_finish():

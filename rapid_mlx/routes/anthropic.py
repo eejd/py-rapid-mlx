@@ -1212,7 +1212,10 @@ async def create_anthropic_message(
         # mode). The Anthropic adapter downstream renders the
         # rescued ``content`` into a TextBlock; without this it would
         # emit a completely empty ``content=[]`` Messages response.
-        finish_reason = "tool_calls" if tool_calls else output.finish_reason
+        finish_reason = public_finish_reason(
+            "tool_calls" if tool_calls else output.finish_reason,
+            getattr(output, "error_kind", None),
+        )
         # PR #715 bundle, fuzz finding C: detect helper Case-4 blank
         # (parser routed whole no-tag output to reasoning, helper
         # cleared cleaned_text=""). See chat.py route for the full
@@ -1271,7 +1274,6 @@ async def create_anthropic_message(
             tool_calls,
             finish_reason,
             include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
-            error_kind=getattr(output, "error_kind", None),
         )
 
         openai_response = ChatCompletionResponse(
@@ -1283,9 +1285,7 @@ async def create_anthropic_message(
                         reasoning_content=reasoning_text,
                         tool_calls=tool_calls,
                     ),
-                    finish_reason=public_finish_reason(
-                        finish_reason, getattr(output, "error_kind", None)
-                    ),
+                    finish_reason=finish_reason,
                 )
             ],
             usage=_build_usage(output, reasoning_text),
@@ -3289,8 +3289,8 @@ async def _stream_anthropic_messages(
     # the engine becomes ``max_tokens`` for spec-compliant
     # continuation; the ``stop_sequence`` ladder below preserves H-03
     # behaviour for user-supplied ``stop_sequences`` matches.
-    if stream_finish_reason == "length" and stream_error_kind == "repetition":
-        stop_reason = "pause_turn"
+    if stream_error_kind == "repetition":
+        stop_reason = "max_tokens"
     elif tool_calls:
         stop_reason = "tool_use"
     elif stream_finish_reason == "length":

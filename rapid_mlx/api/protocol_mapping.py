@@ -4,11 +4,9 @@ ENGINE_CANCELLATION_FINISH_REASON = "cancelled"
 
 
 def public_finish_reason(reason: str | None, error_kind: str | None) -> str | None:
-    """Expose a repetition stop without changing internal truncation handling."""
+    """Keep a repetition abort inside the protocol's standard length reason."""
 
-    if error_kind == "repetition":
-        return "repetition"
-    return reason
+    return "length" if error_kind == "repetition" else reason
 
 
 def is_cancellation_finish_reason(finish_reason: str | None) -> bool:
