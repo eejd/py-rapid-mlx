@@ -1448,7 +1448,7 @@ final class ChatViewModel {
         let instructions = [globalInstruction, conversationInstruction]
             .compactMap { Self.normalizedInstruction($0) }
         let instructionText = instructions.isEmpty ? "" : "Instructions for this chat:\n" + instructions.joined(separator: "\n") + "\n\n"
-        let prompt = instructionText + replay + user.content + (try gooseAttachmentNote(for: user, folder: turnFolder))
+        let prompt = instructionText + replay + user.content + (try gooseAttachmentNote(for: user))
         await agent.prompt(prompt)
         guard epoch == conversationEpoch else { return }
         if Task.isCancelled {
@@ -1531,23 +1531,23 @@ final class ChatViewModel {
         }
     }
 
-    private func gooseAttachmentNote(for user: ChatMessage, folder: URL) throws -> String {
+    private func gooseAttachmentNote(for user: ChatMessage) throws -> String {
         guard !user.imageAttachments.isEmpty || !user.fileAttachments.isEmpty else { return "" }
-        let directory = folder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
-        _ = try GooseToolPresentation.containedDestination(directory, root: folder)
+        let directory = gooseFolder.appendingPathComponent("Attachments/\(user.id.uuidString)", isDirectory: true)
+        _ = try GooseToolPresentation.containedDestination(directory, root: gooseFolder)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var paths: [String] = []
         for image in user.imageAttachments {
             let name = URL(fileURLWithPath: image.filename).lastPathComponent
             let destination = directory.appendingPathComponent(name)
-            let safe = try GooseToolPresentation.containedDestination(destination, root: folder)
+            let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
             try image.data.write(to: safe, options: .atomic)
             paths.append(destination.path)
         }
         for file in user.fileAttachments {
             let name = URL(fileURLWithPath: file.filename).deletingPathExtension().lastPathComponent + ".txt"
             let destination = directory.appendingPathComponent(name)
-            let safe = try GooseToolPresentation.containedDestination(destination, root: folder)
+            let safe = try GooseToolPresentation.containedDestination(destination, root: gooseFolder)
             try file.extractedText.write(to: safe, atomically: true, encoding: .utf8)
             paths.append(destination.path)
         }
