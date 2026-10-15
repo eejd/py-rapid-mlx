@@ -27,10 +27,32 @@ def test_duration_and_pitch(speed, sample_rate):
     assert np.sqrt(np.mean(output**2)) == pytest.approx(np.sqrt(0.5), abs=0.06)
 
 
-@pytest.mark.parametrize("length,speed", [(24000, 1.0), (0, 0.5), (1, 2.0), (767, 0.5)])
-def test_identity_and_short_clips(length, speed):
+@pytest.mark.parametrize("length,speed", [(24000, 1.0), (1, 1.0), (0, 0.5), (0, 2.0)])
+def test_identity(length, speed):
     audio = np.zeros(length, dtype=np.float32)
     assert time_stretch(audio, 24000, speed) is audio
+
+
+@pytest.mark.parametrize("length", [1, 2, 767])
+@pytest.mark.parametrize("speed", [0.5, 2.0])
+def test_short_clips_resample(length, speed):
+    audio = np.linspace(0.25, 0.75, length, dtype=np.float32)
+    output = time_stretch(audio, 24000, speed)
+    expected_length = round(length / speed)
+    expected = np.linspace(audio[0], audio[-1], expected_length)
+    assert len(output) == expected_length
+    assert output.dtype == np.float32
+    np.testing.assert_allclose(output, expected, atol=1e-7)
+
+
+@pytest.mark.parametrize("speed", [0.5, 2.0])
+@pytest.mark.parametrize("length", [768, 769, 1000, 24000])
+def test_tail_keeps_tone_amplitude(length, speed):
+    audio = tone(duration=length / 24000)
+    output = time_stretch(audio, 24000, speed)
+    overall_rms = np.sqrt(np.mean(output**2))
+    assert overall_rms > 0.5
+    assert np.sqrt(np.mean(output[-768:] ** 2)) == pytest.approx(overall_rms, rel=0.2)
 
 
 @pytest.mark.parametrize("length", [768, 769, 1000])

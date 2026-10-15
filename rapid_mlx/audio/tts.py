@@ -991,7 +991,8 @@ class TTSEngine:
         # assemble and stretch once rather than restarting at every boundary.
         # This yields one complete clip and delays first audio until synthesis
         # finishes. The HTTP speech route already uses assembled generation.
-        if self._model_family in _POST_STRETCH_FAMILIES and speed != 1.0:
+        # IndexTTS keeps its existing streaming path: this API has no ref_audio.
+        if self._model_family in {"qwen3_tts", "chatterbox"} and speed != 1.0:
             yield self.generate(text, voice=voice, speed=speed)
             return
 

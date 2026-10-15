@@ -525,28 +525,21 @@ def test_family_speed_handling(monkeypatch, family, speed, stream):
     fake_generate = types.ModuleType("mlx_audio.tts.generate")
     fake_generate.load_audio = lambda *args, **kwargs: source
     monkeypatch.setitem(sys.modules, "mlx_audio.tts.generate", fake_generate)
-    if stream and family == "indextts" and speed != 1.0:
-        # stream_generate has no reference argument: retain its required-ref
-        # error rather than emitting speech with speed silently ignored.
-        with pytest.raises(ValueError, match="requires ref_audio"):
-            list(engine.stream_generate("hello", speed=speed))
-        assert calls == []
-        return
     if stream:
         outputs = list(engine.stream_generate("hello", speed=speed))
     else:
         outputs = [engine.generate("hello", speed=speed, ref_audio="reference.wav")]
     (call,) = calls
-    if family == "kokoro" or (stream and speed == 1.0):
+    if family == "kokoro" or (stream and (speed == 1.0 or family == "indextts")):
         assert call["speed"] == speed
     else:
         assert "speed" not in call
-    expected = len(source) / speed
+    expected = len(source) if stream and family == "indextts" else len(source) / speed
     assert sum(len(out.audio) for out in outputs) == round(expected)
     assert sum(out.duration for out in outputs) == pytest.approx(expected / sample_rate)
-    if stream and family != "kokoro" and speed != 1.0:
+    if stream and family in {"qwen3_tts", "chatterbox"} and speed != 1.0:
         assert len(outputs) == 1
-    if stream and family == "qwen3_tts" and speed == 1.0:
+    if stream and (family == "indextts" or (family == "qwen3_tts" and speed == 1.0)):
         assert engine._loaded
         assert len(outputs) == 3
         for output, chunk in zip(outputs, np.array_split(source, 3), strict=True):

@@ -22,13 +22,14 @@
 """Pitch-preserving, offline WSOLA for mono TTS waveforms."""
 
 import numpy as np
+from scipy.fft import irfft, next_fast_len, rfft
 
 
 def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarray:
     """Change tempo by ``speed`` using 32 ms frames with 50% overlap.
 
-    Input and output are mono float32 samples. Clips shorter than one frame
-    pass through unchanged. No resampling is used, so pitch stays unchanged.
+    Input and output are mono float32 samples. Non-empty clips shorter than
+    one frame use linear resampling; longer clips preserve pitch with WSOLA.
     Frame alignment follows audiotsm's correlation against the previous
     frame's natural progression; normalized Hann overlap-add joins the frames.
     """
@@ -39,13 +40,19 @@ def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarra
     if sample_rate <= 0:
         raise ValueError("sample_rate must be positive")
     frame_length = max(2, round(sample_rate * 0.032 / 2) * 2)
-    if speed == 1.0 or len(audio) < frame_length:
+    if speed == 1.0 or not len(audio):
         return audio
+
+    output_length = round(len(audio) / speed)
+    if len(audio) < frame_length:
+        return np.interp(
+            np.linspace(0, len(audio) - 1, output_length), np.arange(len(audio)), audio
+        ).astype(np.float32)
 
     hop = frame_length // 2
     tolerance = hop
-    output_length = round(len(audio) / speed)
-    # Pad for the last frame and its natural progression, including search.
+    last_start = len(audio) - frame_length
+    # Pad for the previous frame's natural progression near the clip end.
     source = np.pad(audio, (0, frame_length + hop + tolerance))
     output = np.zeros(output_length + frame_length, dtype=np.float32)
     weights = np.zeros_like(output)
@@ -53,15 +60,20 @@ def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarra
     window = np.hanning(frame_length + 2)[1:-1].astype(np.float32)
     previous = 0
     for position in range(0, output_length, hop):
-        expected = round(position * speed)
+        expected = min(round(position * speed), last_start)
         start = expected
         if position:
             lower = max(0, expected - tolerance)
-            upper = min(len(audio) - 1, expected + tolerance)
+            upper = min(last_start, expected + tolerance)
             natural = source[previous + hop : previous + hop + frame_length]
-            correlation = np.correlate(
-                source[lower : upper + frame_length], natural, mode="valid"
-            )
+            candidates = source[lower : upper + frame_length]
+            # Circular correlation agrees with linear correlation over valid
+            # starts; no padding for the unused full-correlation tail is needed.
+            fft_length = next_fast_len(len(candidates), real=True)
+            correlation = irfft(
+                rfft(candidates, fft_length) * rfft(natural, fft_length).conj(),
+                fft_length,
+            )[: upper - lower + 1]
             start = lower + int(np.argmax(correlation))
         frame = source[start : start + frame_length]
         output[position : position + frame_length] += frame * window
