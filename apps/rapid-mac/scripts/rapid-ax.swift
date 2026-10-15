@@ -412,6 +412,8 @@ if command == "key" {
 
 // App menu items are outside the window tree. Open the parent first: a
 // hidden menu item's AXPress can otherwise report success without delivery.
+// Lazy menus may expose no items until opened; poll fresh children and dismiss
+// every unmatched menu (or failed action) before continuing or reporting failure.
 // The caller must still prove the resulting window appeared via AX windows.
 if command == "app-menu" {
     guard let title = wanted,
@@ -422,21 +424,39 @@ if command == "app-menu" {
     func menuChildren(_ element: AXUIElement) -> [AXUIElement] {
         attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
     }
+    guard let escapeDown = CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: true),
+          let escapeUp = CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: false)
+    else { fail("could not create Escape key events") }
+    func closeMenu() {
+        escapeDown.postToPid(pid)
+        escapeUp.postToPid(pid)
+        usleep(150_000)
+    }
     for parent in menuChildren(bar) {
-        for menu in menuChildren(parent) {
-            for item in menuChildren(menu) where string(item, kAXTitleAttribute as CFString) == title {
-                let opened = AXUIElementPerformAction(parent, kAXPressAction as CFString)
-                guard opened == .success else { fail("parent AXPress failed: \(opened.rawValue)") }
-                usleep(500_000)
+        let opened = AXUIElementPerformAction(parent, kAXPressAction as CFString)
+        guard opened == .success else {
+            closeMenu()
+            fail("parent AXPress failed: \(opened.rawValue)")
+        }
+        let deadline = Date().addingTimeInterval(1.0)
+        repeat {
+            usleep(50_000)
+            let items = menuChildren(parent).flatMap { menuChildren($0) }
+            if let item = items.first(where: { string($0, kAXTitleAttribute as CFString) == title }) {
                 let pressed = AXUIElementPerformAction(item, kAXPressAction as CFString)
-                guard pressed == .success else { fail("menu item AXPress failed: \(pressed.rawValue)") }
+                guard pressed == .success else {
+                    closeMenu()
+                    fail("menu item AXPress failed: \(pressed.rawValue)")
+                }
                 let payload: [String: Any] = ["success": true, "method": "native-pid-ax",
                     "pid": pid, "title": title, "parent_ax_error": 0, "item_ax_error": 0]
                 let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
                 print(String(data: data, encoding: .utf8)!)
                 exit(0)
             }
-        }
+            if !items.isEmpty { break }
+        } while Date() < deadline
+        closeMenu()
     }
     fail("app-menu item not found: \(title)")
 }
