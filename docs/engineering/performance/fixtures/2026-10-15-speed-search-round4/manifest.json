@@ -1,0 +1,42 @@
+{
+  "source_commit": "5c70e238f6068d373553c48d92786a5cf333d05b",
+  "archive_sha256": "fa91bbcf4584f3da5e53b7bb46a7072adc4d052096d9954349bb58d445afc308",
+  "members": {
+    "raw/moe-components.json": {
+      "bytes": 17494,
+      "sha256": "5c69816fc4f89e2f7b68baf2c36f03203a08e953d60c3dda8869241d2065bcc0"
+    },
+    "raw/moe-metadata.json": {
+      "bytes": 1205,
+      "sha256": "beb2f6ca060d23fab3fe28887508d7f8408b9b8650c3666eef492064188929ad"
+    },
+    "raw/parser-profile.json": {
+      "bytes": 6194,
+      "sha256": "9acd26fbd416c44b7b59969176b0ae38362657fba2b06fb5a2c6e0548e214a4f"
+    },
+    "raw/parser-metadata.json": {
+      "bytes": 1556,
+      "sha256": "accb5da4003c2026f5d40936925ae3937c26aaa973fcb95faed084d1b9e2ff37"
+    },
+    "raw/execution.json": {
+      "bytes": 88,
+      "sha256": "5fcc8ee8d1979acddf0ffcf7b9eff9925b72ceed5bb3551a21e44e727d149808"
+    },
+    "harness/moe_components.py": {
+      "bytes": 4174,
+      "sha256": "a964d715f18f6100b270da510d59d7bd4d490c8e75198b18b9711addce28c6c8"
+    },
+    "harness/parser_profile.py": {
+      "bytes": 3345,
+      "sha256": "33f16019807c56ce77aabecd6857ecfff9aaaa9cedfe42bfa145d43c4b8b91a0"
+    },
+    "harness/metadata.py": {
+      "bytes": 1376,
+      "sha256": "ea2b03c7f272dcc5a7803a59159fa420f1b99cadb02214bcb09b67c344fd2854"
+    },
+    "harness/official-dependency-files.json": {
+      "bytes": 184362,
+      "sha256": "e8f370d0092de0bf5f9c74d4181bf8556ead46059f0b1fd0a464570817cc7bfb"
+    }
+  }
+}
