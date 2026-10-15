@@ -12,6 +12,7 @@ import threading
 import zipfile
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -100,6 +101,80 @@ def test_unified_cli_rejects_remote_local_search_before_model_resolution():
     assert "non-loopback --host requires API-key authentication" in result.stderr
     assert "Alias:" not in result.stdout
     assert "Resolving" not in result.stderr
+
+
+def test_unified_cli_exposure_helper_reports_actionable_error(monkeypatch, capsys):
+    from rapid_mlx import cli
+
+    monkeypatch.delenv("RAPID_MLX_API_KEY", raising=False)
+    args = SimpleNamespace(
+        enable_local_search=True,
+        host="0.0.0.0",
+        api_key=None,
+        listen_fd=None,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli._validate_local_search_exposure_or_exit(args)
+
+    assert exc_info.value.code == 2
+    assert "requires API-key authentication" in capsys.readouterr().err
+
+
+def test_unified_cli_runs_exposure_gate_immediately_after_parse(monkeypatch):
+    from rapid_mlx import cli
+
+    class ExposureGateReachedError(Exception):
+        pass
+
+    observed = []
+
+    def stop_after_gate(args):
+        observed.append((args.command, args.enable_local_search, args.host))
+        raise ExposureGateReachedError
+
+    monkeypatch.setattr(cli, "_validate_local_search_exposure_or_exit", stop_after_gate)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rapid-mlx",
+            "serve",
+            "qwen3.5-4b-4bit",
+            "--host",
+            "0.0.0.0",
+            "--enable-local-search",
+        ],
+    )
+
+    with pytest.raises(ExposureGateReachedError):
+        cli.main.__wrapped__()
+
+    assert observed == [("serve", True, "0.0.0.0")]
+
+
+def test_standalone_server_rejects_remote_local_search_after_parse(monkeypatch, capsys):
+    from rapid_mlx import server
+
+    monkeypatch.delenv("RAPID_MLX_API_KEY", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rapid_mlx.server",
+            "--model",
+            "qwen3.5-4b-4bit",
+            "--host",
+            "0.0.0.0",
+            "--enable-local-search",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        server.main.__wrapped__()
+
+    assert exc_info.value.code == 2
+    assert "requires API-key authentication" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("existing", [False, True])
