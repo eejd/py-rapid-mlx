@@ -71,7 +71,7 @@ def test_build_script_validates_and_embeds_separate_candidate_key() -> None:
         assert all('"$CUA_HELPER/Contents/Info.plist"' in write for write in writes)
 
 
-def test_signed_release_overlaps_sidecar_with_swift_and_joins_before_staging() -> None:
+def test_signed_release_serializes_sidecar_before_goose_helper_staging() -> None:
     text = BUILD.read_text()
     action = yaml.safe_load(ACTION.read_text())
     build_step = next(
@@ -80,19 +80,18 @@ def test_signed_release_overlaps_sidecar_with_swift_and_joins_before_staging() -
         if step.get("name") == "Build + sign Rapid-MLX Desktop.app"
     )
 
-    assert build_step["env"]["PARALLEL_SIDECAR_BUILD"] == (
-        "${{ inputs.parallel_sidecar_build == 'true' && inputs.signed == 'true' "
-        "&& '1' || '0' }}"
-    )
-    assert action["inputs"]["parallel_sidecar_build"]["default"] == "false"
+    assert build_step["env"]["PARALLEL_SIDECAR_BUILD"] == "0"
+    assert "parallel_sidecar_build" not in action["inputs"]
     start = text.index("starting signed sidecar build beside Swift compilation")
     swift = text.index('echo "==> swift build -c $CONFIG"')
     join = text.index("\njoin_parallel_sidecar\n")
-    assemble = text.index('echo "==> assembling Rapid-MLX Desktop.app"')
+    assemble = text.index('echo "==> assembling $(basename "$APP")"')
     stage = text.index(
         'cp -R "$SIDECAR_STAGE/rapid-mlx" "$CONTENTS/Resources/rapid-mlx"'
     )
     assert start < swift < join < assemble < stage
+    helper = text.index('bash "$ROOT/scripts/build-work-helper.sh" "$CONTENTS" stage')
+    assert assemble < helper < stage
     assert "parallel build timing: Swift" in text
 
 
