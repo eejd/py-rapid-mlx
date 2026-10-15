@@ -582,7 +582,6 @@ struct SettingsView: View {
                     ShareComputeProviderSettings(manager: shareCompute)
                 }
             }
-            }
         }
     }
 
