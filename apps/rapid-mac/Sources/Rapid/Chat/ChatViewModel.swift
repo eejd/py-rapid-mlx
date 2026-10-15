@@ -155,16 +155,15 @@ final class ChatViewModel {
     func answerGoosePermission(_ request: WorkPermission, tool: String, allow: Bool, always: Bool = false) {
         if always && allow { GoosePermissionPolicy.alwaysAllow(tool) }
         WorkAgent.shared.answerPermission(request, allow: allow)
-        if let index = messages.lastIndex(where: { $0.gooseTool?.id == request.toolCallID }),
-           var card = messages[index].gooseTool {
-            card.permissionState = allow ? (always ? "always allowed" : "allowed") : "declined"
-            messages[index].gooseTool = card
+        if let index = messages.lastIndex(where: { $0.gooseParts?.contains(where: { $0.tool?.id == request.toolCallID }) == true }),
+           let part = messages[index].gooseParts?.firstIndex(where: { $0.tool?.id == request.toolCallID }) {
+            messages[index].gooseParts?[part].tool?.permissionState = allow ? (always ? "always allowed" : "allowed") : "declined"
         }
     }
     func goosePermission(for id: String) -> (WorkPermission, String)? { goosePermissions[id] }
     func allowPendingGoosePermissions() {
         for (request, tool) in goosePermissions.values {
-            if messages.contains(where: { $0.gooseTool?.id == request.toolCallID && $0.gooseTool?.permissionState == "permission needed" }) {
+            if messages.contains(where: { $0.gooseParts?.contains(where: { $0.tool?.id == request.toolCallID && $0.tool?.permissionState == "permission needed" }) == true }) {
                 answerGoosePermission(request, tool: tool, allow: true)
             }
         }
@@ -1379,8 +1378,8 @@ final class ChatViewModel {
         }
         if let error = agent.error {
             let receivedContent = messages.dropFirst(placeholderIndex).contains {
-                !$0.content.isEmpty || $0.gooseTool != nil
-            } || !messages[placeholderIndex].content.isEmpty
+                !$0.content.isEmpty || !($0.gooseParts ?? []).isEmpty
+            } || !messages[placeholderIndex].content.isEmpty || !(messages[placeholderIndex].gooseParts ?? []).isEmpty
             if !receivedContent { throw WorkError.message(error) }
             lastError = error
             isStreaming = false
@@ -1443,51 +1442,48 @@ final class ChatViewModel {
     }
 
     func applyGooseEvent(_ event: GooseChatEvent, initialPlaceholder: Int) {
+        guard messages.indices.contains(initialPlaceholder) else { return }
         switch event {
         case .session(let id): gooseSessionID = id
         case .text(let chunk):
-            let index: Int
-            if let last = messages.indices.last, messages[last].role == .assistant,
-               messages[last].gooseTool == nil, messages[last].status == .streaming {
-                index = last
+            guard !chunk.isEmpty else { break }
+            messages[initialPlaceholder].content += chunk
+            if messages[initialPlaceholder].gooseParts == nil { messages[initialPlaceholder].gooseParts = [] }
+            if let last = messages[initialPlaceholder].gooseParts?.indices.last,
+               messages[initialPlaceholder].gooseParts?[last].text != nil {
+                messages[initialPlaceholder].gooseParts?[last].text? += chunk
             } else {
-                index = appendMessage(ChatMessage(role: .assistant, status: .streaming))
+                messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(text: chunk))
             }
-            messages[index].content += chunk
         case .thinking(let chunk):
-            if let last = messages.indices.last, messages[last].role == .assistant,
-               messages[last].gooseTool == nil, messages[last].status == .streaming {
-                messages[last].reasoning += chunk
-            }
+            messages[initialPlaceholder].reasoning += chunk
         case .tool(let id, let name, let input, let status, let output):
-            if let index = messages.lastIndex(where: { $0.gooseTool?.id == id }) {
-                var card = messages[index].gooseTool!
+            if messages[initialPlaceholder].gooseParts == nil { messages[initialPlaceholder].gooseParts = [] }
+            if let part = messages[initialPlaceholder].gooseParts?.firstIndex(where: { $0.tool?.id == id }),
+               var card = messages[initialPlaceholder].gooseParts?[part].tool {
                 if !input.isEmpty { card.input = input }
                 if !output.isEmpty { card.output = String(output.prefix(12000)) }
                 card.status = status
-                messages[index].gooseTool = card
+                messages[initialPlaceholder].gooseParts?[part].tool = card
             } else {
-                if let last = messages.indices.last, messages[last].status == .streaming {
-                    messages[last].status = .complete
-                }
-                appendMessage(ChatMessage(role: .assistant, status: .complete,
-                    gooseTool: GooseToolCard(id: id, name: name, input: input, status: status)))
+                messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(
+                    tool: GooseToolCard(id: id, name: name, input: input,
+                                        output: String(output.prefix(12000)), status: status)))
             }
         case .permission(let request, let name, let state):
             goosePermissions[request.toolCallID] = (request, name)
-            if let index = messages.lastIndex(where: { $0.gooseTool?.id == request.toolCallID }) {
-                messages[index].gooseTool?.permissionState = state
+            if messages[initialPlaceholder].gooseParts == nil { messages[initialPlaceholder].gooseParts = [] }
+            if let part = messages[initialPlaceholder].gooseParts?.firstIndex(where: { $0.tool?.id == request.toolCallID }) {
+                messages[initialPlaceholder].gooseParts?[part].tool?.permissionState = state
             } else {
-                appendMessage(ChatMessage(role: .assistant, status: .complete,
-                    gooseTool: GooseToolCard(id: request.toolCallID, name: name,
-                        input: request.command, permissionState: state)))
+                messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(
+                    tool: GooseToolCard(id: request.toolCallID, name: name,
+                                        input: request.command, permissionState: state)))
             }
         case .error(let message):
             lastError = message
-            if let index = messages.indices.last, messages[index].status == .streaming {
-                messages[index].status = .failed
-                messages[index].errorMessage = message
-            }
+            messages[initialPlaceholder].status = .failed
+            messages[initialPlaceholder].errorMessage = message
         case .cancelled: break
         }
     }

@@ -56,3 +56,17 @@ struct GooseToolCard: Codable, Equatable, Hashable {
     var status: String = "running"
     var permissionState: String? = nil
 }
+
+/// Ordered pieces of one ACP assistant turn. A tool updates its existing
+/// piece, while text after the tool starts a new piece in the same message.
+struct GooseTurnPart: Codable, Equatable, Identifiable {
+    let id: UUID
+    var text: String?
+    var tool: GooseToolCard?
+
+    init(id: UUID = UUID(), text: String? = nil, tool: GooseToolCard? = nil) {
+        self.id = id
+        self.text = text
+        self.tool = tool
+    }
+}

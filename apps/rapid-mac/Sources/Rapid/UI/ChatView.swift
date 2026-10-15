@@ -1967,14 +1967,23 @@ private struct MessageRow: View {
 
     private var assistantBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let card = message.gooseTool {
+            if let parts = message.gooseParts, !parts.isEmpty {
+                ForEach(parts) { part in
+                    if let text = part.text, !text.isEmpty {
+                        TextKitMarkdownView(content: text)
+                    }
+                    if let card = part.tool {
+                        GooseToolCardView(card: card, onDecision: onGooseDecision)
+                    }
+                }
+            } else if let card = message.gooseTool {
                 GooseToolCardView(card: card, onDecision: onGooseDecision)
             }
             if !message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 reasoningDisclosure
             }
-            if hasAssistantContent {
-                if let streamingMarkdown {
+            if message.gooseParts?.isEmpty != false {
+                if hasAssistantContent, let streamingMarkdown {
                     // The same child remains mounted when status changes from
                     // streaming to complete. Its final mutable tail is
                     // committed in place; actions and stats appear below it
@@ -1983,11 +1992,11 @@ private struct MessageRow: View {
                         store: streamingMarkdown,
                         messageID: message.id
                     )
-                } else {
+                } else if hasAssistantContent {
                     TextKitMarkdownView(content: message.content)
+                } else if showTypingIndicator {
+                    typingIndicator
                 }
-            } else if showTypingIndicator {
-                typingIndicator
             }
             if message.status == .failed {
                 failureCaption
@@ -2202,6 +2211,10 @@ private struct MessageRow: View {
         // last answer arrives, so it would also strip the actions from every
         // earlier, settled message.
         guard message.status != .streaming else { return false }
+        if message.gooseParts != nil {
+            return !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || message.gooseParts?.contains(where: { $0.tool != nil }) == true
+        }
         guard let calls = message.toolCalls, !calls.isEmpty else { return true }
         return !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }

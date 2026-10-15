@@ -462,6 +462,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
     /// content is responding to. Required by the OpenAI spec.
     var toolCallID: String?
     var gooseTool: GooseToolCard?
+    var gooseParts: [GooseTurnPart]?
     /// v0.4.12: streaming-time + token-throughput stats. Populated
     /// at end-of-stream for assistant messages so the UI can show
     /// a small caption ("~84 tok/s · 2.4 s"). ``nil`` for all
@@ -613,6 +614,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         toolCalls: [ToolCall]? = nil,
         toolCallID: String? = nil,
         gooseTool: GooseToolCard? = nil,
+        gooseParts: [GooseTurnPart]? = nil,
         stats: MessageStats? = nil,
         reasoningTruncated: Bool = false,
         contentTruncated: Bool = false,
@@ -636,6 +638,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         self.toolCalls = toolCalls
         self.toolCallID = toolCallID
         self.gooseTool = gooseTool
+        self.gooseParts = gooseParts
         self.stats = stats
         self.reasoningTruncated = reasoningTruncated
         self.contentTruncated = contentTruncated
@@ -656,7 +659,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, role, content, imageAttachments, imageDeliveryStatus
         case fileAttachments, reasoning, status
-        case errorMessage, failureKind, toolCalls, toolCallID, gooseTool
+        case errorMessage, failureKind, toolCalls, toolCallID, gooseTool, gooseParts
         case stats, reasoningTruncated, contentTruncated
         case toolNotCalledFlagged
         case toolCallArtifactSuppressed
@@ -701,6 +704,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         try c.encodeIfPresent(toolCalls, forKey: .toolCalls)
         try c.encodeIfPresent(toolCallID, forKey: .toolCallID)
         try c.encodeIfPresent(gooseTool, forKey: .gooseTool)
+        try c.encodeIfPresent(gooseParts, forKey: .gooseParts)
         try c.encodeIfPresent(stats, forKey: .stats)
         try c.encode(reasoningTruncated, forKey: .reasoningTruncated)
         try c.encode(contentTruncated, forKey: .contentTruncated)
@@ -742,6 +746,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Hashable {
         self.toolCalls = try c.decodeIfPresent([ToolCall].self, forKey: .toolCalls)
         self.toolCallID = try c.decodeIfPresent(String.self, forKey: .toolCallID)
         self.gooseTool = try c.decodeIfPresent(GooseToolCard.self, forKey: .gooseTool)
+        self.gooseParts = try c.decodeIfPresent([GooseTurnPart].self, forKey: .gooseParts)
         self.stats = try c.decodeIfPresent(MessageStats.self, forKey: .stats)
         self.reasoningTruncated = try c.decodeIfPresent(Bool.self, forKey: .reasoningTruncated) ?? false
         // Cycle-13 (2026-06-20) F-5: same back-compat shim as
