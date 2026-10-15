@@ -29,9 +29,12 @@ struct WorkView: View {
     }
 
     static func availableModels(in catalog: [ModelEntry], on hardware: MacHardware) -> [ModelEntry] {
-        catalog.filter {
-            $0.cached && $0.kind == .chat
-                && ModelSizing.isAvailable(alias: $0.alias, on: hardware, catalogEntry: $0)
+        let downloaded = catalog.filter { $0.cached && $0.kind == .chat }
+        let recommended = recommendedModel(in: downloaded, on: hardware)?.alias
+        return downloaded.sorted { left, right in
+            if left.alias == recommended { return true }
+            if right.alias == recommended { return false }
+            return left.alias.localizedStandardCompare(right.alias) == .orderedAscending
         }
     }
 
@@ -40,9 +43,12 @@ struct WorkView: View {
     }
 
     static func recommendedModel(in catalog: [ModelEntry], on hardware: MacHardware) -> ModelEntry? {
-        let availableModels = availableModels(in: catalog, on: hardware)
+        let fittingModels = catalog.filter {
+            $0.cached && $0.kind == .chat
+                && ModelSizing.isAvailable(alias: $0.alias, on: hardware, catalogEntry: $0)
+        }
         for alias in ["qwen3.6-27b-4bit", "qwen3.6-35b-4bit", "qwen3.5-9b-4bit"] {
-            if let entry = availableModels.first(where: { $0.alias.lowercased() == alias }) {
+            if let entry = fittingModels.first(where: { $0.alias.lowercased() == alias }) {
                 return entry
             }
         }
@@ -108,7 +114,7 @@ struct WorkView: View {
                         }
                         Menu("Choose a model") {
                             if availableModels.isEmpty {
-                                Text("No cached chat model fits this Mac")
+                                Text("No downloaded chat models")
                             } else {
                                 ForEach(availableModels, id: \.alias) { entry in
                                     Button(entry.alias) { startModel(entry.alias) }
@@ -269,7 +275,7 @@ struct WorkView: View {
                         }
                         Menu("Choose a model") {
                             if availableModels.isEmpty {
-                                Text("No downloaded chat model fits this Mac")
+                                Text("No downloaded chat models")
                             } else {
                                 ForEach(availableModels, id: \.alias) { entry in
                                     Button(modelMenuTitle(entry)) { startModel(entry.alias) }
@@ -303,6 +309,13 @@ struct WorkView: View {
             && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var sendDisabledReason: String? {
+        if folder == nil { return "Choose a folder to start" }
+        if server.servingAlias == nil || server.activeBearer == nil { return "Load a model to start" }
+        if message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Enter a task to send" }
+        return nil
+    }
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .bottom) {
@@ -326,6 +339,12 @@ struct WorkView: View {
                         .accessibilityIdentifier("WorkView.Send")
                         .buttonStyle(.borderedProminent)
                         .disabled(!canSend)
+                    if !canSend, let sendDisabledReason {
+                        Text(sendDisabledReason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("WorkView.SendDisabledReason")
+                    }
                 }
             }
             if WorkAgent.fullAccess {

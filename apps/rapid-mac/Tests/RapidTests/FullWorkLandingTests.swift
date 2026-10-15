@@ -36,6 +36,28 @@ struct FullWorkLandingTests {
                                           on: large)?.alias == "qwen3.6-35b-4bit")
     }
 
+    @Test("Downloaded 27B remains selectable and recommended on a 256 GB M3")
+    func downloadedModelsOnM3() {
+        let model = ModelEntry(alias: "qwen3.6-27b-4bit", hfRepo: nil,
+                               sizeOnDisk: "17 GB", cached: true)
+        let hardware = MacHardware(brandString: "M3 Ultra", family: .m3, tier: .ultra,
+                                   physicalRAMBytes: 256 << 30, memoryBandwidthGBs: 800)
+        #expect(WorkView.availableModels(in: [model], on: hardware).map(\.alias) == [model.alias])
+        #expect(WorkView.recommendedModel(in: [model], on: hardware)?.alias == model.alias)
+    }
+
+    @Test("Recommendation never hides other downloaded chat models")
+    func downloadedModelsRemainSelectable() {
+        let catalog = [
+            ModelEntry(alias: "qwen3.6-27b-4bit", hfRepo: nil, sizeOnDisk: nil, cached: true),
+            ModelEntry(alias: "some-other-chat-model", hfRepo: nil, sizeOnDisk: nil, cached: true),
+        ]
+        let hardware = MacHardware(brandString: "M3 Pro", family: .m3, tier: .pro,
+                                   physicalRAMBytes: 16 << 30, memoryBandwidthGBs: 150)
+        #expect(Set(WorkView.availableModels(in: catalog, on: hardware).map(\.alias))
+                == Set(catalog.map(\.alias)))
+    }
+
     @Test("Full uses and creates the Playground until its own folder chooser is used")
     func fullFolderSelection() throws {
         let fileManager = FileManager.default
