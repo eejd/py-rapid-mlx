@@ -58,6 +58,7 @@ final class WorkAgent {
     private var secret = ""
     private var connection: String?
     private var sessionID: String?
+    private var sessionHasPrompted = false
     private var pendingGooseChatSession: Task<Void, Error>?
     private var proxyBearerFileURL: URL?
     private var nextID = 1
@@ -84,7 +85,7 @@ final class WorkAgent {
     /// Start the next Goose session while the user is composing a new chat.
     /// A Send joins this task, so a fast Send cannot open a second session.
     func preopenGooseChatSession() {
-        guard Self.gooseChat, isRunning, !isBusy else { return }
+        guard Self.gooseChat, isRunning, !isBusy, sessionHasPrompted else { return }
         let previous = pendingGooseChatSession
         pendingGooseChatSession = Task {
             if let previous { _ = try? await previous.value }
@@ -96,7 +97,7 @@ final class WorkAgent {
         if let pendingGooseChatSession {
             try await pendingGooseChatSession.value
             self.pendingGooseChatSession = nil
-        } else {
+        } else if sessionHasPrompted {
             try await newSession()
         }
     }
@@ -338,6 +339,7 @@ final class WorkAgent {
             throw WorkError.message("The Work session could not be created.")
         }
         sessionID = sid
+        sessionHasPrompted = false
         onChatEvent?(.session(sid))
         openStream(session: sid)
         try await Task.sleep(for: .milliseconds(300))
@@ -346,6 +348,7 @@ final class WorkAgent {
 
     func prompt(_ message: String) async {
         guard let sessionID else { return }
+        sessionHasPrompted = true
         let promptGeneration = generation
         let metricSequence = Self.gooseChat ? await inferenceMetric()?.sequence : nil
         let previousTextCount = text.count
@@ -457,6 +460,7 @@ final class WorkAgent {
         generation += 1
         pendingGooseChatSession?.cancel()
         pendingGooseChatSession = nil
+        sessionHasPrompted = false
         proxyBearerFileURL = nil
         streams.forEach { $0.cancel() }
         streams = []
