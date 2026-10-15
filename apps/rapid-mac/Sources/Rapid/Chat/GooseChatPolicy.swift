@@ -44,6 +44,7 @@ enum GooseChatEvent {
     case thinking(String)
     case tool(id: String, name: String, input: String, status: String, output: String)
     case permission(WorkPermission, String, String)
+    case error(String)
     case cancelled
 }
 

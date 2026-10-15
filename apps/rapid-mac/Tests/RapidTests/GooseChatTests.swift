@@ -30,6 +30,9 @@ struct GooseChatTests {
         #expect(model.messages[2].gooseTool?.permissionState == "permission needed")
         model.applyGooseEvent(.text("Done"), initialPlaceholder: 1)
         #expect(model.messages.last?.content == "Done")
+        model.applyGooseEvent(.error("tool failed"), initialPlaceholder: 1)
+        #expect(model.lastError == "tool failed")
+        #expect(model.messages.last?.status == .failed)
         model.applyGooseEvent(.cancelled, initialPlaceholder: 1)
     }
 

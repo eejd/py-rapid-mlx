@@ -1377,7 +1377,17 @@ final class ChatViewModel {
             finishGooseCancellation(epoch: epoch)
             return
         }
-        if let error = agent.error { throw WorkError.message(error) }
+        if let error = agent.error {
+            let receivedContent = messages.dropFirst(placeholderIndex).contains {
+                !$0.content.isEmpty || $0.gooseTool != nil
+            } || !messages[placeholderIndex].content.isEmpty
+            if !receivedContent { throw WorkError.message(error) }
+            lastError = error
+            isStreaming = false
+            inflight = nil
+            gooseContextIDs = []
+            return
+        }
         for index in messages.indices where messages[index].role == .assistant && messages[index].status == .streaming {
             messages[index].status = .complete
         }
@@ -1471,6 +1481,12 @@ final class ChatViewModel {
                 appendMessage(ChatMessage(role: .assistant, status: .complete,
                     gooseTool: GooseToolCard(id: request.toolCallID, name: name,
                         input: request.command, permissionState: state)))
+            }
+        case .error(let message):
+            lastError = message
+            if let index = messages.indices.last, messages[index].status == .streaming {
+                messages[index].status = .failed
+                messages[index].errorMessage = message
             }
         case .cancelled: break
         }

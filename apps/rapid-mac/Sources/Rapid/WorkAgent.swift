@@ -310,7 +310,10 @@ final class WorkAgent {
                 ], session: sessionID, timeout: 900)
             }
         } catch {
-            if generation == promptGeneration { self.error = error.localizedDescription }
+            if generation == promptGeneration {
+                self.error = error.localizedDescription
+                onChatEvent?(.error(error.localizedDescription))
+            }
         }
         if generation == promptGeneration { isBusy = false }
     }

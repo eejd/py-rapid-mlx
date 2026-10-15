@@ -1667,7 +1667,7 @@ private struct GooseToolCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "hammer")
                 Text(card.name).fontWeight(.medium)
-                Text(card.input.components(separatedBy: .newlines).first.map { String($0.prefix(100)) } ?? "")
+                Text(String(card.input.replacingOccurrences(of: "\n", with: " ").prefix(100)))
                     .lineLimit(1).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 Text(card.status == "running" ? "◌" : card.status.lowercased().contains("fail") ? "✗" : "✓")
