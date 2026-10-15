@@ -1989,11 +1989,11 @@ private struct MessageRow: View {
                         TextKitMarkdownView(content: text)
                     }
                     if let card = part.tool {
-                        GooseToolCardView(card: card, folder: gooseFolderPath, onDecision: onGooseDecision)
+                        GooseToolCardView(card: card, folder: card.folder ?? gooseFolderPath, onDecision: onGooseDecision)
                     }
                 }
             } else if let card = message.gooseTool {
-                GooseToolCardView(card: card, folder: gooseFolderPath, onDecision: onGooseDecision)
+                GooseToolCardView(card: card, folder: card.folder ?? gooseFolderPath, onDecision: onGooseDecision)
             }
             if !message.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 reasoningDisclosure
@@ -2020,7 +2020,8 @@ private struct MessageRow: View {
                     let activeCard = card.flatMap { GooseToolPresentation.isRunning($0.status) ? $0 : nil }
                     let start = activeCard?.startedAt ?? message.createdAt
                     Text(GooseToolPresentation.progress(card: activeCard,
-                        elapsed: max(0, Int(timeline.date.timeIntervalSince(start))), folder: gooseFolderPath))
+                        elapsed: max(0, Int(timeline.date.timeIntervalSince(start))),
+                        folder: activeCard?.folder ?? gooseFolderPath))
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("ChatView.GooseProgress")
                 }
@@ -2069,7 +2070,7 @@ private struct MessageRow: View {
 
     private var producedFiles: [URL] {
         let cards = (message.gooseParts ?? []).compactMap(\.tool) + (message.gooseTool.map { [$0] } ?? [])
-        return Array(Set(cards.compactMap { GooseToolPresentation.producedFile($0, folder: gooseFolderPath) }))
+        return Array(Set(cards.compactMap { GooseToolPresentation.producedFile($0, folder: $0.folder ?? gooseFolderPath) }))
             .sorted { $0.path < $1.path }
     }
 

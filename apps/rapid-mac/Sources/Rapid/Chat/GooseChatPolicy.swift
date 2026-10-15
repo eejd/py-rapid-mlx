@@ -57,6 +57,7 @@ struct GooseToolCard: Codable, Equatable, Hashable {
     var status: String = "running"
     var permissionState: String? = nil
     var startedAt: Date? = Date()
+    var folder: String? = nil
 }
 
 enum GooseToolPresentation {

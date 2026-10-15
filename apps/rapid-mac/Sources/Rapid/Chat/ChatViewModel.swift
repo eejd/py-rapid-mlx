@@ -1403,7 +1403,10 @@ final class ChatViewModel {
             let tools = (message.gooseParts ?? []).compactMap(\.tool).suffix(6).map { card in
                 "\(card.name): \(card.status)\(card.output.isEmpty ? "" : " — \(String(card.output.prefix(200)))")"
             }
-            let text = String(message.content.prefix(1200))
+            // Keep the conclusion of a grouped text/tool/text turn. Its
+            // pre-tool narration can otherwise consume the whole replay cap.
+            let text = message.role == .assistant
+                ? String(message.content.suffix(1200)) : String(message.content.prefix(1200))
             let summary = tools.isEmpty ? text : text + "\nTools: " + tools.joined(separator: "; ")
             return "\(message.role == .user ? "User" : "Assistant"): \(summary)"
         }
@@ -1470,6 +1473,7 @@ final class ChatViewModel {
             if messages[initialPlaceholder].gooseParts == nil { messages[initialPlaceholder].gooseParts = [] }
             if let part = messages[initialPlaceholder].gooseParts?.firstIndex(where: { $0.tool?.id == id }),
                var card = messages[initialPlaceholder].gooseParts?[part].tool {
+                if !name.isEmpty && name != "Tool" { card.name = name }
                 if !input.isEmpty { card.input = input }
                 if !output.isEmpty { card.output = String(output.prefix(12000)) }
                 card.status = status
@@ -1477,7 +1481,8 @@ final class ChatViewModel {
             } else {
                 messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(
                     tool: GooseToolCard(id: id, name: name, input: input,
-                                        output: String(output.prefix(12000)), status: status)))
+                                        output: String(output.prefix(12000)), status: status,
+                                        folder: gooseFolder.path)))
             }
         case .permission(let request, let name, let state):
             goosePermissions[request.toolCallID] = (request, name)
@@ -1487,7 +1492,8 @@ final class ChatViewModel {
             } else {
                 messages[initialPlaceholder].gooseParts?.append(GooseTurnPart(
                     tool: GooseToolCard(id: request.toolCallID, name: name,
-                                        input: request.command, permissionState: state)))
+                                        input: request.command, permissionState: state,
+                                        folder: gooseFolder.path)))
             }
         case .error(let message):
             lastError = message

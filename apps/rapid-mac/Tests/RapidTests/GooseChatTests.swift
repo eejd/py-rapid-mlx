@@ -39,6 +39,9 @@ struct GooseChatTests {
         titled.name = "write · /tmp/chat/games/snake.html"
         titled.input = #"{"content":"hi"}"#
         #expect(GooseToolPresentation.producedFile(titled, folder: "/tmp/chat")?.path == "/tmp/chat/games/snake.html")
+        titled.folder = "/tmp/chat"
+        let restored = try? JSONDecoder().decode(GooseToolCard.self, from: JSONEncoder().encode(titled))
+        #expect(GooseToolPresentation.producedFile(restored!, folder: restored!.folder!)?.path == "/tmp/chat/games/snake.html")
         var running = card
         running.status = "running"
         #expect(GooseToolPresentation.producedFile(running, folder: "/tmp/chat") == nil)
@@ -87,9 +90,11 @@ struct GooseChatTests {
         model.applyGooseEvent(.tool(id: "t1", name: "developer", input: "write", status: "running", output: ""), initialPlaceholder: 1)
         model.applyGooseEvent(.permission(WorkPermission(id: "1", sessionID: "s", toolCallID: "t1", command: "write", options: []), "developer", "permission needed"), initialPlaceholder: 1)
         model.applyGooseEvent(.tool(id: "t1", name: "developer", input: "", status: "completed", output: "done"), initialPlaceholder: 1)
+        model.applyGooseEvent(.tool(id: "t1", name: "write · /tmp/chat/report.txt", input: "", status: "completed", output: ""), initialPlaceholder: 1)
         #expect(model.messages.count == 2)
         #expect(model.messages[1].gooseParts?.count == 2)
         #expect(model.messages[1].gooseParts?[1].tool?.output == "done")
+        #expect(model.messages[1].gooseParts?[1].tool?.name == "write · /tmp/chat/report.txt")
         #expect(model.messages[1].gooseParts?[1].tool?.permissionState == "permission needed")
         model.applyGooseEvent(.text("Done"), initialPlaceholder: 1)
         model.applyGooseEvent(.throughput(42.5), initialPlaceholder: 1)
@@ -118,6 +123,8 @@ struct GooseChatTests {
             GooseTurnPart(tool: GooseToolCard(id: "t", name: "write · snake.html",
                 input: "{}", output: "created", status: "completed"))])
         #expect(ChatViewModel.gooseReplay(decoded.messages + [toolOnly]).contains("Tools: write · snake.html: completed"))
+        let longAnswer = ChatMessage(role: .assistant, content: String(repeating: "preamble ", count: 180) + "Final answer: done")
+        #expect(ChatViewModel.gooseReplay(decoded.messages + [longAnswer]).contains("Final answer: done"))
         let visible = decoded.messages.map(\.id)
         #expect(!ChatViewModel.canReuseGooseSession(activeConversationID: decoded.id,
             sessionConversationID: nil, currentContextIDs: visible, visibleContextIDs: visible, sessionID: nil))
