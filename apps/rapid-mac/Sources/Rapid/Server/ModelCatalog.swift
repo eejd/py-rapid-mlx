@@ -2373,15 +2373,6 @@ enum ModelCatalog {
             try? stderr.fileHandleForWriting.close()
             processBox.terminateIfCancelled()
             processRegistry.terminateIfShuttingDown(task)
-            // Goose Chat can still start a manually chosen, cached model when
-            // the host's large cache inventory blocks in a filesystem probe.
-            // Bound only this experimental bundle's catalog children; the
-            // existing Chat catalog behavior stays unchanged elsewhere.
-            if Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat" {
-                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20) {
-                    processBox.cancel()
-                }
-            }
             }
         } onCancel: {
             processBox.cancel()
@@ -2458,13 +2449,7 @@ enum ModelCatalog {
     ) -> [String: String] {
         var env = ambient
         env["DO_NOT_TRACK"] = "1"
-        // Goose Chat's catalog runs several commands besides the cached
-        // inventory. Give every probe the selected cache so a `models` or
-        // `info` probe never falls through to ~/.cache/huggingface, which
-        // may be a symlink to an unselected removable volume.
-        let selected = Bundle.main.bundleIdentifier == "com.rapidmlx.rapid.goose-chat"
-            ? ModelsFolderPreference.validatedOverrideURL() : nil
-        if let hubCacheOverride = hubCacheOverride ?? selected {
+        if let hubCacheOverride {
             env["HF_HUB_CACHE"] = hubCacheOverride.path
             // Issue #1718: scan both Hugging Face and external-runtime layouts.
             env[extraModelRootsEnvKey] = mergedExtraModelRoots(
