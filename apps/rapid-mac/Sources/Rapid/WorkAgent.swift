@@ -59,6 +59,7 @@ final class WorkAgent {
     private var connection: String?
     private var sessionID: String?
     private var pendingGooseChatSession: Task<Void, Error>?
+    private var proxyBearerFileURL: URL?
     private var nextID = 1
     private var waiters: [String: CheckedContinuation<Data, Error>] = [:]
     private var streams: [Task<Void, Never>] = []
@@ -97,6 +98,19 @@ final class WorkAgent {
             self.pendingGooseChatSession = nil
         } else {
             try await newSession()
+        }
+    }
+
+    /// The model server may restart during a Goose turn and rotate its key.
+    /// Keep the proxy's upstream key current without interrupting that turn.
+    func updateProxyBearer(_ bearer: String) {
+        guard Self.gooseChat, let proxyBearerFileURL else { return }
+        do {
+            try Data(bearer.utf8).write(to: proxyBearerFileURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                ofItemAtPath: proxyBearerFileURL.path)
+        } catch {
+            self.error = "Could not refresh the local model connection."
         }
     }
 
@@ -150,6 +164,10 @@ final class WorkAgent {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true,
                                             attributes: [.posixPermissions: 0o700])
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        }
+        if Self.gooseChat {
+            proxyBearerFileURL = support.appendingPathComponent("proxy-upstream-bearer")
+            updateProxyBearer(bearer)
         }
         port = try Self.freePort()
         repeat { proxyPort = try Self.freePort() } while proxyPort == port
@@ -246,6 +264,7 @@ final class WorkAgent {
         proxyEnv.removeValue(forKey: "GOOSE_SERVER__SECRET_KEY")
         proxyEnv.removeValue(forKey: "RAPID_LOCAL_WORK_KEY")
         proxyEnv["WORK_PROXY_BEARER"] = bearer
+        if let proxyBearerFileURL { proxyEnv["WORK_PROXY_BEARER_FILE"] = proxyBearerFileURL.path }
         proxyEnv["WORK_PROXY_METRICS_KEY"] = secret
         proxyProcess = try Self.launchHelper(
             profile: Self.fullAccess ? nil : proxyProfileURL, python: pythonExecutable,
@@ -438,6 +457,7 @@ final class WorkAgent {
         generation += 1
         pendingGooseChatSession?.cancel()
         pendingGooseChatSession = nil
+        proxyBearerFileURL = nil
         streams.forEach { $0.cancel() }
         streams = []
         let children = [process, proxyProcess].compactMap { $0 }
