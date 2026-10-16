@@ -97,15 +97,24 @@ struct UIFontSettingsTestsDogfood {
         }
     }
 
-    @Test("Both What's New buttons explicitly use a 12pt scaled font")
+    @Test("Both What's New buttons render a 12pt scaled font through Rapid styles")
     func bannerButtonFonts() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Rapid/UI/WhatsNewBanner.swift"))
-        for identifier in ["WhatsNew.OpenNotes", "WhatsNew.Dismiss"] {
+        // Native small bordered styles render a fixed AppKit label size and
+        // ignore .font, so both buttons must use the Rapid styles, which apply
+        // the supplied font and scale the control height.
+        for (identifier, style) in [
+            ("WhatsNew.OpenNotes", "RapidPrimaryButtonStyle("),
+            ("WhatsNew.Dismiss", "RapidSecondaryButtonStyle("),
+        ] {
             let end = try #require(source.range(of: ".accessibilityIdentifier(\"\(identifier)\")"))
-            let start = try #require(source[..<end.lowerBound].range(of: ".controlSize(.small)", options: .backwards))
-            #expect(source[start.upperBound..<end.lowerBound].contains(".font(.rapid(size: 12))"))
+            let start = try #require(source[..<end.lowerBound].range(of: ".buttonStyle(", options: .backwards))
+            let chain = source[start.lowerBound..<end.lowerBound]
+            #expect(chain.contains(style))
+            #expect(chain.contains("font: .rapid(size: 12)"))
+            #expect(!chain.contains(".controlSize(.small)"))
         }
         for scale in [1.0, 1.5] {
             withScale(scale) { #expect(UIFontSettings.shared.pointSize(12) == CGFloat(12 * scale)) }

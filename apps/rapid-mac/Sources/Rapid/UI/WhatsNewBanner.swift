@@ -108,17 +108,19 @@ struct WhatsNewBanner: View {
                                     }
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .font(.rapid(size: 12))
+                            .buttonStyle(RapidPrimaryButtonStyle(
+                                height: RapidTheme.ControlHeight.small,
+                                font: .rapid(size: 12)
+                            ))
                             .accessibilityIdentifier("WhatsNew.OpenNotes")
                         }
                         Button("Dismiss") {
                             installTracker.dismissUpgradeNotice()
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .font(.rapid(size: 12))
+                        .buttonStyle(RapidSecondaryButtonStyle(
+                            height: RapidTheme.ControlHeight.small,
+                            font: .rapid(size: 12)
+                        ))
                         .accessibilityIdentifier("WhatsNew.Dismiss")
                     }
                     .padding(.top, 2)
