@@ -745,7 +745,7 @@ def install_compiled_decode(
         finally:
             state["step"] = None
             declined_uids.clear()
-            generation = original_step = original_filter = None
+            del generation, original_step, original_filter
 
     batch_gen._compiled_decode_teardown = teardown
     logger.info("[compiled-decode] installed for qualified Qwen3.6-35B B=1 decode")

@@ -1469,7 +1469,7 @@ def _install_continuous_mtp_router(
                 driver.discard_all()
         finally:
             staged_join_sequences.clear()
-            batch_gen = driver = original_next = original_close = original_remove = None
+            del batch_gen, driver, original_next, original_close, original_remove
 
     batch_gen._continuous_mtp_teardown = _teardown_continuous
     logger.info(
@@ -2768,7 +2768,7 @@ def _install_mtp_vendored(
         _disabled_uids.clear()
         _terminal_uids.clear()
         _initial_skip_logged.clear()
-        batch_gen = gb = _base_next = _orig_remove = _orig_step = _orig_next = None
+        del batch_gen, gb, _base_next, _orig_remove, _orig_step, _orig_next
 
     batch_gen._mtp_vendored_teardown = _teardown_vendored
 
@@ -3360,7 +3360,7 @@ def _install_dspark(
             _uid_stats,
         ):
             state.clear()
-        gb = _orig_step = _orig_next = None
+        del gb, _orig_step, _orig_next
 
     batch_gen._dspark_teardown = _teardown_dspark
     logger.info(
@@ -4169,7 +4169,7 @@ def _install_suffix_decoding(
         _drafters.clear()
         _uid_state.clear()
         _reset_state_gauges_if_idle()
-        gb = _orig_step = _orig_next = _orig_remove = None
+        del gb, _orig_step, _orig_next, _orig_remove
 
     batch_gen._suffix_teardown = _teardown_suffix
 
