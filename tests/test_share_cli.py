@@ -157,6 +157,24 @@ def test_share_warns_when_configured_server_key_is_replaced(monkeypatch, capsys)
     assert "operator-key" not in warning
 
 
+def test_plain_share_registers_with_the_same_bearer_as_local_serve(capsys):
+    key = "a1" * 24
+    factory = MagicMock(return_value=_fake_tunnel())
+    auth_gate = MagicMock(return_value=True)
+    _drive_share_capture(
+        _make_args(),
+        extra_patches=(
+            patch.object(share_cli.secrets, "token_hex", return_value=key),
+            patch.object(share_cli.ws_tunnel, "TunnelClient", factory),
+            patch.object(share_cli, "_verify_auth_gate", auth_gate),
+        ),
+    )
+    assert factory.call_args.kwargs["share_key"] == auth_gate.call_args.args[1] == key
+    assert "key_in_path" not in factory.call_args.kwargs
+    # The intentional share-key banner is on stdout; diagnostics never print it.
+    assert key not in capsys.readouterr().err
+
+
 def test_share_command_aborts_when_serve_exits_before_ready():
     serve_proc = MagicMock()
     serve_proc.poll.return_value = 1  # already exited

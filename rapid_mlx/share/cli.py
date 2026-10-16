@@ -912,7 +912,13 @@ def share_command(args: argparse.Namespace) -> None:
             sys.exit(1)
 
         print(f"Connecting to relay {relay_url}…", file=sys.stderr)
-        tunnel = ws_tunnel.TunnelClient(local_port=port, relay_url=relay_url)
+        # Prove the share key at the upgrade (Authorization header, never the
+        # URL): the relay refuses keyless plain-share registration and only
+        # forwards consumers whose bearer matches the proven key, so an
+        # observed tunnel id alone cannot be re-registered and harvested.
+        tunnel = ws_tunnel.TunnelClient(
+            local_port=port, relay_url=relay_url, share_key=api_key
+        )
         tunnel_thread = tunnel.run_in_thread()
         # 30s ceiling is generous: a healthy WS handshake completes in
         # well under a second; anything beyond that means the relay is
