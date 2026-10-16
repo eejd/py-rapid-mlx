@@ -2061,9 +2061,11 @@ private struct MessageRow: View {
                     let card = message.gooseParts?.compactMap(\.tool).last
                     let activeCard = card.flatMap { GooseToolPresentation.isRunning($0.status) ? $0 : nil }
                     let start = activeCard?.startedAt ?? message.createdAt
-                    Text(GooseToolPresentation.progress(card: activeCard,
-                        elapsed: max(0, Int(timeline.date.timeIntervalSince(start))),
-                        folder: activeCard?.folder ?? gooseFolderPath))
+                    Text(WorkAgent.shared.isPrefixWarming
+                        ? "Preparing model… \(max(0, Int(timeline.date.timeIntervalSince(WorkAgent.shared.prefixWarmStartedAt ?? start)))) s"
+                        : GooseToolPresentation.progress(card: activeCard,
+                            elapsed: max(0, Int(timeline.date.timeIntervalSince(start))),
+                            folder: activeCard?.folder ?? gooseFolderPath))
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("ChatView.GooseProgress")
                 }

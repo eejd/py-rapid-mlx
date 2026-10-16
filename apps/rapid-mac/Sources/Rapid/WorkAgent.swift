@@ -61,6 +61,9 @@ final class WorkAgent {
     private var sessionID: String? { turnOwner.sessionID }
     private var sessionHasPrompted = false
     private var pendingGooseChatSession: Task<Void, Error>?
+    private var prefixWarmTask: Task<Void, Never>?
+    private(set) var prefixWarmStartedAt: Date?
+    private(set) var isPrefixWarming = false
     private var proxyBearerFileURL: URL?
     private var nextID = 1
     private var waiters: [String: CheckedContinuation<Data, Error>] = [:]
@@ -369,6 +372,45 @@ final class WorkAgent {
         try checkPreparation(prepareGeneration)
         guard conversationRevision == requestedRevision else { throw WorkError.message("Chat start cancelled.") }
         completed = true
+        if Self.gooseChat { startPrefixWarm(model: model, bearer: bearer) }
+    }
+
+    private func startPrefixWarm(model: String, bearer: String) {
+        guard prefixWarmTask == nil else { return }
+        let generation = self.generation
+        let port = proxyPort
+        let prefix = Bundle.main.resourceURL!
+            .appendingPathComponent("Helpers/goose-prefix.json")
+        isPrefixWarming = true
+        prefixWarmStartedAt = Date()
+        prefixWarmTask = Task {
+            defer {
+                if self.generation == generation {
+                    self.isPrefixWarming = false
+                    self.prefixWarmTask = nil
+                }
+            }
+            guard let data = try? Data(contentsOf: prefix),
+                  var body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions") else { return }
+            body["model"] = model
+            body["max_tokens"] = 1
+            body["temperature"] = 0
+            body["stream"] = false
+            guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.httpBody = payload
+            request.timeoutInterval = 180
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
+    /// A Send may join the background prefill without delaying composition.
+    func waitForPrefixWarm() async {
+        await prefixWarmTask?.value
     }
 
     func checkPreparation(_ expected: Int) throws {
@@ -530,6 +572,10 @@ final class WorkAgent {
 
     func stop() {
         turnOwner.reset()
+        prefixWarmTask?.cancel()
+        prefixWarmTask = nil
+        isPrefixWarming = false
+        prefixWarmStartedAt = nil
         pendingGooseChatSession?.cancel()
         pendingGooseChatSession = nil
         sessionHasPrompted = false

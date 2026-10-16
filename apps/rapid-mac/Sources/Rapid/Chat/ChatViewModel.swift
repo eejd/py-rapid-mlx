@@ -1527,6 +1527,11 @@ final class ChatViewModel {
             return
         }
         let prompt = replay + user.content + attachmentNote
+        await agent.waitForPrefixWarm()
+        guard epoch == conversationEpoch, !Task.isCancelled else {
+            finishGooseCancellation(epoch: epoch)
+            return
+        }
         await agent.prompt(prompt)
         guard epoch == conversationEpoch else { return }
         if Task.isCancelled {
