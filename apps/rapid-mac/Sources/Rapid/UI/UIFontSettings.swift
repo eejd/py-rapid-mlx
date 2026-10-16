@@ -123,21 +123,21 @@ struct UIFontScaleControl: View {
             }
             if showsSlider {
                 HStack(spacing: RapidTheme.Space.sm) {
-                    step(-UIFontSettings.buttonStep, systemImage: "minus", label: String(localized: "Decrease text size"))
+                    step(-UIFontSettings.buttonStep, systemImage: "minus", label: String(localized: "Decrease text size"), identifier: "Settings.Appearance.TextSizeDecrease")
                     Slider(value: $draft, in: UIFontSettings.range) { editing in
                         if !editing { settings.setScale(draft); draft = settings.scale }
                     }
                     .accessibilityLabel(String(localized: "Text size"))
                     .accessibilityValue(Self.label(draft))
                     .accessibilityIdentifier("Settings.Appearance.TextSizeSlider")
-                    step(UIFontSettings.buttonStep, systemImage: "plus", label: String(localized: "Increase text size"))
+                    step(UIFontSettings.buttonStep, systemImage: "plus", label: String(localized: "Increase text size"), identifier: "Settings.Appearance.TextSizeIncrease")
                 }
             }
         }
         .onChange(of: settings.scale) { _, new in draft = new }
     }
 
-    private func step(_ delta: Double, systemImage: String, label: String) -> some View {
+    private func step(_ delta: Double, systemImage: String, label: String, identifier: String) -> some View {
         Button {
             settings.setScale(settings.scale + delta)
             draft = settings.scale
@@ -146,6 +146,7 @@ struct UIFontScaleControl: View {
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
     }
 
     static func label(_ scale: Double) -> String {
