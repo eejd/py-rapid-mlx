@@ -21,13 +21,16 @@ final class UIFontSettings: @unchecked Sendable {
     /// Floor for every UI font — anything smaller is unreadable for many users.
     static let minimumPointSize: CGFloat = 12
     static let defaultScale: Double = 1.0
-    /// Settings picker choices (multiplier, label).
-    static let choices: [(scale: Double, label: String)] = [
-        (1.0, String(localized: "Default")),
-        (1.15, String(localized: "Large")),
-        (1.3, String(localized: "Larger")),
-        (1.5, String(localized: "Largest")),
-    ]
+    static let range: ClosedRange<Double> = 1.0...1.5
+    /// Step of the −/+ buttons.
+    static let buttonStep: Double = 0.1
+
+    var isDefault: Bool { abs(scale - Self.defaultScale) < 0.001 }
+
+    /// Clamped to ``range`` and rounded to 0.01 so stored values stay tidy.
+    func setScale(_ value: Double) {
+        scale = (min(max(value, Self.range.lowerBound), Self.range.upperBound) * 100).rounded() / 100
+    }
 
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -38,7 +41,7 @@ final class UIFontSettings: @unchecked Sendable {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let saved = defaults.double(forKey: Self.storageKey)
-        self.scale = saved > 0 ? saved : Self.defaultScale
+        self.scale = Self.range.contains(saved) ? saved : Self.defaultScale
     }
 
     func pointSize(_ base: CGFloat) -> CGFloat {
@@ -81,5 +84,71 @@ extension Font {
             weight: weight ?? (style == .headline ? .semibold : .regular),
             design: design
         )
+    }
+}
+
+/// Settings → Appearance row. Collapsed it reads "Default"; clicking reveals
+/// a 1.0–1.5× slider with −/+ steps. Clicking the value again resets to
+/// default and collapses. The slider commits on release so the whole app is
+/// not re-laid-out on every drag tick.
+struct UIFontScaleControl: View {
+    @State private var expanded = false
+    @State private var draft = UIFontSettings.shared.scale
+
+    private var settings: UIFontSettings { .shared }
+    private var showsSlider: Bool { expanded || !settings.isDefault }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
+            HStack {
+                SettingsRowLabel(
+                    title: String(localized: "Text size"),
+                    description: String(localized: "Scales all interface text. Text is never smaller than 12 pt.")
+                )
+                Spacer()
+                Button {
+                    if showsSlider {
+                        settings.setScale(UIFontSettings.defaultScale)
+                        expanded = false
+                    } else {
+                        expanded = true
+                    }
+                    draft = settings.scale
+                } label: {
+                    Text(showsSlider ? Self.label(draft) : String(localized: "Default"))
+                        .monospacedDigit()
+                }
+                .accessibilityIdentifier("Settings.Appearance.TextSizeToggle")
+                .help(showsSlider ? String(localized: "Reset to default") : String(localized: "Customize"))
+            }
+            if showsSlider {
+                HStack(spacing: RapidTheme.Space.sm) {
+                    step(-UIFontSettings.buttonStep, systemImage: "minus", label: String(localized: "Decrease text size"))
+                    Slider(value: $draft, in: UIFontSettings.range) { editing in
+                        if !editing { settings.setScale(draft); draft = settings.scale }
+                    }
+                    .accessibilityLabel(String(localized: "Text size"))
+                    .accessibilityValue(Self.label(draft))
+                    .accessibilityIdentifier("Settings.Appearance.TextSizeSlider")
+                    step(UIFontSettings.buttonStep, systemImage: "plus", label: String(localized: "Increase text size"))
+                }
+            }
+        }
+        .onChange(of: settings.scale) { _, new in draft = new }
+    }
+
+    private func step(_ delta: Double, systemImage: String, label: String) -> some View {
+        Button {
+            settings.setScale(settings.scale + delta)
+            draft = settings.scale
+        } label: {
+            Image(systemName: systemImage)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(label)
+    }
+
+    static func label(_ scale: Double) -> String {
+        "\((scale * 100).rounded() / 100)×"
     }
 }

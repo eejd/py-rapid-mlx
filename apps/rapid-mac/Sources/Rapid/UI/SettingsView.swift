@@ -684,16 +684,8 @@ struct SettingsView: View {
                 .labelsHidden()
                 .accessibilityIdentifier("Settings.Appearance.ThemePicker")
             }
-            SettingsSection(String(localized: "Text size")) {
-                @Bindable var fontSettings = UIFontSettings.shared
-                Picker("Text size", selection: $fontSettings.scale) {
-                    ForEach(UIFontSettings.choices, id: \.scale) { choice in
-                        Text(choice.label).tag(choice.scale)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-                .accessibilityIdentifier("Settings.Appearance.TextSizePicker")
+            SettingsSection {
+                UIFontScaleControl()
             }
         }
     }

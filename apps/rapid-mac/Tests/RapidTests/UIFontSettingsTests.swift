@@ -32,6 +32,21 @@ struct UIFontSettingsTests {
         #expect(UIFontSettings(defaults: d).scale == 1.3)
     }
 
+    @Test("setScale clamps to 1.0–1.5 and rounds to 0.01; out-of-range saved values fall back")
+    func clampAndRound() {
+        let d = makeDefaults()
+        let s = UIFontSettings(defaults: d)
+        s.setScale(2)
+        #expect(s.scale == 1.5)
+        s.setScale(0.5)
+        #expect(s.isDefault)
+        s.setScale(1.234)
+        #expect(s.scale == 1.23)
+        #expect(UIFontScaleControl.label(1.1) == "1.1×")
+        d.set(9.0, forKey: UIFontSettings.storageKey)
+        #expect(UIFontSettings(defaults: d).scale == 1.0)
+    }
+
     @Test("every text style resolves to at least the floor")
     func textStylesFloored() {
         let s = UIFontSettings(defaults: makeDefaults())
