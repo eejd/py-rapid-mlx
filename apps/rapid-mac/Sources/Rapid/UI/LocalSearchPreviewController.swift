@@ -135,10 +135,6 @@ import SwiftUI
     func release(_ controller: LocalSearchPreviewController) {
         pendingShow = false
         let owned = panel?.currentController as AnyObject? === controller
-        // Teardown may remove us from the responder chain before the deferred
-        // close runs. Close our now-unowned panel, but never another owner's.
-        let shouldHide = owned || (presented && panel?.currentController == nil)
-        presented = false
         // Remove only our responder, preserving any other hooks in the chain.
         var predecessor: NSResponder? = ownerWindow
         while let responder = predecessor {
@@ -153,6 +149,11 @@ import SwiftUI
             // so endPreviewPanelControl releases the assign references.
             panel?.updateController()
         }
+        // Teardown may remove us from the responder chain before the deferred
+        // close runs. Close our now-unowned panel, but never another owner's.
+        let shouldHide = (owned || presented)
+            && (panel?.currentController == nil || panel?.currentController as AnyObject? === controller)
+        presented = false
         if shouldHide {
             if let panel, panel.isVisible {
                 closing = true
