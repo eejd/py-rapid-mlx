@@ -37,7 +37,12 @@ from unittest.mock import MagicMock, patch
 
 from rapid_mlx.errors import MetalMemoryBackpressureError
 from rapid_mlx.request import Request, RequestStatus, SamplingParams
-from rapid_mlx.scheduler import BackpressureError, Scheduler, SchedulerConfig
+from rapid_mlx.scheduler import (
+    BackpressureError,
+    BatchGenerator,
+    Scheduler,
+    SchedulerConfig,
+)
 
 # Rotating-cache capacity granularity — mirrors kv_estimation's
 # ``_ROTATING_CACHE_STEP`` / ``_ROTATING_CACHE_KEEP`` (mlx_lm's
@@ -1839,3 +1844,113 @@ def test_prefill_deferral_restores_position_after_shared_prefix_follower_bypass(
     sched._pop_waiting_for_admission = select_unblocked
     assert sched._schedule_waiting() == []
     assert list(sched.waiting) == [head, candidate]
+
+
+def test_prefill_sample_preserves_process_cumulative_peak(monkeypatch):
+    from rapid_mlx import memory_peak
+
+    sched = _cohort_scheduler()
+    sched.waiting.append(_make_request("sample", 10))
+    sched._schedule_waiting()
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 400)
+    )
+    assert memory_peak.cumulative_peak_bytes() == 9_000_000_000
+    before = sched._begin_prefill_memory_sample()
+    peak[0] = 500
+    sched._finish_prefill_memory_sample(before)
+    assert sched._prefill_workspace_high_water == 1.5
+    assert memory_peak.cumulative_peak_bytes() == 9_000_000_000
+    assert sched.get_stats()["metal_peak_memory_gb"] == 9.0
+    peak[0] = 12_000_000_000
+    assert memory_peak.cumulative_peak_bytes() == 12_000_000_000
+    sched._begin_prefill_memory_sample()
+    assert memory_peak.cumulative_peak_bytes() == 12_000_000_000
+
+
+@pytest.mark.parametrize(
+    "generator",
+    [
+        object(),
+        BatchGenerator.__new__(BatchGenerator),
+        SimpleNamespace(
+            _prompt_batch=SimpleNamespace(uids=[101]), _currently_processing=[(101, 3)]
+        ),
+    ],
+)
+def test_prefill_rows_tolerate_generators_without_private_queues(generator):
+    sched = _cohort_scheduler()
+    request = _make_request("live", 10)
+    request.batch_uid = 101
+    sched.running[request.request_id] = request
+    sched.batch_generator = generator
+    expected = [(request, 3)] if hasattr(generator, "_prompt_batch") else []
+    assert sched._prefill_memory_rows() == expected
+
+
+def test_optimization_status_keeps_cumulative_peak_after_sample(monkeypatch):
+    from rapid_mlx import memory_peak, optimizations
+
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 1_000_000_000)
+    )
+    memory_peak.reset_peak_for_sample()
+    assert (
+        optimizations.get_optimization_status()["mlx_memory"]["peak_bytes"]
+        == 9_000_000_000
+    )
+
+
+def test_periodic_memory_log_keeps_cumulative_peak_after_sample(monkeypatch, caplog):
+    from rapid_mlx import memory_peak
+
+    sched = _make_scheduler()
+    sched._memory_log_interval = 1
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 1_000_000_000)
+    )
+    monkeypatch.setattr(memory_peak.mx.metal, "is_available", lambda: True)
+    memory_peak.reset_peak_for_sample()
+    with caplog.at_level(logging.INFO):
+        sched.step()
+    assert any(
+        "[Metal memory]" in r.message and "peak=9.0GB" in r.message
+        for r in caplog.records
+    )
+
+
+def test_mllm_stats_keep_cumulative_peak_after_prefill_sample(monkeypatch):
+    from rapid_mlx import memory_peak
+    from rapid_mlx.mllm_scheduler import MLLMScheduler
+
+    scheduler = MLLMScheduler.__new__(MLLMScheduler)
+    scheduler.running = {}
+    scheduler.num_requests_processed = 0
+    scheduler.total_prompt_tokens = 0
+    scheduler.total_completion_tokens = 0
+    scheduler.performance = SimpleNamespace(snapshot=lambda: SimpleNamespace())
+    scheduler.waiting = []
+    scheduler._aborted_queue_ids = set()
+    scheduler.finished_req_ids = set()
+    scheduler.num_requests_cancelled = 0
+    scheduler.num_requests_cancelled_via_disconnect = 0
+    scheduler.batch_generator = None
+    scheduler.vision_cache = None
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 1_000_000_000)
+    )
+    monkeypatch.setattr(memory_peak.mx.metal, "is_available", lambda: True)
+    memory_peak.reset_peak_for_sample()
+    assert scheduler.get_stats()["metal_peak_memory_gb"] == 9.0

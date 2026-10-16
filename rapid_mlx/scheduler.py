@@ -62,6 +62,7 @@ from .kv_estimation import (  # noqa: E402
     estimate_kv_footprint,
     rotating_cache_slots,
 )
+from .memory_peak import cumulative_peak_bytes, reset_peak_for_sample  # noqa: E402
 
 
 def _read_kv_dims(model):
@@ -9655,7 +9656,9 @@ class Scheduler:
                 (int(seq[1]) for seq in getattr(bg, "_currently_processing", ())),
             )
         )
-        processed.update((seq[0], 0) for seq in bg._unprocessed_sequences)
+        processed.update(
+            (seq[0], 0) for seq in getattr(bg, "_unprocessed_sequences", ())
+        )
         return [
             (req, processed[req.batch_uid])
             for req in self.running.values()
@@ -9790,7 +9793,7 @@ class Scheduler:
             c * max(1, len(r.prompt_token_ids)) for c, (r, _) in zip(chunks, rows)
         )
         active = self._current_metal_active_bytes()
-        mx.reset_peak_memory()
+        reset_peak_for_sample()
         return active, units, sum(chunks)
 
     def _finish_prefill_memory_sample(
@@ -11384,7 +11387,7 @@ class Scheduler:
             try:
                 if mx.metal.is_available():
                     active_gb = mx.get_active_memory() / 1e9
-                    peak_gb = mx.get_peak_memory() / 1e9
+                    peak_gb = cumulative_peak_bytes() / 1e9
                     cache_gb = mx.get_cache_memory() / 1e9
                     logger.info(
                         f"[Metal memory] active={active_gb:.1f}GB "
@@ -11934,7 +11937,7 @@ class Scheduler:
         try:
             if mx.metal.is_available():
                 stats["metal_active_memory_gb"] = round(mx.get_active_memory() / 1e9, 2)
-                stats["metal_peak_memory_gb"] = round(mx.get_peak_memory() / 1e9, 2)
+                stats["metal_peak_memory_gb"] = round(cumulative_peak_bytes() / 1e9, 2)
                 stats["metal_cache_memory_gb"] = round(mx.get_cache_memory() / 1e9, 2)
         except Exception:
             pass
