@@ -1461,6 +1461,17 @@ def _install_continuous_mtp_router(
     batch_gen._continuous_mtp_runtime = runtime
     batch_gen._continuous_mtp_driver = None
     batch_gen._continuous_mtp_removed_states = {}
+
+    def _teardown_continuous():
+        nonlocal batch_gen, driver, original_next, original_close, original_remove
+        try:
+            if driver is not None:
+                driver.discard_all()
+        finally:
+            staged_join_sequences.clear()
+            batch_gen = driver = original_next = original_close = original_remove = None
+
+    batch_gen._continuous_mtp_teardown = _teardown_continuous
     logger.info(
         "[MTP-continuous] BatchGenerator.next coordinator installed "
         "(multi-uid burst delivery; cycle-boundary joins; per-lane detach)."
@@ -2749,6 +2760,18 @@ def _install_mtp_vendored(
     gb._mtp_vendored_terminal_uids = _terminal_uids
     batch_gen._mtp_vendored_admission_owner = None
 
+    def _teardown_vendored():
+        # Retained callbacks must not keep a retired batch/generator alive.
+        nonlocal batch_gen, gb, _base_next, _orig_remove, _orig_step, _orig_next
+        for uid in list(_state):
+            _reap_uid(uid)
+        _disabled_uids.clear()
+        _terminal_uids.clear()
+        _initial_skip_logged.clear()
+        batch_gen = gb = _base_next = _orig_remove = _orig_step = _orig_next = None
+
+    batch_gen._mtp_vendored_teardown = _teardown_vendored
+
     logger.info(
         "[MTP-vendored] installed on GenerationBatch._step "
         "(single-request adaptive chain-of-K with request-local sampling; "
@@ -3325,6 +3348,21 @@ def _install_dspark(
     gb._step = _dspark_step
     gb.next = _dspark_next
     batch_gen._dspark_stats = _stats
+
+    def _teardown_dspark():
+        nonlocal gb, _orig_step, _orig_next
+        for state in (
+            _caches,
+            _pending,
+            _pending_replay,
+            _depths,
+            _cooldowns,
+            _uid_stats,
+        ):
+            state.clear()
+        gb = _orig_step = _orig_next = None
+
+    batch_gen._dspark_teardown = _teardown_dspark
     logger.info(
         "[DSpark] installed (greedy-only; stochastic requests use plain "
         "decode, checkpoint K=%d, runtime max K=%d)",
@@ -4124,6 +4162,16 @@ def _install_suffix_decoding(
     # cleanup. Production code should not mutate this directly.
     gb._suffix_drafters = _drafters
     gb._suffix_uid_state = _uid_state
+
+    def _teardown_suffix():
+        nonlocal gb, _orig_step, _orig_next, _orig_remove
+        _pending_emits.clear()
+        _drafters.clear()
+        _uid_state.clear()
+        _reset_state_gauges_if_idle()
+        gb = _orig_step = _orig_next = _orig_remove = None
+
+    batch_gen._suffix_teardown = _teardown_suffix
 
     logger.info(
         "[SuffixDecoding] installed: max_draft=%d, max_suffix_len=%d, "
@@ -6022,18 +6070,84 @@ class Scheduler:
                 )
 
     def _close_batch_generator(self) -> None:
-        """Properly close BatchGenerator to restore wired_limit."""
-        if self.batch_generator is not None:
+        """Retire generator ownership on the MLX worker, even after failed close."""
+        generator = self.batch_generator
+        self.batch_generator = None
+        # This diagnostic identity is an external root: its patched _step
+        # closes over the MTP hook, which in turn owns the BatchGenerator.
+        self._recurrent_output_chain_batch = None
+        self._recurrent_output_chain_failures = 0
+        self._recurrent_chain_depth = 0
+        self._recurrent_prev_running = 0
+        # Checkpoints are keyed by this generator's UIDs, including during
+        # cache-corruption retries and ordinary sampler-driven replacement.
+        getattr(self, "_hybrid_checkpoints", {}).clear()
+        if generator is not None:
             try:
-                if hasattr(self.batch_generator, "close"):
-                    self.batch_generator.close()
+                if hasattr(generator, "close"):
+                    generator.close()
             except Exception as e:
                 logger.debug(f"Error closing BatchGenerator: {e}")
-            self.batch_generator = None
+            finally:
+                # Upstream close synchronizes/restores wired_limit only. It
+                # does not discard failed lazy graphs or request-local hooks.
+                for name in (
+                    "_continuous_mtp_teardown",
+                    "_mtp_vendored_teardown",
+                    "_dspark_teardown",
+                    "_suffix_teardown",
+                    "_compiled_decode_teardown",
+                ):
+                    teardown = vars(generator).pop(name, None)
+                    if teardown is not None:
+                        try:
+                            teardown()
+                        except Exception as exc:
+                            logger.debug("Error retiring generator hook: %s", exc)
+                for name in ("_unprocessed_sequences", "_currently_processing"):
+                    queue = vars(generator).get(name)
+                    if queue is not None:
+                        queue.clear()
+                for name in ("_prompt_batch", "_generation_batch", "active_batch"):
+                    batch = vars(generator).get(name)
+                    if batch is None:
+                        continue
+                    # Replace containers, never mutate shared cache layers:
+                    # valid prefix entries may still own those layers.
+                    for field in (
+                        "prompt_cache",
+                        "tokens",
+                        "uids",
+                        "samplers",
+                        "logits_processors",
+                        "state_machines",
+                        "max_tokens",
+                        "_current_logprobs",
+                        "_next_logprobs",
+                        "_token_context",
+                        "_num_tokens",
+                        "_matcher_states",
+                    ):
+                        if field in vars(batch):
+                            setattr(batch, field, [])
+                    for field in ("_current_tokens", "_next_tokens"):
+                        if field in vars(batch):
+                            setattr(batch, field, None)
+                    for field in ("_step", "next", "filter"):
+                        vars(batch).pop(field, None)
+                    setattr(generator, name, None)
+                for name in (
+                    "next",
+                    "remove",
+                    "close",
+                    "_partial",
+                    "_mtp_vendored_requeue_owner",
+                    "_mtp_vendored_at_token_boundary",
+                    "_continuous_mtp_driver",
+                    "_continuous_mtp_removed_states",
+                ):
+                    vars(generator).pop(name, None)
         getattr(self, "_admission_prefill_uids", set()).clear()
-        # The hook lives on the closed generator. Clear its published runtime
-        # state even when close() raised; a replacement will republish only
-        # after its own installer succeeds.
         self.spec_decode_runtime_method = None
         self.spec_decode_runtime_attempted = False
 
@@ -11166,7 +11280,13 @@ class Scheduler:
         Returns:
             Set of aborted request IDs.
         """
-        # Close batch generator (clears _partial state, active_batch)
+        # Preserve the existing pressure policy's view of the failed step.
+        # Retiring its graph first would hide the pressure from the next
+        # maintenance tick and retain prefixes that prevent the next batch.
+        try:
+            self.evict_prefix_cache_under_pressure()
+        except Exception as exc:
+            logger.warning("Prefix pressure reclaim during recovery failed: %s", exc)
         self._close_batch_generator()
         self._current_sampler_params = None
 
@@ -11178,11 +11298,22 @@ class Scheduler:
                 self.performance.record_failed_performance(request)
                 request._prefill_memory_sampled = False
                 request.set_finished(RequestStatus.FINISHED_ABORTED)
+                request.prompt_cache = None
+                request._extracted_cache = None
+                request._continuous_mtp_state = None
+                request.batch_uid = None
+            # Discard failed KV; do not route through successful cache storage.
+            if self.block_aware_cache is not None:
+                self.block_aware_cache.release_cache(request_id)
             aborted_ids.add(request_id)
             self.finished_req_ids.add(request_id)
         self.running.clear()
         self._detokenizer_pool.clear()
 
+        # Clear processor ownership before UIDs can be reused.
+        for uid in list(self.uid_to_request_id):
+            self._forget_uid_grammar(uid)
+        self._realign_grammar_logits_processors()
         # Clear UID mappings (batch generator is gone)
         self.request_id_to_uid.clear()
         self.uid_to_request_id.clear()

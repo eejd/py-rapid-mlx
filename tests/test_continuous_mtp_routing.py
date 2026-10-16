@@ -1509,3 +1509,70 @@ def test_runtime_refuses_unattested_recursive_draft_depth(depth):
     assert decision.reasons == (
         "capability descriptor mismatch: recursive_draft_depth",
     )
+
+
+@pytest.mark.requires_mlx
+@pytest.mark.parametrize("discard_raises", [False, True])
+def test_scheduler_retirement_reaps_continuous_closure_owners(
+    monkeypatch, discard_raises
+):
+    import inspect
+    import weakref
+
+    from rapid_mlx.scheduler import (
+        Scheduler,
+        SchedulerConfig,
+        _install_continuous_mtp_router,
+    )
+    from rapid_mlx.spec_decode.mtp import continuous_runtime
+    from rapid_mlx.spec_decode.mtp.continuous_engine import (
+        ContinuousSelfMTPCapabilities,
+    )
+
+    runtime = SimpleNamespace(
+        capabilities=ContinuousSelfMTPCapabilities(
+            target_return_hidden=True,
+            mtp_return_hidden=True,
+            confirmed_target_forward=True,
+            ragged_rollback=True,
+            atomic_cache_commit=True,
+            dynamic_membership=True,
+        )
+    )
+    monkeypatch.setattr(
+        continuous_runtime,
+        "assemble_continuous_self_mtp_runtime",
+        lambda *_a, **_kw: runtime,
+    )
+    batch_gen = _SchedulerBatchGenerator()
+    config = SchedulerConfig(spec_decode="mtp", mtp_continuous_batching=True)
+    assert _install_continuous_mtp_router(batch_gen, _Model(), config)
+    retired_ref = weakref.ref(batch_gen)
+    hooks = tuple(
+        method.__func__
+        for method in (batch_gen.next, batch_gen.remove, batch_gen.close)
+    )
+
+    class Driver:
+        def discard_all(self):
+            if discard_raises:
+                raise RuntimeError("driver discard failed")
+
+    # Stage a driver at the same ownership seam as a prepared cohort.
+    teardown = batch_gen._continuous_mtp_teardown
+    cells = dict(zip(teardown.__code__.co_freevars, teardown.__closure__, strict=True))
+    driver = Driver()
+    driver_ref = weakref.ref(driver)
+    cells["driver"].cell_contents = driver
+    inspect.getclosurevars(teardown).nonlocals["staged_join_sequences"][0] = driver
+    batch_gen._continuous_mtp_driver = driver
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.batch_generator = batch_gen
+    del driver
+
+    scheduler._close_batch_generator()
+
+    del batch_gen
+    assert retired_ref() is None
+    assert driver_ref() is None
+    assert all(callable(hook) for hook in hooks)

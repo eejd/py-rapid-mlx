@@ -734,5 +734,19 @@ def install_compiled_decode(
     generation._rapid_compiled_decode_state = state
     generation._rapid_compiled_decode_declined_uids = declined_uids
     batch_gen._rapid_compiled_decode_stats = stats
+
+    def teardown():
+        nonlocal generation, original_step, original_filter
+        step = state["step"]
+        try:
+            if step is not None:
+                step.poison(RuntimeError("generator retired"), phase="retirement")
+                step.detach()
+        finally:
+            state["step"] = None
+            declined_uids.clear()
+            generation = original_step = original_filter = None
+
+    batch_gen._compiled_decode_teardown = teardown
     logger.info("[compiled-decode] installed for qualified Qwen3.6-35B B=1 decode")
     return True
