@@ -29,7 +29,7 @@ final class LocalSearchThumbnailCache: @unchecked Sendable {
         let path: String
         let timestamp: Double?
         let size: CGSize
-        var waiters: [UUID: CheckedContinuation<NSImage?, Never>] = [:]
+        var waiters: [UUID: CheckedContinuation<Delivered, Never>] = [:]
         var running = false
         var cancel: (@Sendable () -> Void)?
         init(key: String, path: String, timestamp: Double?, size: CGSize) {
@@ -45,21 +45,29 @@ final class LocalSearchThumbnailCache: @unchecked Sendable {
     }
     func thumbnail(path: String, modifiedAt: Double, size: Int, timestamp: Double? = nil,
                    pixelSize: CGSize = CGSize(width: 320, height: 240)) async -> NSImage? {
-        guard !Task.isCancelled else { return nil }
+        await deliveredThumbnail(path: path, modifiedAt: modifiedAt, size: size,
+                                 timestamp: timestamp, pixelSize: pixelSize).image
+    }
+    /// Main-actor callers receive the image through a Sendable box: Swift 6.1
+    /// rejects sending non-Sendable `NSImage?` across isolation boundaries.
+    struct Delivered: @unchecked Sendable { let image: NSImage? }
+    func deliveredThumbnail(path: String, modifiedAt: Double, size: Int, timestamp: Double? = nil,
+                            pixelSize: CGSize = CGSize(width: 320, height: 240)) async -> Delivered {
+        guard !Task.isCancelled else { return Delivered(image: nil) }
         let key = "\(path):\(modifiedAt):\(size):\(timestamp.map { String($0) } ?? "still"):\(pixelSize.width)x\(pixelSize.height)"
         let id = UUID(), consumer = Consumer()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async {
-                    guard !consumer.isCanceled else { continuation.resume(returning: nil); return }
+                    guard !consumer.isCanceled else { continuation.resume(returning: Delivered(image: nil)); return }
                     if let image = self.images.object(forKey: key as NSString) {
-                        continuation.resume(returning: image); return
+                        continuation.resume(returning: Delivered(image: image)); return
                     }
                     let job: Job
                     if let existing = self.jobs[key], !existing.waiters.isEmpty { job = existing }
                     else if self.jobs[key] != nil {
                         // A canceled native generator is still draining its callback.
-                        continuation.resume(returning: nil); return
+                        continuation.resume(returning: Delivered(image: nil)); return
                     } else {
                         job = Job(key: key, path: path, timestamp: timestamp, size: pixelSize)
                         self.jobs[key] = job
@@ -73,7 +81,7 @@ final class LocalSearchThumbnailCache: @unchecked Sendable {
             consumer.cancel()
             self.queue.async {
                 guard let job = self.jobs[key] else { return }
-                job.waiters.removeValue(forKey: id)?.resume(returning: nil)
+                job.waiters.removeValue(forKey: id)?.resume(returning: Delivered(image: nil))
                 if job.waiters.isEmpty {
                     if job.running { job.cancel?() }
                     else {
@@ -83,12 +91,6 @@ final class LocalSearchThumbnailCache: @unchecked Sendable {
                 }
             }
         }
-    }
-    /// Main-actor callers receive the image through a Sendable box: Swift 6.1
-    /// rejects returning non-Sendable `NSImage?` across the isolation boundary.
-    struct Delivered: @unchecked Sendable { let image: NSImage? }
-    func deliveredThumbnail(path: String, modifiedAt: Double, size: Int, timestamp: Double? = nil) async -> Delivered {
-        Delivered(image: await thumbnail(path: path, modifiedAt: modifiedAt, size: size, timestamp: timestamp))
     }
     private func pump() {
         while active < maximumConcurrent, !pending.isEmpty {
@@ -114,7 +116,8 @@ final class LocalSearchThumbnailCache: @unchecked Sendable {
                 image = NSImage(cgImage: frame, size: CGSize(width: frame.width, height: frame.height))
                 self.images.setObject(image!, forKey: job.key as NSString, cost: frame.bytesPerRow * frame.height)
             }
-            for waiter in job.waiters.values { waiter.resume(returning: image) }
+            let delivered = Delivered(image: image)
+            for waiter in job.waiters.values { waiter.resume(returning: delivered) }
             self.jobs.removeValue(forKey: job.key)
             self.active -= 1
             self.pump()
