@@ -74,7 +74,7 @@ def test_tier1_candidate_installs_reduced_vision_runtime_for_multimodal_roster()
         < distribution_check
         < roster_run
     )
-    assert "'mlx-vlm' 'Pillow>=10.0'" in gate
+    assert "'mlx-vlm' 'Pillow>=10.0,<13'" in gate
 
 
 def test_tagged_promotion_and_standalone_build_are_mutually_exclusive():
