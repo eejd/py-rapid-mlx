@@ -1,0 +1,211 @@
+import AppKit
+import QuickLookUI
+import SwiftUI
+
+/// Small seam for exercising lifetime and scheduling without a system preview panel.
+@MainActor protocol LocalSearchPreviewPanelDriving: AnyObject {
+    var isVisible: Bool { get }
+    func acquire(_ controller: LocalSearchPreviewController) -> Bool
+    func reload()
+    func show()
+    func release(_ controller: LocalSearchPreviewController)
+}
+
+/// A view-lifetime reference, independent of result rows and SwiftUI value updates.
+/// All panel work crosses a main-queue boundary. Quick Look can spin a nested event
+/// loop while opening; queued requests must also wait for that operation to return.
+@MainActor final class LocalSearchPreviewController: NSResponder,
+    @preconcurrency QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    private let driver: any LocalSearchPreviewPanelDriving
+    private var pending: [@MainActor () -> Void] = []
+    private var applying = false
+    private(set) var item: NSURL?
+    fileprivate var wantsControl = false
+    private var controlLifetime: LocalSearchPreviewController?
+    weak var window: NSWindow?
+
+    init(driver: any LocalSearchPreviewPanelDriving = LocalSearchSystemPreviewPanel()) {
+        self.driver = driver
+        super.init()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func enqueue(_ action: @escaping @MainActor () -> Void) {
+        pending.append(action)
+        DispatchQueue.main.async { [self] in drain() }
+    }
+    private func drain() {
+        guard !applying, !pending.isEmpty else { return }
+        applying = true
+        let action = pending.removeFirst()
+        action()
+        applying = false
+        if !pending.isEmpty { DispatchQueue.main.async { [self] in drain() } }
+    }
+    func toggle(_ url: URL) {
+        enqueue { [self] in
+            if driver.isVisible, item == url as NSURL { closeNow(); return }
+            item = url as NSURL
+            wantsControl = true
+            guard driver.acquire(self) else { closeNow(); return }
+            driver.reload()
+            driver.show()
+        }
+    }
+    func selectionChanged(to url: URL?) {
+        enqueue { [self] in
+            guard driver.isVisible, wantsControl else { return }
+            guard let url else { closeNow(); return }
+            item = url as NSURL
+            driver.reload()
+        }
+    }
+    func close() { enqueue { [self] in closeNow() } }
+    private func closeNow() {
+        // onDisappear and representable dismantling can both request cleanup.
+        // Reissuing QL's animated close can cancel its in-flight dismissal.
+        guard wantsControl || item != nil else { return }
+        // Keep the item alive until Quick Look relinquishes its assign references.
+        wantsControl = false
+        driver.release(self)
+        item = nil
+    }
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated { wantsControl }
+    }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { bind(panel) }
+    }
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { unbind(panel) }
+    }
+    fileprivate func bind(_ panel: QLPreviewPanel) {
+        controlLifetime = self
+        panel.dataSource = self
+        panel.delegate = self
+    }
+    fileprivate func unbind(_ panel: QLPreviewPanel) {
+        if panel.dataSource === self { panel.dataSource = nil }
+        if panel.delegate === self { panel.delegate = nil }
+        controlLifetime = nil
+    }
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { item == nil ? 0 : 1 }
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
+        index == 0 ? item : nil
+    }
+}
+
+@MainActor final class LocalSearchSystemPreviewPanel: LocalSearchPreviewPanelDriving {
+    private var panel: QLPreviewPanel?
+    private weak var ownerWindow: NSWindow?
+    private weak var owner: LocalSearchPreviewController?
+    private var presented = false
+    private var closing = false
+    private var pendingShow = false
+    private var closeObserver: NSObjectProtocol?
+    var isVisible: Bool { panel?.isVisible == true }
+    func acquire(_ controller: LocalSearchPreviewController) -> Bool {
+        guard let window = controller.window else { return false }
+        let panel = panel ?? QLPreviewPanel.shared()!
+        self.panel = panel
+        owner = controller
+        if ownerWindow == nil {
+            ownerWindow = window
+            controller.nextResponder = window.nextResponder
+            window.nextResponder = controller
+        }
+        if closing { return true }
+        panel.updateController()
+        if panel.currentController as AnyObject? === controller { controller.bind(panel) }
+        // Hidden panels may defer responder discovery until makeKeyAndOrderFront.
+        return !panel.isVisible || panel.currentController as AnyObject? === controller
+    }
+    func reload() {
+        guard !closing, let owner, panel?.currentController as AnyObject? === owner else { return }
+        panel?.reloadData()
+    }
+    func show() {
+        if closing { pendingShow = true; return }
+        panel?.makeKeyAndOrderFront(nil)
+        presented = true
+        // Hidden panels can grant control during opening. Reload after that
+        // handoff so a cached item from the previous session is replaced too.
+        reload()
+    }
+    func release(_ controller: LocalSearchPreviewController) {
+        pendingShow = false
+        let owned = panel?.currentController as AnyObject? === controller
+        // Teardown may remove us from the responder chain before the deferred
+        // close runs. Close our now-unowned panel, but never another owner's.
+        let shouldHide = owned || (presented && panel?.currentController == nil)
+        presented = false
+        // Remove only our responder, preserving any other hooks in the chain.
+        var predecessor: NSResponder? = ownerWindow
+        while let responder = predecessor {
+            if responder.nextResponder === controller {
+                responder.nextResponder = controller.nextResponder
+                break
+            }
+            predecessor = responder.nextResponder
+        }
+        if owned {
+            // Notify Quick Look after changing the responder chain, while visible,
+            // so endPreviewPanelControl releases the assign references.
+            panel?.updateController()
+        }
+        if shouldHide {
+            if let panel, panel.isVisible {
+                closing = true
+                if closeObserver == nil {
+                    closeObserver = NotificationCenter.default.addObserver(
+                        forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main
+                    ) { [self] _ in
+                        // Keep the adapter alive through dismissal even if its view
+                        // is gone; finishClosing removes this observer and its hold.
+                        DispatchQueue.main.async { [self] in finishClosingIfHidden() }
+                    }
+                }
+                panel.orderOut(nil)
+                DispatchQueue.main.async { [weak self] in self?.finishClosingIfHidden() }
+            }
+            // Quick Look can cache currentController across hidden sessions without
+            // sending endControl. Detach assign references while still the owner.
+            if let panel, panel.currentController as AnyObject? === controller {
+                controller.unbind(panel)
+                panel.reloadData()
+            }
+        }
+        controller.nextResponder = nil
+        ownerWindow = nil
+        owner = nil
+    }
+    private func finishClosingIfHidden() {
+        guard closing, panel?.isVisible != true else { return }
+        closing = false
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        closeObserver = nil
+        if pendingShow, let owner, owner.wantsControl {
+            pendingShow = false
+            if acquire(owner) { reload(); show() }
+        }
+    }
+
+}
+
+/// Supplies the owning window without stealing keyboard focus or changing panel
+/// state during NSViewRepresentable updates/layout. Teardown is deferred too.
+struct LocalSearchPreviewAnchor: NSViewRepresentable {
+    let controller: LocalSearchPreviewController
+    func makeNSView(context: Context) -> Anchor { Anchor(controller: controller) }
+    func updateNSView(_ nsView: Anchor, context: Context) {}
+    static func dismantleNSView(_ nsView: Anchor, coordinator: ()) { nsView.controller.close() }
+    final class Anchor: NSView {
+        let controller: LocalSearchPreviewController
+        init(controller: LocalSearchPreviewController) {
+            self.controller = controller
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); controller.window = window }
+    }
+}

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import Rapid
@@ -89,5 +90,119 @@ import Testing
                 ? String(localized: "Matched by file name — \(LocalSearchSkipReason.localized("future reason"))")
                 : String(localized: "Matched by file name")))
         }
+    }
+}
+
+@Suite @MainActor struct LocalSearchPreviewTests {
+    @MainActor final class Panel: LocalSearchPreviewPanelDriving {
+        var isVisible = false
+        weak var dataSource: LocalSearchPreviewController?
+        weak var delegate: LocalSearchPreviewController?
+        var calls: [String] = []
+        var onShow: (() -> Void)?
+        func acquire(_ controller: LocalSearchPreviewController) -> Bool {
+            calls.append("acquire"); dataSource = controller; delegate = controller; return true
+        }
+        func reload() { calls.append("reload") }
+        func show() { calls.append("show"); isVisible = true; onShow?() }
+        func release(_ controller: LocalSearchPreviewController) {
+            calls.append("release"); isVisible = false; dataSource = nil; delegate = nil
+        }
+    }
+    private func nextTurn() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+    @Test func openingLeavesUpdateTransactionBeforeTouchingPanel() async {
+        let panel = Panel()
+        let controller = LocalSearchPreviewController(driver: panel)
+        controller.toggle(URL(fileURLWithPath: "/tmp/preview.pdf"))
+        #expect(panel.calls.isEmpty)
+        await nextTurn()
+        #expect(panel.calls == ["acquire", "reload", "show"])
+        controller.close(); await nextTurn()
+    }
+    @Test func retainsExactItemIndependentlyOfRequestingState() async {
+        let panel = Panel()
+        let controller = LocalSearchPreviewController(driver: panel)
+        #expect(controller.numberOfPreviewItems(in: nil) == 0)
+        var requestingState: URL? = URL(fileURLWithPath: "/tmp/a file.png")
+        let expected = requestingState!
+        controller.toggle(requestingState!)
+        requestingState = nil
+        await nextTurn()
+        #expect(controller.numberOfPreviewItems(in: nil) == 1)
+        #expect(controller.previewPanel(nil, previewItemAt: 0)?.previewItemURL == expected)
+        #expect(controller.previewPanel(nil, previewItemAt: 1) == nil)
+        controller.close(); await nextTurn()
+        #expect(controller.numberOfPreviewItems(in: nil) == 0)
+    }
+    @Test func toggleSelectionAndDisappearReleaseControl() async {
+        let panel = Panel()
+        let controller = LocalSearchPreviewController(driver: panel)
+        let first = URL(fileURLWithPath: "/tmp/a.pdf")
+        let second = URL(fileURLWithPath: "/tmp/b.txt")
+        controller.toggle(first); await nextTurn()
+        controller.selectionChanged(to: second)
+        #expect(controller.item == first as NSURL)
+        await nextTurn()
+        #expect(controller.item == second as NSURL)
+        #expect(panel.calls.last == "reload")
+        controller.toggle(first); await nextTurn()
+        #expect(panel.isVisible)
+        #expect(controller.item == first as NSURL)
+        controller.toggle(first); await nextTurn()
+        #expect(!panel.isVisible)
+        #expect(panel.dataSource == nil && panel.delegate == nil)
+        controller.toggle(second); await nextTurn()
+        controller.close(); await nextTurn()
+        #expect(!panel.isVisible)
+        #expect(panel.dataSource == nil && panel.delegate == nil)
+        #expect(controller.item == nil)
+    }
+    @Test func nestedOpeningDoesNotApplyTeardownUntilOpeningReturns() async {
+        let panel = Panel()
+        let controller = LocalSearchPreviewController(driver: panel)
+        panel.onShow = {
+            controller.close()
+            // Model Quick Look's nested run loop servicing a queued request.
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+            #expect(panel.dataSource === controller)
+            #expect(controller.item != nil)
+        }
+        controller.toggle(URL(fileURLWithPath: "/tmp/a.pdf"))
+        await nextTurn(); await nextTurn()
+        #expect(panel.dataSource == nil && panel.delegate == nil)
+    }
+    @Test func disappearanceAndAnchorTeardownCloseOnlyOnce() async {
+        let panel = Panel()
+        let controller = LocalSearchPreviewController(driver: panel)
+        controller.toggle(URL(fileURLWithPath: "/tmp/a.png")); await nextTurn()
+        controller.close()
+        controller.close()
+        for _ in 0..<3 { await nextTurn() }
+        #expect(panel.calls.filter { $0 == "release" }.count == 1)
+        #expect(!panel.isVisible && panel.dataSource == nil && panel.delegate == nil)
+    }
+    @Test func rapidRequestsKeepOrderAndDoNotReopenAfterDisappear() async {
+        let panel = Panel()
+        let controller = LocalSearchPreviewController(driver: panel)
+        let url = URL(fileURLWithPath: "/tmp/a.pdf")
+        controller.toggle(url)
+        controller.toggle(url)
+        controller.toggle(url)
+        controller.close()
+        #expect(panel.calls.isEmpty)
+        for _ in 0..<5 { await nextTurn() }
+        #expect(panel.calls == ["acquire", "reload", "show", "release", "acquire", "reload", "show", "release"])
+        #expect(!panel.isVisible && panel.dataSource == nil && panel.delegate == nil)
+    }
+    @Test func localSearchDoesNotUseSwiftUIPreviewBinding() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Rapid/UI/LocalSearchView.swift"), encoding: .utf8)
+        let canonical = SourceGuardSupport.canonicalSource(source, literals: .erase)
+        #expect(!canonical.contains(".quickLookPreview("))
     }
 }
