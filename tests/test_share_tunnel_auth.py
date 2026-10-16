@@ -80,7 +80,9 @@ def test_tunnel_logger_redacts_exception_tracebacks_without_global_filters(caplo
 
 def test_tunnel_logger_redacts_overlapping_credentials_longest_first(caplog):
     client = ws_tunnel.TunnelClient(
-        local_port=1, share_key="shared-secret", override_authorization="shared-secret-tail"
+        local_port=1,
+        share_key="shared-secret",
+        override_authorization="shared-secret-tail",
     )
     with caplog.at_level(logging.DEBUG, logger="websockets.client"):
         client._ws_logger.debug("%s %s", "shared-secret", "shared-secret-tail")
