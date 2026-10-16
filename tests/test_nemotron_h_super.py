@@ -708,6 +708,7 @@ def test_mtp_cli_alias_gates():
     assert _config_vetted_mtp_supports_spec_decode("nemotron_h")
     assert _resolve_mtp_depth_for_model("nemotron_h", 2, explicit=True) == 2
     assert _resolve_mtp_depth_for_model("nemotron_h", 2, explicit=False) == 1
+    assert _resolve_mtp_depth_for_model("nemotron_h", 3, explicit=False) == 1
     assert _resolve_mtp_depth_for_model("nemotron_h", 0, explicit=True) == 0
     with pytest.raises(ValueError, match="Nemotron"):
         _resolve_mtp_depth_for_model("nemotron_h", 3, explicit=True)
