@@ -175,6 +175,45 @@ def test_plain_share_registers_with_the_same_bearer_as_local_serve(capsys):
     assert key not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("phase", ["connect", "ready", "disconnect"])
+def test_plain_share_redacts_key_echoed_in_tunnel_errors(phase, capsys):
+    key = "ab" * 24
+    tunnel = _fake_tunnel(
+        error=RuntimeError(f"relay echoed Bearer {key}"),
+        closed=phase == "disconnect",
+    )
+    if phase == "connect":
+        tunnel.ready_event = MagicMock()
+        tunnel.ready_event.wait.return_value = False
+    elif phase == "disconnect":
+        # Initial readiness succeeds, then the monitor sees the relay error.
+        def connected(*args, **kwargs):
+            tunnel.error = None
+            return MagicMock(is_alive=lambda: False)
+
+        def disconnected(*args, **kwargs):
+            tunnel.error = RuntimeError(f"relay echoed Bearer {key}")
+            return True
+
+        tunnel.run_in_thread.side_effect = connected
+        tunnel.closed_event.is_set = disconnected
+    with pytest.raises(SystemExit) as exc:
+        _drive_share_capture(
+            _make_args(),
+            extra_patches=(
+                patch.object(share_cli.secrets, "token_hex", return_value=key),
+                patch.object(share_cli.ws_tunnel, "TunnelClient", return_value=tunnel),
+            ),
+        )
+    assert exc.value.code == 1
+    output = capsys.readouterr()
+    assert key not in output.err
+    assert "[redacted]" in output.err
+    if phase != "disconnect":
+        assert key not in output.out
+    tunnel.stop.assert_called_once()
+
+
 def test_share_command_aborts_when_serve_exits_before_ready():
     serve_proc = MagicMock()
     serve_proc.poll.return_value = 1  # already exited

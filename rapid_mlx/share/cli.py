@@ -930,10 +930,12 @@ def share_command(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
             if err is not None:
-                print(f"   reason: {err}", file=sys.stderr)
+                detail = str(err).replace(api_key, "[redacted]")
+                print(f"   reason: {detail}", file=sys.stderr)
             sys.exit(1)
         if tunnel.error is not None:
-            print(f"share: WS tunnel failed: {tunnel.error}", file=sys.stderr)
+            detail = str(tunnel.error).replace(api_key, "[redacted]")
+            print(f"share: WS tunnel failed: {detail}", file=sys.stderr)
             sys.exit(1)
 
         # End-to-end probe: bearer-authed /v1/models through the public
@@ -996,7 +998,11 @@ def share_command(args: argparse.Namespace) -> None:
                 # a non-zero exit so supervisor wrappers restart us; the
                 # serve child is still alive, terminated in cleanup.
                 err = tunnel.error
-                suffix = f": {err}" if err is not None else ""
+                suffix = (
+                    ": " + str(err).replace(api_key, "[redacted]")
+                    if err is not None
+                    else ""
+                )
                 print(
                     f"share: WS tunnel disconnected{suffix}. Stopping serve.",
                     file=sys.stderr,
