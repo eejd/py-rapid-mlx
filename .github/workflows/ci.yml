@@ -1010,6 +1010,7 @@ jobs:
             tests/test_bailing_hybrid_model.py \
             tests/test_nemotron_h_puzzle_vendored.py \
             tests/test_nemotron_h_super.py \
+            tests/test_nemotron_super_vl_convert.py \
             tests/test_cohere2_moe_reference_parity.py \
             tests/test_mtp_spec_decode.py \
             tests/test_metal_cap_enforcement.py \

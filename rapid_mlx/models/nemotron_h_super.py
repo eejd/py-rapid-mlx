@@ -8,9 +8,14 @@ checked loader, without replacing the installed architecture globally.
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.models import nemotron_h as base
 
-from . import nemotron_h_puzzle as shared
+from .. import _mlx_compat
+
+_mlx_compat.install()
+
+from mlx_lm.models import nemotron_h as base  # noqa: E402
+
+from . import nemotron_h_puzzle as shared  # noqa: E402
 
 
 def text_config(config):
