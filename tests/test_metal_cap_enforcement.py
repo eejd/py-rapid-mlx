@@ -1631,7 +1631,7 @@ def test_prefill_uncalibrated_cohort_is_narrow_and_high_water_only_rises():
     with patch("rapid_mlx.scheduler.mx.reset_peak_memory") as reset:
         before = sched._begin_prefill_memory_sample()
         reset.assert_called_once()
-    assert before == (400, 100, 10)
+    assert before == (400, [(next(iter(sched.running.values())), 10)])
     with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=500):
         sched._finish_prefill_memory_sample(before)
     assert sched._prefill_workspace_high_water == 1
@@ -1776,7 +1776,7 @@ def test_prefill_calibration_uses_dispatched_chunk_and_bounds_shorter_context():
     sched._schedule_waiting()
     with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
         before = sched._begin_prefill_memory_sample()
-    assert before == (400, 512 * 8192, 512)
+    assert before == (400, [(req, 512)])
     with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
         sched._finish_prefill_memory_sample(before)
     # A shorter context still reserves the activation high-water per chunk.
@@ -2076,7 +2076,8 @@ def test_review_abort_response_cannot_qualify_sample():
     sched.waiting.append(req)
     sched._schedule_waiting()
     with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
-        sched._begin_prefill_memory_sample()
+        before = sched._begin_prefill_memory_sample()
+    sched._finish_prefill_memory_sample(before)
     sched._process_batch_responses(
         [
             SimpleNamespace(
@@ -2092,3 +2093,151 @@ def test_review_abort_response_cannot_qualify_sample():
     assert not getattr(sched, "_prefill_workspace_calibrated", False)
     assert not req._prefill_memory_sampled
     assert req.status == RequestStatus.FINISHED_ABORTED
+
+
+@pytest.fixture
+def review2_generator():
+    import mlx.core as mx
+
+    class Model:
+        def __call__(self, tokens, cache):
+            return mx.zeros((*tokens.shape, 4))
+
+    with patch("mlx.core.metal.is_available", return_value=False):
+        generator = BatchGenerator(Model(), prefill_step_size=2048)
+    yield generator
+    generator.close()
+
+
+@pytest.mark.parametrize(
+    "lengths, qualifies", [([1, 254, 1], False), ([1, 256, 1], True)]
+)
+def test_review2_segmented_sample_requires_representative_dispatch(
+    review2_generator, lengths, qualifies
+):
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_calibrated
+    sched.config.prefill_step_size = 2048
+    sched.batch_generator = bg = review2_generator
+    del sched._prefill_workspace_high_water
+    req = _make_request("segmented", sum(lengths))
+    segments = [[0] * n for n in lengths]
+    req.batch_uid = bg.insert_segments([segments], caches=[[]], max_tokens=[1])[0]
+    sched.running[req.request_id] = req
+    sched.uid_to_request_id[req.batch_uid] = req.request_id
+    # The initial one-token segment must not reset peaks or qualify a sample.
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory") as reset:
+        before = sched._begin_prefill_memory_sample()
+    assert before is None
+    reset.assert_not_called()
+    bg.next()
+    # Subsequent sampling must see the active segment, rather than total suffix.
+    before = sched._begin_prefill_memory_sample()
+    assert (before is not None) == qualifies
+    bg.next()
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
+        sched._finish_prefill_memory_sample(before)
+    for _ in range(2):
+        _, responses = bg.next()
+        sched._process_batch_responses(responses)
+    assert bool(getattr(sched, "_prefill_workspace_calibrated", False)) == qualifies
+    if qualifies:
+        assert sched._prefill_workspace_per_chunk == 4  # 1024 / 256
+        assert sched._prefill_workspace_high_water == 1024 / (256 * sum(lengths))
+
+
+def test_review2_generation_batch_prompt_kv_already_resident(review2_generator):
+    sched = _cohort_scheduler()
+    del sched._estimate_request_kv_bytes
+    sched._resolve_kv_bytes_per_token = lambda: 10
+    sched.batch_generator = bg = review2_generator
+    req = _make_request("promoted", 40)
+    req.batch_uid = bg.insert([req.prompt_token_ids], caches=[[]], max_tokens=[1])[0]
+    sched.running[req.request_id] = req
+    bg.next()  # prefill 39 tokens
+    _, responses = bg.next()  # final prompt token; first output arrives next step
+    assert not responses and not req.num_output_tokens
+    assert req.batch_uid in bg._generation_batch.uids
+    assert sched._prefill_memory_rows() == []
+    assert sched._prefill_unmaterialized_bytes(req, 0) == 10
+    # Resident KV must not force cache eviction or defer a fitting candidate.
+    sched._prefill_workspace_high_water = 0
+    sched._resolve_metal_cap_bytes = lambda: 500
+    sched._reclaim_prefix_cache_for_prefill = MagicMock()
+    assert sched._prefill_cohort_fits(_make_request("candidate", 1))
+    assert sched._reclaim_prefix_cache_for_prefill.call_args.kwargs["cohort_need"] < 100
+
+
+@pytest.mark.parametrize("dispatch", ["tiny", "large", "both", "none"])
+def test_review2_sample_counts_only_dispatched_rows_and_marks_large_rows(dispatch):
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_high_water
+    del sched._prefill_workspace_calibrated
+    sched.config.prefill_step_size = 2048
+    bg = sched.batch_generator
+    bg.prefill_step_size = 2048
+    tiny = _make_request("tiny", 400)
+    large = _make_request("large", 800)
+    tiny.batch_uid, large.batch_uid = 101, 102
+    sched.running.update((r.request_id, r) for r in (tiny, large))
+    # One active segment plus an inserted row which may remain queued.
+    bg._prompt_batch.uids = [101]
+    bg._currently_processing = [[[[0], [0] * 399], 0, 400]]
+    bg._unprocessed_sequences = [(102, [[0] * 512, [0] * 288])]
+    before = sched._begin_prefill_memory_sample()
+    assert before == (400, [(tiny, 1), (large, 512)])
+    assert not getattr(large, "_prefill_memory_sampled", False)
+    uids = {"tiny": [101], "large": [102], "both": [101, 102], "none": []}[dispatch]
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
+        sched._finish_prefill_memory_sample(
+            before, ([SimpleNamespace(uid=uid) for uid in uids], [])
+        )
+    assert not getattr(tiny, "_prefill_memory_sampled", False)
+    if dispatch in ("tiny", "none"):
+        assert not hasattr(sched, "_prefill_workspace_high_water")
+        assert not getattr(large, "_prefill_memory_sampled", False)
+    else:
+        assert large._prefill_memory_sampled
+        chunks = 513 if dispatch == "both" else 512
+        units = 512 * 800 + (400 if dispatch == "both" else 0)
+        assert sched._prefill_workspace_high_water == 1024 / units
+        assert sched._prefill_workspace_per_chunk == 1024 / chunks
+
+
+def test_review2_failed_sample_cannot_mark_a_trajectory():
+    sched = _cohort_scheduler()
+    sched.waiting.append(_make_request("sample", 10))
+    req = sched._schedule_waiting()[0]
+    before = sched._begin_prefill_memory_sample()
+    with (
+        patch("rapid_mlx.scheduler.mx.get_peak_memory", side_effect=RuntimeError),
+        pytest.raises(RuntimeError),
+    ):
+        sched._finish_prefill_memory_sample(before)
+    assert not getattr(req, "_prefill_memory_sampled", False)
+
+
+@pytest.mark.parametrize("timing", [False, True])
+def test_review2_step_samples_generator_dispatch_with_timing(review2_generator, timing):
+    sched = _cohort_scheduler()
+    sched._step_timing_enabled = timing
+    sched.config.prefill_step_size = 2048
+    sched.batch_generator = bg = review2_generator
+    req = _make_request("step-sample", 512)
+    req.batch_uid = bg.insert([req.prompt_token_ids], caches=[[]], max_tokens=[1])[0]
+    sched.running[req.request_id] = req
+    sched.requests[req.request_id] = req
+    sched.uid_to_request_id[req.batch_uid] = req.request_id
+    with patch.object(
+        sched,
+        "_finish_prefill_memory_sample",
+        wraps=sched._finish_prefill_memory_sample,
+    ) as finish:
+        for _ in range(2):
+            output = sched.step()
+            assert not output.finished_request_ids
+        assert finish.call_count == 2
+        before, raw_next = finish.call_args_list[0].args
+        assert before[1] == [(req, 511)]
+        assert raw_next[0][0].uid == req.batch_uid
+    assert req._prefill_memory_sampled

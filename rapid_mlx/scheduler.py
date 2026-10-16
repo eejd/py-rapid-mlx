@@ -9717,7 +9717,12 @@ class Scheduler:
     def _prefill_unmaterialized_bytes(self, request: Request, processed: int) -> int:
         per_tok = self._resolve_kv_bytes_per_token()
         resident_tokens = request.cached_tokens + processed
-        if request.request_id in self.running and request.num_output_tokens:
+        generation_uids = getattr(
+            getattr(self.batch_generator, "_generation_batch", None), "uids", ()
+        )
+        if request.request_id in self.running and (
+            request.num_output_tokens or request.batch_uid in generation_uids
+        ):
             resident_tokens = len(request.prompt_token_ids) + request.num_output_tokens
         resident = per_tok * resident_tokens
         if resident_tokens:
@@ -9789,34 +9794,52 @@ class Scheduler:
             )
         return False
 
-    def _begin_prefill_memory_sample(self) -> tuple[int, int, int] | None:
+    def _begin_prefill_memory_sample(
+        self,
+    ) -> tuple[int, list[tuple[Request, int]]] | None:
         if self._resolve_metal_cap_bytes() <= 0:
             return None
-        rows = self._prefill_memory_rows()
-        # Tiny warmup/exact-hit steps are dominated by fixed initialization
-        # allocations and cannot calibrate a full-sized prefill workspace.
-        chunk_size = int(self.batch_generator.prefill_step_size)
-        chunks = [
-            min(chunk_size, max(1, len(r.prompt_token_ids) - r.cached_tokens - n))
-            for r, n in rows
-        ]
-        if not chunks or max(chunks) < min(256, self.config.prefill_step_size):
-            return None
-        units = sum(
-            c * max(1, len(r.prompt_token_ids)) for c, (r, _) in zip(chunks, rows)
+        bg = self.batch_generator
+        # Use the next segment, exactly as the generator does. Total remaining
+        # prompt length can hide a tiny shared-prefix boundary forward.
+        segments = dict(
+            zip(
+                getattr(getattr(bg, "_prompt_batch", None), "uids", ()),
+                (seq[0] for seq in getattr(bg, "_currently_processing", ())),
+            )
         )
+        segments.update(
+            (seq[0], seq[1]) for seq in getattr(bg, "_unprocessed_sequences", ())
+        )
+        rows = [
+            (r, min(int(bg.prefill_step_size), len(segments[r.batch_uid][0])))
+            for r, _ in self._prefill_memory_rows()
+        ]
+        minimum = min(256, self.config.prefill_step_size)
+        if not rows or max(chunk for _, chunk in rows) < minimum:
+            return None
         active = self._current_metal_active_bytes()
         reset_peak_for_sample()
-        for request, _ in rows:
-            request._prefill_memory_sampled = True
-        return active, units, sum(chunks)
+        return active, rows
 
     def _finish_prefill_memory_sample(
-        self, before: tuple[int, int, int] | None
+        self,
+        before: tuple[int, list[tuple[Request, int]]] | None,
+        raw_next=None,
     ) -> None:
         if before is None:
             return
-        active, units, chunks = before
+        active, rows = before
+        if isinstance(raw_next, tuple):
+            # Only rows actually dispatched in this step belong in the sample:
+            # completion/prefill capacity can leave inserted rows queued.
+            dispatched = {response.uid for response in raw_next[0]}
+            rows = [(r, chunk) for r, chunk in rows if r.batch_uid in dispatched]
+        minimum = min(256, self.config.prefill_step_size)
+        if not rows or max(chunk for _, chunk in rows) < minimum:
+            return
+        units = sum(chunk * max(1, len(r.prompt_token_ids)) for r, chunk in rows)
+        chunks = sum(chunk for _, chunk in rows)
         # Include KV allocation and simultaneous decode in the residual rather
         # than trying to subtract uncertain allocator/copy lifetimes. This is
         # deliberately conservative; the high-water can only rise.
@@ -9829,6 +9852,9 @@ class Scheduler:
         self._prefill_workspace_per_chunk = max(
             getattr(self, "_prefill_workspace_per_chunk", 0.0), delta / max(1, chunks)
         )
+        for request, chunk in rows:
+            if chunk >= minimum:
+                request._prefill_memory_sampled = True
 
     def _schedule_waiting(self) -> list[Request]:
         """
@@ -11256,7 +11282,7 @@ class Scheduler:
                             st[0], st[1] = [], []
                     else:
                         raw_next = self.batch_generator.next()
-                    self._finish_prefill_memory_sample(_prefill_memory_before)
+                    self._finish_prefill_memory_sample(_prefill_memory_before, raw_next)
                     self._record_prefill_cost(_prefill_cost_before)
                     # Bound functional recurrent-state graphs without forcing
                     # a host synchronization on every token. The barrier fires
