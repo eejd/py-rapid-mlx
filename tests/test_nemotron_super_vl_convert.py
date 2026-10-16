@@ -15,10 +15,8 @@ from scripts import nemotron_super_vl_convert as convert  # noqa: E402
 def test_published_model_card_guidance(bits, size):
     card = convert.model_card(bits, size)
     assert f"Artifact size: {size / 1e9:.3f} GB." in card
-    assert (
-        "Requires an upcoming Rapid-MLX release with Nemotron 3.5 Super VL text support;\n"
-        "Rapid-MLX 0.16.2 supports Nemotron 3.5 Bolt only."
-    ) in card
+    assert "Requires Rapid-MLX 0.16.2 or newer." in card
+    assert "Bolt only" not in card
     assert "Memory qualification pending" not in card
     if bits == 3:
         assert (

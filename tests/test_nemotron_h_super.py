@@ -516,8 +516,7 @@ def test_metadata_recurrent_safety_and_parsers(tmp_path):
 @pytest.mark.parametrize("bits", [3, 4])
 def test_generated_card_published_guidance(bits):
     card = convert.model_card(bits, 43e9 if bits == 3 else 70e9)
-    assert "Requires an upcoming Rapid-MLX release" in card
-    assert "Rapid-MLX 0.16.2 supports Nemotron 3.5 Bolt only." in card
+    assert "Requires Rapid-MLX 0.16.2 or newer." in card
     for internal in ("handoff", "/private/tmp", "PR #", "Memory qualification pending"):
         assert internal not in card
     if bits == 4:

@@ -129,8 +129,7 @@ Text conversion of [{BASE_MODEL}](https://huggingface.co/{BASE_MODEL}).
 
 ## Requirements
 
-Requires an upcoming Rapid-MLX release with Nemotron 3.5 Super VL text support;
-Rapid-MLX 0.16.2 supports Nemotron 3.5 Bolt only. The config retains
+Requires Rapid-MLX 0.16.2 or newer. The config retains
 `nemotron_h` and opts into Rapid's reviewed precision adapter. Stock loaders
 do not apply that adapter; only Rapid-MLX is validated for this conversion.
 
