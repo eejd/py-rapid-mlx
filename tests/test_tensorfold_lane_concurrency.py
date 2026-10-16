@@ -546,6 +546,33 @@ async def test_concurrent_closed_or_unstarted_generator_cleanup_after_executor_j
     assert admission._reservations == 0
 
 
+def test_close_unstarted_tracked_iterator_releases_registry(stalled_provider):
+    backend, provider, _, _, _ = stalled_provider
+
+    class Inner:
+        close_count = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            raise AssertionError("unstarted iterator must not be pulled")
+
+        def close(self):
+            self.close_count += 1
+
+    inner = Inner()
+    iterator = provider._track_iterator(inner)
+    assert backend._provider_iterators == {iterator}
+    iterator.close()
+    assert not backend._provider_iterators
+    assert inner.close_count == 1
+    iterator.close()
+    assert inner.close_count == 1
+    with pytest.raises(StopIteration):
+        next(iterator)
+
+
 def test_close_and_provider_registration_are_atomic(stalled_provider):
     backend, provider, _, stopped, jobs = stalled_provider
     preparing, resume = Event(), Event()

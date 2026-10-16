@@ -185,18 +185,24 @@ class TensorFoldRequestProvider:
         if not self._close_cancellable:
             return iterator
 
-        def tracked() -> Iterator[RequestOutput]:
+        def tracked() -> Iterator[Any]:
             try:
-                yield from iterator
+                yield  # Prime cleanup without pulling the inner iterator.
+                # Own close explicitly; yield-from would also close the inner.
+                for item in iterator:
+                    yield item
             finally:
-                iterator.close()
-                with self.backend._lock:
-                    self.backend._provider_iterators.discard(wrapper)
+                try:
+                    iterator.close()
+                finally:
+                    with self.backend._lock:
+                        self.backend._provider_iterators.discard(wrapper)
 
         wrapper = tracked()
         with self.backend._lock:
             if self.backend._closed:
                 raise RuntimeError("TensorFold backend is closed")
+            next(wrapper)
             self.backend._provider_iterators.add(wrapper)
         return wrapper
 
