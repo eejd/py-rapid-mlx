@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import uuid
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from typing import Any
 
@@ -128,7 +128,7 @@ class NemotronToolParser(ToolParser):
         return held[:safe_end]
 
     def _undeclared_spans(self, text, request, accepted):
-        """Consume bounded, unfenced wrapped attempts at their first close."""
+        """Consume rejected siblings in bounded, unfenced call wrappers."""
         from .qwen3coder_tool_parser import _MarkdownCodeTracker
 
         declared = _declared_tool_names(request)
@@ -137,6 +137,7 @@ class NemotronToolParser(ToolParser):
         tracker = _MarkdownCodeTracker()
         spans = []
         wrapper_closes = [m.start() for m in re.finditer(r"</tool_call>", text)]
+        accepted_ends = [b for _, _, _, b in accepted]
         consumed = 0
         for wrapper in re.finditer(r"<tool_call>", text):
             start = wrapper.start()
@@ -149,49 +150,66 @@ class NemotronToolParser(ToolParser):
             if close == -1:
                 continue
             function_end = close + len("</function>")
-            # Use the accepted path's span scanner, with names unrestricted
-            # for recognition. The first close deliberately bounds rejection:
-            # a literal close in refused arguments has the documented limit.
-            calls = split_marked_calls(
+            first_calls = split_marked_calls(
                 text[wrapper.end() : function_end],
                 r"<function=([^>]+)>",
                 "</function>",
             )
-            if not calls:
+            if not first_calls:
                 continue
-            name, _, a, b = calls[0]
-            a += wrapper.end()
-            b += wrapper.end()
-            # A closed decorative example cannot wrap a later bare function.
-            if text.find("</tool_call>", wrapper.end(), a) != -1:
+            first_start = wrapper.end() + first_calls[0][2]
+            # A closed decorative wrapper cannot claim a later bare function.
+            # A literal wrapper close *inside* the function remains payload.
+            if text.find("</tool_call>", wrapper.end(), first_start) != -1:
                 continue
-            close_index = bisect_left(wrapper_closes, b)
+            close_index = bisect_left(wrapper_closes, function_end)
             wrapper_close = (
                 wrapper_closes[close_index] if close_index < len(wrapper_closes) else -1
             )
-            next_wrapper = text.find("<tool_call>", b, limit)
-            end = (
-                wrapper_close + len("</tool_call>")
-                if wrapper_close != -1
-                and (next_wrapper == -1 or wrapper_close < next_wrapper)
-                else b
+            next_wrapper = text.find("<tool_call>", function_end, limit)
+            wrapped = wrapper_close != -1 and (
+                next_wrapper == -1 or wrapper_close < next_wrapper
             )
-            if (
-                end - start > 32768
-                or name in declared
-                or any(start < y and end > x for _, _, x, y in accepted)
-            ):
+            if wrapped and wrapper_close + len("</tool_call>") > limit:
                 continue
             if tracker.inside(text, start):
                 continue
+            boundary = (
+                wrapper_close
+                if wrapped
+                else (next_wrapper if next_wrapper != -1 else limit)
+            )
+            # Recognize every sibling with the same nested-opener rules as
+            # accepted calls. Never cut a rejected-looking span out of an
+            # accepted argument: marker-shaped payload must remain payload.
+            calls = split_marked_calls(
+                text[wrapper.end() : boundary],
+                r"<function=([^>]+)>",
+                "</function>",
+            )
+            rejected = []
+            for name, _, a, b in calls:
+                a += wrapper.end()
+                b += wrapper.end()
+                accepted_index = bisect_right(accepted_ends, a)
+                overlaps = (
+                    accepted_index < len(accepted) and accepted[accepted_index][2] < b
+                )
+                if name not in declared and not overlaps:
+                    rejected.append((a, b))
+            if not rejected:
+                continue
             # Formatting-only whitespace belongs to the wrapper; narration
             # between the same boundaries remains ordinary assistant content.
+            a = calls[0][2] + wrapper.end()
+            b = calls[-1][3] + wrapper.end()
             prefix_end = a if text[wrapper.end() : a].isspace() else wrapper.end()
-            spans.extend([(start, prefix_end), (a, b)])
-            if end > b:
+            spans.append((start, prefix_end))
+            spans.extend(rejected)
+            if wrapped:
                 suffix_start = b if text[b:wrapper_close].isspace() else wrapper_close
-                spans.append((suffix_start, end))
-            consumed = end
+                spans.append((suffix_start, wrapper_close + len("</tool_call>")))
+            consumed = wrapper_close + len("</tool_call>") if wrapped else b
         return spans
 
     def _visible_content_between(
@@ -402,16 +420,11 @@ class NemotronToolParser(ToolParser):
         # Clean the text: drop the function bodies and any residual bare
         # <tool_call>/</tool_call> wrapper tags so they don't leak as content.
         if matches or rejected:
-            # Excise the exact spans the scan identified. A second regex pass
-            # would truncate at a different point than the parse did whenever
-            # a value holds a literal marker, leaving a tail of the call in
-            # the content the user sees.
-            spans = [(a, b) for _, _, a, b in matches] + rejected
-            for span_start, span_end in sorted(spans, reverse=True):
-                cleaned_text = cleaned_text[:span_start] + cleaned_text[span_end:]
-            if matches:
-                cleaned_text = self.RESIDUAL_WRAPPER_PATTERN.sub("", cleaned_text)
-            cleaned_text = cleaned_text.strip()
+            # Share streaming's projection, including formatting-only gaps
+            # between removed siblings and overlapping accepted payload spans.
+            cleaned_text = self._visible_content_between(
+                model_output, 0, len(model_output), request
+            ).strip()
 
         if tool_calls:
             return ExtractedToolCallInformation(

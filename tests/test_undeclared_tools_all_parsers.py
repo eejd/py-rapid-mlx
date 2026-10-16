@@ -807,6 +807,126 @@ def test_nemotron_round5_accounts_function_before_pending_suffix(name, suffix):
     assert bool(parser._undeclared_dropped) == (name == "send_email")
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("send_email", "send_email"),
+        ("send_email", "write_file"),
+        ("send_email", "send_email", "write_file"),
+    ],
+)
+@pytest.mark.parametrize("narration", [False, True, "formatting"])
+def test_nemotron_round6_wrapper_siblings(names, narration):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    prefix, gap, suffix = (
+        ("Before. ", " Between. ", " After.") if narration else ("", "", "")
+    )
+    if narration == "formatting":
+        gap = "\n  "
+    functions = [
+        f'<function={name}>{{"x":{i}}}</function>' for i, name in enumerate(names, 1)
+    ]
+    text = "<tool_call>" + prefix + gap.join(functions) + suffix + "</tool_call>"
+    content = (
+        prefix + ("" if gap.isspace() else gap * (len(names) - 1)) + suffix
+    ).strip()
+    valid = [name for name in names if name == "write_file"]
+    expected = (
+        content or ("" if valid else NOTICE),
+        valid,
+        "tool_calls" if valid else "stop",
+    )
+    assert _route_reply(text, stream=False) == expected
+    for deltas in (
+        [text],
+        [text[i : i + 7] for i in range(0, len(text), 7)],
+        list(text),
+    ):
+        assert _route_reply(text, stream=True, deltas=deltas) == expected
+        parser = NemotronToolParser()
+        parser.reset()
+        previous = ""
+        visible = ""
+        calls = []
+        for delta in deltas:
+            current = previous + delta
+            result = parser.extract_tool_calls_streaming(
+                previous, current, delta, request={"tools": TOOLS}
+            )
+            if result:
+                visible += result.get("content", "")
+                calls.extend(result.get("tool_calls", []))
+            previous = current
+        visible += parser.flush_held_content(text)
+        assert visible.strip() == content
+        assert [call["function"]["name"] for call in calls] == valid
+        assert parser._undeclared_dropped == names.count("send_email")
+    buffered = NemotronToolParser()
+    buffered.extract_tool_calls(text, {"tools": TOOLS})
+    assert buffered._undeclared_dropped == names.count("send_email")
+
+
+@pytest.mark.parametrize("cap", [False, True])
+@pytest.mark.parametrize("batch", [False, True])
+def test_authorization_round6_mixed_index_resume(cap, batch):
+    pp = processor()
+    pp.request["parallel_tool_calls"] = not cap
+    good = anchor("write_file", 0)
+    good["function"]["arguments"] = '{"path":"'
+    fragments = [
+        good,
+        anchor("send_email", 1),
+        {"function": {"arguments": "rejected"}},
+        {"index": 1, "function": {"arguments": "rejected"}},
+        {"index": 0, "function": {"arguments": "x"}},
+        {"function": {"arguments": '"}'}},
+    ]
+    pp.tool_parser = Mock()
+    pp.tool_parser._undeclared_dropped = 0
+    pp.tool_parser.extract_tool_calls_streaming.side_effect = (
+        [{"tool_calls": fragments}]
+        if batch
+        else [{"tool_calls": [call]} for call in fragments]
+    )
+    calls = []
+    for _ in range(1 if batch else len(fragments)):
+        calls.extend(pp._detect_tool_calls("<").get("tool_calls", []))
+    assert (
+        "".join(call["function"].get("arguments", "") for call in calls)
+        == '{"path":"x"}'
+    )
+    assert pp.undeclared_tool_dropped
+
+
+def test_nemotron_round6_literal_wrapper_close_inside_rejection():
+    text = '<tool_call><function=send_email>{"x":"</tool_call>"}</function></tool_call>'
+    expected = (NOTICE, [], "stop")
+    assert _route_reply(text, stream=False) == expected
+
+
+def test_authorization_round6_rejected_index_resumes_suppression():
+    pp = processor()
+    pp._filter_declared_calls(
+        [anchor("write_file", 0), anchor("send_email", 1)], incremental=True
+    )
+    kept = pp._filter_declared_calls(
+        [
+            {"index": 0, "function": {"arguments": "good"}},
+            {"index": 1, "function": {"arguments": "bad"}},
+            {"function": {"arguments": "also bad"}},
+            {"index": 0, "function": {"arguments": "good again"}},
+            {"function": {"arguments": "good tail"}},
+        ],
+        incremental=True,
+    )
+    assert [call["function"]["arguments"] for call in kept] == [
+        "good",
+        "good again",
+        "good tail",
+    ]
+
+
 @pytest.mark.parametrize("name", ["send_email", "write_file"])
 def test_nemotron_round5_consumes_resolved_wrapper_suffix(name):
     from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser

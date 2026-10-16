@@ -2042,8 +2042,13 @@ class StreamingPostProcessor:
                 if index is not None
                 else self._last_anchor_dropped
             ):
+                self._last_anchor_dropped = True
                 continue
             if incremental and index is not None:
+                # Like the parallel cap, an admitted indexed continuation
+                # resumes routing subsequent no-index fragments to that call.
+                # Rejected indices were suppressed above and cannot reset it.
+                self._last_anchor_dropped = False
                 if index not in self._declared_indices:
                     self._declared_indices[index] = len(self._declared_indices)
                 call = {**call, "index": self._declared_indices[index]}
