@@ -2,6 +2,7 @@
 """Super text extraction, precision boundary and real tiny conversion contracts."""
 
 import json
+import os
 from copy import deepcopy
 
 import pytest
@@ -274,6 +275,121 @@ def test_real_tiny_conversion_roundtrip(tmp_path, bits):
     (cache / "ignored").write_text("ignore")
     assert convert.artifact_size(output) == result["bytes"]
     assert f"Recommend {128 if bits == 4 else 64} GB+" in convert.model_card(bits, 70e9)
+
+
+@pytest.fixture
+def staged_conversion(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "config.json").write_text(json.dumps(config()))
+    (source / "model.safetensors").write_bytes(b"source weights")
+    (source / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": "model.safetensors"}})
+    )
+    (source / "chat_template.jinja").write_text("{{ messages }}")
+    (source / "tokenizer_config.json").write_text(
+        json.dumps({"tokenizer_class": "Backend", "processor_class": "Remote"})
+    )
+    output = tmp_path / "new-parent" / "output"
+    argv = ["--source", str(source), "--output", str(output), "--bits", "4"]
+    saved = []
+    monkeypatch.setattr(
+        convert, "load_model_checked", lambda *a, **kw: (object(), config())
+    )
+    monkeypatch.setattr(convert, "quantization_predicate", lambda *a: None)
+    monkeypatch.setattr(
+        convert, "quantize_model", lambda model, cfg, *a, **kw: (model, cfg)
+    )
+
+    def save(staging, model, **kwargs):
+        assert not output.exists()
+        assert staging.parent == output.parent
+        assert staging.name.startswith(".output.partial-")
+        (staging / "model.safetensors").write_bytes(b"converted weights")
+        saved.append(staging)
+
+    monkeypatch.setattr(convert, "save_model", save)
+    monkeypatch.setattr(
+        convert, "save_config", lambda cfg, path: path.write_text(json.dumps(cfg))
+    )
+    return argv, output, saved
+
+
+def test_converter_atomic_success(staged_conversion, capsys):
+    argv, output, saved = staged_conversion
+    result = convert.main(argv)
+    assert output.is_dir()
+    assert "openmdw-1.1" in (output / "README.md").read_text()
+    assert (output / "chat_template.jinja").read_text() == "{{ messages }}"
+    assert json.loads((output / "tokenizer_config.json").read_text()) == {
+        "tokenizer_class": "Backend"
+    }
+    assert (output / "model.safetensors").read_bytes() == b"converted weights"
+    assert (output / "config.json").is_file()
+    assert result["output"] == str(output)
+    assert result["bytes"] == sum(path.stat().st_size for path in output.iterdir())
+    assert json.loads(capsys.readouterr().out) == result
+    assert not saved[0].exists()
+    assert not list(output.parent.glob(".output.partial-*"))
+
+
+@pytest.mark.parametrize(
+    "failure_at,error",
+    [
+        ("save_model", OSError),
+        ("save_model", KeyboardInterrupt),
+        ("save_config", ValueError),
+        ("copyfile", OSError),
+        ("model_card", ValueError),
+        ("rename", OSError),
+    ],
+)
+def test_converter_atomic_failure_and_retry(
+    staged_conversion, monkeypatch, failure_at, error
+):
+    argv, output, saved = staged_conversion
+    owner = {"copyfile": convert.shutil, "rename": os}.get(failure_at, convert)
+    original = getattr(owner, failure_at)
+
+    def fail(*args, **kwargs):
+        if failure_at == "save_model":
+            original(*args, **kwargs)
+        assert saved[0].is_dir()
+        assert (saved[0] / "model.safetensors").is_file()
+        assert not output.exists()
+        raise error("injected conversion failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(owner, failure_at, fail)
+        with pytest.raises(error, match="injected conversion failure"):
+            convert.main(argv)
+    assert not output.exists()
+    assert not saved[0].exists()
+    assert not list(output.parent.glob(".output.partial-*"))
+    result = convert.main(argv)
+    assert result["output"] == str(output)
+    assert (output / "README.md").is_file()
+    assert not list(output.parent.glob(".output.partial-*"))
+
+
+def test_converter_preserves_destination_created_during_conversion(
+    staged_conversion, monkeypatch
+):
+    argv, output, saved = staged_conversion
+    original = convert.model_card
+
+    def create_destination(*args):
+        output.mkdir()
+        (output / "keep").write_text("another conversion")
+        return original(*args)
+
+    monkeypatch.setattr(convert, "model_card", create_destination)
+    with pytest.raises(FileExistsError):
+        convert.main(argv)
+    assert (output / "keep").read_text() == "another conversion"
+    assert list(output.iterdir()) == [output / "keep"]
+    assert not saved[0].exists()
+    assert not list(output.parent.glob(".output.partial-*"))
 
 
 def test_mixed_allocation_and_precision_boundaries():

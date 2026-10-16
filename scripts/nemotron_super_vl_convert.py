@@ -158,6 +158,8 @@ def shard_path(root, name):
 
 
 def main(argv=None):
+    import os
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -177,35 +179,44 @@ def main(argv=None):
     scratch = Path("/private/tmp/nemotron-super-vl-convert")
     scratch.mkdir(exist_ok=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=scratch) as temporary:
-        view = Path(temporary)
-        (view / "config.json").write_text(json.dumps(config, indent=2))
-        for name, source in sources.items():
-            destination = shard_path(view, name)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.symlink_to(source.resolve())
-        model, config = load_model_checked(load_model, view, lazy=True)
-        model, config = quantize_model(
-            model,
-            config,
-            64,
-            args.bits,
-            quant_predicate=quantization_predicate(model, args.bits),
-        )
-        save_model(args.output, model, donate_model=True)
-        save_config(text_config(config), args.output / "config.json")
-    for name in ASSETS:
-        if (args.source / name).is_file():
-            if name == "tokenizer_config.json":
-                tokenizer_config = json.loads((args.source / name).read_text())
-                for key in ("auto_map", "processor_class"):
-                    tokenizer_config.pop(key, None)
-                (args.output / name).write_text(json.dumps(tokenizer_config, indent=2))
-            else:
-                shutil.copyfile(args.source / name, args.output / name)
-    card = args.output / "README.md"
-    card.write_text(model_card(args.bits, artifact_size(args.output)))
-    card.write_text(model_card(args.bits, artifact_size(args.output)))
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{args.output.name}.partial-", dir=args.output.parent)
+    )
+    try:
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            view = Path(temporary)
+            (view / "config.json").write_text(json.dumps(config, indent=2))
+            for name, source in sources.items():
+                destination = shard_path(view, name)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.symlink_to(source.resolve())
+            model, config = load_model_checked(load_model, view, lazy=True)
+            model, config = quantize_model(
+                model,
+                config,
+                64,
+                args.bits,
+                quant_predicate=quantization_predicate(model, args.bits),
+            )
+            save_model(staging, model, donate_model=True)
+            save_config(text_config(config), staging / "config.json")
+        for name in ASSETS:
+            if (args.source / name).is_file():
+                if name == "tokenizer_config.json":
+                    tokenizer_config = json.loads((args.source / name).read_text())
+                    for key in ("auto_map", "processor_class"):
+                        tokenizer_config.pop(key, None)
+                    (staging / name).write_text(json.dumps(tokenizer_config, indent=2))
+                else:
+                    shutil.copyfile(args.source / name, staging / name)
+        card = staging / "README.md"
+        card.write_text(model_card(args.bits, artifact_size(staging)))
+        if args.output.exists():
+            raise FileExistsError(args.output)
+        os.rename(staging, args.output)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     result = {
         "bits": args.bits,
         "output": str(args.output),
