@@ -960,3 +960,22 @@ def test_mtp_prebuilt_cache_split_uses_stateful_count(tmp_path, monkeypatch):
     )
     assert len(output) == 8
     assert draft[0].offset > 0
+
+
+def test_mtp_injection_preserves_ordinary_preexisting_caches(tmp_path, monkeypatch):
+    from mlx_lm.models.cache import ArraysCache
+
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import inject_mtp_support
+
+    # Other family injectors may have installed this optional class slot.
+    # A plain cache created before any MTP installation owns no such tag.
+    monkeypatch.delattr(ArraysCache, "n_confirmed_for_mtp", raising=False)
+    model = mtp_fixture(tmp_path)
+    reference_cache, existing_cache = model.make_cache(), model.make_cache()
+    tokens = mx.array([[1, 2, 3]])
+    expected = model(tokens, cache=reference_cache)
+    mx.eval(expected)
+    assert inject_mtp_support(model, tmp_path)
+    actual = model(tokens, cache=existing_cache)
+    mx.eval(actual)
+    assert bool(mx.array_equal(expected, actual))

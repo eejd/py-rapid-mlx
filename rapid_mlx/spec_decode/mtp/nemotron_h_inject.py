@@ -49,7 +49,7 @@ class MambaWithHistory(super_h.shared.NemotronHMamba2Mixer):
     """Batched projections/convolution, short sequential recurrence history."""
 
     def _conv(self, conv_input, cache, mask):
-        if cache is not None and cache.n_confirmed_for_mtp > 0:
+        if cache is not None and getattr(cache, "n_confirmed_for_mtp", 0) > 0:
             if cache.lengths is not None or cache.left_padding is not None:
                 raise ValueError("Mamba2 MTP verification requires an unpadded lane")
             if mask is not None:
@@ -68,7 +68,7 @@ class MambaWithHistory(super_h.shared.NemotronHMamba2Mixer):
         return super()._conv(conv_input, cache, mask)
 
     def _ssm(self, hidden_states, B, C, dt, cache, mask):
-        if cache is None or cache.n_confirmed_for_mtp <= 0:
+        if cache is None or getattr(cache, "n_confirmed_for_mtp", 0) <= 0:
             return super()._ssm(hidden_states, B, C, dt, cache, mask)
         batch, length, _ = hidden_states.shape
         dtype = hidden_states.dtype
