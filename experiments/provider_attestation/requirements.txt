@@ -1,0 +1,3 @@
+# Isolated experiment only; not a Rapid runtime dependency.
+cryptography>=41,<49
+pytest>=8,<10
