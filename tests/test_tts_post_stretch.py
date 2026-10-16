@@ -51,6 +51,13 @@ def test_family_speed_handling(monkeypatch, family, speed, stream):
     fake_generate = types.ModuleType("mlx_audio.tts.generate")
     fake_generate.load_audio = lambda *args, **kwargs: source
     monkeypatch.setitem(sys.modules, "mlx_audio.tts.generate", fake_generate)
+    # generate() imports mlx.core only for an isinstance check; stub it so
+    # this runs on hosts without MLX (Linux coverage).
+    fake_mlx = types.ModuleType("mlx")
+    fake_mlx.core = types.ModuleType("mlx.core")
+    fake_mlx.core.array = type("array", (), {})
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mlx.core)
     if stream:
         outputs = list(engine.stream_generate("hello", speed=speed))
     else:
