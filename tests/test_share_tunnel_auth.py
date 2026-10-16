@@ -89,3 +89,24 @@ def test_tunnel_logger_redacts_overlapping_credentials_longest_first(caplog):
     assert "shared-secret" not in caplog.text
     assert "-tail" not in caplog.text
     assert "[redacted] [redacted]" in caplog.text
+
+
+def test_tunnel_logger_redacts_preformatted_exception_and_stack_text(caplog):
+    key = "test-stack-secret"
+    client = ws_tunnel.TunnelClient(local_port=1, share_key=key)
+    record = logging.LogRecord(
+        "websockets.client",
+        logging.ERROR,
+        __file__,
+        1,
+        "connection diagnostics",
+        (),
+        None,
+        sinfo=f"stack includes {key}",
+    )
+    record.exc_text = f"cached exception includes {key}"
+    with caplog.at_level(logging.ERROR, logger="websockets.client"):
+        client._ws_logger.handle(record)
+    assert key not in caplog.text
+    assert "stack includes [redacted]" in caplog.text
+    assert "cached exception includes [redacted]" in caplog.text
