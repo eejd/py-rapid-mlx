@@ -4555,6 +4555,11 @@ async def _create_chat_completion_impl(
 
     cfg = get_config()
 
+    # Authorization uses the caller's declarations before prompt-time narrowing.
+    request._tool_authorization_names = {
+        tool.function.get("name") for tool in request.tools or []
+    }
+
     # Enforce ``tool_choice`` at the prompt level (#445). The OpenAI spec
     # accepts four modes: "auto", "none", "required", and
     # ``{"type":"function","function":{"name":X}}``. Local inference has no
@@ -8148,9 +8153,7 @@ async def stream_chat_completion(
             structured_output_requested = _is_structured_output_requested(
                 request.response_format
             )
-            rejected_only_tool_call = bool(
-                getattr(processor.tool_parser, "_undeclared_dropped", 0)
-            )
+            rejected_only_tool_call = processor.undeclared_tool_dropped
             if (
                 not already_streamed_content
                 and not has_any_tool_calls

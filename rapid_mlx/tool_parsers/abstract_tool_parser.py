@@ -494,10 +494,14 @@ class ToolParser(ABC):
 
         return tool_calls
 
+    # Parsers that consume rejected call markup report it to shared layers.
+    _undeclared_dropped: int = 0
+
     def reset(self) -> None:
         """Reset parser state for a new request."""
         self.current_tool_id = -1
         self.prev_tool_call_arr = []
+        self._undeclared_dropped = 0
 
 
 class ToolParserManager:

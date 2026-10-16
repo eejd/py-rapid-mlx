@@ -465,7 +465,8 @@ class TestStreamingPostProcessorToolCalls:
         ``parse_tool_calls`` fallback in ``service/helpers.py``.
         """
         tool_parser = self._make_tool_parser()
-        # Configured parser fails to extract (wire-format mismatch)
+        # Configured parser fails to extract (wire-format mismatch).
+        tool_parser._undeclared_dropped = 0
         tool_parser.extract_tool_calls.return_value = MagicMock(
             tools_called=False, tool_calls=[]
         )

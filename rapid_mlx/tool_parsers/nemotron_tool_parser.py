@@ -107,6 +107,38 @@ class NemotronToolParser(ToolParser):
         super().reset()
         self._content_upto = 0
         self._stream_started = False
+        self._undeclared_logged = False
+
+    def flush_held_content(self, full_text: str) -> str:
+        if "<tool_call>" in full_text or "<function=" in full_text:
+            return ""
+        held = full_text[self._content_upto :]
+        self._content_upto = len(full_text)
+        return held
+
+    def _undeclared_spans(self, text, request, accepted):
+        """Recognize bounded wrapped attempts without widening sibling parsing."""
+        from .qwen3coder_tool_parser import _MarkdownCodeTracker
+
+        declared = _declared_tool_names(request)
+        if not declared:
+            return []
+        tracker = _MarkdownCodeTracker()
+        spans = []
+        for match in re.finditer(
+            r"<tool_call>\s*<function=([^>]+)>.*?</function>\s*(?:</tool_call>|\Z)",
+            text,
+            re.DOTALL,
+        ):
+            start, end = match.span()
+            if (
+                match.group(1).strip() not in declared
+                and end - start <= 32768
+                and not any(start < b and end > a for _, _, a, b in accepted)
+                and not tracker.inside(text, start)
+            ):
+                spans.append((start, end))
+        return spans
 
     def _visible_content_between(
         self,
@@ -118,8 +150,8 @@ class NemotronToolParser(ToolParser):
         """Project a raw range onto the non-tool content stream.
 
         Valid function spans are executable calls and must stay off the content
-        channel. Refused spans are deliberately retained as prose. When at
-        least one valid call exists, the decorative outer wrappers are removed
+        channel. Wrapped undeclared attempts are consumed; bare refused forms
+        remain prose. When at least one valid call exists, the decorative outer wrappers are removed
         too, matching :meth:`extract_tool_calls`.
 
         Keeping source offsets here is important: a single model delta can
@@ -138,7 +170,8 @@ class NemotronToolParser(ToolParser):
                 valid_names=_declared_tool_names(request),
             )
         ]
-        removed = list(valid_spans)
+        accepted = [("", "", a, b) for a, b in valid_spans]
+        removed = list(valid_spans) + self._undeclared_spans(text, request, accepted)
         if valid_spans:
             removed.extend(
                 (match.start(), match.end())
@@ -238,6 +271,11 @@ class NemotronToolParser(ToolParser):
             "</function>",
             valid_names=_declared_tool_names(request),
         )
+        rejected = self._undeclared_spans(model_output, request, matches)
+        self._undeclared_dropped = len(rejected)
+        if rejected and not getattr(self, "_undeclared_logged", False):
+            logger.warning("nemotron tool parser: dropped undeclared tool attempt")
+            self._undeclared_logged = True
         for func_name, content, _span_start, _span_end in matches:
             func_name = func_name.strip()
 
@@ -295,15 +333,14 @@ class NemotronToolParser(ToolParser):
 
         # Clean the text: drop the function bodies and any residual bare
         # <tool_call>/</tool_call> wrapper tags so they don't leak as content.
-        if matches:
+        if matches or rejected:
             # Excise the exact spans the scan identified. A second regex pass
             # would truncate at a different point than the parse did whenever
             # a value holds a literal marker, leaving a tail of the call in
             # the content the user sees.
-            for _n, _b, span_start, span_end in matches:
-                cleaned_text = cleaned_text.replace(
-                    model_output[span_start:span_end], "", 1
-                )
+            spans = [(a, b) for _, _, a, b in matches] + rejected
+            for span_start, span_end in sorted(spans, reverse=True):
+                cleaned_text = cleaned_text[:span_start] + cleaned_text[span_end:]
             cleaned_text = self.RESIDUAL_WRAPPER_PATTERN.sub("", cleaned_text).strip()
 
         if tool_calls:
@@ -311,6 +348,10 @@ class NemotronToolParser(ToolParser):
                 tools_called=True,
                 tool_calls=tool_calls,
                 content=cleaned_text if cleaned_text else None,
+            )
+        elif rejected:
+            return ExtractedToolCallInformation(
+                tools_called=False, tool_calls=[], content=cleaned_text or None
             )
         else:
             # Diagnostic: a tool-call marker was present but nothing parsed
@@ -397,8 +438,11 @@ class NemotronToolParser(ToolParser):
         if "<tool_call>" not in current_text and "<function=" not in current_text:
             # Ordinary prose, forwarded verbatim — already on the wire, so a
             # later refusal must not send it again.
-            self._content_upto = len(current_text)
-            return {"content": delta_text}
+            pending = self._pending_markup_index(current_text)
+            safe_end = len(current_text) if pending is None else pending
+            content = current_text[self._content_upto : safe_end]
+            self._content_upto = safe_end
+            return {"content": content} if content else None
 
         # The XML parameter format has no escaping rule. A literal
         # ``</function>`` inside a value can appear before the structural
@@ -411,6 +455,16 @@ class NemotronToolParser(ToolParser):
             and current_text.rfind("</parameter>")
             > current_text.rfind("</function>")
             >= 0
+        ):
+            return None
+
+        # A split wrapper close is still markup, even if the function just
+        # closed in this delta. Wait until it can be consumed as a whole.
+        after_function = current_text.rsplit("</function>", 1)[-1].strip()
+        if (
+            after_function
+            and after_function != "</tool_call>"
+            and "</tool_call>".startswith(after_function)
         ):
             return None
 
@@ -475,23 +529,9 @@ class NemotronToolParser(ToolParser):
                     self._content_upto = safe_end
                     return out
             elif safe_end > self._content_upto:
-                # The block CLOSED and is not a call — the declared-name gate
-                # refused it. Non-streaming answers that with
-                # ``content=model_output``: text the caller never authorised as
-                # a tool is still the model's answer and belongs on the wire.
-                #
-                # Streaming had no equivalent. Every delta of the block was
-                # withheld (``None``), and the postprocessor buffers those only
-                # until a closing tag arrives — at which point it drops the
-                # buffer unemitted (``_tool_suppressed_buffer = ""``) because
-                # the parser "made progress". Its #1359 release is byte-budget
-                # driven, so a short refused call never trips it and the user
-                # gets an EMPTY response instead of the prose.
-                #
-                # Returning the accumulated text hands the postprocessor the
-                # content it is about to discard, so nothing is duplicated.
-                # Once per turn: ``</function>`` and ``</tool_call>`` each bump
-                # the close count, and the second must not re-send it.
+                # Advance past a consumed attempt or a refused bare form.
+                # The projection keeps narration and bare prose, excluding
+                # wrapped undeclared markup even at the first function close.
                 self._content_upto = safe_end
                 if unsent_content:
                     return {"content": unsent_content}

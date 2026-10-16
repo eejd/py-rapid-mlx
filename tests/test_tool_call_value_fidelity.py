@@ -900,21 +900,22 @@ def test_the_nemotron_gate_survives_streaming():
     assert emitted == [], f"streaming admitted an undeclared call: {emitted}"
 
 
-def test_a_streamed_refusal_still_reaches_the_user_as_text():
-    """Refusing a call must not swallow the answer.
+def _render_bare_refused_body(name, key, value):
+    return (
+        _render_xml_body(name, key, value)
+        .removeprefix("<tool_call>")
+        .removesuffix("</tool_call>")
+    )
 
-    Non-streaming answers a refused block with ``content=model_output`` —
-    text the caller never authorised as a tool is still the model's reply.
-    Streaming had no equivalent: every delta of the block was withheld
-    (``None``), and the postprocessor drops its suppression buffer the moment
-    the parser "makes progress" on a closing tag. Its #1359 release is
-    byte-budget driven, so a short refused call never tripped it and the user
-    got an EMPTY response.
 
-    Mutation: delete the release branch and ``content`` comes back ``''``.
+def test_a_streamed_bare_refusal_still_reaches_the_user_as_text():
+    """Bare undeclared function markup remains prose, released exactly once.
+
+    Wrapped undeclared attempts are consumed and reported by the parser;
+    this preserve-as-text contract applies to the unwrapped form.
     """
     parser = ToolParserManager.get_tool_parser("nemotron")(None)
-    hostile = _render_xml_body("delete_everything", _KEY, "x")
+    hostile = _render_bare_refused_body("delete_everything", _KEY, "x")
 
     content, previous = "", ""
     for i in range(len(hostile)):
@@ -932,7 +933,7 @@ def test_a_streamed_refusal_still_reaches_the_user_as_text():
     assert content.count("<function=delete_everything>") == 1, content
 
 
-def test_every_refused_block_reaches_the_user_and_none_twice():
+def test_every_bare_refused_block_reaches_the_user_and_none_twice():
     """One release per BLOCK, not one per turn — and no duplication.
 
     A boolean "already released" flag drops every refused block after the
@@ -940,8 +941,8 @@ def test_every_refused_block_reaches_the_user_and_none_twice():
     re-sends that prose. Both were live in earlier revisions of this fix.
     """
     parser = ToolParserManager.get_tool_parser("nemotron")(None)
-    first = _render_xml_body("delete_everything", _KEY, "x")
-    second = _render_xml_body("also_undeclared", _KEY, "y")
+    first = _render_bare_refused_body("delete_everything", _KEY, "x")
+    second = _render_bare_refused_body("also_undeclared", _KEY, "y")
     text = first + " BETWEEN " + second
 
     content, previous = "", ""
@@ -968,7 +969,9 @@ def test_reset_clears_the_content_watermark():
     delta.
     """
     parser = ToolParserManager.get_tool_parser("nemotron")(None)
-    hostile = _render_xml_body("delete_everything", _KEY, "a much longer first turn")
+    hostile = _render_bare_refused_body(
+        "delete_everything", _KEY, "a much longer first turn"
+    )
 
     def _turn(text):
         out, previous = "", ""
@@ -987,7 +990,7 @@ def test_reset_clears_the_content_watermark():
     # prefix without invoking the parser, so the first post-reset parser call
     # starts with non-empty previous_text.
     prefix = "already visible: "
-    second = _render_xml_body("also_undeclared", _KEY, "x")
+    second = _render_bare_refused_body("also_undeclared", _KEY, "x")
     current = prefix + second
     delta = parser.extract_tool_calls_streaming(
         prefix, current, second, request=_REQUEST
@@ -997,7 +1000,7 @@ def test_reset_clears_the_content_watermark():
     assert "already visible" not in content, "the fast-path prefix was replayed"
 
 
-def test_refused_block_before_valid_call_in_one_delta_is_not_swallowed():
+def test_bare_refused_block_before_valid_call_in_one_delta_is_not_swallowed():
     """A later valid call must not advance across earlier refused prose.
 
     Streaming parsers receive tokenizer-sized deltas in production, including
@@ -1005,7 +1008,7 @@ def test_refused_block_before_valid_call_in_one_delta_is_not_swallowed():
     executes, while the undeclared block retains non-streaming parity as text.
     """
     parser = ToolParserManager.get_tool_parser("nemotron")(None)
-    refused = _render_xml_body("delete_everything", _KEY, "x")
+    refused = _render_bare_refused_body("delete_everything", _KEY, "x")
     valid = _render_xml_body(_NAME, _KEY, "ok")
     text = refused + valid
 

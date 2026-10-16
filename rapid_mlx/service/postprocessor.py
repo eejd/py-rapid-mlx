@@ -21,6 +21,7 @@ from unittest.mock import Mock
 from ..api.tool_calling import parse_tool_calls
 from ..api.utils import sanitize_output, strip_special_tokens
 from ..domain.events import StreamEvent
+from ..tool_call_authorization import call_name, declared_names, log_drop
 
 if TYPE_CHECKING:
     from ..config.server_config import ServerConfig
@@ -463,6 +464,10 @@ class StreamingPostProcessor:
         # site (channel-routed, reasoning, standard) AND in
         # ``_build_tool_call_event``. Read by ``_compute_finish_reason``.
         self._tool_calls_emitted_to_wire: int = 0
+        self._undeclared_count = 0
+        self._undeclared_indices = set()
+        self._declared_indices = {}
+        self._last_anchor_dropped = False
         # Issue #1359 — bound tool-call streaming suppression.
         # ``_tool_suppressed_buffer`` accumulates only the deltas the parser
         # withheld (returned ``None``) while inside an unclosed tool-call block;
@@ -2001,6 +2006,44 @@ class StreamingPostProcessor:
             return False
         return not isinstance(parsed, dict)
 
+    @property
+    def undeclared_tool_dropped(self) -> bool:
+        return bool(
+            self._undeclared_count
+            or getattr(self.tool_parser, "_undeclared_dropped", 0)
+        )
+
+    def _filter_declared_calls(self, calls, *, incremental=False):
+        """Authorize anchors and retain the decision for argument continuations."""
+        declared = declared_names(self.request)
+        if not declared:
+            return calls
+        kept = []
+        for call in calls:
+            name = call_name(call)
+            index = call.get("index")
+            if name:
+                dropped = name not in declared
+                self._last_anchor_dropped = dropped
+                if dropped:
+                    self._undeclared_count += 1
+                    log_drop(name)
+                    if index is not None:
+                        self._undeclared_indices.add(index)
+                    continue
+            elif incremental and (
+                index in self._undeclared_indices
+                if index is not None
+                else self._last_anchor_dropped
+            ):
+                continue
+            if incremental and index is not None:
+                if index not in self._declared_indices:
+                    self._declared_indices[index] = len(self._declared_indices)
+                call = {**call, "index": self._declared_indices[index]}
+            kept.append(call)
+        return kept
+
     def _apply_forced_tool_choice_filter(self, tool_calls: list[dict]) -> list[dict]:
         """Suppress streaming tool_calls deltas that violate the
         ``tool_choice`` contract (forced named, or ``"required"``).
@@ -2438,6 +2481,10 @@ class StreamingPostProcessor:
         # prior turn's emitted-count into a new stream and lie to
         # ``_compute_finish_reason`` about the wire state.
         self._tool_calls_emitted_to_wire = 0
+        self._undeclared_count = 0
+        self._undeclared_indices = set()
+        self._declared_indices = {}
+        self._last_anchor_dropped = False
         # Issue #1359 — clear the suppression-release latch/buffer so a re-used
         # processor doesn't carry a prior turn's released state into a new stream.
         self._tool_suppressed_buffer = ""
@@ -2551,7 +2598,7 @@ class StreamingPostProcessor:
         Returns a list of StreamEvents (may be empty if content is suppressed).
         """
         delta_text = output.new_text
-        if not delta_text:
+        if not delta_text and not getattr(output, "tool_calls", None):
             # Handle finish-only chunks
             if output.finished:
                 # #447 round-4 NIT (PR #948): if a stream emitted an
@@ -2758,6 +2805,7 @@ class StreamingPostProcessor:
         # closes the same scratch-with-primitive-args leak on the
         # channel-routed path.
         if engine_tool_calls:
+            engine_tool_calls = self._filter_declared_calls(engine_tool_calls)
             engine_tool_calls = self._apply_forced_tool_choice_filter(engine_tool_calls)
         if output.channel == "tool_call" and engine_tool_calls:
             # ``parallel_tool_calls=false`` is a hard external contract:
@@ -2856,7 +2904,9 @@ class StreamingPostProcessor:
         if output.channel == "reasoning":
             content, reasoning = None, delta_text
         elif output.channel == "tool_call":
-            content, reasoning = delta_text, None
+            # A structured attempted call has already been consumed above.
+            content = None if getattr(output, "tool_calls", None) else delta_text
+            reasoning = None
         else:
             content, reasoning = delta_text, None
 
@@ -3727,7 +3777,11 @@ class StreamingPostProcessor:
                 request=self.request,
             )
             if raw_delta and raw_delta.get("tool_calls"):
-                allowed = self._apply_parallel_cap(raw_delta["tool_calls"])
+                allowed = self._apply_parallel_cap(
+                    self._filter_declared_calls(
+                        raw_delta["tool_calls"], incremental=True
+                    )
+                )
                 if allowed:
                     self.tool_calls_detected = True
                     self._tool_calls_emitted_to_wire += len(allowed)
@@ -3899,6 +3953,7 @@ class StreamingPostProcessor:
                     ]
                 else:
                     _filtered_calls = list(result.tool_calls)
+                _filtered_calls = self._filter_declared_calls(_filtered_calls)
                 if _filtered_calls:
                     events.append(
                         self._build_tool_call_event(
@@ -3911,7 +3966,7 @@ class StreamingPostProcessor:
                         )
                     )
                     self.tool_calls_detected = True
-            else:
+            elif not getattr(self.tool_parser, "_undeclared_dropped", 0):
                 # Cross-format fallback. The configured streaming parser is bound to
                 # ONE wire format; ``parse_tool_calls`` in ``api/tool_calling.py``
                 # scans every known format and recovers calls the per-parser path
@@ -3961,6 +4016,15 @@ class StreamingPostProcessor:
                                 tc.function.arguments
                             )
                         ]
+                if fb_tcs:
+                    allowed_names = self._filter_declared_calls(
+                        [tc.model_dump() for tc in fb_tcs]
+                    )
+                    fb_tcs = [
+                        tc
+                        for tc in fb_tcs
+                        if tc.function.name in {call_name(c) for c in allowed_names}
+                    ]
                 if fb_tcs:
                     logger.info(
                         "[finalize] cross-format fallback recovered %d tool_call(s); "
@@ -4240,6 +4304,12 @@ class StreamingPostProcessor:
                 # so ``_compute_finish_reason`` stays honest (no phantom
                 # ``finish_reason="tool_calls"`` with zero calls on the wire).
                 return {"content": tool_result.get("content", "")}
+            tool_result = dict(tool_result)
+            tool_result["tool_calls"] = self._filter_declared_calls(
+                tool_result["tool_calls"], incremental=True
+            )
+            if not tool_result["tool_calls"]:
+                return {"content": tool_result.get("content", "")}
             self.tool_calls_detected = True
             return tool_result
 
@@ -4270,7 +4340,9 @@ class StreamingPostProcessor:
         # a lie. Normalize it here — the single terminal chokepoint — so it
         # holds even for a separate finish-only chunk that carried no
         # structured call of its own (codex #1761).
-        if self._suppress_tool_calls and output.finish_reason == "tool_calls":
+        if (
+            self._suppress_tool_calls or self.undeclared_tool_dropped
+        ) and output.finish_reason == "tool_calls":
             return "stop"
         return output.finish_reason
 
