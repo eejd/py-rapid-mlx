@@ -114,6 +114,7 @@ extension LocalSearchPreviewPanelDriving {
     private var closeObserver: NSObjectProtocol?
     var isVisible: Bool { panel?.isVisible == true }
     func acquire(_ controller: LocalSearchPreviewController) -> Bool {
+        finishClosingIfHidden(reopen: false)
         guard let window = controller.window else { return false }
         let panel = panel ?? QLPreviewPanel.shared()!
         self.panel = panel
@@ -130,10 +131,12 @@ extension LocalSearchPreviewPanelDriving {
         return !panel.isVisible || panel.currentController as AnyObject? === controller
     }
     func reload() {
+        finishClosingIfHidden(reopen: false)
         guard !closing, let owner, panel?.currentController as AnyObject? === owner else { return }
         panel?.reloadData()
     }
     func show() {
+        finishClosingIfHidden(reopen: false)
         if closing { return }
         panel?.makeKeyAndOrderFront(nil)
         presented = true
@@ -142,6 +145,7 @@ extension LocalSearchPreviewPanelDriving {
         reload()
     }
     func release(_ controller: LocalSearchPreviewController) {
+        finishClosingIfHidden(reopen: false)
         let owned = panel?.currentController as AnyObject? === controller
         // Remove only our responder, preserving any other hooks in the chain.
         var predecessor: NSResponder? = ownerWindow
@@ -201,12 +205,14 @@ extension LocalSearchPreviewPanelDriving {
         // may already have a later open waiting for its animation to finish.
         if !closing, controller.wantsControl { controller.close() }
     }
-    private func finishClosingIfHidden() {
+    // Requests recover missed occlusion notifications synchronously and then
+    // continue themselves; only queued completion checks resume a pending open.
+    private func finishClosingIfHidden(reopen: Bool = true) {
         guard closing, panel?.isVisible != true else { return }
         closing = false
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
         closeObserver = nil
-        if let owner, owner.wantsControl {
+        if reopen, let owner, owner.wantsControl {
             if acquire(owner) { reload(); show() }
         }
     }
