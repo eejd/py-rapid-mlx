@@ -131,7 +131,7 @@ extension LocalSearchPreviewPanelDriving {
         return !panel.isVisible || panel.currentController as AnyObject? === controller
     }
     func reload() {
-        finishClosingIfHidden(reopen: false)
+        finishClosingIfHidden()
         guard !closing, let owner, panel?.currentController as AnyObject? === owner else { return }
         panel?.reloadData()
     }
@@ -205,8 +205,8 @@ extension LocalSearchPreviewPanelDriving {
         // may already have a later open waiting for its animation to finish.
         if !closing, controller.wantsControl { controller.close() }
     }
-    // Requests recover missed occlusion notifications synchronously and then
-    // continue themselves; only queued completion checks resume a pending open.
+    // Reloads and queued completion checks resume a pending open. Acquire/show
+    // continue opening themselves; release completes closing without reopening.
     private func finishClosingIfHidden(reopen: Bool = true) {
         guard closing, panel?.isVisible != true else { return }
         closing = false
