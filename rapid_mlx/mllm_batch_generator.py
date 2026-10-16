@@ -31,10 +31,13 @@ from collections import OrderedDict
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
 from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as nn
+from packaging.version import InvalidVersion, Version
 
 # MUST install the MLX hardware-compat shim BEFORE any `from mlx_lm.*` import.
 # `mlx_lm/__init__.py` re-exports from `mlx_lm.generate`, which captures
@@ -249,17 +252,30 @@ def _accepts_var_kwargs(fn) -> bool:
     return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
 
+# mlx-vlm a8715d52 (#2157), first released in 0.7.1, forwards this option
+# through Model and LanguageModel to the trunk. 0.7.0 only slices at the LM head.
+_GEMMA4_LAST_POSITION_MIN_VERSION = Version("0.7.1")
+
+
 def _model_supports_gemma4_last_position(model: nn.Module) -> bool:
     """Qualify the existing ordinary-prefill contract once per model load.
 
     Older wrappers accept arbitrary kwargs but silently discard this option.
-    Require the known wrapper, forwarding on both hops, and an explicit trunk
-    parameter; an unavailable or changed implementation keeps the full forward.
+    Require the known wrapper, a distribution with qualified forwarding, both
+    wrapper signatures, and an explicit trunk parameter. Unknown versions or
+    incompatible structure keep the full forward. No upper bound is needed for
+    this optional keyword contract; dependency upgrades remain separately pinned
+    and validated by the project.
     """
     if (type(model).__module__, type(model).__name__) != (
         "mlx_vlm.models.gemma4.gemma4",
         "Model",
     ):
+        return False
+    try:
+        if Version(distribution_version("mlx-vlm")) < _GEMMA4_LAST_POSITION_MIN_VERSION:
+            return False
+    except (PackageNotFoundError, InvalidVersion, TypeError):
         return False
     language_model = getattr(model, "language_model", None)
     trunk = getattr(language_model, "model", None)
@@ -273,18 +289,9 @@ def _model_supports_gemma4_last_position(model: nn.Module) -> bool:
         parameter = inspect.signature(type(trunk).__call__).parameters.get(
             "logits_to_keep"
         )
-        return (
-            parameter is not None
-            and parameter.kind
-            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-            and all(
-                call is not None
-                and any(
-                    key in inspect.getsource(call)
-                    for key in ('"logits_to_keep"', "'logits_to_keep'")
-                )
-                for call in calls
-            )
+        return parameter is not None and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
         )
     except (AttributeError, OSError, TypeError, ValueError):
         return False

@@ -1,5 +1,6 @@
 """Ordinary Gemma prefill keeps one output row without losing prefix state."""
 
+from importlib.metadata import PackageNotFoundError, version
 from types import SimpleNamespace
 
 import pytest
@@ -9,11 +10,19 @@ pytestmark = pytest.mark.requires_mlx
 
 import mlx.core as mx
 
+import rapid_mlx.mllm_batch_generator as batch_generator
 from rapid_mlx.mllm_batch_generator import (
     MLLMBatchGenerator,
     MLLMBatchRequest,
     _model_supports_gemma4_last_position,
 )
+
+
+@pytest.fixture(autouse=True)
+def qualified_distribution(monkeypatch):
+    # Recording doubles exercise the supported contract independently of the
+    # optional installed distribution. The real-model test restores metadata.
+    monkeypatch.setattr(batch_generator, "distribution_version", lambda _: "0.7.1")
 
 
 class _Trunk:
@@ -112,7 +121,6 @@ def test_ordinary_prefill_keeps_last_logits_and_complete_prefix(pixels):
 @pytest.mark.parametrize(
     "model",
     [
-        _model(wrapper=_LegacyWrapper),
         _model(module="mlx_vlm.models.gemma4_unified.gemma4_unified"),
         _model(module="mlx_vlm.models.qwen3_vl.qwen3_vl"),
         _model(module="rapid_mlx.models.gemma4_vendored.gemma4"),
@@ -124,12 +132,33 @@ def test_unknown_or_old_wrapper_keeps_full_forward(model):
     assert model.calls == [(5, {})]
 
 
-def test_kwargs_only_trunk_is_not_a_capability():
+@pytest.mark.parametrize("installed", ["0.7.1", "0.7.2"])
+def test_kwargs_only_trunk_is_not_a_capability(monkeypatch, installed):
+    monkeypatch.setattr(batch_generator, "distribution_version", lambda _: installed)
     model = _model()
     model.language_model.model = _LegacyTrunk()
     output = _generator(model)._run_vision_encoding(_request(), [_Cache()])
     assert output.shape == (1, 5, 2)
     assert "logits_to_keep" not in model.calls[0][1]
+
+
+@pytest.mark.parametrize("hop", ["wrapper", "language_model"])
+def test_qualified_version_still_requires_wrapper_kwargs(hop):
+    def call(self, ids, cache=None):
+        return SimpleNamespace(logits=mx.zeros((1, ids.shape[1], 2)))
+
+    model = _model()
+    if hop == "wrapper":
+        model = type(
+            "Model",
+            (_Wrapper,),
+            {"__module__": "mlx_vlm.models.gemma4.gemma4", "__call__": call},
+        )()
+    else:
+        model.language_model = type(
+            "LanguageModel", (_LanguageModel,), {"__call__": call}
+        )()
+    assert not _model_supports_gemma4_last_position(model)
 
 
 @pytest.mark.parametrize(
@@ -194,14 +223,65 @@ def test_forward_error_is_not_retried_with_a_mutated_cache():
     assert cache[0].tokens == list(range(5))
 
 
-def test_capability_is_checked_once_and_uninspectable_source_is_ineligible(monkeypatch):
+@pytest.mark.parametrize(
+    "installed,expected",
+    [
+        ("0.7.0", False),
+        ("0.7.1rc1", False),
+        ("0.7.1", True),
+        ("0.7.2", True),
+        ("0.8.0", True),
+        ("unknown", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_distribution_version_gate(monkeypatch, installed, expected):
+    monkeypatch.setattr(batch_generator, "distribution_version", lambda _: installed)
+    model = _model()
+    assert _model_supports_gemma4_last_position(model) is expected
+    output = _generator(model)._run_vision_encoding(_request(), [_Cache()])
+    assert output.shape == (1, 1 if expected else 5, 2)
+    assert model.calls == [(5, {"logits_to_keep": 1} if expected else {})]
+
+
+def test_missing_distribution_keeps_full_forward(monkeypatch):
+    def missing(name):
+        assert name == "mlx-vlm"
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(batch_generator, "distribution_version", missing)
+    model = _model()
+    assert _generator(model)._run_vision_encoding(_request(), [_Cache()]).shape == (
+        1,
+        5,
+        2,
+    )
+    assert model.calls == [(5, {})]
+
+
+def test_old_distribution_keeps_ignoring_wrapper_ineligible(monkeypatch):
+    monkeypatch.setattr(batch_generator, "distribution_version", lambda _: "0.7.0")
+    model = _model(wrapper=_LegacyWrapper)
+    assert not _model_supports_gemma4_last_position(model)
+    assert _generator(model)._run_vision_encoding(_request(), [_Cache()]).shape == (
+        1,
+        5,
+        2,
+    )
+
+
+def test_capability_is_checked_once_without_source_inspection(monkeypatch):
     import inspect
 
+    def unavailable_source(_):
+        raise OSError("source unavailable")
+
+    monkeypatch.setattr(inspect, "getsource", unavailable_source)
     model = _model()
+    assert _model_supports_gemma4_last_position(model)
     gen = _generator(model)
-    monkeypatch.setattr(
-        inspect, "getsource", lambda _: (_ for _ in ()).throw(OSError())
-    )
+    monkeypatch.setattr(batch_generator, "distribution_version", lambda _: "unknown")
     assert not _model_supports_gemma4_last_position(model)
     assert gen._run_vision_encoding(_request(), [_Cache()]).shape == (1, 1, 2)
 
@@ -239,9 +319,13 @@ def preserved_random_state():
         mx.random.state = state
 
 
-def test_real_language_model_retains_cache_and_next_decode(preserved_random_state):
+def test_real_language_model_retains_cache_and_next_decode(
+    preserved_random_state, monkeypatch
+):
+    monkeypatch.setattr(batch_generator, "distribution_version", version)
     config_module = pytest.importorskip("mlx_vlm.models.gemma4.config")
     language = pytest.importorskip("mlx_vlm.models.gemma4.language")
+    gemma = pytest.importorskip("mlx_vlm.models.gemma4.gemma4")
     config = config_module.TextConfig.from_dict(
         dict(
             hidden_size=16,
@@ -261,8 +345,13 @@ def test_real_language_model_retains_cache_and_next_decode(preserved_random_stat
     )
     mx.random.seed(11)
     lm = language.LanguageModel(config)
-    if not _model_supports_gemma4_last_position(_model(language_model=lm)):
-        pytest.skip("installed dependency predates the last-position contract")
+    # Qualify the actual installed outer wrapper without constructing its
+    # vision/audio towers or downloading weights.
+    wrapper = gemma.Model.__new__(gemma.Model)
+    wrapper.language_model = lm
+    assert _model_supports_gemma4_last_position(wrapper), (
+        "installed mlx-vlm must support the declared last-position contract"
+    )
     request = _request()
     full_cache, kept_cache = lm.make_cache(), lm.make_cache()
     baseline = lm(request.input_ids, cache=full_cache).logits
