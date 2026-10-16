@@ -1674,6 +1674,10 @@ class MLXMultimodalLM:
                 self.model_name,
                 **({} if trust_remote_code else {"trust_remote_code": False}),
             )
+            if self.config.get("model_type") == "minicpmv4_7":
+                from .minicpmv4_7 import install_minicpmv4_7
+
+                install_minicpmv4_7()
             if (
                 sys.platform == "darwin"
                 and isinstance(self.config, dict)
@@ -3298,7 +3302,7 @@ class MLXMultimodalLM:
             "Phi-3-Vision": "Microsoft's Phi-3 Vision models",
             "CogVLM": "Tsinghua's CogVLM models",
             "InternVL": "InternVL models",
-            "MiniCPM-V": "OpenBMB's MiniCPM-V models",
+            "MiniCPM-V": "OpenBMB's MiniCPM-V models (including 4.7 dense and MoE)",
             "Florence": "Microsoft Florence vision models",
             "DeepSeek-VL": "DeepSeek's vision-language models (DeepSeek-VL, DeepSeek-VL2)",
         }
