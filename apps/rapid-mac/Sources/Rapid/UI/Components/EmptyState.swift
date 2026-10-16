@@ -203,7 +203,7 @@ struct EmptyStateSymbolMark: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 19, weight: .semibold))
+            .font(.rapid(size: 19, weight: .semibold))
             .foregroundStyle(RapidTheme.brandPrimaryDeep)
     }
 }

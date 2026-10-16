@@ -80,7 +80,7 @@ struct CommunityBenchmarkMyResultsView: View {
             CommunityContributorPortrait(contributor: contributor, size: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(contributor.displayName)
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .font(.rapid(size: 15, weight: .semibold, design: .monospaced))
                     .foregroundStyle(RapidTheme.textPrimary)
                     .textSelection(.enabled)
                 Text(totalsSentence)
@@ -92,7 +92,7 @@ struct CommunityBenchmarkMyResultsView: View {
                 Link(destination: url) {
                     HStack(spacing: 6) {
                         Text("View contributor page")
-                        Image(systemName: "arrow.up.right.square").font(.system(size: 11))
+                        Image(systemName: "arrow.up.right.square").font(.rapid(size: 11))
                     }
                 }
                 .buttonStyle(.rapidSecondaryCompact)
@@ -272,7 +272,7 @@ struct CommunityBenchmarkMyResultsView: View {
                 } label: {
                     HStack(spacing: RapidTheme.Space.sm) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.rapid(size: 10, weight: .semibold))
                             .foregroundStyle(RapidTheme.textTertiary)
                         Text(aliasForRepo(result.repoID))
                             .font(RapidFont.bodyEmphasis)
@@ -301,7 +301,7 @@ struct CommunityBenchmarkMyResultsView: View {
                 Group {
                     if let headline = metrics.headline {
                         Text(headline.combined)
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(.rapid(size: 13, design: .monospaced))
                             .monospacedDigit()
                             .foregroundStyle(RapidTheme.textPrimary)
                     } else {
@@ -353,9 +353,9 @@ struct CommunityBenchmarkMyResultsView: View {
             symbol = "lock.fill"
         }
         return HStack(spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 10)).accessibilityHidden(true)
+            Image(systemName: symbol).font(.rapid(size: 10)).accessibilityHidden(true)
             Text(status == .all ? Status.local.title.uppercased() : status.title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
+                .font(.rapid(size: 10, weight: .semibold))
                 .tracking(0.3)
         }
         .foregroundStyle(tone)

@@ -187,7 +187,7 @@ struct CommunityBenchmarkTestMethodSheet: View {
     private func note(systemImage: String, text: String) -> some View {
         HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
             Image(systemName: systemImage)
-                .font(.system(size: 13))
+                .font(.rapid(size: 13))
                 .foregroundStyle(RapidTheme.textTertiary)
                 .accessibilityHidden(true)
             Text(text)

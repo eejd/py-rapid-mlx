@@ -670,6 +670,37 @@ struct ModelSurfaceRedesignTests {
         }
     }
 
+    /// Settings → Appearance → Text size grows ``RapidFont/caption`` up to
+    /// 1.5×. The column is measured with the scaled cell font, so every
+    /// cell must fit at full size — no reliance on the shrink floor — at
+    /// both ends of the supported range.
+    @Test("size column: every cell fits at 1.0× and 1.5× Settings text size", arguments: [1.0, 1.5])
+    func cellsFitAtSettingsTextSize(scale: Double) throws {
+        let name = "ModelTableLayoutTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let fonts = UIFontSettings(defaults: defaults)
+        fonts.setScale(scale)
+        let font = fonts.pointSize(11)
+        #expect(font >= UIFontSettings.minimumPointSize)
+        let column = ModelTableLayout.sizeColumnWidth(cellFontSize: font)
+        #expect(column >= 124)
+        for size in ["7.9 GiB", "512 MiB", "123.4 GiB"] {
+            let cached = ModelTableLayout.cachedCellWidth(size: size, cellFontSize: font)
+            let serving = ModelTableLayout.inUseCellWidth(size: size, cellFontSize: font)
+            #expect(cached <= column, "\(scale)×: cached \"\(size)\" needs \(cached)pt, column is \(column)pt")
+            #expect(serving <= column, "\(scale)×: serving \"\(size)\" needs \(serving)pt, column is \(column)pt")
+        }
+        for size in ["0.5 GB", "123.4 GB"] {
+            let needed = ModelTableLayout.notCachedCellWidth(size: size, cellFontSize: font)
+            #expect(needed <= column, "\(scale)×: not cached \"~\(size)\" needs \(needed)pt, column is \(column)pt")
+        }
+        if scale > 1 {
+            // The regression this pins: a fixed 124pt column clips at 1.5×.
+            #expect(ModelTableLayout.inUseCellWidth(size: "123.4 GiB", cellFontSize: font) > 124)
+        }
+    }
+
     // MARK: - Size column: measured vs. estimated
 
     /// A cached row must quote what was MEASURED on disk

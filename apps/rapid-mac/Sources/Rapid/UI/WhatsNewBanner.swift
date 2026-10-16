@@ -54,7 +54,7 @@ struct WhatsNewBanner: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "sparkles")
                     .foregroundStyle(RapidTheme.brand)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.rapid(size: 14, weight: .semibold))
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 4) {
                     // Headline + detail combine into ONE VoiceOver element so

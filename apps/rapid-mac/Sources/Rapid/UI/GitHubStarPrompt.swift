@@ -25,7 +25,7 @@ struct GitHubStarButton: View {
             openURL(GitHubCommunity.repositoryURL)
         } label: {
             Label("Star on GitHub", systemImage: "star")
-                .font(.system(size: 12, weight: .medium))
+                .font(.rapid(size: 12, weight: .medium))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
         }
@@ -54,7 +54,7 @@ struct GitHubStarPromptCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
             Image(systemName: "star.fill")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.rapid(size: 17, weight: .semibold))
                 .foregroundStyle(RapidTheme.amberDeep)
                 .frame(width: 22, height: 22)
                 .accessibilityHidden(true)
@@ -62,11 +62,11 @@ struct GitHubStarPromptCard: View {
             VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
                 VStack(alignment: .leading, spacing: RapidTheme.Space.xs) {
                     Text("Enjoying Rapid-MLX?")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.rapid(size: 14, weight: .semibold))
                         .foregroundStyle(RapidTheme.textPrimary)
 
                     Text("Rapid-MLX is open source. If it helped today, a GitHub star helps other developers find it.")
-                        .font(.system(size: 14))
+                        .font(.rapid(size: 14))
                         .foregroundStyle(RapidTheme.textSecondary)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -109,7 +109,7 @@ struct GitHubStarPromptCard: View {
                             } else {
                                 Text("Star on GitHub")
                                 Image(systemName: "star")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.rapid(size: 10, weight: .semibold))
                             }
                         }
                         .fixedSize(horizontal: true, vertical: false)
@@ -118,7 +118,7 @@ struct GitHubStarPromptCard: View {
                     .buttonStyle(RapidPrimaryButtonStyle(
                         expands: true,
                         height: RapidTheme.ControlHeight.medium,
-                        font: .system(size: 14, weight: .medium)
+                        font: .rapid(size: 14, weight: .medium)
                     ))
                     .frame(maxWidth: .infinity, minHeight: RapidTheme.ControlHeight.medium)
                     .disabled(prompt.isStarring)
@@ -135,7 +135,7 @@ struct GitHubStarPromptCard: View {
                         .buttonStyle(RapidSecondaryButtonStyle(
                             expands: true,
                             height: RapidTheme.ControlHeight.medium,
-                            font: .system(size: 14, weight: .medium)
+                            font: .rapid(size: 14, weight: .medium)
                         ))
                         .frame(maxWidth: .infinity, minHeight: RapidTheme.ControlHeight.medium)
                         .disabled(prompt.isStarring)
@@ -157,7 +157,7 @@ struct GitHubStarPromptCard: View {
                         .buttonStyle(RapidSecondaryButtonStyle(
                             expands: true,
                             height: RapidTheme.ControlHeight.medium,
-                            font: .system(size: 14, weight: .medium)
+                            font: .rapid(size: 14, weight: .medium)
                         ))
                         .frame(maxWidth: .infinity, minHeight: RapidTheme.ControlHeight.medium)
                         .accessibilityIdentifier("GitHub.Star.ValueMoment.Feedback")
@@ -179,7 +179,7 @@ struct GitHubStarPromptCard: View {
         .overlay(alignment: .topTrailing) {
             Button { prompt.deferPrompt() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.rapid(size: 11, weight: .semibold))
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }

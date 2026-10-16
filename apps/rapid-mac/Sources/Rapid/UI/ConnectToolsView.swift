@@ -383,7 +383,7 @@ struct ConnectToolsView: View {
                     }
                     Spacer(minLength: RapidTheme.Space.sm)
                     Text("LOCAL")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.rapid(size: 10, weight: .semibold, design: .rounded))
                         .tracking(0.6)
                         .foregroundStyle(.secondary)
                 }
@@ -781,7 +781,7 @@ private struct ConnectToolRow: View {
             // title and the description below it.
             HStack(alignment: .firstTextBaseline, spacing: Self.iconGap) {
                 Image(systemName: tool.symbol)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.rapid(size: 14, weight: .medium))
                     // v1.0.2: amber. These are brand/integration marks
                     // on a page that had drifted entirely neutral;
                     // steel blue is off this surface altogether.
@@ -826,7 +826,7 @@ private struct ConnectToolRow: View {
                 } label: {
                     HStack(spacing: RapidTheme.Space.xs) {
                         Image(systemName: showsCommand ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.rapid(size: 10, weight: .semibold))
                         Text(showsCommand ? "Hide command" : "Show command")
                             .font(RapidFont.secondary)
                     }

@@ -136,7 +136,7 @@ struct ImagesView: View {
                         viewModel.beginEdit(image)
                     } label: {
                         Image(systemName: "pencil")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.rapid(size: 12, weight: .semibold))
                             .frame(width: 28, height: 28)
                             .background(.ultraThinMaterial, in: Circle())
                     }
@@ -150,7 +150,7 @@ struct ImagesView: View {
                     save(image)
                 } label: {
                     Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.rapid(size: 12, weight: .semibold))
                         .frame(width: 28, height: 28)
                         .background(.ultraThinMaterial, in: Circle())
                 }
@@ -163,7 +163,7 @@ struct ImagesView: View {
                     pendingDeletion = image
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.rapid(size: 12, weight: .semibold))
                         .foregroundStyle(.red)
                         .frame(width: 28, height: 28)
                         .background(.ultraThinMaterial, in: Circle())
@@ -227,7 +227,7 @@ struct ImagesView: View {
     private var aspectPreview: some View {
         VStack(spacing: RapidTheme.Space.sm - 1) {
             Image(systemName: "photo")
-                .font(.system(size: 26, weight: .light))
+                .font(.rapid(size: 26, weight: .light))
                 .foregroundStyle(RapidTheme.textTertiary)
             Text(viewModel.aspect.size(for: viewModel.resolution))
                 .font(RapidFont.code)
@@ -416,28 +416,28 @@ struct ImagesView: View {
                             Text(viewModel.cancelling
                                  ? "Stopping…"
                                  : (finalizing ? "Finalizing image…" : "Generating"))
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.rapid(size: 14, weight: .semibold))
                                 .foregroundStyle(RapidTheme.bandInk)
                         } else {
                             ProgressView().controlSize(.small)
                             Text(viewModel.cancelling
                                  ? "Stopping…"
                                  : "Warming up \(viewModel.selectedDisplayName)")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.rapid(size: 14, weight: .semibold))
                                 .foregroundStyle(RapidTheme.bandInk)
                                 .lineLimit(1).truncationMode(.middle)
                         }
                         Spacer(minLength: 8)
                         if denoising {
                             Text("\(step) / \(total)")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .font(.rapid(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(RapidTheme.bandInkSecondary)
                                 .monospacedDigit()
                                 .accessibilityIdentifier("Images.Progress.Step")
                         }
                         Button { viewModel.cancel() } label: {
                             Image(systemName: "xmark")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.rapid(size: 10, weight: .bold))
                                 .foregroundStyle(RapidTheme.bandInk)
                                 .frame(width: 22, height: 22)
                                 .background(RapidTheme.bandTrack, in: Circle())
@@ -458,7 +458,7 @@ struct ImagesView: View {
 
                     HStack {
                         Text(String(format: "%.1fs", max(0, elapsed)))
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .font(.rapid(size: 12, weight: .medium, design: .monospaced))
                             .foregroundStyle(RapidTheme.bandInkSecondary)
                             .monospacedDigit()
                         Spacer()
@@ -467,7 +467,7 @@ struct ImagesView: View {
                              : (denoising
                                 ? etaText(secondsRemaining: viewModel.denoiseETASeconds)
                                 : "First run — only happens once"))
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.rapid(size: 12, weight: .medium))
                             .foregroundStyle(RapidTheme.bandInkSecondary)
                             .accessibilityIdentifier("Images.Progress.ETA")
                     }
@@ -719,7 +719,7 @@ struct ImagesView: View {
             Spacer(minLength: 8)
             Button { viewModel.cancelEdit() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.rapid(size: 10, weight: .semibold))
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
@@ -736,7 +736,7 @@ struct ImagesView: View {
     private var importButton: some View {
         Button(action: chooseEditImage) {
             Image(systemName: "photo.badge.plus")
-                .font(.system(size: 12, weight: .medium))
+                .font(.rapid(size: 12, weight: .medium))
                 .frame(width: 28, height: RapidTheme.ControlHeight.small)
                 .contentShape(Rectangle())
         }
@@ -758,7 +758,7 @@ struct ImagesView: View {
                     viewModel.use(starter: starter)
                 } label: {
                     Text(starter)
-                        .font(.caption)
+                        .font(.rapid(.caption))
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
@@ -785,7 +785,7 @@ struct ImagesView: View {
                     viewModel.aspect = ar
                 } label: {
                     Text(ar.label)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.rapid(size: 11, weight: .medium))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(on ? RapidTheme.hoverFill : Color.clear)
@@ -826,13 +826,13 @@ struct ImagesView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "ruler")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.rapid(size: 11, weight: .medium))
                     .accessibilityHidden(true)
                 Text(viewModel.outputSizeLabel)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.rapid(size: 11, weight: .medium))
                     .monospacedDigit()
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.rapid(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
@@ -887,7 +887,7 @@ struct ImagesView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.rapid(size: 10, weight: .medium))
                     .foregroundStyle(pickerHovering ? .primary : .secondary)
                     .accessibilityHidden(true)
             }
@@ -933,7 +933,7 @@ struct ImagesView: View {
         if viewModel.isGenerating {
             Button { viewModel.cancel() } label: {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.rapid(size: 12, weight: .bold))
                     .foregroundStyle(RapidTheme.sendButtonIcon)
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(RapidTheme.sendButton))
@@ -946,7 +946,7 @@ struct ImagesView: View {
         } else {
             Button(action: runSubmit) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.rapid(size: 12, weight: .bold))
                     .foregroundStyle(sendEnabled ? RapidTheme.onBrandPrimary : Color.secondary)
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(sendEnabled ? RapidTheme.brandPrimary : Color.clear))

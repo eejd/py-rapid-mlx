@@ -60,7 +60,7 @@ struct FollowUpSuggestionRail: View {
                         onSelect(question)
                     } label: {
                         Text(question)
-                            .font(.caption)
+                            .font(.rapid(.caption))
                             .lineLimit(1)
                             .padding(.horizontal, RapidTheme.Space.md)
                             .frame(height: RapidTheme.ControlHeight.small)

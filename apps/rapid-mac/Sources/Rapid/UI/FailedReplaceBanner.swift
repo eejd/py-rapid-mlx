@@ -25,7 +25,7 @@ struct FailedReplaceBanner: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.rapid(size: 14, weight: .semibold))
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 4) {
                     // Codex r1 nit (a11y), r2 BLOCKING follow-up:

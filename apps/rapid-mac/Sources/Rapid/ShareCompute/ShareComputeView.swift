@@ -235,7 +235,7 @@ struct ShareComputeView: View {
             Link(destination: ShareComputeDestination.provider) {
                 HStack(spacing: 6) {
                     Text("Open QuickSilver")
-                    Image(systemName: "arrow.up.right.square").font(.system(size: 11))
+                    Image(systemName: "arrow.up.right.square").font(.rapid(size: 11))
                 }
                 .font(RapidFont.body)
             }

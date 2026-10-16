@@ -1130,7 +1130,7 @@ struct OnboardingGlyphTile: View {
             .frame(width: 52, height: 52)
             .overlay {
                 Image(systemName: systemName)
-                    .font(.system(size: 24, weight: .regular))
+                    .font(.rapid(size: 24, weight: .regular))
                     .foregroundStyle(tone.ink)
             }
             .accessibilityHidden(true)
@@ -1214,7 +1214,7 @@ struct OnboardingSelectionGlyph: View {
                     .fill(RapidTheme.brandPrimary)
                     .overlay {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.rapid(size: 10, weight: .bold))
                             .foregroundStyle(RapidTheme.brandOnAccent)
                     }
             } else {
@@ -1396,7 +1396,7 @@ struct OnboardingInlineNote: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: glyph)
-                .font(.system(size: 14, weight: .medium))
+                .font(.rapid(size: 14, weight: .medium))
                 .foregroundStyle(tone)
                 .accessibilityHidden(true)
             Text(text)

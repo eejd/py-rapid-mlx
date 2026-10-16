@@ -87,7 +87,7 @@ struct SettingsToolsPanel: View {
                         // where it used to be one of the app's most
                         // repeated steel-blue accents.
                         .symbolRenderingMode(.monochrome)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.rapid(size: 13, weight: .medium))
                         .foregroundStyle(RapidTheme.utilityActionLabel)
                         .frame(width: RapidTheme.Layout.iconSlot)
                         .accessibilityHidden(true)
@@ -139,7 +139,7 @@ struct SettingsToolsPanel: View {
             } label: {
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.rapid(size: 9, weight: .semibold))
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     Text("Details")
                         .font(RapidFont.caption)

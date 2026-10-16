@@ -185,7 +185,7 @@ struct CommunityWorkloadBadge: View {
 
     var body: some View {
         Text(workload.displayName.uppercased())
-            .font(.system(size: 10, weight: .semibold))
+            .font(.rapid(size: 10, weight: .semibold))
             .tracking(0.3)
             .foregroundStyle(RapidTheme.brandSecondary)
             .padding(.horizontal, 6)
@@ -211,7 +211,7 @@ struct CommunityFactLane: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.system(size: 12))
+                .font(.rapid(size: 12))
                 .frame(width: 14)
                 .foregroundStyle(tone)
             Text(label)
@@ -239,16 +239,16 @@ struct CommunityMetricView: View {
                 Text(metric.value)
                     .font(
                         isHeadline
-                            ? .system(size: 44, weight: .semibold, design: .monospaced)
-                            : .system(size: 20, weight: .medium, design: .monospaced)
+                            ? .rapid(size: 44, weight: .semibold, design: .monospaced)
+                            : .rapid(size: 20, weight: .medium, design: .monospaced)
                     )
                     .monospacedDigit()
                 if let unit = metric.unit {
                     Text(unit)
                         .font(
                             isHeadline
-                                ? .system(size: 18, weight: .regular, design: .monospaced)
-                                : .system(size: 13, design: .monospaced)
+                                ? .rapid(size: 18, weight: .regular, design: .monospaced)
+                                : .rapid(size: 13, design: .monospaced)
                         )
                         .foregroundStyle(RapidTheme.textSecondary)
                 }
@@ -277,7 +277,7 @@ struct CommunityUnavailableBand: View {
                     .accessibilityHidden(true)
             } else {
                 Image(systemName: "chart.bar.doc.horizontal")
-                    .font(.system(size: 13))
+                    .font(.rapid(size: 13))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
             }
@@ -314,7 +314,7 @@ struct CommunityContributorIdentity: View {
             CommunityContributorPortrait(contributor: contributor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(contributor.displayName)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .font(.rapid(size: 13, weight: .medium, design: .monospaced))
                     .foregroundStyle(RapidTheme.textPrimary)
                     .textSelection(.enabled)
                 if showsDestination, let url = contributor.profileURL {
@@ -349,7 +349,7 @@ struct CommunityLeaderboardLinkRow: View {
         Link(destination: destination) {
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: "trophy")
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
                 Text("View the verified global leaderboard")
@@ -362,7 +362,7 @@ struct CommunityLeaderboardLinkRow: View {
                     .truncationMode(.tail)
                 Spacer(minLength: RapidTheme.Space.sm)
                 Image(systemName: "arrow.up.right.square")
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
             }

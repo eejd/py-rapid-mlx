@@ -91,7 +91,7 @@ struct CommunityBenchmarkShareConfirmationSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
                 Text("Publish this result to the Community Benchmark?")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.rapid(size: 17, weight: .semibold))
                     .foregroundStyle(RapidTheme.textPrimary)
                 Text("It will be published publicly under your anonymous contributor alias on rapidmlx.com.")
                     .font(RapidFont.body)
@@ -181,10 +181,10 @@ struct CommunityBenchmarkShareConfirmationSheet: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
             HStack(spacing: 6) {
                 Image(systemName: "eye.slash")
-                    .font(.system(size: 11))
+                    .font(.rapid(size: 11))
                     .accessibilityHidden(true)
                 Text("KEPT ON THIS MAC, NOT PUBLISHED")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.rapid(size: 11, weight: .semibold))
                     .tracking(0.5)
             }
             .foregroundStyle(RapidTheme.textTertiary)
@@ -244,7 +244,7 @@ struct CommunityBenchmarkShareConfirmationSheet: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11))
+                    .font(.rapid(size: 11))
                     .foregroundStyle(tone)
                     .accessibilityHidden(true)
                 Text(title)
@@ -272,7 +272,7 @@ struct CommunityBenchmarkShareConfirmationSheet: View {
             } label: {
                 HStack(spacing: RapidTheme.Space.sm) {
                     Image(systemName: showsPayload ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.rapid(size: 10, weight: .semibold))
                         .foregroundStyle(RapidTheme.textSecondary)
                         .accessibilityHidden(true)
                     Text(showsPayload ? String(localized: "Hide exact data") : String(localized: "Review the exact data"))
@@ -375,7 +375,7 @@ struct CommunityBenchmarkPublishedSheet: View {
 
                 VStack(spacing: RapidTheme.Space.sm) {
                     Text(celebration.headline)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.rapid(size: 20, weight: .semibold))
                         .foregroundStyle(RapidTheme.textPrimary)
                     Text(celebration.body)
                         .font(RapidFont.body)
@@ -406,7 +406,7 @@ struct CommunityBenchmarkPublishedSheet: View {
                     HStack(spacing: 6) {
                         Text("View your contribution")
                         Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 11))
+                            .font(.rapid(size: 11))
                     }
                 }
                 .buttonStyle(.rapidPrimary)
