@@ -2505,7 +2505,7 @@ struct QuickstartView: View {
                                 HStack(spacing: 7) {
                                     Image(systemName: showsOtherCachedVariants
                                         ? "minus" : "plus")
-                                        .font(.system(size: 10, weight: .semibold))
+                                        .font(.rapid(size: 10, weight: .semibold))
                                     Text("Other variants (\(list.cachedAlternates.count))")
                                         .scaledSystemFont(12, weight: .medium)
                                 }
@@ -2738,7 +2738,7 @@ struct QuickstartView: View {
             HStack(spacing: 12) {
                 HStack(spacing: 9) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13))
+                        .font(.rapid(size: 13))
                         .foregroundStyle(RapidTheme.textSecondary)
                         .accessibilityHidden(true)
                     TextField(
@@ -2902,7 +2902,7 @@ struct QuickstartView: View {
         VStack(spacing: 10) {
             if let symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: 24, weight: .regular))
+                    .font(.rapid(size: 24, weight: .regular))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
             } else {

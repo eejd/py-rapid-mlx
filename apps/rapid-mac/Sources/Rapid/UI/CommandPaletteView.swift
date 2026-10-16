@@ -51,7 +51,7 @@ struct CommandPaletteView: View {
     private var searchHeader: some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: "command")
-                .font(.system(size: 15, weight: .medium))
+                .font(.rapid(size: 15, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
@@ -99,7 +99,7 @@ struct CommandPaletteView: View {
         } label: {
             HStack(spacing: RapidTheme.Space.md) {
                 Image(systemName: command.systemImage)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.rapid(size: 14, weight: .medium))
                     .frame(width: RapidTheme.Layout.iconSlot)
                 Text(command.title)
                     .font(selected ? RapidFont.bodyEmphasis : RapidFont.body)
@@ -137,7 +137,7 @@ struct CommandPaletteView: View {
     private var emptyState: some View {
         VStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 22, weight: .regular))
+                .font(.rapid(size: 22, weight: .regular))
                 .foregroundStyle(.secondary)
             Text("No commands match")
                 .font(RapidFont.body)

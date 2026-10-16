@@ -312,7 +312,7 @@ struct DownloadStrip: View {
                 downloads.cancelDownload(alias: job.alias)
             } label: {
                 Image(systemName: "xmark.circle")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.rapid(size: 14, weight: .semibold))
                     .foregroundStyle(RapidTheme.brandPrimaryDeep)
                     .frame(width: 24, height: 24)
                     .background(RapidTheme.brandPrimaryTint, in: Circle())
@@ -326,7 +326,7 @@ struct DownloadStrip: View {
                 downloads.dismissJob(alias: job.alias)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10))
+                    .font(.rapid(size: 10))
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)

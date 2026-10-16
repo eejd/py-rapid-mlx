@@ -51,16 +51,16 @@ struct CommunityBenchmarkReadyView: View {
             HStack(alignment: .top, spacing: RapidTheme.Space.xl) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(invitation.eyebrow)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.rapid(size: 11, weight: .semibold))
                         .tracking(0.7)
                         .foregroundStyle(RapidTheme.brandPrimaryDeep)
                     Text(invitation.headline)
-                        .font(.system(size: 26, weight: .semibold))
+                        .font(.rapid(size: 26, weight: .semibold))
                         .foregroundStyle(RapidTheme.textPrimary)
                         .padding(.top, RapidTheme.Space.md)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(invitation.body)
-                        .font(.system(size: 14))
+                        .font(.rapid(size: 14))
                         .foregroundStyle(RapidTheme.textSecondary)
                         .padding(.top, RapidTheme.Space.sm)
                         .fixedSize(horizontal: false, vertical: true)
@@ -90,7 +90,7 @@ struct CommunityBenchmarkReadyView: View {
 
                 HStack(spacing: 6) {
                     Image(systemName: "lock")
-                        .font(.system(size: 11))
+                        .font(.rapid(size: 11))
                         .accessibilityHidden(true)
                     Text("Private until you publish")
                         .font(RapidFont.body)
@@ -104,7 +104,7 @@ struct CommunityBenchmarkReadyView: View {
             if let serverImpactNote {
                 HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 12))
+                        .font(.rapid(size: 12))
                         .foregroundStyle(RapidTheme.textTertiary)
                         .accessibilityHidden(true)
                     Text(serverImpactNote)
@@ -161,7 +161,7 @@ struct CommunityBenchmarkReadyView: View {
     private var modelIdentity: some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Text(model.entry.alias)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.rapid(size: 15, weight: .semibold))
                 .foregroundStyle(RapidTheme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -272,12 +272,12 @@ struct CommunityBenchmarkRunningView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: RapidTheme.Space.xs) {
                     Text("BENCHMARK RUNNING")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.rapid(size: 11, weight: .semibold))
                         .tracking(0.7)
                         .foregroundStyle(RapidTheme.textTertiary)
                     HStack(spacing: RapidTheme.Space.sm) {
                         Text(model.entry.alias)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.rapid(size: 22, weight: .semibold))
                             .lineLimit(1)
                             .truncationMode(.tail)
                         CommunityWorkloadBadge(workload: scope.workload)
@@ -301,7 +301,7 @@ struct CommunityBenchmarkRunningView: View {
 
             HStack(alignment: .firstTextBaseline, spacing: RapidTheme.Space.md) {
                 Text(progress.stage.activeTitle)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.rapid(size: 18, weight: .semibold))
                     .foregroundStyle(RapidTheme.textPrimary)
                     .accessibilityIdentifier("CommunityBenchmark.RunStage")
                 if let caption = progress.passCaption {
@@ -324,7 +324,7 @@ struct CommunityBenchmarkRunningView: View {
 
             HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
                 Text("Chat and Images are paused so the benchmark has the Mac to itself. Your model reloads automatically when it finishes.")
@@ -359,7 +359,7 @@ struct CommunityBenchmarkRunningView: View {
                             ? "checkmark.circle.fill"
                             : (isActive ? "circle.inset.filled" : "circle")
                     )
-                    .font(.system(size: 11))
+                    .font(.rapid(size: 11))
                     .foregroundStyle(
                         isDone || isActive ? RapidTheme.brandPrimary : RapidTheme.textTertiary
                     )
@@ -368,7 +368,7 @@ struct CommunityBenchmarkRunningView: View {
                     // directly below, so the labels drop rather than truncate.
                     if !isNarrow || isActive {
                         Text(stage.title)
-                            .font(.system(size: 11, weight: isActive ? .semibold : .regular))
+                            .font(.rapid(size: 11, weight: isActive ? .semibold : .regular))
                             .foregroundStyle(
                                 isActive ? RapidTheme.textPrimary : RapidTheme.textSecondary
                             )
@@ -491,11 +491,11 @@ struct CommunityBenchmarkRunningView: View {
                 if let measurement = progress.latestMeasurement {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("LATEST MEASUREMENT")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.rapid(size: 10, weight: .semibold))
                             .tracking(0.6)
                             .foregroundStyle(RapidTheme.textTertiary)
                         Text(measurement.value)
-                            .font(.system(size: 22, weight: .medium, design: .monospaced))
+                            .font(.rapid(size: 22, weight: .medium, design: .monospaced))
                             .monospacedDigit()
                             .foregroundStyle(RapidTheme.textPrimary)
                         Text(
@@ -519,11 +519,11 @@ struct CommunityBenchmarkRunningView: View {
     private func metric(label: String, value: String, identifier: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.rapid(size: 10, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(RapidTheme.textTertiary)
             Text(value)
-                .font(.system(size: 22, weight: .medium, design: .monospaced))
+                .font(.rapid(size: 22, weight: .medium, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.textPrimary)
         }

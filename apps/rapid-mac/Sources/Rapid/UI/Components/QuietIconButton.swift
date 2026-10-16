@@ -44,7 +44,7 @@ struct QuietIconButton: View {
         // ax-exempt: callers attach action/entity-specific identifiers to this wrapper
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: symbolSize, weight: .medium))
+                .font(.rapid(size: symbolSize, weight: .medium))
                 .foregroundStyle(foreground)
                 // These buttons are overwhelmingly toggles — copy/checkmark,
                 // show/hide, play/pause — and a hard glyph swap gave no signal

@@ -1890,7 +1890,7 @@ struct CommunityBenchmarkView: View {
             Link(destination: communityBenchmarkLeaderboardURL) {
                 HStack(spacing: 6) {
                     Text("Open rapidmlx.com")
-                    Image(systemName: "arrow.up.right.square").font(.system(size: 11))
+                    Image(systemName: "arrow.up.right.square").font(.rapid(size: 11))
                 }
                 .font(RapidFont.body)
             }

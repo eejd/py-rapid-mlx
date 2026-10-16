@@ -82,17 +82,17 @@ struct CampaignBanner: View {
     var body: some View {
         HStack(spacing: RapidTheme.Space.md) {
             Image(systemName: "sparkles")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.rapid(size: 16, weight: .semibold))
                 .foregroundStyle(RapidTheme.brandAmber)
                 .frame(width: 32, height: 32)
                 .background(RapidTheme.brandAmberTint, in: RoundedRectangle(cornerRadius: RapidTheme.Radius.row))
 
             VStack(alignment: .leading, spacing: RapidTheme.Space.xxs) {
                 Text(campaign.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.rapid(size: 13, weight: .semibold))
                     .foregroundStyle(RapidTheme.textPrimary)
                 Text(campaign.body)
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.textSecondary)
                     .lineLimit(2)
             }
@@ -108,7 +108,7 @@ struct CampaignBanner: View {
                 onDismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.rapid(size: 11, weight: .semibold))
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)

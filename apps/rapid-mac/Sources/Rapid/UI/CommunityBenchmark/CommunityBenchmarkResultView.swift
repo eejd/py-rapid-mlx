@@ -75,7 +75,7 @@ struct CommunityBenchmarkResultView: View {
                     HStack(spacing: RapidTheme.Space.md) {
                         resultBadge
                         Text(modelAlias)
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.rapid(size: 16, weight: .semibold))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         CommunityWorkloadBadge(workload: scope.workload)
@@ -91,7 +91,7 @@ struct CommunityBenchmarkResultView: View {
                 HStack(spacing: RapidTheme.Space.md) {
                     resultBadge
                     Text(modelAlias)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.rapid(size: 16, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     CommunityWorkloadBadge(workload: scope.workload)
@@ -106,7 +106,7 @@ struct CommunityBenchmarkResultView: View {
 
     private var resultBadge: some View {
         Image(systemName: "checkmark")
-            .font(.system(size: 12, weight: .semibold))
+            .font(.rapid(size: 12, weight: .semibold))
             .foregroundStyle(RapidTheme.statusReady)
             .frame(width: 26, height: 26)
             .background(RapidTheme.statusReadyTint, in: RoundedRectangle(cornerRadius: 7))
@@ -143,12 +143,12 @@ struct CommunityBenchmarkResultView: View {
     private var statusChip: some View {
         HStack(spacing: 6) {
             Image(systemName: isPublished ? "checkmark.circle.fill" : "lock")
-                .font(.system(size: 11))
+                .font(.rapid(size: 11))
                 .accessibilityHidden(true)
             // "SAVED HERE" is a complete phrase; "SAVED ON THIS M…" is not.
             // A shorter true label beats a longer truncated one.
             Text(statusLabel)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.rapid(size: 11, weight: .semibold))
                 .tracking(0.3)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -173,14 +173,14 @@ struct CommunityBenchmarkResultView: View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
                 Text(metrics.headline?.label.uppercased() ?? String(localized: "RESULT"))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.rapid(size: 11, weight: .semibold))
                     .tracking(0.6)
                     .foregroundStyle(RapidTheme.textTertiary)
                 if let headline = metrics.headline {
                     CommunityMetricView(metric: headline, isHeadline: true)
                 } else if let status = metrics.incompleteStatus {
                     Text(status)
-                        .font(.system(size: 22, weight: .medium))
+                        .font(.rapid(size: 22, weight: .medium))
                         .foregroundStyle(RapidTheme.statusError)
                 }
                 if metrics.headline != nil {
@@ -197,7 +197,7 @@ struct CommunityBenchmarkResultView: View {
                 Divider()
                 VStack(alignment: .leading, spacing: RapidTheme.Space.lg) {
                     Text("ALSO MEASURED")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.rapid(size: 11, weight: .semibold))
                         .tracking(0.6)
                         .foregroundStyle(RapidTheme.textTertiary)
                     // Two per row so an image/video run with two supporting
@@ -319,7 +319,7 @@ struct CommunityBenchmarkResultView: View {
     private func statistic(value: String, label: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(.system(size: 15, design: .monospaced))
+                .font(.rapid(size: 15, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.textPrimary)
             Text(label)
@@ -516,7 +516,7 @@ struct CommunityBenchmarkResultView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: showsTechnicalDetails ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.rapid(size: 10, weight: .semibold))
                 Text("Technical details")
             }
         }

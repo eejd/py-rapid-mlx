@@ -923,7 +923,7 @@ struct SettingsModelManagementPanel: View {
             toggleFavorite(alias)
         } label: {
             Image(systemName: isFav ? "star.fill" : "star")
-                .font(.system(size: 13))
+                .font(.rapid(size: 13))
                 .foregroundStyle(isFav ? RapidTheme.brandPrimaryDeep : RapidTheme.textTertiary)
         }
         .buttonStyle(.plain)

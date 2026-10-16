@@ -231,7 +231,7 @@ struct SettingsView: View {
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: cat.iconName)
                     .symbolRenderingMode(.monochrome)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.rapid(size: 13, weight: .medium))
                     .frame(width: RapidTheme.Layout.iconSlot, alignment: .center)
                 Text(cat.title)
                     .font(RapidFont.body)
@@ -683,6 +683,17 @@ struct SettingsView: View {
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
                 .accessibilityIdentifier("Settings.Appearance.ThemePicker")
+            }
+            SettingsSection(String(localized: "Text size")) {
+                @Bindable var fontScale = UIFontScale.shared
+                Picker("Text size", selection: $fontScale.scale) {
+                    ForEach(UIFontScale.choices, id: \.scale) { choice in
+                        Text(choice.label).tag(choice.scale)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                .accessibilityIdentifier("Settings.Appearance.TextSizePicker")
             }
         }
     }

@@ -92,7 +92,7 @@ struct ShareComputeTabBar: View {
             selection = tab
         } label: {
             Text(tab.title)
-                .font(.system(size: 12, weight: isSelected ? .bold : .medium))
+                .font(.rapid(size: 12, weight: isSelected ? .bold : .medium))
                 .foregroundStyle(
                     isSelected ? RapidTheme.textPrimary : RapidTheme.textSecondary
                 )
@@ -149,7 +149,7 @@ struct ShareComputeEyebrow: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: size, weight: .bold))
+            .font(.rapid(size: size, weight: .bold))
             .tracking(0.06 * size)
             .foregroundStyle(tone)
             .accessibilityLabel(text)
@@ -213,7 +213,7 @@ struct ShareComputeStatusTag: View {
 
     var body: some View {
         Text(title.uppercased())
-            .font(.system(size: 9, weight: .bold))
+            .font(.rapid(size: 9, weight: .bold))
             .tracking(0.4)
             .foregroundStyle(tone.foreground)
             .padding(.horizontal, 10)
@@ -259,7 +259,7 @@ struct ShareComputePager: View {
                 action: onPrevious
             )
             Text("\(page + 1) / \(pageCount)")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.rapid(size: 10, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .accessibilityLabel(
@@ -286,7 +286,7 @@ struct ShareComputePager: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 10, weight: .medium))
+                .font(.rapid(size: 10, weight: .medium))
                 .frame(width: controlSize, height: controlSize)
                 .foregroundStyle(
                     enabled ? RapidTheme.bandInk : RapidTheme.bandInkTertiary
@@ -322,9 +322,9 @@ struct ShareComputePrimaryBandButton: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.rapid(size: 15, weight: .bold))
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.rapid(size: 13, weight: .bold))
                     .accessibilityHidden(true)
             }
             .foregroundStyle(RapidTheme.onBrandPrimary)
@@ -353,7 +353,7 @@ struct ShareComputeStopButton: View {
     var body: some View {
         Button(action: action) {
             Text("Stop Sharing")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.rapid(size: 12, weight: .semibold))
                 .foregroundStyle(RapidTheme.bandDestructive)
                 .contentShape(Rectangle())
         }
@@ -489,7 +489,7 @@ struct ShareComputeValuePath: View {
             // Paper sets the numeral semibold on the narrow board and bold on
             // the desktop one; both at 12pt.
             Text("\(step.number)")
-                .font(.system(size: 12, weight: isNarrow ? .semibold : .bold))
+                .font(.rapid(size: 12, weight: isNarrow ? .semibold : .bold))
                 .foregroundStyle(step.tint)
                 .frame(width: circleSize, height: circleSize)
                 .background(step.tintBackground, in: Circle())
@@ -499,12 +499,12 @@ struct ShareComputeValuePath: View {
                 // narrow for the title; regular — never medium or heavier —
                 // for the supporting line in both.
                 Text(step.title(isNarrow: isNarrow))
-                    .font(.system(size: isNarrow ? 13 : 14, weight: isNarrow ? .semibold : .bold))
+                    .font(.rapid(size: isNarrow ? 13 : 14, weight: isNarrow ? .semibold : .bold))
                     .foregroundStyle(RapidTheme.bandInk)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(step.detail(isNarrow: isNarrow))
-                    .font(.system(size: isNarrow ? 11 : 12, weight: .regular))
+                    .font(.rapid(size: isNarrow ? 11 : 12, weight: .regular))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -522,7 +522,7 @@ struct ShareComputeValuePath: View {
     /// into, centred vertically with the steps beside it.
     private var connector: some View {
         Image(systemName: "arrow.right")
-            .font(.system(size: isNarrow ? 10 : 11, weight: .medium))
+            .font(.rapid(size: isNarrow ? 10 : 11, weight: .medium))
             .foregroundStyle(RapidTheme.bandInkTertiary)
             .frame(width: connectorWidth, height: circleSize)
             .accessibilityHidden(true)

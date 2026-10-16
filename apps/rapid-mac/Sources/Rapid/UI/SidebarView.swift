@@ -756,7 +756,7 @@ struct SidebarView: View {
             action()
         } label: {
             Image(systemName: systemImage)
-                .font(.system(size: 16, weight: isSelected ? .semibold : .medium))
+                .font(.rapid(size: 16, weight: isSelected ? .semibold : .medium))
                 .foregroundStyle(
                     isSelected ? RapidTheme.brandPrimaryDeep : RapidTheme.textSecondary
                 )
@@ -806,7 +806,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.xs) {
             HStack(spacing: RapidTheme.Space.xs) {
                 Image(systemName: "memorychip")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.rapid(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text("Resident")
                     .font(RapidFont.caption)
@@ -818,7 +818,7 @@ struct SidebarView: View {
                         limitBytes: snapshot.memoryLimitBytes
                     )
                 )
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.rapid(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -845,7 +845,7 @@ struct SidebarView: View {
             ForEach(snapshot.models.prefix(4)) { model in
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: model.pinned ? "lock.fill" : "circle.fill")
-                        .font(.system(size: model.pinned ? 9 : 6, weight: .semibold))
+                        .font(.rapid(size: model.pinned ? 9 : 6, weight: .semibold))
                         .foregroundStyle(model.pinned ? RapidTheme.brandAmber : .secondary)
                         .frame(width: 12)
                     Text(model.displayName(preferredAlias: preferredAlias))
@@ -854,7 +854,7 @@ struct SidebarView: View {
                         .truncationMode(.middle)
                     Spacer(minLength: 4)
                     Text(Self.formatBytes(model.displayBytes))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.rapid(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("Sidebar.ResidentModel.\(model.id)")
@@ -866,7 +866,7 @@ struct SidebarView: View {
             ) { lane in
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: "waveform")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.rapid(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 12)
                     Text(lane.model ?? lane.lane.uppercased())
@@ -875,7 +875,7 @@ struct SidebarView: View {
                         .truncationMode(.middle)
                     Spacer(minLength: 4)
                     Text(lane.lane.uppercased())
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.rapid(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("Sidebar.ResidentAudio.\(lane.lane)")
@@ -941,7 +941,7 @@ struct SidebarView: View {
                         .controlSize(.mini)
                 } else {
                     Image(systemName: "eject.fill")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.rapid(size: 10, weight: .semibold))
                 }
             }
             .frame(width: 22, height: 22)
@@ -1373,7 +1373,7 @@ struct SidebarView: View {
                     systemName: isFolderExpanded(section.folder.id)
                         ? "chevron.down" : "chevron.right"
                 )
-                .font(.system(size: 9, weight: .semibold))
+                .font(.rapid(size: 9, weight: .semibold))
                 SectionHeader("\(section.folder.name) (\(section.conversations.count))")
             }
             .contentShape(Rectangle())
@@ -1424,7 +1424,7 @@ struct SidebarView: View {
             } label: {
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: showArchived ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.rapid(size: 9, weight: .semibold))
                     SectionHeader(String(localized: "Archived (\(archived.count))"))
                 }
                 .contentShape(Rectangle())
@@ -1546,7 +1546,7 @@ struct SidebarView: View {
                 rowMenuItems(conv)
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.rapid(size: 11, weight: .semibold))
                     .frame(
                         width: RapidTheme.ControlHeight.mini,
                         height: RapidTheme.ControlHeight.mini
@@ -1830,7 +1830,7 @@ struct SidebarView: View {
                     // glyph and its word are one object; letting only the
                     // text thicken made the icon look like it belonged to
                     // the row above.
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(.rapid(size: 13, weight: isSelected ? .semibold : .medium))
                     .frame(width: RapidTheme.Layout.iconSlot, alignment: .center)
                 Text(title)
                     .font(isSelected ? RapidFont.bodyEmphasis : RapidFont.body)
@@ -1849,7 +1849,7 @@ private struct CUASidebarRow: View {
         SidebarRow(isSelected: isSelected, action: action) {
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: "macwindow.on.rectangle")
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(.rapid(size: 13, weight: isSelected ? .semibold : .medium))
                     .frame(width: RapidTheme.Layout.iconSlot, alignment: .center)
                 Text("Computer Use")
                     .font(isSelected ? RapidFont.bodyEmphasis : RapidFont.body)
@@ -1857,7 +1857,7 @@ private struct CUASidebarRow: View {
                 Spacer(minLength: RapidTheme.Space.xs)
                 if let status = CUASidebarStatus(phase: viewModel.phase) {
                     Text(status.title)
-                        .font(.caption2.weight(.semibold))
+                        .font(.rapid(.caption2).weight(.semibold))
                         .foregroundStyle(
                             status == .awaitingApproval ? Color.orange : Color.secondary
                         )

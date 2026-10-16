@@ -252,7 +252,7 @@ struct SettingsConnectorsPanel: View {
         // tokens rather than the notice itself.
         HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
             Image(systemName: "arrow.clockwise.circle.fill")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.rapid(size: 11, weight: .semibold))
                 .foregroundStyle(RapidTheme.statusWarning)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: RapidTheme.Space.xs) {

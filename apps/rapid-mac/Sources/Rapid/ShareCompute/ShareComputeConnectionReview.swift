@@ -53,7 +53,7 @@ struct ShareComputeConnectionReview: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Review & connect this Mac")
-                .font(.system(size: 19, weight: .bold))
+                .font(.rapid(size: 19, weight: .bold))
                 .foregroundStyle(RapidTheme.textPrimary)
             Text(modelTitle)
                 .font(RapidFont.body)
@@ -90,7 +90,7 @@ struct ShareComputeConnectionReview: View {
     ) -> some View {
         HStack(alignment: .top, spacing: RapidTheme.Space.md) {
             Image(systemName: systemImage)
-                .font(.system(size: 13))
+                .font(.rapid(size: 13))
                 .foregroundStyle(RapidTheme.textSecondary)
                 // Fixed slot so the three titles align down a lane regardless
                 // of glyph width.
@@ -139,7 +139,7 @@ struct ShareComputeConnectionReview: View {
                             HStack(spacing: 4) {
                                 Text("Get a key").font(RapidFont.secondary)
                                 Image(systemName: "arrow.up.right")
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .font(.rapid(size: 9, weight: .semibold))
                                     .accessibilityHidden(true)
                             }
                             .foregroundStyle(RapidTheme.linkLabel)

@@ -27,7 +27,7 @@ struct PopupControlChrome: View {
                 .truncationMode(.middle)
             Spacer(minLength: RapidTheme.Space.sm)
             Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.rapid(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
         }

@@ -29,7 +29,7 @@ struct BrandIcon: View {
             .frame(width: size, height: size)
             .overlay(
                 Text(monogram)
-                    .font(.system(size: size * 0.37, weight: .heavy, design: .rounded))
+                    .font(.rapid(size: size * 0.37, weight: .heavy, design: .rounded))
                     .foregroundStyle(.white)
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)

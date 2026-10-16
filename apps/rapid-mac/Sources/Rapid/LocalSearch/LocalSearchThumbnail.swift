@@ -175,7 +175,7 @@ struct LocalSearchThumbnail: View {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
                 Image(systemName: result.kind == .video ? "video" : "photo")
-                    .font(.title2).foregroundStyle(.secondary)
+                    .font(.rapid(.title2)).foregroundStyle(.secondary)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 6))

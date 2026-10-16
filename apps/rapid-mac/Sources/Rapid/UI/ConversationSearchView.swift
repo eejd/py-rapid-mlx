@@ -56,7 +56,7 @@ struct ConversationSearchView: View {
     private var searchHeader: some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
+                .font(.rapid(size: 15, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
@@ -116,7 +116,7 @@ struct ConversationSearchView: View {
         } label: {
             HStack(spacing: RapidTheme.Space.md) {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.rapid(size: 14, weight: .medium))
                     .frame(width: RapidTheme.Layout.iconSlot)
                 Text("New chat")
                     .font(RapidFont.bodyEmphasis)
@@ -148,7 +148,7 @@ struct ConversationSearchView: View {
         } label: {
             HStack(spacing: RapidTheme.Space.md) {
                 Image(systemName: conversation.isArchived ? "archivebox" : "bubble.left")
-                    .font(.system(size: 13, weight: .regular))
+                    .font(.rapid(size: 13, weight: .regular))
                     .foregroundStyle(.secondary)
                     .frame(width: RapidTheme.Layout.iconSlot)
                 Text(conversation.title)
@@ -158,7 +158,7 @@ struct ConversationSearchView: View {
                 Spacer(minLength: RapidTheme.Space.sm)
                 if conversation.isPinned {
                     Image(systemName: "pin.fill")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.rapid(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityLabel("Pinned")
                 }
@@ -201,7 +201,7 @@ struct ConversationSearchView: View {
     private func emptyState(title: LocalizedStringKey, symbol: String) -> some View {
         VStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: symbol)
-                .font(.system(size: 22, weight: .regular))
+                .font(.rapid(size: 22, weight: .regular))
                 .foregroundStyle(.secondary)
             Text(title)
                 .font(RapidFont.body)

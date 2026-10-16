@@ -48,7 +48,7 @@ struct ShareComputeRewardSessionStrip: View {
                 stageView(stage)
                 if index < Stage.allCases.count - 1 {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.rapid(size: 10, weight: .medium))
                         .foregroundStyle(RapidTheme.textTertiary)
                         .accessibilityHidden(true)
                 }
@@ -93,11 +93,11 @@ struct ShareComputeRewardSessionStrip: View {
             Group {
                 if done {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.rapid(size: 10, weight: .bold))
                         .foregroundStyle(RapidTheme.surfaceRaised)
                 } else {
                     Text("\(stage.rawValue + 1)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.rapid(size: 10, weight: .bold, design: .monospaced))
                         .foregroundStyle(
                             isActive ? RapidTheme.onBrandPrimary : RapidTheme.brandPrimaryInk
                         )
@@ -115,7 +115,7 @@ struct ShareComputeRewardSessionStrip: View {
             }
             if !isNarrow || isActive {
                 Text(stage.title(isComplete: done))
-                    .font(.system(size: 13, weight: isActive ? .bold : .regular))
+                    .font(.rapid(size: 13, weight: isActive ? .bold : .regular))
                     .foregroundStyle(stageInk(done: done, isActive: isActive))
                     .lineLimit(1)
             }
@@ -171,11 +171,11 @@ struct ShareComputePreparingView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ShareComputeEyebrow(text: String(localized: "Preparing this Mac"), size: 11)
                     Text("Starting the shared model")
-                        .font(.system(size: isNarrow ? 21 : 25, weight: .bold))
+                        .font(.rapid(size: isNarrow ? 21 : 25, weight: .bold))
                         .foregroundStyle(RapidTheme.bandInk)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(modelTitle)
-                        .font(.system(size: 12))
+                        .font(.rapid(size: 12))
                         .foregroundStyle(RapidTheme.bandInkSecondary)
                 }
                 Spacer(minLength: 0)
@@ -186,11 +186,11 @@ struct ShareComputePreparingView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 11))
+                    .font(.rapid(size: 11))
                     .foregroundStyle(RapidTheme.bandReady)
                     .accessibilityHidden(true)
                 Text("Stop takes this Mac offline and unloads the sharing model. Your local model stays unloaded.")
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -215,7 +215,7 @@ struct ShareComputePreparingView: View {
                     size: 11
                 )
                 Text(tracking.headline)
-                    .font(.system(size: isNarrow ? 22 : 27, weight: .bold))
+                    .font(.rapid(size: isNarrow ? 22 : 27, weight: .bold))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -223,11 +223,11 @@ struct ShareComputePreparingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if tracking.showsNoRewardCountedYet {
                     Text("No reward is counted yet")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.rapid(size: 12, weight: .bold))
                         .foregroundStyle(RapidTheme.onBrandPrimary)
                 }
                 Text(tracking.detail)
-                    .font(.system(size: 11))
+                    .font(.rapid(size: 11))
                     .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -305,19 +305,19 @@ struct ShareComputeStepRail: View {
             // in Dark, where ``statusReady`` resolves light.
             case .complete, .alreadyRegistered:
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.rapid(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
                     .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.bandReady, in: Circle())
             case .failed:
                 Image(systemName: "exclamationmark")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.rapid(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
                     .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.bandDestructive, in: Circle())
             case .inProgress:
                 Text("\(row.step.number)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.rapid(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(RapidTheme.brandPrimary)
                     .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.surfaceBand, in: Circle())
@@ -326,7 +326,7 @@ struct ShareComputeStepRail: View {
                     }
             case .waiting:
                 Text("\(row.step.number)")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.rapid(size: 10, design: .monospaced))
                     .foregroundStyle(RapidTheme.bandInkTertiary)
                     .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.surfaceBand, in: Circle())
@@ -341,14 +341,14 @@ struct ShareComputeStepRail: View {
     private func label(for row: ShareComputePreparationRow) -> some View {
         VStack(spacing: 3) {
             Text(row.step.title)
-                .font(.system(size: 11, weight: row.status == .waiting ? .regular : .bold))
+                .font(.rapid(size: 11, weight: row.status == .waiting ? .regular : .bold))
                 .foregroundStyle(
                     row.status == .waiting ? RapidTheme.bandInkTertiary : RapidTheme.bandInk
                 )
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Text(row.status.title)
-                .font(.system(size: 10))
+                .font(.rapid(size: 10))
                 .foregroundStyle(statusTint(row.status))
                 .multilineTextAlignment(.center)
         }
@@ -431,7 +431,7 @@ struct ShareComputeOnlineView: View {
                             ? String(localized: "Reconnecting to the pool")
                             : String(localized: "Your Mac is contributing")
                     )
-                    .font(.system(size: isNarrow ? 21 : 25, weight: .bold))
+                    .font(.rapid(size: isNarrow ? 21 : 25, weight: .bold))
                     .foregroundStyle(RapidTheme.bandInk)
                     .fixedSize(horizontal: false, vertical: true)
                 }
@@ -450,7 +450,7 @@ struct ShareComputeOnlineView: View {
             // colour on a caption and left the id with nothing to stand out
             // against, which is the opposite of what the tone is for.
             Text(lockLine)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.rapid(size: 11, design: .monospaced))
                 .foregroundStyle(RapidTheme.bandInkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -530,14 +530,14 @@ struct ShareComputeOnlineView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label.uppercased())
-                .font(.system(size: 11))
+                .font(.rapid(size: 11))
                 .tracking(0.5)
                 .foregroundStyle(RapidTheme.bandInkSecondary)
             Text(value)
                 .font(
                     isMonospaced
-                        ? .system(size: 28, weight: .bold, design: .monospaced)
-                        : .system(size: 15, weight: .bold)
+                        ? .rapid(size: 28, weight: .bold, design: .monospaced)
+                        : .rapid(size: 15, weight: .bold)
                 )
                 .monospacedDigit()
                 .foregroundStyle(tint)
@@ -552,7 +552,7 @@ struct ShareComputeOnlineView: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 9) {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.rapid(size: 12, weight: .bold))
                         .foregroundStyle(RapidTheme.onBrandPrimary)
                         .accessibilityHidden(true)
                     ShareComputeEyebrow(
@@ -562,7 +562,7 @@ struct ShareComputeOnlineView: View {
                     )
                 }
                 Text("Reward activity is managed in QuickSilver.")
-                    .font(.system(size: isNarrow ? 22 : 29, weight: .bold))
+                    .font(.rapid(size: isNarrow ? 22 : 29, weight: .bold))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -577,7 +577,7 @@ struct ShareComputeOnlineView: View {
                         : String(localized: "Provider account not reported")
                 )
             )
-            .font(.system(size: 11))
+            .font(.rapid(size: 11))
             .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -592,7 +592,7 @@ struct ShareComputeOnlineView: View {
     private var payoutCallout: some View {
         HStack(alignment: .top, spacing: 11) {
             Image(systemName: payoutAccountConnected ? "dollarsign.circle.fill" : "questionmark.circle")
-                .font(.system(size: 20))
+                .font(.rapid(size: 20))
                 .foregroundStyle(RapidTheme.onBrandPrimary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -601,10 +601,10 @@ struct ShareComputeOnlineView: View {
                         ? String(localized: "Payout account connected")
                         : String(localized: "Payout account not reported")
                 )
-                .font(.system(size: 13, weight: .bold))
+                .font(.rapid(size: 13, weight: .bold))
                 .foregroundStyle(RapidTheme.onBrandPrimary)
                 Text("Final usage and rewards appear in QuickSilver.")
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -687,24 +687,24 @@ struct ShareComputeSessionCompleteView: View {
                         size: 11
                     )
                     Text("Your contribution session is complete")
-                        .font(.system(size: isNarrow ? 20 : 24, weight: .bold))
+                        .font(.rapid(size: isNarrow ? 20 : 24, weight: .bold))
                         .foregroundStyle(RapidTheme.onBrandPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Text(Self.timestamp(receipt.endedAt))
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.rapid(size: 11, design: .monospaced))
                     .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Text("Complete")
-                    .font(.system(size: isNarrow ? 40 : 60, weight: .heavy))
+                    .font(.rapid(size: isNarrow ? 40 : 60, weight: .heavy))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                 Text("reward activity continues in QuickSilver")
-                    .font(.system(size: 13))
+                    .font(.rapid(size: 13))
                     .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -742,14 +742,14 @@ struct ShareComputeSessionCompleteView: View {
     private func fact(_ label: String, _ value: String, isMonospaced: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label.uppercased())
-                .font(.system(size: 11))
+                .font(.rapid(size: 11))
                 .tracking(0.5)
                 .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
             Text(value)
                 .font(
                     isMonospaced
-                        ? .system(size: 16, weight: .bold, design: .monospaced)
-                        : .system(size: 14, weight: .bold)
+                        ? .rapid(size: 16, weight: .bold, design: .monospaced)
+                        : .rapid(size: 14, weight: .bold)
                 )
                 .foregroundStyle(RapidTheme.onBrandPrimary)
         }
@@ -763,7 +763,7 @@ struct ShareComputeSessionCompleteView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 9) {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.rapid(size: 12, weight: .bold))
                         .foregroundStyle(RapidTheme.textPrimary)
                         .accessibilityHidden(true)
                     ShareComputeEyebrow(
@@ -773,14 +773,14 @@ struct ShareComputeSessionCompleteView: View {
                     )
                 }
                 Text("QuickSilver payout account")
-                    .font(.system(size: isNarrow ? 20 : 25, weight: .bold))
+                    .font(.rapid(size: isNarrow ? 20 : 25, weight: .bold))
                     .foregroundStyle(RapidTheme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(receipt.rewardStatus.detailTitle)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.rapid(size: 13, weight: .semibold))
                     .foregroundStyle(RapidTheme.textPrimary)
                 Text("Payment timing and destination remain managed by the provider.")
-                    .font(.system(size: 13))
+                    .font(.rapid(size: 13))
                     .foregroundStyle(RapidTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -789,10 +789,10 @@ struct ShareComputeSessionCompleteView: View {
                 Button(action: onViewReward) {
                     HStack(spacing: 6) {
                         Text("View reward in QuickSilver")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.rapid(size: 13, weight: .bold))
                             .foregroundStyle(RapidTheme.surfaceRaised)
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.rapid(size: 11, weight: .bold))
                             .foregroundStyle(RapidTheme.brandPrimary)
                             .accessibilityHidden(true)
                     }
@@ -809,7 +809,7 @@ struct ShareComputeSessionCompleteView: View {
 
                 Button(action: onShareAgain) {
                     Text("Share again")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.rapid(size: 13, weight: .semibold))
                         .foregroundStyle(RapidTheme.linkLabel)
                         .frame(maxWidth: .infinity)
                         .frame(height: 34)

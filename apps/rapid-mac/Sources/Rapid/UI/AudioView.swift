@@ -357,7 +357,7 @@ struct AudioView: View {
                     Slider(value: $viewModel.speed, in: 0.5...2, step: 0.05)
                         .accessibilityIdentifier("Audio.Speech.Speed")
                     Text(viewModel.speed.formatted(.number.precision(.fractionLength(2))) + "x")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.rapid(size: 12, weight: .medium, design: .monospaced))
                         .monospacedDigit()
                         .frame(width: 48, alignment: .trailing)
                 }
@@ -382,9 +382,9 @@ struct AudioView: View {
     ) -> some View {
         HStack(alignment: .top, spacing: RapidTheme.Space.md) {
             VStack(alignment: .leading, spacing: RapidTheme.Space.xxs) {
-                Text(label).font(.subheadline.weight(.medium))
+                Text(label).font(.rapid(.subheadline).weight(.medium))
                 Text(caption)
-                    .font(.caption)
+                    .font(.rapid(.caption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -397,7 +397,7 @@ struct AudioView: View {
     private func speechResult(_ audio: SynthesizedAudio) -> some View {
         HStack(spacing: RapidTheme.Space.md) {
             Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 28))
+                .font(.rapid(size: 28))
                 .foregroundStyle(RapidTheme.brandPrimaryDeep)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: RapidTheme.Space.xs) {
@@ -749,7 +749,7 @@ private struct VoiceOptionRow: View {
             Button(action: select) {
                 HStack(spacing: RapidTheme.Space.sm) {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.rapid(size: 10, weight: .semibold))
                         .opacity(isSelected ? 1 : 0)
                         .frame(width: 14)
                     Text(voice)
