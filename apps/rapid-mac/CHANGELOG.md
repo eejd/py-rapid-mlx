@@ -17,10 +17,36 @@ can actually understand.
 
 ## [Unreleased]
 
-### Fixed
+## [0.16.2] — 2026-10-16
 
+Rapid-MLX 0.16.2 adds new text-model support and experimental Local Search, and improves concurrent serving, cache reuse, agent setup, and Desktop Share Compute.
+
+### Highlights
+
+- **NVIDIA Nemotron 3.5 Bolt 74B-A9B text support**: run local text chat, reasoning, and tool calling with automatic reasoning and tool-call configuration. Choose `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-3bit` (31.7 GB download, 48 GB+ Macs) or `rapid-mlx/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-MLX-4bit` (43.3 GB download, 64 GB+ Macs). Start either with `rapid-mlx serve <repo>`. Supports text only; image/video input and speculative drafter support are unavailable. Download size differs from runtime memory; memory needs vary with context length and concurrent requests. ([#4679](https://github.com/raullenchai/Rapid-MLX/pull/4679))
+- **NVIDIA Nemotron 3.5 Super VL 120B-A12B text support**: run the 120B model for local text chat, reasoning, and tool calling. Choose `rapid-mlx/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-MLX-4bit` (69.5 GB download, 128 GB+ Macs) or `rapid-mlx/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-MLX-3bit` (mixed precision, 42.8 GB download, targets 64 GB Macs at short context). Start either with `rapid-mlx serve <repo>`. Supports text only; image input and speculative decoding are unavailable. ([#4695](https://github.com/raullenchai/Rapid-MLX/pull/4695))
+- Experimental Local Search is off by default. Opt in through Settings → Experimental, choose folders, and search documents, images, and sampled video frames by filename, exact text, or meaning, then open, reveal, or Quick Look results. Meaning-based search requires the search model; keyword results and clearer availability guidance remain when it cannot load.
+- **Ternary Bonsai 2 small models**: new aliases `bonsai2-2b-2bit`, `bonsai2-4b-2bit`, and `bonsai2-9b-2bit` (0.43 / 0.95 / 2.0 GB) bring the 2-bit Hadamard format to small-memory Macs with image input, tool calling, and reasoning. ([#4703](https://github.com/raullenchai/Rapid-MLX/pull/4703))
+- **Safer Local Search startup and shutdown**: enabling Search on non-loopback or inherited listeners requires an API key before model preflight or indexing begins. Disabling Search stops background indexing without deleting the index. ([#4671](https://github.com/raullenchai/Rapid-MLX/pull/4671))
+- **Better Local Search result ordering**: meaning-based results receive a bounded ranking boost when the file contains query terms that are rare across indexed files, helping distinguish similar documents and find matches deep inside long files. Filename and exact-text search priorities stay unchanged. ([#4638](https://github.com/raullenchai/Rapid-MLX/pull/4638))
+- Qualified Qwen3.5 4B and 9B vision-enabled servers batch concurrent text requests while preserving image routing; eligible long text prefills yield between chunks so other requests can advance. Benefits depend on the model, hardware, and workload.
+- **Better warm-session cache reuse**: the qualified experimental Qwen27 text runtime retains prompt prefixes at message boundaries. ([#4626](https://github.com/raullenchai/Rapid-MLX/pull/4626))
+- **Steady concurrent Qwen3.6 27B text serving**: after a burst of concurrent text requests, a larger later burst no longer fails with HTTP 503 and leaves the server failing every larger batch. ([#4722](https://github.com/raullenchai/Rapid-MLX/pull/4722))
+- **PFlash threshold basis**: opt-in `--pflash-threshold-basis uncached` lets `--pflash auto` compare only uncached tokens against its threshold with the memory-aware prefix cache, preserving full context and cache reuse when the remainder is below the threshold. `total` remains the default; cold prompts above the threshold still compress, and block-aware/paged caches retain total-token semantics. ([#4684](https://github.com/raullenchai/Rapid-MLX/pull/4684))
+- **Safer speculative decoding**: automatic MTP falls back to ordinary decoding for unqualified targets, and grammar-constrained requests retain ordinary constrained decoding. ([#4569](https://github.com/raullenchai/Rapid-MLX/pull/4569), [#4615](https://github.com/raullenchai/Rapid-MLX/pull/4615))
+- **Configurable continuous MTP depth**: continuous MTP honors `num_speculative_tokens` values of 1 or 2. Values of 3 or higher clamp to 2 with an explicit warning once per server process after admission; the default remains 2. Cohorts reduced to depth 1 under memory pressure can continue at that depth. ([#4683](https://github.com/raullenchai/Rapid-MLX/pull/4683))
+- **Clean forced tool-call responses**: a truncated terminal tool-call header no longer leaks into visible content or reasoning in streamed or buffered forced-call responses, and a forced streamed call that runs out of tokens before any call is produced now ends with an explicit error, matching the buffered response, instead of an empty stream. Narration and valid structured tool calls are preserved. ([#4678](https://github.com/raullenchai/Rapid-MLX/pull/4678), [#4710](https://github.com/raullenchai/Rapid-MLX/pull/4710))
+- **Truthful finish reason for truncated tool calls**: when `max_tokens` ends generation in the middle of a tool call, Chat Completions reports `finish_reason: "length"`, Responses reports `incomplete`, and Messages reports `stop_reason: "max_tokens"`, instead of signalling a completed call whose arguments may be incomplete. ([#4715](https://github.com/raullenchai/Rapid-MLX/pull/4715))
+- **Clearer replies after unavailable tool calls**: when a model calls a tool the request did not declare and removing that call leaves no visible reply or valid tool call, chat completions explain that the tool is unavailable instead of returning an empty reply. Applies to streamed and buffered responses. ([#4680](https://github.com/raullenchai/Rapid-MLX/pull/4680), [#4710](https://github.com/raullenchai/Rapid-MLX/pull/4710))
+- **Less unused Gemma 4 prefill output work**: eligible ordinary text/image prefills compute only the final output position while retaining the full KV cache. On Apple M5 Max with 36 GiB, Gemma 4 E2B 4-bit warm HTTP time to first content token fell 47.0% for 220-token text (50.65 → 26.84 ms), 61.3% for 796-token text (121.57 → 47.07 ms), and 24.6% for the tested 280-token image/text request (112.73 → 85.04 ms), with caches and speculation disabled. Already-chunked requests were neutral; results depend on model, hardware, and workload. ([#4658](https://github.com/raullenchai/Rapid-MLX/pull/4658))
+- Idle unload/reload cycles release retained host-memory graphs and reuse text-stream workers. Optional Qwen3.5 fused decoding checks the installed runtime and falls back safely when qualification fails.
 - Invalid image settings report the model’s validation message as HTTP 400. Asset-independent parameter checks (steps, dimensions, guidance, negative prompt, character limits, and input-image rules) reject requests before any download or load. HiDream’s token limit is only evaluated once the model’s assets are available and also returns HTTP 400; a cold request downloads and loads the model first.
-
+- Model pulls retry transient failures, local path and checkpoint errors explain recovery, and missing serving runtimes offer repair through the active installer where supported.
+- Additional local coding-agent integrations preserve existing settings and isolate integration checks. Interactive chat-server startup shows working request and setup commands without exposing the server key.
+- **Working speech speed control**: the Text-to-Speech Speed setting (`speed` on `/v1/audio/speech`) now changes playback duration for Qwen3-TTS, Chatterbox, and IndexTTS while preserving pitch; models with native speed control keep using it. ([#4686](https://github.com/raullenchai/Rapid-MLX/pull/4686))
+- **Readable Desktop text with a Text size setting**: Desktop interface text now renders at 12 pt or larger, and Settings → Appearance → Text size enlarges interface text up to 1.5×, including chat messages, code blocks, the message composer, and the model list. Changes apply immediately and persist across relaunches. ([#4707](https://github.com/raullenchai/Rapid-MLX/pull/4707))
+- **Safer plain sharing**: plain shares prove their generated share key during tunnel registration, keys stay out of connection URLs and protocol frames, and connection diagnostics redact keys. Clients older than 0.16.2 cannot register plain shares with the updated relay. ([#4698](https://github.com/raullenchai/Rapid-MLX/pull/4698))
+- Share Compute remembers the provider account in Keychain and reuses its registered node. Qwen27 sharing defaults to the qualified experimental text runtime with in-memory prefix reuse and a 48 GiB Desktop memory floor; Stop leaves sharing and personal models unloaded.
 
 ## [0.16.1] — 2026-10-12
 
@@ -4292,7 +4318,8 @@ Older versions: see the
 [GitHub Releases page](https://github.com/machinefi/rapid-desktop/releases)
 for auto-generated notes against earlier tags.
 
-[Unreleased]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.1...HEAD
+[Unreleased]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.2...HEAD
+[0.16.2]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.1...rapid-mac-v0.16.2
 [0.16.1]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.0...rapid-mac-v0.16.1
 [0.15.7]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.15.6...rapid-mac-v0.15.7
 [0.15.6]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.15.5...rapid-mac-v0.15.6
