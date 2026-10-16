@@ -12,6 +12,7 @@ import concurrent.futures
 import functools
 import importlib.metadata
 import json
+import logging
 import platform
 import sys
 import threading
@@ -29,6 +30,8 @@ from .tensorfold_runtime import (
     SUPPORTED_RUNTIME_URL,
     SUPPORTED_VERSION,
 )
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_MODEL_TYPE = "qwen3_5"
 SUPPORTED_TARGET = "Vontra/Qwen3.8-27B-MLX-4bit"
@@ -437,11 +440,17 @@ class TensorFoldQwen27Backend:
                 scheduler.stop()
         if self._owns_executor:
             self._executor.shutdown(wait=True)
-            # All provider pulls have exited; suspended iterators can now close
-            # safely too, without leaving jobs/model references between pulls.
-            with self._lock:
-                iterators = list(self._provider_iterators)
-                self._provider_iterators.clear()
-            for iterator in iterators:
+        # Finalize suspended providers even when the executor is borrowed.
+        # A borrowed executor may still be pulling a running generator; its
+        # close raises, but cancellation lets its own finally clean up later.
+        with self._lock:
+            iterators = list(self._provider_iterators)
+            self._provider_iterators.clear()
+        for iterator in iterators:
+            try:
                 iterator.close()
+            except Exception:
+                logger.warning(
+                    "Failed to close TensorFold provider iterator", exc_info=True
+                )
         self._app = None

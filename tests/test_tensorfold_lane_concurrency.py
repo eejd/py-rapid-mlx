@@ -371,7 +371,7 @@ def test_execution_policy_cannot_unlock_default_gpu_callbacks():
 
 
 @pytest.fixture
-def stalled_provider(monkeypatch):
+def stalled_provider(monkeypatch, request):
     """A scheduler stop leaves jobs without terminal chunks, as in 0.6.6."""
     import queue
     import sys
@@ -433,7 +433,10 @@ def stalled_provider(monkeypatch):
         _resolve_sampling=lambda *_: None,
         scheduler=SimpleNamespace(submit=submit, stop=stopped.set),
     )
-    backend = TensorFoldQwen27Backend(app)
+    executor = (
+        ThreadPoolExecutor(max_workers=2) if getattr(request, "param", False) else None
+    )
+    backend = TensorFoldQwen27Backend(app, executor=executor)
     # Set the forthcoming opt-in explicitly so the same test reproduces the old bug.
     provider = TensorFoldRequestProvider(backend)
     provider._close_cancellable = True
@@ -676,6 +679,9 @@ def test_close_and_provider_registration_are_atomic(stalled_provider):
         thread.join(2)
 
 
+@pytest.mark.parametrize(
+    "stalled_provider", [False, True], indirect=True, ids=["owned", "injected"]
+)
 def test_close_finalizes_provider_suspended_between_stream_pulls(
     stalled_provider, monkeypatch
 ):
@@ -699,11 +705,91 @@ def test_close_finalizes_provider_suspended_between_stream_pulls(
     try:
         assert not backend._active, "suspended provider keeps its job/model after close"
         assert not backend._provider_iterators
+        assert backend._app is None
+        if not backend._owns_executor:
+            assert (
+                backend._executor.submit(lambda: "usable").result(timeout=1) == "usable"
+            )
         import inspect
 
         assert inspect.getgeneratorstate(iterator) == inspect.GEN_CLOSED
     finally:
         iterator.close()
+
+
+def test_close_continues_after_tracked_iterator_cleanup_failure(
+    stalled_provider, caplog
+):
+    backend, provider, _, stopped, _ = stalled_provider
+
+    class Inner:
+        fail = False
+        closed = False
+
+        def close(self):
+            self.closed = True
+            if self.fail:
+                raise OSError("audit write failed")
+
+    inners = [Inner() for _ in range(3)]
+    iterators = {provider._track_iterator(inner): inner for inner in inners}
+    # Fail the first close in the registry's iteration order, so continuing
+    # cleanup is required to finalize either of the remaining iterators.
+    iterators[next(iter(backend._provider_iterators))].fail = True
+    try:
+        backend.close()
+        assert all(inner.closed for inner in inners)
+        assert not backend._provider_iterators
+        assert backend._app is None
+        assert stopped.is_set()
+        assert "audit write failed" in caplog.text
+    finally:
+        for iterator in iterators:
+            iterator.close()
+
+
+@pytest.mark.parametrize("stalled_provider", [True], indirect=True)
+def test_close_with_injected_executor_leaves_running_iterator_cleanup_to_pull(
+    stalled_provider,
+):
+    import inspect
+    import queue
+
+    backend, provider, submitted, stopped, jobs = stalled_provider
+    entered, release = Event(), Event()
+
+    def get(**_kwargs):
+        entered.set()
+        assert release.wait(3)
+        raise queue.Empty
+
+    def submit(job):
+        job.chunks.get = get
+        jobs.append(job)
+        submitted.set()
+
+    backend._app.scheduler.submit = submit
+    iterator = provider._outputs("prompt")
+    future = backend._executor.submit(next, iterator)
+    try:
+        assert entered.wait(2)
+        backend.close()
+        assert stopped.is_set()
+        assert jobs[0].cancellation.event.is_set()
+        assert backend._app is None
+        assert not backend._provider_iterators
+        assert not future.done()
+    finally:
+        release.set()
+        with pytest.raises(RuntimeError, match="cancelled"):
+            future.result(timeout=1)
+    assert inspect.getgeneratorstate(iterator) == inspect.GEN_CLOSED
+    assert not backend._active
+    assert not backend._provider_iterators
+    with pytest.raises(RuntimeError, match="closed"):
+        provider._outputs("after close")
+    assert not backend._provider_iterators
+    assert backend._executor.submit(lambda: "usable").result(timeout=1) == "usable"
 
 
 def test_client_stream_close_finalizes_inner_tracked_job(stalled_provider, monkeypatch):
