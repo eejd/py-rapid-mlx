@@ -455,6 +455,50 @@ class TestAdvisoryContract:
         # The finding must flag that some tests failed (honest advisory signal).
         assert res.findings and "some unit tests failed" in res.findings[0]
 
+    @pytest.mark.parametrize(
+        "diagnostic",
+        [
+            "[gw0] node down: Not properly terminated",
+            "replacing crashed worker gw0",
+            "worker 'gw12' crashed while running 'tests/test_example.py::test_one'",
+            "worker gw0 crashed and worker restarting disabled",
+            "maximum crashed workers reached: 4",
+            "The following workers failed to return coverage data, ensure that "
+            "pytest-cov is installed on these workers.",
+        ],
+    )
+    @pytest.mark.parametrize("stream", ["stdout", "stderr"])
+    @pytest.mark.parametrize("write_succeeds", [False, True])
+    def test_skip_when_worker_coverage_is_incomplete(
+        self, ctx_factory, monkeypatch, diagnostic, stream, write_succeeds
+    ):
+        _both_tools_present(monkeypatch)
+        ctx = ctx_factory(["rapid_mlx/quantized_batch_cache.py"])
+        if not write_succeeds:
+            monkeypatch.setattr(
+                "scripts.pr_validate.steps.diff_coverage._safe_write",
+                lambda *a, **k: False,
+            )
+
+        def fake_run(cmd, *a, **k):
+            assert "pytest" in cmd  # never proceed to diff-cover
+            Path(_xml_target(cmd)).write_text("<coverage/>")
+            output = {"stdout": "", "stderr": "", stream: diagnostic}
+            return subprocess.CompletedProcess(cmd, 1, **output)
+
+        monkeypatch.setattr(
+            "scripts.pr_validate.steps.diff_coverage._run_group_bounded", fake_run
+        )
+        res = DiffCoverageStep().run(ctx)
+        assert res.status == "skip"
+        assert "coverage may be incomplete" in res.summary
+        log_path = ctx.artifact_path("diff-coverage.log")
+        if write_succeeds:
+            assert res.artifacts == [str(log_path)]
+            assert diagnostic in log_path.read_text()
+        else:
+            assert res.artifacts == []
+
     @pytest.mark.parametrize("exit_code", [2, 3, 4, 5])
     def test_skip_when_suite_interrupted_or_errored(
         self, ctx_factory, monkeypatch, exit_code

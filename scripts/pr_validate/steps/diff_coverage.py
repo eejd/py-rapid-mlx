@@ -67,8 +67,9 @@ _PYTEST_TIMEOUT_S = 1800
 _DIFF_COVER_TIMEOUT_S = 180
 
 # pytest exit codes that still yield a trustworthy coverage.xml. 0 = all
-# passed; 1 = tests ran but some FAILED — coverage is a complete record of
-# the lines that executed either way (pytest-cov writes on session finish
+# passed; 1 = tests ran but some FAILED — absent worker data loss (checked
+# below), coverage is a complete record of the lines that executed either
+# way (pytest-cov writes on session finish
 # regardless of outcomes). 2 = interrupted, 3 = internal error, 4 = usage
 # error, 5 = no tests collected — those leave no dependable coverage, so we
 # skip on them. Accepting exit 1 is deliberate: an ADVISORY baseline
@@ -241,8 +242,8 @@ class DiffCoverageStep(Step):
         # 3. Coverage trust model (see ``_PYTEST_COVERAGE_VALID_EXITS``). We
         #    accept exit 0 (all passed) and exit 1 (some tests failed but the
         #    run completed and coverage.xml is a valid record of executed
-        #    lines) and skip only on 2-5 (interrupted / internal error /
-        #    usage error / no tests) — those leave no dependable coverage. A
+        #    lines, unless worker data was lost) and skip on 2-5 (interrupted /
+        #    internal error / usage error / no tests) — no dependable coverage. A
         #    failing test that WAS meant to exercise the changed lines simply
         #    leaves them uncovered, which is honest advisory signal, not
         #    contamination; the caveat below flags that the % may under-count.
@@ -255,6 +256,21 @@ class DiffCoverageStep(Step):
                 log_path if wrote else None,
             )
         suite_had_failures = pytest_proc.returncode == 1
+
+        # xdist can replace a crashed worker and exit 1 while pytest-cov
+        # still writes XML from surviving workers. That data is incomplete.
+        if re.search(
+            r"node down|replacing crashed worker|worker '?gw\d+'? crashed|"
+            r"maximum crashed workers reached|"
+            r"The following workers failed to return coverage data",
+            (pytest_proc.stdout or "") + "\n" + (pytest_proc.stderr or ""),
+        ):
+            wrote = _safe_write(log_path, _pytest_dump(pytest_cmd, pytest_proc))
+            return self._skip(
+                "advisory coverage skipped (xdist worker crash or missing "
+                "worker coverage data — coverage may be incomplete)",
+                log_path if wrote else None,
+            )
 
         if not xml_path.exists():
             wrote = _safe_write(log_path, _pytest_dump(pytest_cmd, pytest_proc))
