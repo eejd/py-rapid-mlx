@@ -801,6 +801,7 @@ def test_mtp_shared_cache_symlink_containment(tmp_path, monkeypatch):
 @pytest.mark.parametrize("stop", [False, True])
 def test_mtp_benchmark_harness_tiny(tmp_path, monkeypatch, stop):
     import sys
+    from types import SimpleNamespace
 
     from scripts import benchmark_nemotron_mtp as bench
 
@@ -819,6 +820,11 @@ def test_mtp_benchmark_harness_tiny(tmp_path, monkeypatch, stop):
 
     monkeypatch.setattr(
         bench, "load_model_with_fallback", lambda path: (model, Tokenizer())
+    )
+    monkeypatch.setattr(
+        bench,
+        "subprocess",
+        SimpleNamespace(check_output=lambda *a, **kw: "tiny-test-commit\n"),
     )
     output = tmp_path / "results.json"
     monkeypatch.setattr(
