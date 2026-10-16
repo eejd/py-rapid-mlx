@@ -13,7 +13,7 @@
 
 - **Concurrent long prompts queue when memory is tight**: prefill runs in memory-fitting groups so bursts no longer abort with out-of-memory errors.
 
-- **Generation errors release retired batch memory**: failed generations now discard request caches, queues, checkpoints, and decode hooks so later requests can recover without restarting the server.
+- **The server recovers from an out-of-memory error without a restart**: after a batch fails with insufficient memory, the memory it held is released, so later requests succeed again. Previously `/v1/cache/clear` could not free it and only a restart restored capacity.
 
 - **Fresh installs no longer break image generation**: a new release of the imaging library (Pillow 13.0.0) fails to import on supported Python versions, so a fresh install could pull it and the image runtime would fail to load. Rapid-MLX now keeps Pillow below 13 until a compatible release is available.
 - **Logprobs requests work with MTP speculative decoding**: requests for token log probabilities no longer fail with an HTTP 500 or crash the server when MTP speculative decoding is active.

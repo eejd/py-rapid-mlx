@@ -6073,83 +6073,101 @@ class Scheduler:
         """Retire generator ownership on the MLX worker, even after failed close."""
         generator = self.batch_generator
         self.batch_generator = None
-        # This diagnostic identity is an external root: its patched _step
-        # closes over the MTP hook, which in turn owns the BatchGenerator.
-        self._recurrent_output_chain_batch = None
-        self._recurrent_output_chain_failures = 0
-        self._recurrent_chain_depth = 0
-        self._recurrent_prev_running = 0
-        # Checkpoints are keyed by this generator's UIDs, including during
-        # cache-corruption retries and ordinary sampler-driven replacement.
-        getattr(self, "_hybrid_checkpoints", {}).clear()
-        if generator is not None:
-            try:
-                if hasattr(generator, "close"):
-                    generator.close()
-            except Exception as e:
-                logger.debug(f"Error closing BatchGenerator: {e}")
-            finally:
-                # Upstream close synchronizes/restores wired_limit only. It
-                # does not discard failed lazy graphs or request-local hooks.
-                for name in (
-                    "_continuous_mtp_teardown",
-                    "_mtp_vendored_teardown",
-                    "_dspark_teardown",
-                    "_suffix_teardown",
-                    "_compiled_decode_teardown",
-                ):
-                    teardown = vars(generator).pop(name, None)
-                    if teardown is not None:
-                        try:
-                            teardown()
-                        except Exception as exc:
-                            logger.debug("Error retiring generator hook: %s", exc)
-                for name in ("_unprocessed_sequences", "_currently_processing"):
-                    queue = vars(generator).get(name)
-                    if queue is not None:
-                        queue.clear()
-                for name in ("_prompt_batch", "_generation_batch", "active_batch"):
-                    batch = vars(generator).get(name)
-                    if batch is None:
-                        continue
-                    # Replace containers, never mutate shared cache layers:
-                    # valid prefix entries may still own those layers.
-                    for field in (
-                        "prompt_cache",
-                        "tokens",
-                        "uids",
-                        "samplers",
-                        "logits_processors",
-                        "state_machines",
-                        "max_tokens",
-                        "_current_logprobs",
-                        "_next_logprobs",
-                        "_token_context",
-                        "_num_tokens",
-                        "_matcher_states",
+        try:
+            if generator is not None:
+                try:
+                    if hasattr(generator, "close"):
+                        generator.close()
+                except Exception as e:
+                    logger.debug(f"Error closing BatchGenerator: {e}")
+                finally:
+                    state = getattr(generator, "__dict__", None) or {}
+                    # Upstream close synchronizes/restores wired_limit only. It
+                    # does not discard failed lazy graphs or request-local hooks.
+                    for name in (
+                        "_continuous_mtp_teardown",
+                        "_mtp_vendored_teardown",
+                        "_dspark_teardown",
+                        "_suffix_teardown",
+                        "_compiled_decode_teardown",
                     ):
-                        if field in vars(batch):
-                            setattr(batch, field, [])
-                    for field in ("_current_tokens", "_next_tokens"):
-                        if field in vars(batch):
-                            setattr(batch, field, None)
-                    for field in ("_step", "next", "filter"):
-                        vars(batch).pop(field, None)
-                    setattr(generator, name, None)
-                for name in (
-                    "next",
-                    "remove",
-                    "close",
-                    "_partial",
-                    "_mtp_vendored_requeue_owner",
-                    "_mtp_vendored_at_token_boundary",
-                    "_continuous_mtp_driver",
-                    "_continuous_mtp_removed_states",
-                ):
-                    vars(generator).pop(name, None)
-        getattr(self, "_admission_prefill_uids", set()).clear()
-        self.spec_decode_runtime_method = None
-        self.spec_decode_runtime_attempted = False
+                        teardown = state.pop(name, None)
+                        if teardown is not None:
+                            try:
+                                teardown()
+                            except Exception as exc:
+                                logger.debug("Error retiring generator hook: %s", exc)
+                    for name in ("_unprocessed_sequences", "_currently_processing"):
+                        queue = state.get(name)
+                        if queue is not None:
+                            try:
+                                queue.clear()
+                            except Exception as exc:
+                                logger.debug(
+                                    "Error clearing retired generator queue: %s", exc
+                                )
+                                state.pop(name, None)
+                    for name in ("_prompt_batch", "_generation_batch", "active_batch"):
+                        batch = state.get(name)
+                        if batch is None:
+                            continue
+                        try:
+                            batch_state = getattr(batch, "__dict__", None) or {}
+                            # Replace containers, never mutate shared cache layers:
+                            # valid prefix entries may still own those layers.
+                            for field in (
+                                "prompt_cache",
+                                "tokens",
+                                "uids",
+                                "samplers",
+                                "logits_processors",
+                                "state_machines",
+                                "max_tokens",
+                                "_current_logprobs",
+                                "_next_logprobs",
+                                "_token_context",
+                                "_num_tokens",
+                                "_matcher_states",
+                            ):
+                                if field in batch_state:
+                                    batch_state[field] = []
+                            for field in ("_current_tokens", "_next_tokens"):
+                                if field in batch_state:
+                                    batch_state[field] = None
+                            for field in ("_step", "next", "filter"):
+                                batch_state.pop(field, None)
+                        except Exception as exc:
+                            logger.debug(
+                                "Error clearing retired generator batch: %s", exc
+                            )
+                        finally:
+                            state[name] = None
+                    for name in (
+                        "next",
+                        "remove",
+                        "close",
+                        "_partial",
+                        "_mtp_vendored_requeue_owner",
+                        "_mtp_vendored_at_token_boundary",
+                        "_continuous_mtp_driver",
+                        "_continuous_mtp_removed_states",
+                    ):
+                        state.pop(name, None)
+        except Exception as exc:
+            logger.debug("Error retiring BatchGenerator state: %s", exc)
+        finally:
+            # This diagnostic identity is an external root: its patched _step
+            # closes over the MTP hook, which in turn owns the BatchGenerator.
+            self._recurrent_output_chain_batch = None
+            self._recurrent_output_chain_failures = 0
+            self._recurrent_chain_depth = 0
+            self._recurrent_prev_running = 0
+            # Checkpoints are keyed by this generator's UIDs, including during
+            # cache-corruption retries and ordinary sampler-driven replacement.
+            getattr(self, "_hybrid_checkpoints", {}).clear()
+            getattr(self, "_admission_prefill_uids", set()).clear()
+            self.spec_decode_runtime_method = None
+            self.spec_decode_runtime_attempted = False
 
     def _ensure_batch_generator(self, sampling_params: SamplingParams) -> bool:
         """Ensure BatchGenerator exists with compatible stop token configuration.

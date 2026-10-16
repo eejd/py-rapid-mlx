@@ -387,7 +387,13 @@ def test_retired_generator_releases_graph_without_gc(monkeypatch, close_raises):
     assert scheduler.batch_generator.next() == ([], [])
 
 
-def test_generation_recovery_releases_request_and_checkpoint_ownership(monkeypatch):
+@pytest.mark.parametrize(
+    "generator_kind",
+    ["regular", "slotted", "slotted_batch", "unreadable_generator", "unreadable_batch"],
+)
+def test_generation_recovery_releases_request_and_checkpoint_ownership(
+    monkeypatch, generator_kind
+):
     import weakref
 
     from rapid_mlx.request import Request, RequestStatus
@@ -406,7 +412,42 @@ def test_generation_recovery_releases_request_and_checkpoint_ownership(monkeypat
     scheduler.request_id_to_uid[request.request_id] = 0
     scheduler.uid_to_request_id[0] = request.request_id
     scheduler._hybrid_checkpoints[0] = [cache]
-    scheduler.batch_generator = _RetiredGenerator(cache)
+
+    class SlottedGenerator:
+        __slots__ = ()
+
+        def close(self):
+            pass
+
+    class SlottedBatch:
+        __slots__ = ("prompt_cache",)
+
+        def __init__(self, cache):
+            self.prompt_cache = [cache]
+
+    class UnreadableGenerator(SlottedGenerator):
+        @property
+        def __dict__(self):
+            raise RuntimeError("instance state unavailable")
+
+    class UnreadableBatch:
+        @property
+        def __dict__(self):
+            raise RuntimeError("batch state unavailable")
+
+    retired = _RetiredGenerator(cache)
+    if generator_kind == "slotted":
+        retired = SlottedGenerator()
+    elif generator_kind == "slotted_batch":
+        retired._prompt_batch = SlottedBatch(cache)
+    elif generator_kind == "unreadable_generator":
+        retired = UnreadableGenerator()
+    elif generator_kind == "unreadable_batch":
+        retired._prompt_batch = UnreadableBatch()
+    scheduler.batch_generator = retired
+    scheduler._admission_prefill_uids.add(0)
+    scheduler.spec_decode_runtime_method = "mtp"
+    scheduler.spec_decode_runtime_attempted = True
     scheduler.block_aware_cache = MagicMock()
     prefix = MagicMock()
     scheduler.memory_aware_cache = prefix
@@ -424,6 +465,9 @@ def test_generation_recovery_releases_request_and_checkpoint_ownership(monkeypat
     assert not scheduler._hybrid_checkpoints
     assert not scheduler.request_id_to_uid
     assert not scheduler.uid_to_request_id
+    assert not scheduler._admission_prefill_uids
+    assert scheduler.spec_decode_runtime_method is None
+    assert scheduler.spec_decode_runtime_attempted is False
     scheduler.block_aware_cache.release_cache.assert_called_once_with(
         request.request_id
     )
@@ -556,6 +600,41 @@ def test_retirement_continues_after_hook_teardown_raises():
     scheduler._close_batch_generator()
 
     assert scheduler._recurrent_output_chain_batch is None
+    assert ref() is None
+
+
+@pytest.mark.parametrize(
+    "queue_name", ["_unprocessed_sequences", "_currently_processing"]
+)
+def test_retirement_continues_after_queue_clear_raises(queue_name):
+    import weakref
+
+    class BrokenQueue:
+        def __init__(self, cache):
+            self.cache = cache
+
+        def clear(self):
+            raise RuntimeError("queue clear failed")
+
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    retired = _RetiredGenerator(cache)
+    setattr(retired, queue_name, BrokenQueue(cache))
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = retired
+    del cache
+
+    scheduler._close_batch_generator()
+
+    assert queue_name not in vars(retired)
+    other_queue = (
+        "_currently_processing"
+        if queue_name == "_unprocessed_sequences"
+        else "_unprocessed_sequences"
+    )
+    assert not getattr(retired, other_queue)
+    assert retired._prompt_batch is None
+    assert retired._generation_batch is None
     assert ref() is None
 
 
