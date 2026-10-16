@@ -2228,3 +2228,83 @@ def test_forced_shape_salvage_reaches_the_wire_repair():
     # (single quotes) is not an object the wire can carry.
     raw = '"name": "local_run", "arguments": >{\'command\': \'python3\'}'
     assert _salvage_forced_shape_arguments("local_run", raw, _LOCAL_RUN_TOOLS) is None
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "<",
+        "<parameter",
+        "<parameter=",
+        "<parameter=content",
+        "<parameter=content>\n# Write",
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
+def test_rc_xml_forced_header_at_tiny_budget(monkeypatch, tail, stream):
+    prefix = "<tool_call>\n<function=write_file>\n"
+
+    class Engine(_RecordingEngine):
+        async def stream_chat(self, messages, **kwargs):
+            yield GenerationOutput(text=prefix, new_text=prefix, completion_tokens=0)
+            yield GenerationOutput(
+                text=prefix + tail,
+                raw_text=prefix + tail,
+                new_text=tail,
+                prompt_tokens=4,
+                completion_tokens=1,
+                finished=True,
+                finish_reason="length",
+            )
+
+    monkeypatch.setattr(
+        "rapid_mlx.routes.chat._compute_forced_tool_prefix", lambda *a: prefix
+    )
+    client = _make_client(Engine(text=prefix + tail), tool_call_parser="hermes")
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "Call write_file now."}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "write_file"}},
+            "max_tokens": 1,
+            "stream": stream,
+            "enable_thinking": False,
+        },
+    )
+    assert response.status_code == 200, response.text
+    if stream:
+        choices = [
+            c
+            for line in response.text.splitlines()
+            if line.startswith("data: {")
+            for c in json.loads(line[6:])["choices"]
+        ]
+        assert "".join(c["delta"].get("content") or "" for c in choices) == ""
+        calls = [call for c in choices for call in c["delta"].get("tool_calls", [])]
+        assert calls[-1]["function"] == {"name": "write_file", "arguments": "{}"}
+    else:
+        message = response.json()["choices"][0]["message"]
+        assert not message.get("content"), message
+        assert message["tool_calls"][0]["function"] == {
+            "name": "write_file",
+            "arguments": "{}",
+        }
+
+
+def test_rc_xml_header_scrub_preserves_inline_documentation_and_narration():
+    example = "Explain <tool_call><function=write_file> literally."
+    assert not _contains_structural_tool_wire_leak(example, allow_truncated=True)
+    assert _scrub_visible_tool_wire_leaks(example, allow_truncated=True) == example
+    raw = "Calling now.\n<tool_call>\n<function=write_file>\n<"
+    assert _contains_structural_tool_wire_leak(raw, allow_truncated=True)
+    assert _scrub_visible_tool_wire_leaks(raw, allow_truncated=True) == "Calling now."

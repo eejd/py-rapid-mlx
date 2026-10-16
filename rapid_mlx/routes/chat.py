@@ -2701,6 +2701,8 @@ def _contains_structural_tool_wire_leak(
     """
     if not text:
         return False
+    if allow_truncated and _FORCED_TOOL_SECTION_RE.search(text):
+        return True
     for balanced_re in _TOOL_WIRE_BALANCED_SPAN_RES:
         match = balanced_re.search(text)
         if match and _span_has_tool_payload_object(match.group(0)):
@@ -2748,7 +2750,7 @@ def _scrub_visible_tool_wire_leaks(
     """
     if not text:
         return text or ""
-    result = text
+    result = _strip_forced_tool_section(text) if allow_truncated else text
     # DeepSeek V3.1 orphan fragment:
     # ``<｜tool▁call▁begin｜>NAME<｜tool▁sep｜>{...}`` without a closer.
     # Remove the whole fragment so the opener/name prefix cannot leak
@@ -2821,6 +2823,10 @@ _FORCED_TOOL_SECTION_RE = re.compile(
     r"(?:"
     r"<｜tool▁calls▁begin｜>\s*<｜tool▁call▁begin｜>"
     r"|<toolcallsbegin>\s*<toolcallbegin>"
+    # XML prefill can end before any JSON/parameter payload exists. Only
+    # classify an unclosed, line-start envelope, preserving inline examples.
+    r"|(?:^|\n)[ \t]*<tool_call>\s*<function=[^<>\s]+>"
+    r"(?:(?!</function>|</tool_call>).)*\Z"
     r")",
     re.DOTALL,
 )
@@ -2834,9 +2840,11 @@ def _strip_forced_tool_section(text: str | None) -> str:
     call but intentionally returns the raw text for diagnostics, which leaks
     the native section into ``content`` and — after reasoning extraction — into
     ``reasoning_content``.  A paired section+call opener is stronger evidence
-    than a literal marker mention in prose, so truncate only at that sequence
-    and preserve any narration before it.  The compact spelling is produced by
-    Qwen-tokenizer decoding of the same fullwidth DeepSeek markers.
+    than a literal marker mention in prose, so truncate at that sequence and
+    preserve any narration before it. An unclosed line-start XML envelope plus
+    named function is likewise structural, even before a parameter exists.
+    The compact spelling is produced by Qwen-tokenizer decoding of the same
+    fullwidth DeepSeek markers.
     """
     if not text:
         return text or ""
@@ -6706,7 +6714,10 @@ async def _create_chat_completion_impl(
         # Any wire-literal scrub above only touched user-visible
         # ``cleaned_text`` — reasoning extraction operates on the
         # untouched ``raw_text``.
-        raw_text=_raw_text_for_reasoning,
+        # A rejected span has already been removed authoritatively. Giving
+        # the reasoning fallback the original raw text would restore it when
+        # cleaned_text is empty (notably zero-argument XML calls).
+        raw_text=(cleaned_text if undeclared_tool_dropped else _raw_text_for_reasoning),
         cleaned_text=cleaned_text,
         tool_calls=tool_calls,
         reasoning_parser=cfg.reasoning_parser,
@@ -7902,7 +7913,23 @@ async def stream_chat_completion(
                 _forced_terminal_content_consumed = True
                 _forced_content_pending.append((_terminal_held, None))
                 _pending_raw = "".join(text for text, _ in _forced_content_pending)
-                if _contains_structural_tool_wire_leak(
+                if (
+                    buffered_finish is not None
+                    and buffered_finish[0].finish_reason == "length"
+                    and (kwargs.get("forced_assistant_prefix") or "").startswith(
+                        "<tool_call>\n<function="
+                    )
+                    and _pending_raw.strip()
+                    and (
+                        "<parameter=".startswith(_pending_raw.strip())
+                        or _pending_raw.lstrip().startswith("<parameter=")
+                    )
+                ):
+                    # The XML prefill was swallowed upstream; a one-token
+                    # continuation can leave only '<'. Do not replay that
+                    # parameter-header prefix as prose at the budget boundary.
+                    _final_content = ""
+                elif _contains_structural_tool_wire_leak(
                     _pending_raw, allow_truncated=True
                 ):
                     _final_content = _scrub_visible_tool_wire_leaks(
