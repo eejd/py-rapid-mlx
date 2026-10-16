@@ -499,6 +499,31 @@ class TestAdvisoryContract:
         else:
             assert res.artifacts == []
 
+    def test_test_output_mentioning_crash_words_still_measures(
+        self, ctx_factory, monkeypatch
+    ):
+        # Only the plugins' line-start diagnostics mean lost worker data; a
+        # failing test that prints similar words must not discard coverage.
+        _both_tools_present(monkeypatch)
+        ctx = ctx_factory(["rapid_mlx/quantized_batch_cache.py"])
+
+        def fake_run(cmd, *a, **k):
+            if "pytest" in cmd:
+                Path(_xml_target(cmd)).write_text("<coverage/>")
+                return subprocess.CompletedProcess(
+                    cmd,
+                    1,
+                    stdout="E   AssertionError: expected 'node down' / "
+                    "'replacing crashed worker gw0' in output\n",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(cmd, 0, stdout=_DC_WITH_LINES, stderr="")
+
+        monkeypatch.setattr(
+            "scripts.pr_validate.steps.diff_coverage._run_group_bounded", fake_run
+        )
+        assert DiffCoverageStep().run(ctx).status == "pass"
+
     @pytest.mark.parametrize("exit_code", [2, 3, 4, 5])
     def test_skip_when_suite_interrupted_or_errored(
         self, ctx_factory, monkeypatch, exit_code

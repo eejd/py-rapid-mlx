@@ -64,6 +64,8 @@ _COV_PACKAGE = "rapid_mlx"
 # full suite is ~3 min today) — a false timeout would just silently drop a
 # measurement, so err long.
 _PYTEST_TIMEOUT_S = 1800
+# Bounds only the diff-cover CLI (it scores an existing coverage.xml); the
+# instrumented pytest suite above is bounded by _PYTEST_TIMEOUT_S.
 _DIFF_COVER_TIMEOUT_S = 180
 
 # pytest exit codes that still yield a trustworthy coverage.xml. 0 = all
@@ -259,11 +261,14 @@ class DiffCoverageStep(Step):
 
         # xdist can replace a crashed worker and exit 1 while pytest-cov
         # still writes XML from surviving workers. That data is incomplete.
+        # Match only the plugins' own line-start diagnostics so a test that
+        # merely prints similar words cannot discard a valid measurement.
         if re.search(
-            r"node down|replacing crashed worker|worker '?gw\d+'? crashed|"
-            r"maximum crashed workers reached|"
-            r"The following workers failed to return coverage data",
+            r"^(?:\[gw\d+\] node down:|replacing crashed worker gw\d+|"
+            r"worker '?gw\d+'? crashed|maximum crashed workers reached:|"
+            r"The following workers failed to return coverage data)",
             (pytest_proc.stdout or "") + "\n" + (pytest_proc.stderr or ""),
+            re.MULTILINE,
         ):
             wrote = _safe_write(log_path, _pytest_dump(pytest_cmd, pytest_proc))
             return self._skip(
