@@ -677,6 +677,8 @@ rapid_mlx = [
     # Vendored SD3.5 MLX runtime attribution must ship beside the MIT source.
     "image/sd35_runtime/LICENSE",
     "image/sd35_runtime/NOTICE",
+    # LiLiCorr architecture/checkpoint license accompanies the offline module.
+    "models/LICENSE-LILICORR",
     # DeepSeek V4.1 native target + DSpark implementations retain separate
     # upstream licenses; ship both texts and the provenance notice.
     "models/deepseek_v41_native/LICENSE",

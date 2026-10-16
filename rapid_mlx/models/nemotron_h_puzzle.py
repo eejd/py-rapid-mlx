@@ -370,7 +370,13 @@ class NemotronHModel(nn.Module):
         self.fa_idx = stateful.index("*") if "*" in stateful else None
         self.ssm_idx = stateful.index("M") if "M" in stateful else None
 
-    def __call__(self, inputs, cache=None):
+    def __call__(self, inputs, cache=None, *, target_layer_ids=None):
+        if target_layer_ids is not None and (
+            not target_layer_ids
+            or len(set(target_layer_ids)) != len(target_layer_ids)
+            or any(i < 0 or i >= len(self.layers) for i in target_layer_ids)
+        ):
+            raise ValueError("Target taps must be unique valid zero-based block IDs")
         x = self.embeddings(inputs)
         if cache is None:
             cache = [None] * sum(
@@ -387,11 +393,17 @@ class NemotronHModel(nn.Module):
             else None
         )
         caches = iter(cache)
-        for layer in self.layers:
+        taps = {}
+        for i, layer in enumerate(self.layers):
             layer_cache = next(caches) if layer.block_type in ("M", "*") else None
             mask = attn_mask if layer.block_type == "*" else ssm_mask
             x = layer(x, mask=mask, cache=layer_cache)
-        return self.norm_f(x)
+            if target_layer_ids is not None and i in target_layer_ids:
+                taps[i] = x
+        hidden = self.norm_f(x)
+        if target_layer_ids is not None:
+            return hidden, mx.concatenate([taps[i] for i in target_layer_ids], axis=-1)
+        return hidden
 
 
 class Model(base.Model):
