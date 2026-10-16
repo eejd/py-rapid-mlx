@@ -284,6 +284,7 @@ def test_nemotron_every_byte_split():
             if result:
                 visible += result.get("content", "")
             previous = current
+        visible += parser.flush_held_content(wire)
         assert visible == "Before.  After.", (split, visible)
 
 
@@ -394,3 +395,107 @@ def test_buffered_authorization_ignores_forced_choice(monkeypatch):
     )
     assert calls[0].function.name == "send_email"
     assert not helpers._was_undeclared_tool_dropped()
+
+
+LITERAL_CLOSE = (
+    '<tool_call><function=send_email><parameter=body>print("</function></tool_call>")'
+    "</parameter></function></tool_call>"
+)
+FENCED_EXAMPLE = "```xml\n<tool_call>example</tool_call>\n```"
+
+
+def _route_reply(
+    text, *, stream, deltas=None, tools=TOOLS, tool_choice=None, expected_status=200
+):
+    cfg = reset_config()
+    cfg.engine = _Engine(text, deltas=deltas)
+    cfg.model_name = "test-model"
+    cfg.model_registry = None
+    cfg.no_thinking = True
+    cfg.enable_auto_tool_choice = True
+    cfg.tool_call_parser = "nemotron" if tool_choice is None else "hermes"
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        response = TestClient(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "stream": stream,
+                "messages": [{"role": "user", "content": "Use a tool"}],
+                "tools": tools,
+                "tool_choice": tool_choice,
+            },
+        )
+        assert response.status_code == expected_status, response.text
+        if expected_status != 200:
+            return response.json()
+        if stream:
+            choices = [
+                c
+                for line in response.text.splitlines()
+                if line.startswith("data: {")
+                for c in json.loads(line[6:])["choices"]
+            ]
+            content = "".join(c["delta"].get("content") or "" for c in choices)
+            names = [
+                tc["function"]["name"]
+                for c in choices
+                for tc in c["delta"].get("tool_calls", [])
+                if tc.get("function", {}).get("name")
+            ]
+            finish = choices[-1]["finish_reason"]
+        else:
+            choice = response.json()["choices"][0]
+            content = choice["message"].get("content") or ""
+            names = [
+                tc["function"]["name"]
+                for tc in choice["message"].get("tool_calls") or []
+            ]
+            finish = choice["finish_reason"]
+        return content.strip(), names, finish
+    finally:
+        reset_config()
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (LITERAL_CLOSE, NOTICE),
+        ("Before. " + LITERAL_CLOSE + " After.", "Before.  After."),
+        (LITERAL_CLOSE + REJECTED, NOTICE),
+        (REJECTED + "\n" + FENCED_EXAMPLE, FENCED_EXAMPLE),
+        (FENCED_EXAMPLE + "\n" + REJECTED, FENCED_EXAMPLE),
+    ],
+)
+def test_nemotron_rejected_route_every_byte_boundary(text, expected):
+    expected_result = (expected, [], "stop")
+    assert _route_reply(text, stream=False) == expected_result
+    for split in range(1, len(text)):
+        assert (
+            _route_reply(text, stream=True, deltas=[text[:split], text[split:]])
+            == expected_result
+        ), split
+    assert _route_reply(text, stream=True, deltas=list(text)) == expected_result
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_forced_choice_uses_original_authorization(stream, caplog):
+    text = '<tool_call>{"name":"send_email","arguments":{"body":"hi"}}</tool_call>'
+    result = _route_reply(
+        text,
+        stream=stream,
+        expected_status=200 if stream else 422,
+        tools=[*TOOLS, {"type": "function", "function": {"name": "send_email"}}],
+        tool_choice={"type": "function", "function": {"name": "write_file"}},
+    )
+    # Authorization agrees; existing forced-choice enforcement still differs:
+    # buffered rejects a wrong choice, streaming recovers the pinned function.
+    if stream:
+        content, names, finish = result
+        assert names == ["write_file"]
+        assert finish == "tool_calls"
+        assert NOTICE not in content
+    else:
+        assert "emitted calls to ['send_email']" in result["detail"]
+    assert not any("undeclared" in record.message for record in caplog.records)

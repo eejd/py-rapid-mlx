@@ -214,6 +214,7 @@ class StreamingPostProcessor:
         request: dict | None = None,
         reasoning_max_tokens: int | None = None,
         line1_gate_engaged: bool = False,
+        tool_authorization_names: set[str] | None = None,
     ):
         self.cfg = cfg
         if tools_requested is None:
@@ -273,6 +274,9 @@ class StreamingPostProcessor:
         # for schema-driven type conversion (#171). Without it, raw XML leaks
         # into delta.content instead of structured tool_calls deltas.
         self.request = request
+        # Prompt-time forced choice may narrow request.tools. Authorization
+        # still uses the caller's original declarations, as the buffered path does.
+        self._tool_authorization_names = tool_authorization_names
         # When the client explicitly sets enable_thinking=False, the chat
         # template suppresses the <think> generation prompt and the model
         # answers directly. The streaming reasoning parser's implicit-think
@@ -2015,7 +2019,9 @@ class StreamingPostProcessor:
 
     def _filter_declared_calls(self, calls, *, incremental=False):
         """Authorize anchors and retain the decision for argument continuations."""
-        declared = declared_names(self.request)
+        declared = self._tool_authorization_names
+        if declared is None:
+            declared = declared_names(self.request)
         if not declared:
             return calls
         kept = []

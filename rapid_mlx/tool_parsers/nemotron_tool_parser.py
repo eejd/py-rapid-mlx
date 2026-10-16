@@ -67,6 +67,8 @@ class NemotronToolParser(ToolParser):
     # still has the attribute.
     _content_upto = 0
     _stream_started = False
+    _rejected_stream_held = False
+    _rejected_stream_request = None
 
     # Pattern for Nemotron-style with parameters.
     #
@@ -108,36 +110,66 @@ class NemotronToolParser(ToolParser):
         self._content_upto = 0
         self._stream_started = False
         self._undeclared_logged = False
+        self._rejected_stream_request = None
+        self._rejected_stream_held = False
 
     def flush_held_content(self, full_text: str) -> str:
+        if self._rejected_stream_held:
+            held = self._visible_content_between(
+                full_text,
+                self._content_upto,
+                len(full_text),
+                self._rejected_stream_request,
+            )
+            self._content_upto = len(full_text)
+            return held
         if "<tool_call>" in full_text or "<function=" in full_text:
             return ""
         held = full_text[self._content_upto :]
         self._content_upto = len(full_text)
         return held
 
-    def _undeclared_spans(self, text, request, accepted):
-        """Recognize bounded wrapped attempts without widening sibling parsing."""
+    def _undeclared_openers(self, text, request, accepted):
+        """Wrapped, unfenced attempts outside an accepted argument span."""
         from .qwen3coder_tool_parser import _MarkdownCodeTracker
 
         declared = _declared_tool_names(request)
         if not declared:
             return []
         tracker = _MarkdownCodeTracker()
+        return [
+            match
+            for match in re.finditer(r"<tool_call>\s*<function=([^>]+)>", text)
+            if match.group(1).strip() not in declared
+            and not any(a <= match.start() < b for _, _, a, b in accepted)
+            and not tracker.inside(text, match.start())
+        ]
+
+    def _undeclared_spans(self, text, request, accepted):
+        """Use the last close before a real sibling or the next wrapped block."""
         spans = []
-        for match in re.finditer(
-            r"<tool_call>\s*<function=([^>]+)>.*?</function>\s*(?:</tool_call>|\Z)",
-            text,
-            re.DOTALL,
-        ):
-            start, end = match.span()
-            if (
-                match.group(1).strip() not in declared
-                and end - start <= 32768
-                and not any(start < b and end > a for _, _, a, b in accepted)
-                and not tracker.inside(text, start)
-            ):
-                spans.append((start, end))
+        declared = _declared_tool_names(request)
+        for match in self._undeclared_openers(text, request, accepted):
+            start = match.start()
+            next_block = text.find("<tool_call>", match.end())
+            limit = len(text) if next_block == -1 else next_block
+            block = text[start:limit]
+            calls = split_marked_calls(
+                block,
+                r"<function=([^>]+)>",
+                "</function>",
+                valid_names=declared | {match.group(1).strip()},
+            )
+            if not calls:
+                continue
+            end = start + calls[0][3]
+            wrapper = re.match(r"\s*(?:</tool_call>|\Z)", text[end:limit])
+            if wrapper:
+                end += wrapper.end()
+                if end - start <= 32768 and not any(
+                    start < b and end > a for _, _, a, b in accepted
+                ):
+                    spans.append((start, end))
         return spans
 
     def _visible_content_between(
@@ -341,7 +373,9 @@ class NemotronToolParser(ToolParser):
             spans = [(a, b) for _, _, a, b in matches] + rejected
             for span_start, span_end in sorted(spans, reverse=True):
                 cleaned_text = cleaned_text[:span_start] + cleaned_text[span_end:]
-            cleaned_text = self.RESIDUAL_WRAPPER_PATTERN.sub("", cleaned_text).strip()
+            if matches:
+                cleaned_text = self.RESIDUAL_WRAPPER_PATTERN.sub("", cleaned_text)
+            cleaned_text = cleaned_text.strip()
 
         if tool_calls:
             return ExtractedToolCallInformation(
@@ -442,6 +476,30 @@ class NemotronToolParser(ToolParser):
             safe_end = len(current_text) if pending is None else pending
             content = current_text[self._content_upto : safe_end]
             self._content_upto = safe_end
+            return {"content": content} if content else None
+
+        # A closing marker can still be argument data. Until a later block
+        # or EOF fixes the positional boundary, keep the last rejected block
+        # and its tail off the wire. Earlier prose remains streamable.
+        accepted = split_marked_calls(
+            current_text,
+            r"<function=([^>]+)>",
+            "</function>",
+            valid_names=_declared_tool_names(request),
+        )
+        hold_at = len(current_text)
+        for opener in self._undeclared_openers(current_text, request, accepted):
+            if current_text.find("<tool_call>", opener.end()) == -1:
+                hold_at = opener.start()
+                self._rejected_stream_held = True
+                self._rejected_stream_request = request
+        if hold_at < len(current_text):
+            if self._undeclared_spans(current_text, request, accepted):
+                self.extract_tool_calls(current_text, request)
+            content = self._visible_content_between(
+                current_text, self._content_upto, hold_at, request
+            )
+            self._content_upto = max(self._content_upto, hold_at)
             return {"content": content} if content else None
 
         # The XML parameter format has no escaping rule. A literal

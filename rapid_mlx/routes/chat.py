@@ -7373,6 +7373,9 @@ async def stream_chat_completion(
                 and getattr(request.response_format, "type", "text") != "text"
             ),
             request=request_dict,
+            tool_authorization_names=getattr(
+                request, "_tool_authorization_names", None
+            ),
             # Per-request reasoning cap (upstream vLLM PR #20859 backport).
             # When None the postprocessor is a no-op for the cap path.
             # Suppressed when the generation-time thinking-budget processor
