@@ -23,6 +23,7 @@ from rapid_mlx.memory_cache import (  # noqa: E402
     MemoryCacheConfig,
     PrefixProbe,
     _rewind_feasible,
+    _snap_position,
 )
 from rapid_mlx.pflash import PFlashConfig  # noqa: E402
 from rapid_mlx.request import Request, SamplingParams  # noqa: E402
@@ -160,7 +161,10 @@ class TestProbe:
     @pytest.fixture
     def cache(self):
         return MemoryAwarePrefixCache(
-            MagicMock(), MemoryCacheConfig(max_memory_mb=1, max_entries=10)
+            MagicMock(),
+            MemoryCacheConfig(
+                max_memory_mb=1, max_entries=10, hybrid_reuse_max_entries=10
+            ),
         )
 
     def test_probe_reports_exact_prefix_and_miss_without_touching_state(self, cache):
@@ -275,6 +279,116 @@ class TestProbe:
 
     def test_rewind_feasibility_rejects_non_pooling_wrapper(self):
         assert not _rewind_feasible([_Wrapper(_KV(offset=4))], 2)
+
+    def test_plain_supersequence_probe_matches_fetch(self, cache):
+        cache.store([1, 2, 3, 4], [_KV(offset=4)])
+        assert cache.probe([1, 2]) == PrefixProbe(2, "supersequence")
+        _, remaining = cache.fetch([1, 2])
+        assert remaining == []
+
+    def test_supersequence_probe_refuses_insufficient_offset(self, cache):
+        cache.store([1, 2, 3, 4], [_KV(offset=1)])
+        assert cache.probe([1]) == PrefixProbe(0, "miss")
+
+    def test_zero_excess_candidate_needs_no_rewind(self, cache, monkeypatch):
+        # Isolate the candidate-consumer boundary: a zero-excess candidate
+        # must not attempt a rewind, even if normal lookup returns it as exact.
+        cache.store([1, 2], [_KV(offset=2)])
+        entry = cache._entries[(1, 2)]
+        monkeypatch.setattr(cache, "_entries", {})
+        monkeypatch.setattr(
+            cache, "_match_candidates_locked", lambda *_: (None, 0, entry)
+        )
+        assert cache.probe([1, 2]) == PrefixProbe(2, "supersequence")
+
+    @pytest.mark.parametrize(
+        "query, expected", [([1, 2, 3], "supersequence"), ([1, 2, 9], "lcp")]
+    )
+    def test_hybrid_probe_snaps_to_checkpoint_without_mutation(
+        self, cache, query, expected
+    ):
+        from mlx_lm.models.cache import ArraysCache
+
+        from rapid_mlx.hybrid_state_checkpoints import CHECKPOINT_ATTR, StateCheckpoints
+
+        recurrent = ArraysCache(1)
+        recurrent.cache = [mx.array([4])]
+        holder = StateCheckpoints([(2, (mx.array([2]),))])
+        setattr(recurrent, CHECKPOINT_ATTR, holder)
+        kv = _KV(offset=4)
+        assert cache.store([1, 2, 3, 4], [kv, recurrent])
+
+        assert cache.probe(query) == PrefixProbe(2, expected)
+        assert kv.offset == 4
+        assert recurrent.cache[0].item() == 4
+        assert getattr(recurrent, CHECKPOINT_ATTR) is holder
+        _, remaining = cache.fetch(query)
+        assert remaining == query[2:]
+
+    def test_nontrimmable_exact_is_not_reused_or_counted_as_lcp(self, cache):
+        from mlx_lm.models.cache import ArraysCache
+
+        recurrent = ArraysCache(1)
+        recurrent.cache = [mx.array([4])]
+        assert cache.store([1, 2, 3, 4], [recurrent])
+        assert cache.probe([1, 2, 3, 4]) == PrefixProbe(0, "miss")
+        assert cache.probe([1, 2, 9]) == PrefixProbe(0, "miss")
+
+    def test_lcp_scan_keeps_longer_neighbour(self, cache):
+        cache.store([1, 2, 3, 4], [_KV()])
+        cache.store([1, 2, 9], [_KV()])
+        assert cache.probe([1, 2, 3, 8]) == PrefixProbe(3, "lcp")
+
+
+class TestRewindMetadata:
+    def test_negative_zero_and_absent_layers(self):
+        assert not _rewind_feasible([], -1)
+        assert _rewind_feasible([None, object()], 0)
+
+    def test_optional_quantized_cache_import(self, monkeypatch):
+        import mlx_lm.models.cache as cache_module
+
+        monkeypatch.delattr(cache_module, "QuantizedKVCache")
+        assert _rewind_feasible([_KV(offset=4)], 2)
+
+    @pytest.mark.parametrize("offset, feasible", [(4, True), (1, False), (None, False)])
+    def test_quantized_cache_offset_limits(self, offset, feasible):
+        from mlx_lm.models.cache import QuantizedKVCache
+
+        layer = QuantizedKVCache()
+        layer.offset = offset
+        assert _rewind_feasible([layer], 2) is feasible
+        assert layer.offset == offset
+
+    def test_nontrimmable_leaf_is_refused(self):
+        from mlx_lm.models.cache import ArraysCache
+
+        assert not _rewind_feasible([ArraysCache(1)], 1)
+
+    def test_pooling_wrapper_rejects_unproven_child(self):
+        from rapid_mlx.models.deepseek_v4_cache import PoolingCache
+
+        assert not _rewind_feasible([_Wrapper(PoolingCache(ratio=4), _KV())], 0)
+
+    def test_index_pooling_cache_is_recognized(self):
+        from rapid_mlx.memory_cache import _has_deepseek_pooling
+        from rapid_mlx.models.qwen4_exp_cache import QSAIndexCache
+
+        assert _has_deepseek_pooling(QSAIndexCache(compress_ratio=4))
+
+    def test_snap_position_refusals(self):
+        from mlx_lm.models.cache import ArraysCache
+
+        from rapid_mlx.hybrid_state_checkpoints import CHECKPOINT_ATTR, StateCheckpoints
+
+        assert _snap_position([], 4, 0) == 0
+        assert _snap_position([], 0, 4) == 0
+        assert _snap_position([object()], 4, 2) == 0
+        recurrent = ArraysCache(1)
+        assert _snap_position([recurrent], 4, 2) == 0
+        setattr(recurrent, CHECKPOINT_ATTR, StateCheckpoints([(2, (mx.array([2]),))]))
+        # A valid recurrent checkpoint cannot compensate for an unrewindable KV layer.
+        assert _snap_position([_KV(offset=1), recurrent], 4, 2) == 0
 
 
 # --------------------------------------------------------------------------
