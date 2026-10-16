@@ -4246,9 +4246,9 @@ class StreamingPostProcessor:
         # The route layer separately re-stamps ``finish_reason`` to
         # ``"tool_calls"`` when ``finalize()`` recovers a call via the
         # cross-format fallback (see ``routes/chat.py`` buffered-finish
-        # merge). Both paths upgrade only natural stops: a streamed anchor
+        # merge). Neither path upgrades a token-limit finish: a streamed anchor
         # may still have incomplete arguments at the token limit.
-        if self._tool_calls_emitted_to_wire > 0 and output.finish_reason == "stop":
+        if self._tool_calls_emitted_to_wire > 0 and output.finish_reason != "length":
             return "tool_calls"
         # ``tool_choice="none"``: no call can ever reach the wire this turn,
         # so a channel-routed engine's ``finish_reason="tool_calls"`` (stamped
