@@ -1,3 +1,12 @@
+<!-- Scratch space for the next release's notes. Rename to vX.Y.Z.md in the
+     version-bump PR. See README.md in this directory. -->
+
+<!-- One or two sentences: what is this release about? -->
+
 ## Highlights
 
-**Actionable image validation** — Asset-independent parameter checks (steps, dimensions, guidance, negative prompt, character limits, and input-image rules) return HTTP 400 with the model’s validation message before any download or load. HiDream’s token limit also returns HTTP 400, but is only evaluated once the model’s assets are available; a cold request downloads and loads the model first. Operational failures remain HTTP 500, and cancellation remains successful.
+**<Named thing>** — what changed, and why a user should care. Link the merged PR.
+
+## Fixes
+
+- **Desktop no longer quits when you open What's New after an update**: clicking "See what's new" on the post-update banner opens the release notes and dismisses the banner instead of crashing the app. The "Star on GitHub" prompt had the same defect and is fixed too.

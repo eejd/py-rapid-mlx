@@ -789,7 +789,17 @@ def config_declares_linear_attention(config: dict | None) -> bool:
 
     text_config = config.get("text_config")
     language_config = text_config if isinstance(text_config, dict) else config
-    layer_types = language_config.get("layer_types") or []
+    if language_config.get("model_type") == "nemotron_h_puzzle":
+        return True
+    layer_types = (
+        language_config.get("layer_types")
+        or (
+            language_config.get("layers_block_type")
+            if language_config.get("rapid_mlx_nemotron_h") is True
+            else None
+        )
+        or []
+    )
     if any(
         isinstance(layer_type, str)
         and any(
@@ -1215,7 +1225,28 @@ def _detect_metadata_config(
         )
     )
 
-    if "qwen4_exp" in model_types:
+    if "nemotron_h" in model_types and config.get("rapid_mlx_nemotron_h") is True:
+        settings.update(
+            is_hybrid=True,
+            is_hybrid_explicit=True,
+            is_moe=True,
+            is_text_only=True,
+            supports_spec_decode=False,
+            tool_call_parser="nemotron",
+            reasoning_parser="qwen3",
+        )
+        reasons.append("Nemotron-H precision-adapted text architecture")
+    elif "nemotron_h_puzzle" in model_types:
+        settings.update(
+            is_hybrid=True,
+            is_hybrid_explicit=True,
+            is_moe=True,
+            supports_spec_decode=False,
+            tool_call_parser="nemotron",
+            reasoning_parser="qwen3",
+        )
+        reasons.append("Nemotron Puzzle text architecture")
+    elif "qwen4_exp" in model_types:
         settings.update(
             is_hybrid=True,
             is_hybrid_explicit=True,
@@ -1258,7 +1289,9 @@ def _detect_metadata_config(
         )
         reasons.append("linear/recurrent attention architecture")
 
-    if _template_uses_parameterized_xml_tools(metadata.chat_template):
+    if not settings.get("tool_call_parser") and _template_uses_parameterized_xml_tools(
+        metadata.chat_template
+    ):
         settings["tool_call_parser"] = "hermes"
         reasons.append("parameterized XML tool template")
         if any(

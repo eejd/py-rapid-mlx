@@ -68,7 +68,7 @@ struct ShareComputeRelayStatusBar: View {
                         size: 11
                     )
                     Text(status.title)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.rapid(size: 15, weight: .medium))
                         .foregroundStyle(RapidTheme.bandInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -82,7 +82,7 @@ struct ShareComputeRelayStatusBar: View {
             // accept?" is the first question this surface gets asked.
             if !isNarrow {
                 Text("Live requests · no task queue")
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .fixedSize()
             }
@@ -174,7 +174,7 @@ struct ShareComputeShareTab: View {
                 // happens (forwarding while online) and what does NOT exist (a
                 // queue, a claim step).
                 Text("QuickSilver forwards requests to this Mac while it is online. No task queue or manual acceptance.")
-                    .font(.system(size: isNarrow ? 13 : 14))
+                    .font(.rapid(size: isNarrow ? 13 : 14))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -206,21 +206,21 @@ struct ShareComputeShareTab: View {
         if isNarrow {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Serve live requests.")
-                    .font(.system(size: size, weight: .bold))
+                    .font(.rapid(size: size, weight: .bold))
                     .tracking(tracking)
                     .foregroundStyle(RapidTheme.bandInk)
                 Text("Earn API credits.")
-                    .font(.system(size: size, weight: .bold))
+                    .font(.rapid(size: size, weight: .bold))
                     .tracking(tracking)
                     .foregroundStyle(RapidTheme.brandPrimary)
             }
         } else {
             (
                 Text("Serve live requests. ")
-                    .font(.system(size: size, weight: .bold))
+                    .font(.rapid(size: size, weight: .bold))
                     .foregroundColor(RapidTheme.bandInk)
                 + Text("Earn API credits.")
-                    .font(.system(size: size, weight: .bold))
+                    .font(.rapid(size: size, weight: .bold))
                     .foregroundColor(RapidTheme.brandPrimary)
             )
             .tracking(tracking)
@@ -318,14 +318,11 @@ struct ShareComputeShareTab: View {
             .accessibilityIdentifier("ShareCompute.OpenPool")
         } else {
             ShareComputePrimaryBandButton(
-                // Both paths open the same review sheet. The label differs
-                // because connecting a provider key is a materially different
-                // ask from re-joining a pool this Mac is already registered
-                // with, and the button has to say which one is about to
-                // happen.
+                // First setup collects a key. Once configured, a direct start
+                // reuses the saved account or node without another review sheet.
                 title: requiresConnection
-                    ? String(localized: "Connect & serve")
-                    : String(localized: "Review & connect"),
+                    ? String(localized: "Set up sharing")
+                    : String(localized: "Start sharing"),
                 height: isNarrow ? 48 : 72,
                 action: onStart
             )
@@ -339,7 +336,7 @@ struct ShareComputeShareTab: View {
         AdaptiveAssuranceRow(isNarrow: isNarrow) {
             HStack(spacing: 22) {
                 assurance(String(localized: "One model serves at a time"))
-                assurance(String(localized: "Rapid requests a restart after Stop"))
+                assurance(String(localized: "Stop takes this Mac offline and unloads the model"))
             }
         } trailing: {
             HStack(spacing: 10) {
@@ -350,7 +347,7 @@ struct ShareComputeShareTab: View {
                 Link(destination: ShareComputeDestination.credits) {
                     HStack(spacing: 4) {
                         Text("QuickSilver API credits")
-                            .font(.system(size: isNarrow ? 11 : 12, weight: .bold))
+                            .font(.rapid(size: isNarrow ? 11 : 12, weight: .bold))
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: isNarrow ? 9 : 10, weight: .bold))
                             .accessibilityHidden(true)
@@ -369,7 +366,7 @@ struct ShareComputeShareTab: View {
     private func assurance(_ text: String) -> some View {
         Text(text)
             // Paper: 12pt desktop, 11pt narrow, regular weight in both.
-            .font(.system(size: isNarrow ? 11 : 12, weight: .regular))
+            .font(.rapid(size: isNarrow ? 11 : 12, weight: .regular))
             .foregroundStyle(RapidTheme.bandInkSecondary)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -424,18 +421,17 @@ struct ShareComputeModelSelectorRow: View {
                     // the user has to be able to read in full before sharing.
                     if isNarrow {
                         Text(model.title)
-                            .font(.system(size: 17, weight: .bold))
+                            .font(.rapid(size: 17, weight: .bold))
                             .foregroundStyle(RapidTheme.bandInk)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.75)
                         HStack(spacing: 10) {
                             if let size = model.onDiskSize {
                                 Text(size)
-                                    .font(.system(size: 12))
+                                    .font(.rapid(size: 12))
                                     .foregroundStyle(RapidTheme.bandInkSecondary)
                             }
                             Text("Ready on this Mac")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.rapid(size: 11, weight: .bold))
                                 .foregroundStyle(RapidTheme.bandReady)
                         }
                     } else {
@@ -444,13 +440,12 @@ struct ShareComputeModelSelectorRow: View {
                         // Mac" twice.
                         HStack(alignment: .firstTextBaseline, spacing: 14) {
                             Text(model.title)
-                                .font(.system(size: 20, weight: .semibold))
+                                .font(.rapid(size: 20, weight: .semibold))
                                 .foregroundStyle(RapidTheme.bandInk)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.8)
                             if let size = model.onDiskSize {
                                 Text(size)
-                                    .font(.system(size: 13))
+                                    .font(.rapid(size: 13))
                                     .foregroundStyle(RapidTheme.bandInkSecondary)
                                     .fixedSize()
                             }
@@ -498,14 +493,14 @@ struct ShareComputeModelSelectorRow: View {
     private var secondLine: some View {
         HStack(spacing: 7) {
             Text("Ready on this Mac")
-                .font(.system(size: 12, weight: .medium))
+                .font(.rapid(size: 12, weight: .medium))
                 .foregroundStyle(RapidTheme.bandReady)
             Text("·")
                 .font(.system(size: 12))
                 .foregroundStyle(RapidTheme.bandInkTertiary)
                 .accessibilityHidden(true)
             Text(model.detail)
-                .font(.system(size: 12))
+                .font(.rapid(size: 12))
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
         }
@@ -537,11 +532,11 @@ struct ShareComputeNoLocalModelsRow: View {
                         ? String(localized: "No pool model is downloaded yet")
                         : String(localized: "Checking this Mac…")
                 )
-                .font(.system(size: 15, weight: .bold))
+                .font(.rapid(size: 15, weight: .bold))
                 .foregroundStyle(RapidTheme.bandInk)
                 if catalogLoaded {
                     Text("Live Pool shows every supported model, what is online, and what each one would download.")
-                        .font(.system(size: 12))
+                        .font(.rapid(size: 12))
                         .foregroundStyle(RapidTheme.bandInkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

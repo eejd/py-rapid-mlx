@@ -64,6 +64,7 @@ from ..patches.deepseek_v32_indexer_gate import (
 from ..patches.mla_absorbed_verify import (
     install_mla_absorbed_verify as _install_mla_absorbed_verify,
 )
+from ..patches.nemotron_h_ssm import install_nemotron_h_ssm_fix
 from ..patches.qwen3_5_eager_dispatch import (
     install_qwen3_5_eager_dispatch as _install_qwen3_5_eager_dispatch,
 )
@@ -77,6 +78,7 @@ _install_dsv32_indexer_gate()
 _install_qwen3_5_eager_dispatch()
 _install_qwen3_5_norm_shift_fix()
 _install_mla_absorbed_verify()
+install_nemotron_h_ssm_fix()
 
 # Models that require tokenizer fallback
 FALLBACK_MODELS = [
@@ -864,6 +866,36 @@ def _register_vendored_archs() -> None:
                 _VENDORED_MODEL_TYPES.add("gpt_oss_puzzle")
         else:
             _VENDORED_MODEL_TYPES.add("gpt_oss_puzzle")
+
+    if "mlx_lm.models.nemotron_h_puzzle" not in sys.modules:
+        # Prefer a future native Puzzle implementation when available.
+        import importlib.util as _importlib_util
+
+        _puzzle_native_spec = None
+        try:
+            _puzzle_native_spec = _importlib_util.find_spec(
+                "mlx_lm.models.nemotron_h_puzzle"
+            )
+        except (ImportError, ValueError):
+            _puzzle_native_spec = None
+
+        if _puzzle_native_spec is None:
+            try:
+                from ..models import nemotron_h_puzzle as _nemotron_h_puzzle
+
+                sys.modules.setdefault(
+                    "mlx_lm.models.nemotron_h_puzzle", _nemotron_h_puzzle
+                )
+            except Exception as e:
+                logger.warning(
+                    "nemotron_h_puzzle vendored module failed to register — "
+                    "NVIDIA Puzzle checkpoints will not load until resolved: %s",
+                    e,
+                )
+            else:
+                _VENDORED_MODEL_TYPES.add("nemotron_h_puzzle")
+        else:
+            _VENDORED_MODEL_TYPES.add("nemotron_h_puzzle")
 
     if "mlx_lm.models.nemotron_labs_diffusion" not in sys.modules:
         # NVIDIA Nemotron-Labs-Diffusion (3B/8B/14B) — AR (autoregressive)

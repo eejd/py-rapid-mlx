@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from ..local_search.extraction import FolderAccessDeniedError
+from ..local_search.store import SchemaVersionError
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..middleware.exception_handlers import register_request_model
 
@@ -54,7 +55,12 @@ async def require_store(request: Request):
     try:
         await get_service(request).store.ready()
     except Exception as exc:
-        error(str(exc), "store_open_failed", "local_search_dir", 503)
+        code = (
+            "unsupported_index_schema"
+            if isinstance(exc, SchemaVersionError)
+            else "store_open_failed"
+        )
+        error(str(exc), code, "local_search_dir", 503)
 
 
 router = APIRouter(

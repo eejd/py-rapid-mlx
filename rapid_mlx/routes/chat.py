@@ -123,6 +123,7 @@ from ..service.helpers import (
     _validate_response_format,
     _validate_tool_call_params,
     _wait_with_disconnect,
+    _was_undeclared_tool_dropped,
     build_extended_sampling_kwargs,
     context_overflow_from_client_error,
     context_overflow_from_guided_limit,
@@ -2636,6 +2637,8 @@ def _payload_object_after_marker(
     text: str,
     marker_end: int,
     window_end: int,
+    *,
+    allow_truncated: bool = False,
 ) -> tuple[int, int] | None:
     """Return adjacent JSON payload bounds after a wire marker, if any."""
     pos = marker_end
@@ -2644,6 +2647,24 @@ def _payload_object_after_marker(
     if pos >= window_end or text[pos] != "{":
         return None
     object_end = _balanced_json_end(text, pos)
+    if object_end is None and allow_truncated and window_end == len(text):
+        # At EOF a forced call can stop after its name or during the next
+        # key. Recognize only this JSON header, never arbitrary text after
+        # a marker. Live streaming leaves partials undecided so a later
+        # documentation suffix can still establish that they were prose.
+        payload = text[pos:window_end]
+        header = re.match(r'\{\s*"name"\s*:\s*("(?:[^"\\]|\\.)*")\s*', payload)
+        if header is not None:
+            try:
+                name = json.loads(header.group(1))
+            except ValueError:
+                return None
+            tail = payload[header.end() :]
+            if name and (
+                not tail
+                or (tail.startswith(",") and '"arguments"'.startswith(tail[1:].strip()))
+            ):
+                return pos, window_end
     if object_end is None or object_end > window_end:
         return None
     payload = text[pos:object_end]
@@ -2666,7 +2687,9 @@ def _span_has_tool_payload_object(span: str) -> bool:
     return False
 
 
-def _contains_structural_tool_wire_leak(text: str | None) -> bool:
+def _contains_structural_tool_wire_leak(
+    text: str | None, *, allow_truncated: bool = False
+) -> bool:
     """Return True when known wire markers appear as tool-wire residue.
 
     ``_contains_tool_wire_literal`` intentionally answers the broad
@@ -2678,6 +2701,8 @@ def _contains_structural_tool_wire_leak(text: str | None) -> bool:
     """
     if not text:
         return False
+    if allow_truncated and _FORCED_TOOL_SECTION_RE.search(text):
+        return True
     for balanced_re in _TOOL_WIRE_BALANCED_SPAN_RES:
         match = balanced_re.search(text)
         if match and _span_has_tool_payload_object(match.group(0)):
@@ -2686,12 +2711,20 @@ def _contains_structural_tool_wire_leak(text: str | None) -> bool:
     if cross_match and _span_has_tool_payload_object(cross_match.group(0)):
         return True
     for marker_re in _TOOL_WIRE_STANDALONE_MARKERS:
-        match = marker_re.search(text)
-        if not match:
-            continue
-        window_end = min(len(text), match.end() + 2048)
-        if _payload_object_after_marker(text, match.end(), window_end) is not None:
-            return True
+        matches = (
+            marker_re.finditer(text) if allow_truncated else [marker_re.search(text)]
+        )
+        for match in matches:
+            if not match:
+                continue
+            window_end = min(len(text), match.end() + 2048)
+            if (
+                _payload_object_after_marker(
+                    text, match.end(), window_end, allow_truncated=allow_truncated
+                )
+                is not None
+            ):
+                return True
     return False
 
 
@@ -2705,7 +2738,9 @@ def _is_tool_wire_marker_only(text: str | None) -> bool:
     return not result.strip()
 
 
-def _scrub_visible_tool_wire_leaks(text: str | None) -> str:
+def _scrub_visible_tool_wire_leaks(
+    text: str | None, *, allow_truncated: bool = False
+) -> str:
     """Scrub structural wire residue while preserving marker examples.
 
     Unlike ``_scrub_tool_wire_literals`` this is safe for route-visible
@@ -2715,7 +2750,7 @@ def _scrub_visible_tool_wire_leaks(text: str | None) -> str:
     """
     if not text:
         return text or ""
-    result = text
+    result = _strip_forced_tool_section(text) if allow_truncated else text
     # DeepSeek V3.1 orphan fragment:
     # ``<｜tool▁call▁begin｜>NAME<｜tool▁sep｜>{...}`` without a closer.
     # Remove the whole fragment so the opener/name prefix cannot leak
@@ -2739,6 +2774,7 @@ def _scrub_visible_tool_wire_leaks(text: str | None) -> str:
             result,
             sep + len(deepseek_sep),
             min(len(result), sep + len(deepseek_sep) + 2048),
+            allow_truncated=allow_truncated,
         )
         if payload_bounds is None:
             search_pos = begin + len(deepseek_begin)
@@ -2764,7 +2800,7 @@ def _scrub_visible_tool_wire_leaks(text: str | None) -> str:
                 window_end = min(len(result), match.end() + 2048)
                 pieces.append(result[last : match.start()])
                 payload_bounds = _payload_object_after_marker(
-                    result, match.end(), window_end
+                    result, match.end(), window_end, allow_truncated=allow_truncated
                 )
                 if payload_bounds is not None:
                     _, object_end = payload_bounds
@@ -2814,6 +2850,26 @@ def _strip_forced_tool_section(text: str | None) -> str:
     if result.strip() in {"<think>", "</think>"}:
         return ""
     return result
+
+
+def _strip_truncated_forced_xml_call(text: str | None, tool_names: set[str]) -> str:
+    """Remove an unclosed XML tail only for an actually produced forced call.
+
+    A line-start envelope alone may be a documentation example. The structured
+    call's name supplies the evidence needed to discard a truncated prefill.
+    Closed envelopes remain the parser's responsibility.
+    """
+    if not text:
+        return text or ""
+    match = re.search(
+        r"(?:^|\n)[ \t]*<tool_call>\s*<function=([^<>\s]+)>"
+        r"(?:(?!</function>|</tool_call>).)*\Z",
+        text,
+        re.DOTALL,
+    )
+    if match and match.group(1) in tool_names:
+        return text[: match.start()].rstrip()
+    return text
 
 
 def _scrub_tool_wire_literals(text: str | None) -> str:
@@ -3426,9 +3482,9 @@ def _forced_synth_schema_error(name: str, arguments: str | None, tools) -> str |
     ``finish_reason="tool_calls"`` would ``json.loads`` the arguments and
     execute a broken call, trusting a guarantee the server cannot make. Callers
     fail EXPLICITLY on a non-``None`` return — 422 on the non-stream paths;
-    drop-the-synth (the turn finishes with its real terminal reason,
-    ``stop``/``length``, never a fabricated ``tool_calls``) / ``response.failed``
-    on the streaming paths — rather than shipping the bad call.
+    an SSE error on streaming chat (including at the token limit), or
+    ``response.failed`` on streaming responses — rather than shipping a bad
+    call the client might execute.
 
     Returns ``None`` (synth allowed) when the tool has no constraints the
     synthesised arguments violate, the schema can't be resolved, or the
@@ -6358,8 +6414,11 @@ async def _create_chat_completion_impl(
             cleaned_text = ""
     else:
         cleaned_text, tool_calls = _parse_tool_calls_with_parser(
-            output.text, request, structured_tool_calls=engine_tool_calls
+            output.text,
+            request,
+            structured_tool_calls=engine_tool_calls,
         )
+    undeclared_tool_dropped = _was_undeclared_tool_dropped()
 
     # r7-A R7-H1: UI-TARS chat-lane coordinate-key parity. The parser
     # emits canonical ``point`` / ``start_point`` / ``end_point``; the
@@ -6624,7 +6683,7 @@ async def _create_chat_completion_impl(
     # parser-wire residue, not merely a literal token mention.
     _raw_text_for_reasoning = output.raw_text or output.text
     _raw_has_structural_wire = _contains_structural_tool_wire_leak(
-        _raw_text_for_reasoning
+        _raw_text_for_reasoning, allow_truncated=True
     )
 
     def _should_scrub_visible_wire(
@@ -6636,7 +6695,7 @@ async def _create_chat_completion_impl(
             and bool(tool_calls)
             and _contains_tool_wire_literal(text)
             and (
-                _contains_structural_tool_wire_leak(text)
+                _contains_structural_tool_wire_leak(text, allow_truncated=True)
                 or (allow_raw_context and _raw_has_structural_wire)
             )
         )
@@ -6653,7 +6712,9 @@ async def _create_chat_completion_impl(
     # (handled by ``_finalize_content_and_reasoning`` returning
     # ``cleaned_text`` that we never mutate after this block).
     if _wire_scrub_active:
-        cleaned_text = _scrub_visible_tool_wire_leaks(cleaned_text)
+        cleaned_text = _scrub_visible_tool_wire_leaks(
+            cleaned_text, allow_truncated=True
+        )
 
     # Extract reasoning content. extract_reasoning() is stateless (pure regex
     # on full text), so the singleton is safe here unlike the streaming variant.
@@ -6667,7 +6728,10 @@ async def _create_chat_completion_impl(
         # Any wire-literal scrub above only touched user-visible
         # ``cleaned_text`` — reasoning extraction operates on the
         # untouched ``raw_text``.
-        raw_text=_raw_text_for_reasoning,
+        # A rejected span has already been removed authoritatively. Giving
+        # the reasoning fallback the original raw text would restore it when
+        # cleaned_text is empty (notably zero-argument XML calls).
+        raw_text=(cleaned_text if undeclared_tool_dropped else _raw_text_for_reasoning),
         cleaned_text=cleaned_text,
         tool_calls=tool_calls,
         reasoning_parser=cfg.reasoning_parser,
@@ -6709,14 +6773,21 @@ async def _create_chat_completion_impl(
     if _should_scrub_visible_wire(cleaned_text, allow_raw_context=False):
         cleaned_text = _scrub_visible_tool_wire_leaks(cleaned_text)
     if _should_scrub_visible_wire(reasoning_text) and reasoning_text:
-        reasoning_text = _scrub_visible_tool_wire_leaks(reasoning_text)
+        reasoning_text = _scrub_visible_tool_wire_leaks(
+            reasoning_text, allow_truncated=True
+        )
     if _is_forced_choice and tool_calls:
         # #1676/#1677: a recovered valid DeepSeek call may be followed by a
         # malformed duplicate.  Never expose that native section through the
         # OpenAI content channels; the structured ``tool_calls`` field is the
         # authoritative representation.
-        cleaned_text = _strip_forced_tool_section(cleaned_text)
-        reasoning_text = _strip_forced_tool_section(reasoning_text)
+        _produced_tool_names = {call.function.name for call in tool_calls}
+        cleaned_text = _strip_truncated_forced_xml_call(
+            _strip_forced_tool_section(cleaned_text), _produced_tool_names
+        )
+        reasoning_text = _strip_truncated_forced_xml_call(
+            _strip_forced_tool_section(reasoning_text), _produced_tool_names
+        )
 
     # Process response_format if specified (after reasoning parser cleaned the text)
     if response_format and not tool_calls:
@@ -6741,7 +6812,12 @@ async def _create_chat_completion_impl(
             logger.warning(f"JSON output parsing failed: {e}")
 
     # Determine finish reason
-    finish_reason = "tool_calls" if tool_calls else output.finish_reason
+    # Tool deltas can precede token exhaustion; a length finish is never a completed call.
+    finish_reason = (
+        "tool_calls"
+        if tool_calls and output.finish_reason != "length"
+        else output.finish_reason
+    )
     if is_cancellation_finish_reason(finish_reason):
         return Response(status_code=499)
 
@@ -6826,7 +6902,7 @@ async def _create_chat_completion_impl(
             and reasoning_text
             and not final_content
         )
-        if not deepseek_v4_mid_think:
+        if not deepseek_v4_mid_think and not undeclared_tool_dropped:
             final_content = _rescue_silent_drop_from_reasoning(
                 final_content,
                 reasoning_text,
@@ -6860,6 +6936,16 @@ async def _create_chat_completion_impl(
             finish_reason,
             include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
         )
+
+    if (
+        undeclared_tool_dropped
+        and not (final_content or "").strip()
+        and not tool_calls
+        and not _is_structured_output_requested(response_format)
+    ):
+        from ..tool_parsers.qwen3coder_tool_parser import UNAVAILABLE_TOOL_NOTICE
+
+        final_content = UNAVAILABLE_TOOL_NOTICE
 
     # Build logprobs for response if requested.
     #
@@ -7334,6 +7420,7 @@ async def stream_chat_completion(
             and _stream_tool_choice
             and _stream_tool_choice.get("mode") in ("required", "named")
         )
+        _produced_tool_names: set[str] = set()
         _forced_content_pending: list[tuple[str, ChoiceLogProbs | None]] = []
         _forced_wire_quarantine = False
         _forced_quarantine_tail = ""
@@ -7546,6 +7633,11 @@ async def stream_chat_completion(
                     # parser-native ``point``. Gated on
                     # ``function.name == "computer"`` inside the helper.
                     _normalized_tcs = _normalize_ui_tars_tcs_for_chat(event.tool_calls)
+                    _produced_tool_names.update(
+                        tc["function"]["name"]
+                        for tc in (_normalized_tcs or [])
+                        if tc.get("function", {}).get("name")
+                    )
                     chunk = ChatCompletionChunk(
                         id=response_id,
                         created=_sse_created,
@@ -7785,7 +7877,7 @@ async def stream_chat_completion(
                 # wire so we cannot 422 mid-flight. If the synthesised call's
                 # arguments fail the target tool's schema, DON'T fabricate it —
                 # leave ``fallback_tool_calls`` empty. The terminal gate below
-                # reports a forced-choice error unless generation hit ``length``;
+                # reports a forced-choice error even when generation hit ``length``;
                 # never ship a broken call that the client might execute.
                 _synth_err = _forced_synth_schema_error(
                     _synth_target, _synth_call.function.arguments, request.tools
@@ -7851,8 +7943,41 @@ async def stream_chat_completion(
                 _forced_terminal_content_consumed = True
                 _forced_content_pending.append((_terminal_held, None))
                 _pending_raw = "".join(text for text, _ in _forced_content_pending)
-                if _contains_structural_tool_wire_leak(_pending_raw):
-                    _final_content = _scrub_visible_tool_wire_leaks(_pending_raw)
+                _produced_tool_names.update(
+                    tc["function"]["name"] for tc in fallback_tool_calls
+                )
+                _xml_cleaned = _strip_truncated_forced_xml_call(
+                    _pending_raw, _produced_tool_names
+                )
+                if _xml_cleaned != _pending_raw:
+                    if _xml_cleaned:
+                        yield _content_sse_chunk(_xml_cleaned, None)
+                elif (
+                    buffered_finish is not None
+                    and buffered_finish[0].finish_reason == "length"
+                    and re.fullmatch(
+                        r"<tool_call>\n<function=[^<>\s]+>\n",
+                        kwargs.get("forced_assistant_prefix") or "",
+                    )
+                    and _pending_raw.strip()
+                    and (
+                        "<parameter=".startswith(_pending_raw.strip())
+                        or _pending_raw.lstrip().startswith("<parameter=")
+                    )
+                ):
+                    # The XML prefill was swallowed upstream; a one-token
+                    # continuation can leave only '<'. Do not replay that
+                    # parameter-header prefix as prose at the budget boundary.
+                    # This prefix is server-generated, so it establishes wire
+                    # context even when schema validation refuses synthesis
+                    # and no produced tool name is available as evidence.
+                    _final_content = ""
+                elif _contains_structural_tool_wire_leak(
+                    _pending_raw, allow_truncated=True
+                ):
+                    _final_content = _scrub_visible_tool_wire_leaks(
+                        _pending_raw, allow_truncated=True
+                    )
                     if _final_content:
                         yield _content_sse_chunk(_final_content, None)
                 else:
@@ -7867,14 +7992,16 @@ async def stream_chat_completion(
         # Required/named requests must never report a successful stop after
         # dropping every call. Headers are already sent, so signal a stream
         # error rather than fabricating arguments.
+        # #4432 exempted ``length`` to preserve token-limit results. With zero
+        # calls after synthesis, that exemption silently loses a forced turn
+        # while non-stream returns 422. Truncation must also error here; calls
+        # already emitted/recovered bypass this gate, and schema-valid synthesis
+        # above still returns a call just as non-stream does.
         if (
             _stream_tool_choice
             and _stream_tool_choice.get("mode") in {"required", "named"}
             and processor._tool_calls_emitted_to_wire == 0
             and not fallback_tool_calls
-            and (
-                buffered_finish is None or buffered_finish[0].finish_reason != "length"
-            )
         ):
             error = {
                 "error": {
@@ -7899,18 +8026,18 @@ async def stream_chat_completion(
 
         # Emit the terminal chunk. Three cases:
         #   (a) Streaming parser already emitted tool_calls during the
-        #       loop → buffered_finish has finish_reason="tool_calls"
-        #       and fallback_tool_calls is empty. Emit as-is.
+        #       loop → buffered_finish preserves length or reports tool_calls
+        #       for any other finish. Emit as-is when there is no fallback.
         #   (b) Streaming parser missed the call but finalize() recovered
         #       it via cross-format fallback → merge tool_calls into the
-        #       buffered finish and override finish_reason="tool_calls".
+        #       buffered finish and upgrade any non-length finish to tool_calls.
         #   (c) No tool calls at all → emit the buffered finish unchanged.
         if buffered_finish is not None:
             finish_event, finish_output = buffered_finish
             if fallback_tool_calls:
                 logger.info(
                     "[SSE-FALLBACK-TC-MERGED] merging %d recovered tool_call(s) "
-                    "into terminal chunk; overriding finish_reason -> tool_calls",
+                    "into terminal chunk",
                     len(fallback_tool_calls),
                 )
             # Merge any released prefix-held content into the terminal
@@ -8014,16 +8141,21 @@ async def stream_chat_completion(
             # ``response_format`` which the rescue helper has no
             # access to.
             already_streamed_content = bool(processor.accumulated_text)
+            visible_content_streamed = bool(streamed_content.strip())
             has_any_tool_calls = bool(fallback_tool_calls) or (
                 finish_event.finish_reason == "tool_calls"
             )
             structured_output_requested = _is_structured_output_requested(
                 request.response_format
             )
+            rejected_only_tool_call = bool(
+                getattr(processor.tool_parser, "_undeclared_dropped", 0)
+            )
             if (
                 not already_streamed_content
                 and not has_any_tool_calls
                 and not structured_output_requested
+                and not rejected_only_tool_call
             ):
                 # Pass ``terminal_content or None`` so the helper
                 # sees the same "empty vs whitespace vs real"
@@ -8238,6 +8370,18 @@ async def stream_chat_completion(
                         "finish=length + reasoning present; surfacing "
                         "cutoff sentinel as content"
                     )
+            if (
+                not visible_content_streamed
+                and not (terminal_content or "").strip()
+                and not has_any_tool_calls
+                and not structured_output_requested
+                and rejected_only_tool_call
+            ):
+                from ..tool_parsers.qwen3coder_tool_parser import (
+                    UNAVAILABLE_TOOL_NOTICE,
+                )
+
+                terminal_content = UNAVAILABLE_TOOL_NOTICE
             final_chunk = ChatCompletionChunk(
                 id=response_id,
                 created=_sse_created,
@@ -8254,6 +8398,7 @@ async def stream_chat_completion(
                         finish_reason=(
                             "tool_calls"
                             if fallback_tool_calls
+                            and finish_event.finish_reason != "length"
                             else finish_event.finish_reason
                         ),
                         logprobs=_build_chunk_logprobs(finish_output),
