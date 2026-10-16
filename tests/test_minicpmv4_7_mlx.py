@@ -184,6 +184,9 @@ def test_processor_loads_locally_with_checkpoint_template(tmp_path):
         tmp_path, local_files_only=True, trust_remote_code=False
     )
     assert isinstance(processor, MiniCPMV4_7Processor)
+    # ProcessorMixin deep-copies instance state for serialization and repr.
+    assert processor.to_dict()["processor_class"] == "MiniCPMV4_7Processor"
+    assert "MiniCPMV4_7Processor" in repr(processor)
     assert (
         processor.tokenizer.chat_template
         == (tmp_path / "chat_template.jinja").read_text()

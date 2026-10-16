@@ -14,7 +14,8 @@ and cached-feature corrections. The per-file inventory, upstream SHA256s,
 local-byte digests and MIT notice live under
 `rapid_mlx/models/mlx_vlm_vendored/models/minicpmv4_7/`. The original
 Apache-2.0 notice on the canvas RoPE implementation is retained. The offline
-provenance test reverses import redirects to reconstruct upstream bytes;
+provenance test reverses import redirects and the documented thread-safety
+hunk to reconstruct upstream bytes;
 extracted compatibility regions have separate upstream hashes.
 
 ## Compatibility evidence
@@ -44,7 +45,14 @@ The dependency diff from the pinned tag to that commit was inspected for
   for those artifacts. Raw backbone MTP weights are discarded by sanitization.
 
 The only architecture-source deviations are license/provenance headers,
-marked import redirects, and marked subset extraction. There is no global
+marked import redirects, marked subset extraction, and the processor
+`VENDOR-DEVIATION(thread-safety)` hunk. A class-level `threading.Lock`
+serializes mode selection and the save/set/call/restore sequence for the
+shared image/video processors across processor instances, including restoration
+after exceptions. Keeping the lock outside instance state preserves
+`ProcessorMixin.to_dict()` and `repr()` compatibility with deep-copy serialization.
+Offline concurrency coverage verifies independent request modes and default
+mode selection without model weights or MLX. There is no global
 replacement of the pinned 4.6 or Qwen modules.
 
 ## Registration and routing

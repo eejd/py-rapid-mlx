@@ -17,7 +17,11 @@ and #2514), while the installed dependency remains 0.7.2. Its MIT notice
 is in ``models/minicpmv4_7/LICENSE``; the original Apache-2.0 notice in
 ``rope.py`` is retained. Per-file upstream SHA256 inventory entries and
 vendored-byte digests are in ``models/minicpmv4_7/provenance.json``.
-The six package files have only headers and marked import redirects.
+The six package files have headers and marked import redirects.
+``processing_minicpmv4_7.py`` also carries a marked
+``VENDOR-DEVIATION(thread-safety)``: a per-processor lock serializes
+request mode selection, temporary image/video modes, processing and restoration
+(including exceptions), preventing concurrent requests from mixing modes.
 ``_config.py`` copies the newer 4.6 config (MoE parsing hook);
 ``_vision_compat.py`` copies only the newer 4.6 model's two embedding
 methods (vision dtype and request downsampling). Both carry marked

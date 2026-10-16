@@ -24,7 +24,7 @@
     "processing_minicpmv4_7.py": {
       "upstream_path": "mlx_vlm/models/minicpmv4_7/processing_minicpmv4_7.py",
       "upstream_sha256": "7a2db85f38d054836463f4a664e3232ab6192f9e718c1bdc5297c308ee1d6dfe",
-      "vendored_sha256": "c98056365a72d7ff763850362c97c0e80430b5edc72a6c6dc376f56621cee2e1"
+      "vendored_sha256": "e0ce4b9279b2df5fa6ac24b8f7287eda1ed70d75df7c4f7d30d5df20ff6ab7b6"
     },
     "rope.py": {
       "upstream_path": "mlx_vlm/models/minicpmv4_7/rope.py",
