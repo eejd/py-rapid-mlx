@@ -149,7 +149,9 @@ def test_live_port_probe_detects_loopback_listener(host, capsys):
     """Retain real kernel coverage separately from deterministic scan policy."""
     listener, port = _claim_loopback_port()
     with listener:
-        assert cli._port_collision_host(host, port) in {host, "127.0.0.1"}
+        # A wildcard bind reports itself as "0.0.0.0" when the kernel rejects it
+        # (Linux); otherwise the loopback-shadow probe reports the listener.
+        assert cli._port_collision_host(host, port) in {host or "0.0.0.0", "127.0.0.1"}
         with pytest.raises(SystemExit) as exc:
             cli._port_preflight_or_die(
                 host, port, model="qwen3.5-4b-4bit", port_explicit=True
