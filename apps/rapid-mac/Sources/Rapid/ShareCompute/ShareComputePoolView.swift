@@ -60,11 +60,11 @@ struct ShareComputePoolTab: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("What is online right now")
-                    .font(.system(size: isNarrow ? 22 : 27, weight: .semibold))
+                    .font(.rapid(size: isNarrow ? 22 : 27, weight: .semibold))
                     .foregroundStyle(RapidTheme.bandInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Availability and capacity only. QuickSilver does not publish a demand queue.")
-                    .font(.system(size: 12))
+                    .font(.rapid(size: 12))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -75,7 +75,7 @@ struct ShareComputePoolTab: View {
 
             HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                 Text("Live relay availability · no demand queue")
-                    .font(.system(size: 11))
+                    .font(.rapid(size: 11))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: RapidTheme.Space.sm)
@@ -83,7 +83,7 @@ struct ShareComputePoolTab: View {
                 // links to them rather than printing a figure the summary
                 // endpoint never returned.
                 Text("Credits: metered tokens, monthly")
-                    .font(.system(size: 11))
+                    .font(.rapid(size: 11))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -117,7 +117,7 @@ struct ShareComputePoolTab: View {
             .accessibilityHidden(true)
 
             Text(freshnessText)
-                .font(.system(size: 11))
+                .font(.rapid(size: 11))
                 .foregroundStyle(RapidTheme.bandInkSecondary)
         }
         .padding(.horizontal, 10)
@@ -192,17 +192,15 @@ struct ShareComputePoolTab: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value ?? ShareComputePoolAvailability.unknownValue)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.rapid(size: 22, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(value == nil ? RapidTheme.bandInkTertiary : tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .semibold))
+                .font(.rapid(size: 10, weight: .semibold))
                 .tracking(0.5)
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, isFirst ? 0 : 18)
@@ -295,12 +293,12 @@ struct ShareComputePoolTab: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.rapid(size: 13, weight: .medium))
                     .foregroundStyle(RapidTheme.bandInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail {
                     Text(detail)
-                        .font(.system(size: 12))
+                        .font(.rapid(size: 12))
                         .foregroundStyle(tint)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -325,11 +323,11 @@ struct ShareComputePoolTab: View {
                     size: 11
                 )
                 Text(communityHeadline)
-                    .font(.system(size: isNarrow ? 24 : 29, weight: .bold))
+                    .font(.rapid(size: isNarrow ? 24 : 29, weight: .bold))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(communitySubhead)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.rapid(size: 14, weight: .semibold))
                     .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -379,11 +377,11 @@ struct ShareComputePoolTab: View {
                     size: 10
                 )
                 Text(row.local.title)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.rapid(size: 17, weight: .semibold))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(selectedCardStatus(row))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.rapid(size: 13, weight: .semibold))
                     .foregroundStyle(
                         row.local.isReady
                             ? RapidTheme.onBrandPrimaryReady
@@ -392,7 +390,7 @@ struct ShareComputePoolTab: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if let storageLabel = row.storage.label, !row.local.isReady {
                     Text(storageLabel)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.rapid(size: 12, weight: .semibold))
                         .foregroundStyle(
                             row.storage.isSufficient
                                 ? RapidTheme.onBrandPrimarySecondary
@@ -466,15 +464,14 @@ struct ShareComputePoolTab: View {
         } label: {
             HStack(spacing: RapidTheme.Space.sm) {
                 Text(row.local.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.rapid(size: 13, weight: .semibold))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.78)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // Fixed trailing slot so the state words form one lane down the
                 // list instead of drifting with each model name's length.
                 Text(pickerState(row).uppercased())
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.rapid(size: 10, weight: .bold))
                     .tracking(0.4)
                     .foregroundStyle(pickerStateTint(row))
                     .lineLimit(1)
@@ -531,9 +528,8 @@ struct ShareComputePoolTab: View {
         } label: {
             HStack(spacing: 8) {
                 Text(plan.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.rapid(size: 14, weight: .semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
                 Image(systemName: plan.startsDownload ? "arrow.down.circle" : "arrow.right")
                     .font(.system(size: 12, weight: .bold))
                     .accessibilityHidden(true)
@@ -576,19 +572,17 @@ struct ShareComputePoolRowView: View {
             HStack(spacing: RapidTheme.Space.sm) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(row.local.title)
-                        .font(.system(size: isNarrow ? 14 : 15, weight: .semibold))
+                        .font(.rapid(size: isNarrow ? 14 : 15, weight: .semibold))
                         .foregroundStyle(RapidTheme.bandInk)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .font(.rapid(size: 12))
                         .foregroundStyle(
                             row.isDisabledUpstream
                                 ? RapidTheme.bandInkTertiary
                                 : RapidTheme.bandInkSecondary
                         )
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -644,17 +638,14 @@ struct ShareComputePoolRowView: View {
     ) -> some View {
         VStack(alignment: alignment, spacing: 3) {
             Text(value.map { "\($0)" } ?? ShareComputePoolAvailability.unknownValue)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.rapid(size: 15, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(value == nil ? RapidTheme.bandInkTertiary : tint)
             Text(label.uppercased())
-                .font(.system(size: 10))
+                .font(.rapid(size: 10))
                 .tracking(0.4)
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
-                // Scale rather than truncate: a metric label that reads
-                // "CONNECT…" no longer names which counter it labels.
-                .minimumScaleFactor(0.72)
         }
         .frame(width: metricWidth, alignment: alignment == .trailing ? .trailing : .leading)
     }

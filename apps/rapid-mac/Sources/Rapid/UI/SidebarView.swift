@@ -818,7 +818,7 @@ struct SidebarView: View {
                         limitBytes: snapshot.memoryLimitBytes
                     )
                 )
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.rapid(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -854,7 +854,7 @@ struct SidebarView: View {
                         .truncationMode(.middle)
                     Spacer(minLength: 4)
                     Text(Self.formatBytes(model.displayBytes))
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.rapid(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("Sidebar.ResidentModel.\(model.id)")
@@ -875,7 +875,7 @@ struct SidebarView: View {
                         .truncationMode(.middle)
                     Spacer(minLength: 4)
                     Text(lane.lane.uppercased())
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.rapid(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier("Sidebar.ResidentAudio.\(lane.lane)")
@@ -1857,7 +1857,7 @@ private struct CUASidebarRow: View {
                 Spacer(minLength: RapidTheme.Space.xs)
                 if let status = CUASidebarStatus(phase: viewModel.phase) {
                     Text(status.title)
-                        .font(.caption2.weight(.semibold))
+                        .font(.rapid(.caption2).weight(.semibold))
                         .foregroundStyle(
                             status == .awaitingApproval ? Color.orange : Color.secondary
                         )

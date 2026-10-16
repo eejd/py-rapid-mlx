@@ -274,7 +274,7 @@ private struct OnboardingRailMark: View {
             .frame(width: 22, height: 22)
             .overlay {
                 Text("R")
-                    .scaledSystemFont(13, relativeTo: .caption, weight: .bold)
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(RapidTheme.brandPrimary)
             }
             .accessibilityHidden(true)
@@ -317,7 +317,7 @@ private struct OnboardingRailStepRow: View {
         switch state {
         case .complete:
             Text("✓")
-                .scaledSystemFont(11, relativeTo: .caption, weight: .semibold, design: .monospaced)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(RapidTheme.statusReady)
         case .current:
             Text("\(step.displayNumber)")
