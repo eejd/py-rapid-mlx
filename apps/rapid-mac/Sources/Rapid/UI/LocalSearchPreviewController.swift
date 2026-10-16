@@ -111,7 +111,10 @@ extension LocalSearchPreviewPanelDriving {
     private weak var owner: LocalSearchPreviewController?
     private var presented = false
     private var closing = false
-    private var closeObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var closeObserver: NSObjectProtocol?
+    deinit {
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+    }
     var isVisible: Bool { panel?.isVisible == true }
     func acquire(_ controller: LocalSearchPreviewController) -> Bool {
         finishClosingIfHidden(reopen: false)
@@ -178,16 +181,16 @@ extension LocalSearchPreviewPanelDriving {
                 if closeObserver == nil {
                     closeObserver = NotificationCenter.default.addObserver(
                         forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main
-                    ) { [self] _ in
-                        // Keep the adapter alive through dismissal even if its view
-                        // is gone; finishClosing removes this observer and its hold.
-                        DispatchQueue.main.async { [self, controller] in
-                            controller.enqueue { [self] in finishClosingIfHidden() }
+                    ) { [weak self, weak controller] _ in
+                        // Observe dismissal while the view owns the controller;
+                        // observation must not extend either object's lifetime.
+                        DispatchQueue.main.async { [weak self, weak controller] in
+                            controller?.enqueue { [weak self] in self?.finishClosingIfHidden() }
                         }
                     }
                 }
                 panel.orderOut(nil)
-                controller.enqueue { [self] in finishClosingIfHidden() }
+                controller.enqueue { [weak self] in self?.finishClosingIfHidden() }
             }
             // Quick Look can cache currentController across hidden sessions without
             // sending endControl. Detach assign references while still the owner.
