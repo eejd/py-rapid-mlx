@@ -2823,10 +2823,6 @@ _FORCED_TOOL_SECTION_RE = re.compile(
     r"(?:"
     r"<｜tool▁calls▁begin｜>\s*<｜tool▁call▁begin｜>"
     r"|<toolcallsbegin>\s*<toolcallbegin>"
-    # XML prefill can end before any JSON/parameter payload exists. Only
-    # classify an unclosed, line-start envelope, preserving inline examples.
-    r"|(?:^|\n)[ \t]*<tool_call>\s*<function=[^<>\s]+>"
-    r"(?:(?!</function>|</tool_call>).)*\Z"
     r")",
     re.DOTALL,
 )
@@ -2840,11 +2836,9 @@ def _strip_forced_tool_section(text: str | None) -> str:
     call but intentionally returns the raw text for diagnostics, which leaks
     the native section into ``content`` and — after reasoning extraction — into
     ``reasoning_content``.  A paired section+call opener is stronger evidence
-    than a literal marker mention in prose, so truncate at that sequence and
-    preserve any narration before it. An unclosed line-start XML envelope plus
-    named function is likewise structural, even before a parameter exists.
-    The compact spelling is produced by Qwen-tokenizer decoding of the same
-    fullwidth DeepSeek markers.
+    than a literal marker mention in prose, so truncate only at that sequence
+    and preserve any narration before it.  The compact spelling is produced by
+    Qwen-tokenizer decoding of the same fullwidth DeepSeek markers.
     """
     if not text:
         return text or ""
@@ -2856,6 +2850,26 @@ def _strip_forced_tool_section(text: str | None) -> str:
     if result.strip() in {"<think>", "</think>"}:
         return ""
     return result
+
+
+def _strip_truncated_forced_xml_call(text: str | None, tool_names: set[str]) -> str:
+    """Remove an unclosed XML tail only for an actually produced forced call.
+
+    A line-start envelope alone may be a documentation example. The structured
+    call's name supplies the evidence needed to discard a truncated prefill.
+    Closed envelopes remain the parser's responsibility.
+    """
+    if not text:
+        return text or ""
+    match = re.search(
+        r"(?:^|\n)[ \t]*<tool_call>\s*<function=([^<>\s]+)>"
+        r"(?:(?!</function>|</tool_call>).)*\Z",
+        text,
+        re.DOTALL,
+    )
+    if match and match.group(1) in tool_names:
+        return text[: match.start()].rstrip()
+    return text
 
 
 def _scrub_tool_wire_literals(text: str | None) -> str:
@@ -6767,8 +6781,13 @@ async def _create_chat_completion_impl(
         # malformed duplicate.  Never expose that native section through the
         # OpenAI content channels; the structured ``tool_calls`` field is the
         # authoritative representation.
-        cleaned_text = _strip_forced_tool_section(cleaned_text)
-        reasoning_text = _strip_forced_tool_section(reasoning_text)
+        _produced_tool_names = {call.function.name for call in tool_calls}
+        cleaned_text = _strip_truncated_forced_xml_call(
+            _strip_forced_tool_section(cleaned_text), _produced_tool_names
+        )
+        reasoning_text = _strip_truncated_forced_xml_call(
+            _strip_forced_tool_section(reasoning_text), _produced_tool_names
+        )
 
     # Process response_format if specified (after reasoning parser cleaned the text)
     if response_format and not tool_calls:
@@ -7396,6 +7415,7 @@ async def stream_chat_completion(
             and _stream_tool_choice
             and _stream_tool_choice.get("mode") in ("required", "named")
         )
+        _produced_tool_names: set[str] = set()
         _forced_content_pending: list[tuple[str, ChoiceLogProbs | None]] = []
         _forced_wire_quarantine = False
         _forced_quarantine_tail = ""
@@ -7608,6 +7628,11 @@ async def stream_chat_completion(
                     # parser-native ``point``. Gated on
                     # ``function.name == "computer"`` inside the helper.
                     _normalized_tcs = _normalize_ui_tars_tcs_for_chat(event.tool_calls)
+                    _produced_tool_names.update(
+                        tc["function"]["name"]
+                        for tc in (_normalized_tcs or [])
+                        if tc.get("function", {}).get("name")
+                    )
                     chunk = ChatCompletionChunk(
                         id=response_id,
                         created=_sse_created,
@@ -7913,12 +7938,23 @@ async def stream_chat_completion(
                 _forced_terminal_content_consumed = True
                 _forced_content_pending.append((_terminal_held, None))
                 _pending_raw = "".join(text for text, _ in _forced_content_pending)
-                if (
+                _produced_tool_names.update(
+                    tc["function"]["name"] for tc in fallback_tool_calls
+                )
+                _xml_cleaned = _strip_truncated_forced_xml_call(
+                    _pending_raw, _produced_tool_names
+                )
+                if _xml_cleaned != _pending_raw:
+                    if _xml_cleaned:
+                        yield _content_sse_chunk(_xml_cleaned, None)
+                elif (
                     buffered_finish is not None
                     and buffered_finish[0].finish_reason == "length"
-                    and (kwargs.get("forced_assistant_prefix") or "").startswith(
-                        "<tool_call>\n<function="
-                    )
+                    and (kwargs.get("forced_assistant_prefix") or "")
+                    in {
+                        f"<tool_call>\n<function={name}>\n"
+                        for name in _produced_tool_names
+                    }
                     and _pending_raw.strip()
                     and (
                         "<parameter=".startswith(_pending_raw.strip())
