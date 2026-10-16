@@ -423,8 +423,10 @@ for this alias (the checkpoint has no draft model or MTP head).
 
 MiniCPM-V 4.7 supports image and video inputs, XML tool calls, and optional
 thinking through the native MLLM lane. These experimental aliases keep
-speculative decoding disabled; bundled MTP weights are not used. Hardware
-verification of these two checkpoints is pending.
+speculative decoding disabled; bundled MTP weights are not used. Both
+checkpoints passed image Q&A (streaming and non-streaming), text-only chat,
+and tool-call verification on a Mac Studio M3 Ultra. Default chat is
+non-thinking. See the [verification record](../engineering/design/2026-10-16-minicpmv4_7-support.md#real-checkpoint-verification).
 
 ### Recommended VLM Models
 

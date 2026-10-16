@@ -4,8 +4,9 @@ Owner: Vector. Dependency: `mlx-vlm==0.7.2`, unchanged.
 
 The 1B dense and 35B-A3B expert models enter the existing native MLLM lane.
 Aliases are `minicpm-v4.7-1b-8bit` and `minicpm-v4.7-35b-a3b-mxfp4`.
-Both are experimental until real-checkpoint verification completes. MTP,
-DSpark and expert lookahead scheduling are outside this change.
+Both remain experimental after real-checkpoint verification. Speculative
+decoding remains disabled; bundled MTP weights are not used. MTP, DSpark and
+expert lookahead scheduling are outside this change.
 
 The architecture package is copied from upstream commit
 `b8bf04c6dd7f3bd3a2a5033bbfecef6375c3bfb0`, including the vision dtype
@@ -66,8 +67,8 @@ the existing `qwen3_coder_xml` and `qwen3` parsers are reused.
 
 ## Verification and handoff
 
-No model weights were downloaded. Real config/template fixtures are pinned
-in `tests/fixtures/minicpmv4_7/README.md`. Download sizes were measured with
+Initial implementation checks downloaded no model weights. Real config/template
+fixtures are pinned in `tests/fixtures/minicpmv4_7/README.md`. Download sizes were measured with
 `scripts.gen_model_sizes._size_one` for only the two new aliases.
 
 CPU contracts: **4,425 passed, 7 skipped**:
@@ -82,7 +83,8 @@ Additional detection coverage: **95 passed, 114 deselected**:
 .venv/cpu/bin/python -m pytest tests/test_api_utils.py tests/test_model_metadata.py -k 'mllm or vlm or multimodal' -q
 ```
 
-Apple-only runtime/provenance files were requested locally; **six modules
+During initial CPU validation, Apple-only runtime/provenance files were
+requested locally; **six modules
 skipped** because the CPU environment has no MLX. Pytest returns 5 when all
 requested modules skip. The host's MLX import independently fails with
 `[metal::load_device] No Metal device available` in this sandbox.
@@ -95,9 +97,10 @@ The new runtime test file is in the CI Apple list. It covers real-config
 parsing, nested reparsing, loader binding, tiny dense/MoE image forwards,
 cached features, both downsampling modes, decode, quantized-text dtype,
 local processor loading, chat templates, MTP filtering, and strict synthetic
-weight round trips. Vector/caller owns running these on Metal and verifying
-both real checkpoints, image/video requests, cancellation and relaunch before
-removing the experimental flags. No performance claims are made here.
+weight round trips. Metal and real-checkpoint verification are recorded below.
+Video requests, cancellation and relaunch remain outside the completed
+checkpoint checks; Vector owns that follow-up. Both aliases remain
+experimental. No performance claims are made here.
 
 Post-review provenance/BYOM rerun: **120 passed, 2 skipped**:
 
@@ -120,3 +123,34 @@ upstream formatting under the repository's existing formatter exclusions.
 .venv/bin/python -m ruff format --check rapid_mlx/models/minicpmv4_7.py rapid_mlx/models/mlx_vlm_vendored/models/minicpmv4_7 rapid_mlx/models/mlx_vlm_vendored/__init__.py rapid_mlx/models/mllm.py rapid_mlx/model_auto_config.py rapid_mlx/api/utils.py rapid_mlx/byom/preflight.py rapid_mlx/byom/_vlm_model_types.py tests/test_minicpmv4_7_contract.py tests/test_minicpmv4_7_mlx.py tests/test_byom_preflight.py
 git diff --check
 ```
+
+## Real-checkpoint verification
+
+Completed on 2026-10-16 on a Mac Studio M3 Ultra using the real checkpoints
+through `rapid-mlx serve <alias>`. Run each alias separately:
+
+```sh
+rapid-mlx serve minicpm-v4.7-1b-8bit
+rapid-mlx serve minicpm-v4.7-35b-a3b-mxfp4
+```
+
+For each server, send image Q&A requests in both non-streaming and streaming
+mode using a synthetic 448×448 image containing a red circle, a blue square,
+and the text `RAPID 42`. Repeat with a text-only `17*3` prompt and a weather
+request for Paris with a `get_weather` tool accepting a `city` argument.
+Both aliases produced the following results:
+
+- Image Q&A answered correctly in both modes.
+- Text-only `17*3` returned `51`.
+- Tool calling returned `get_weather({"city":"Paris"})` with
+  `finish_reason=tool_calls`.
+- Default chat was non-thinking, with empty reasoning.
+
+Metal runtime tests plus contract tests: **17 passed**:
+
+```sh
+.venv/bin/python -m pytest tests/test_minicpmv4_7_mlx.py tests/test_minicpmv4_7_contract.py -q
+```
+
+This evidence does not remove the experimental designation or enable
+speculative decoding for either alias.
