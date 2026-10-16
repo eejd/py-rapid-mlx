@@ -1236,7 +1236,7 @@ def test_generic_tokenizer_dispatch_preserves_existing_fallbacks(
     cause = ValueError(
         "Tokenizer class is unavailable"
         if fallback_name == "tokenizer"
-        else "Missing parameters in model"
+        else "Received 1 parameters not in model: \nvision_tower.proj.weight."
     )
     failure.__cause__ = cause
 

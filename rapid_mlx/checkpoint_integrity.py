@@ -50,7 +50,8 @@ def _read_header(path: Path) -> dict:
         if (
             not isinstance(offsets, list)
             or len(offsets) != 2
-            or not all(isinstance(value, int) for value in offsets)
+            or not all(type(value) is int for value in offsets)
+            or not 0 <= offsets[0] <= offsets[1]
         ):
             raise _UnreadableHeaderError
         data_end = max(data_end, 8 + header_len + offsets[1])

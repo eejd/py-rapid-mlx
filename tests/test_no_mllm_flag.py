@@ -3552,6 +3552,7 @@ def test_checkpoint_strict_retry_safety(tmp_path, monkeypatch, case):
         "truncated",
         "backbone",
         "wrapped_backbone",
+        "unparseable",
     ):
         incomplete = case in ("missing_shard", "absent_tensor", "truncated")
         expected = ValueError if incomplete else type(failure)
@@ -3572,3 +3573,67 @@ def test_checkpoint_strict_retry_safety(tmp_path, monkeypatch, case):
         assert result == (model, tokenizer)
         assert calls == [(tmp_path, {"strict": False})]
         assert resolved == ([ref] if case == "hub" else [])
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Missing parameters in model",
+        "Missing 1 parameters: \n",
+        "Missing 2 parameters: \nvision_tower.weight.",
+        "Missing 1 parameters: \nvision_tower.weight,\nmodel.mtp.layers.0.weight.",
+        "Model weights are incompatible: Missing 3 parameters: \n"
+        "model.layers.0.weight,\nmodel.layers.1.weight,\nmodel.layers.2.weight.",
+    ],
+)
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_unparsed_missing_parameters_refuse_strict_false(
+    tmp_path, monkeypatch, message, wrapped
+):
+    from unittest.mock import Mock
+
+    import mlx_lm.utils
+
+    from rapid_mlx.model_load_errors import IncompatibleWeights
+    from rapid_mlx.utils import tokenizer as loader
+
+    original = ValueError(message)
+    failure = original
+    if wrapped:
+        failure = IncompatibleWeights(f"Model weights are incompatible: {message}")
+        failure.__cause__ = original
+    load_model = Mock(side_effect=AssertionError("unsafe strict=False load"))
+    monkeypatch.setattr(mlx_lm.utils, "load_model", load_model)
+
+    with pytest.raises(type(failure)) as caught:
+        loader._load_strict_false(str(tmp_path), load_error=failure)
+
+    assert caught.value is failure
+    load_model.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "offsets",
+    [[False, 4], [0, True], [-1, 4], [0, -1], [-2, -1], [4, 0]],
+)
+def test_checkpoint_header_rejects_invalid_offsets(tmp_path, offsets):
+    import json
+    import struct
+
+    from rapid_mlx.checkpoint_integrity import (
+        _read_header,
+        _UnreadableHeaderError,
+        incomplete_checkpoint_reason,
+    )
+
+    header = json.dumps(
+        {"weight": {"dtype": "F32", "shape": [1], "data_offsets": offsets}}
+    ).encode()
+    shard = tmp_path / "model.safetensors"
+    shard.write_bytes(struct.pack("<Q", len(header)) + header + b"\0" * 4)
+
+    with pytest.raises(_UnreadableHeaderError):
+        _read_header(shard)
+    assert incomplete_checkpoint_reason(tmp_path) == (
+        "model.safetensors is truncated or unreadable"
+    )

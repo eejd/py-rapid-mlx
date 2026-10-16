@@ -1956,13 +1956,17 @@ def _refuse_unsafe_strict_false_retry(
         ) from load_error
     original = load_error.__cause__ if load_error.__cause__ is not None else load_error
     text = str(original)
-    names = _parse_missing_param_names(text)
-    if (
-        names
-        and _parse_missing_count(text) == len(names)
-        and not all(_is_optional_missing_weight(name) for name in names)
-    ):
-        raise load_error
+    # Only pure extra-parameter failures can retry without checking names.
+    # Every other failure requires a complete, optional-only missing-name list.
+    missing_count = _parse_missing_count(text)
+    if "parameters not in model" not in text or missing_count is not None:
+        names = _parse_missing_param_names(text)
+        if (
+            not names
+            or missing_count != len(names)
+            or not all(_is_optional_missing_weight(name) for name in names)
+        ):
+            raise load_error
 
 
 def _load_strict_false(
