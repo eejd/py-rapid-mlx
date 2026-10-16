@@ -76,3 +76,14 @@ def test_tunnel_logger_redacts_exception_tracebacks_without_global_filters(caplo
     assert "handshake rejected [redacted]" in caplog.text
     assert "unrelated connection intact" in caplog.text
     assert not logging.getLogger("websockets.client").filters
+
+
+def test_tunnel_logger_redacts_overlapping_credentials_longest_first(caplog):
+    client = ws_tunnel.TunnelClient(
+        local_port=1, share_key="shared-secret", override_authorization="shared-secret-tail"
+    )
+    with caplog.at_level(logging.DEBUG, logger="websockets.client"):
+        client._ws_logger.debug("%s %s", "shared-secret", "shared-secret-tail")
+    assert "shared-secret" not in caplog.text
+    assert "-tail" not in caplog.text
+    assert "[redacted] [redacted]" in caplog.text

@@ -105,7 +105,9 @@ class _CredentialFilter(logging.Filter):
 
     def __init__(self, *credentials: str | None) -> None:
         super().__init__()
-        self.credentials = tuple(value for value in credentials if value)
+        self.credentials = sorted(
+            {value for value in credentials if value}, key=len, reverse=True
+        )
 
     def _redact(self, text: str) -> str:
         for value in self.credentials:
