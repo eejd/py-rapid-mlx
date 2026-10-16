@@ -94,6 +94,15 @@ def model_card(bits, size):
         else "mixed: 26 interior MoE layers at 2-bit/group-128, 14 boundary layers at "
         "3-bit/group-128, other eligible projections 4-bit/group-64"
     )
+    memory = (
+        "Recommend 128 GB+ unified memory (measured peak 72.7 GB at 1K context "
+        "on M3 Ultra; 96 GB Macs may need a raised GPU wired-memory limit "
+        "and are not yet verified)."
+        if bits == 4
+        else "Recommend 64 GB+ unified memory (measured MLX allocator peak "
+        "45.903 GB for 1,024 prompt + 64 generated tokens, prefill chunk 256, "
+        "measured on 256 GiB M3 Ultra; physical 64 GB Mac not tested)."
+    )
     return f"""---
 license: other
 license_name: openmdw-1.1
@@ -110,16 +119,18 @@ Text conversion of [{BASE_MODEL}](https://huggingface.co/{BASE_MODEL}).
 
 - Quantization: {recipe}; embeddings 8-bit/group-64. Output head,
   routers and latent projections retain checkpoint precision.
-- Artifact size: {size / 1e9:.3f} GB. {"Memory qualification pending the 1K runtime measurement." if bits == 3 and size <= 44e9 else "Recommend **96 GB+** unified memory."}
+- Artifact size: {size / 1e9:.3f} GB. {memory}
   Allow headroom beyond the weights for prefill, caches, macOS and applications.
 - Text only: the vision tower, image projector and unused MTP head are omitted.
 - Declared context limit: 1,048,576 tokens; this does not promise that the full
-  window fits the recommended memory. Validation scope and measured results
-  are recorded in the Rapid-MLX handoff.
+  window fits the recommended memory. Memory measurements above cover only
+  the stated short-context workload.
 
 ## Requirements
 
-Requires Rapid-MLX PR #4679 and follow-up. The config retains
+Requires Rapid-MLX 0.16.2 or newer.
+
+The config retains
 `nemotron_h` and opts into Rapid's reviewed precision adapter. Stock loaders
 do not apply that adapter; only Rapid-MLX is validated for this conversion.
 
@@ -137,6 +148,15 @@ This conversion inherits the original model's license terms.
 """
 
 
+def shard_path(root, name):
+    """Contain checkpoint-controlled paths, including symlinks, in their root."""
+    relative = Path(name)
+    candidate = root / relative
+    if relative.is_absolute() or not candidate.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"Checkpoint shard path escapes its root: {name}")
+    return candidate
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
@@ -148,7 +168,8 @@ def main(argv=None):
     config = text_config(json.loads((args.source / "config.json").read_text()))
     index = json.loads((args.source / "model.safetensors.index.json").read_text())
     shards = set(index["weight_map"].values())
-    missing = [name for name in shards if not (args.source / name).is_file()]
+    sources = {name: shard_path(args.source, name) for name in shards}
+    missing = [name for name, path in sources.items() if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"Checkpoint download incomplete: {sorted(missing)}")
     start = time.monotonic()
@@ -159,8 +180,10 @@ def main(argv=None):
     with tempfile.TemporaryDirectory(dir=scratch) as temporary:
         view = Path(temporary)
         (view / "config.json").write_text(json.dumps(config, indent=2))
-        for name in shards:
-            (view / name).symlink_to((args.source / name).resolve())
+        for name, source in sources.items():
+            destination = shard_path(view, name)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.symlink_to(source.resolve())
         model, config = load_model_checked(load_model, view, lazy=True)
         model, config = quantize_model(
             model,

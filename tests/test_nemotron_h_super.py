@@ -273,7 +273,7 @@ def test_real_tiny_conversion_roundtrip(tmp_path, bits):
     cache.mkdir()
     (cache / "ignored").write_text("ignore")
     assert convert.artifact_size(output) == result["bytes"]
-    assert "96 GB+" in convert.model_card(bits, 70e9)
+    assert f"Recommend {128 if bits == 4 else 64} GB+" in convert.model_card(bits, 70e9)
 
 
 def test_mixed_allocation_and_precision_boundaries():
@@ -320,7 +320,7 @@ def test_mixed_allocation_and_precision_boundaries():
         85,
         87,
     )
-    assert "Memory qualification pending" in convert.model_card(3, 43e9)
+    assert "45.903 GB" in convert.model_card(3, 43e9)
     assert "26 interior" in convert.model_card(3, 43e9)
     model = super_h.Model(super_h.ModelArgs.from_dict(config()))
     predicate = convert.quantization_predicate(model, 3)
@@ -395,3 +395,63 @@ def test_metadata_recurrent_safety_and_parsers(tmp_path):
     assert config_declares_linear_attention(text)
     assert config_declares_linear_attention({"text_config": text})
     assert not config_declares_linear_attention({"layers_block_type": ["attention"]})
+
+
+@pytest.mark.parametrize("bits", [3, 4])
+def test_generated_card_published_guidance(bits):
+    card = convert.model_card(bits, 43e9 if bits == 3 else 70e9)
+    assert "Requires Rapid-MLX 0.16.2 or newer." in card
+    for internal in ("handoff", "/private/tmp", "PR #", "Memory qualification pending"):
+        assert internal not in card
+    if bits == 4:
+        assert "Recommend 128 GB+ unified memory" in card
+        assert "72.7 GB at 1K context on M3 Ultra" in card
+        assert "96 GB Macs may need a raised GPU wired-memory limit" in card
+        assert "are not yet verified" in card
+    else:
+        assert "Recommend 64 GB+ unified memory" in card
+        assert "45.903 GB for 1,024 prompt + 64 generated tokens" in card
+        assert "prefill chunk 256" in card
+        assert "256 GiB M3 Ultra; physical 64 GB Mac not tested" in card
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../escaped.safetensors",
+        "nested/../../escaped.safetensors",
+        "/absolute.safetensors",
+    ],
+)
+def test_converter_rejects_untrusted_shard_names(tmp_path, name):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "config.json").write_text(json.dumps(config()))
+    (source / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": name}})
+    )
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="shard path escapes"):
+        convert.main(["--source", str(source), "--output", str(output), "--bits", "4"])
+    assert not output.exists()
+    assert not (tmp_path / "escaped.safetensors").exists()
+
+
+@pytest.mark.parametrize("root_name", ["source", "view"])
+def test_shard_path_rejects_symlink_escape(tmp_path, root_name):
+    root = tmp_path / root_name
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="shard path escapes"):
+        convert.shard_path(root, "linked/shard.safetensors")
+    (root / "shard.safetensors").symlink_to(outside / "shard.safetensors")
+    with pytest.raises(ValueError, match="shard path escapes"):
+        convert.shard_path(root, "shard.safetensors")
+
+
+def test_shard_path_allows_contained_nested_file(tmp_path):
+    assert convert.shard_path(tmp_path, "nested/shard.safetensors") == (
+        tmp_path / "nested/shard.safetensors"
+    )
