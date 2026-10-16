@@ -9149,40 +9149,71 @@ def test_closest_only_after_empty_normal_results(tmp_path, monkeypatch, group_li
                 ]
             limited = await search.search("departing staff customer lists", 1, None)
             assert limited["results"] == response["results"][:1]
-            # Exact normal results must equal the pre-change implementation,
-            # including scores, markers, representatives, and group previews.
-            import types
-
-            baseline = subprocess.check_output(
-                ["git", "show", "origin/main:rapid_mlx/local_search/service.py"],
-                text=True,
-            )
-            module = types.ModuleType("rapid_mlx.local_search._baseline_service")
-            module.__package__ = "rapid_mlx.local_search"
-            exec(compile(baseline, "baseline_service.py", "exec"), module.__dict__)
-            old = await module.LocalSearch.search(
-                search, "apple", 20, None, group_limit=group_limit
-            )
+            # All eight files contain the literal phrase: lexical tier 2,
+            # ordered by keyword rank, with score (2 + 61 / (60 + rank)) / 4.
             new = await search.search("apple", 20, None, group_limit=group_limit)
-            old.pop("took_ms")
-            new.pop("took_ms")
-            assert new == old
+            assert new["mode"] == "hybrid"
+            assert [h["path"] for h in new["results"]] == [
+                str(root / f"file{n}.txt") for n in range(8)
+            ]
+            assert [h["score"] for h in new["results"]] == pytest.approx(
+                [(2 + 61 / (61 + n)) / 4 for n in range(8)]
+            )
+            assert all(h["matched"] == ["keyword"] for h in new["results"])
             assert new["results"] and all(
                 "closest" not in h["matched"] for h in new["results"]
             )
-            # A semantic-only normal hit also preserves the baseline exactly.
+            assert [h["snippet"] for h in new["results"]] == [
+                f"apple contract section {n}" for n in range(8)
+            ]
+            assert all(h["highlights"] == [[0, 5]] for h in new["results"])
+            if group_limit is not None:
+                assert new["groups"] == [
+                    {
+                        "kind": "text",
+                        "results": new["results"][:group_limit],
+                        "total": 8,
+                    }
+                ]
+            else:
+                assert "groups" not in new
+            # Lower background admits every semantic hit; rank follows the
+            # descending fixture similarities (file7 through file0). A single
+            # semantic vote is normalized by 2 * 1.05 / 61, then divided by 4.
             monkeypatch.setattr(
                 search.store._store,
                 "semantic_background",
                 lambda _: dict.fromkeys(("text", "image", "video"), 0.01),
             )
-            old = await module.LocalSearch.search(
-                search, "paraphrase", 20, None, group_limit=group_limit
-            )
             new = await search.search("paraphrase", 20, None, group_limit=group_limit)
-            old.pop("took_ms")
-            new.pop("took_ms")
-            assert new == old
+            assert new["mode"] == "hybrid"
+            assert [h["path"] for h in new["results"]] == [
+                str(root / f"file{n}.txt") for n in reversed(range(8))
+            ]
+            assert [h["score"] for h in new["results"]] == pytest.approx(
+                [
+                    0.125,
+                    (61 / 62 + 0.02) / 8.4,
+                    (61 / 63 + 0.02) / 8.4,
+                    *[61 / (60 + rank) / 8.4 for rank in range(4, 9)],
+                ]
+            )
+            assert all(h["matched"] == ["semantic"] for h in new["results"])
+            assert all("closest" not in h["matched"] for h in new["results"])
+            assert [h["snippet"] for h in new["results"]] == [
+                f"apple contract section {n}" for n in reversed(range(8))
+            ]
+            assert all(h["highlights"] == [] for h in new["results"])
+            if group_limit is not None:
+                assert new["groups"] == [
+                    {
+                        "kind": "text",
+                        "results": new["results"][:group_limit],
+                        "total": 8,
+                    }
+                ]
+            else:
+                assert "groups" not in new
         finally:
             await search.close()
 
