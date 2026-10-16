@@ -4168,6 +4168,11 @@ def _pflash_cached_prefix_tokens(
     return max(0, min(matched, len(tokens)))
 
 
+def _prompt_len(request: Request) -> int:
+    """Tokenized prompt length; zero before tokenization."""
+    return len(request.prompt_token_ids or ())
+
+
 class Scheduler:
     """
     Scheduler for continuous batching using mlx-lm BatchGenerator.
@@ -7420,7 +7425,7 @@ class Scheduler:
         # Promotion runs after prompt compression; admission runs before it.
         # Keep logical usage intact while reserving only physical model KV.
         prompt_tokens = (
-            len(request.prompt_token_ids)
+            _prompt_len(request)
             if model_prompt
             else int(getattr(request, "num_prompt_tokens", 0) or 0)
         )
@@ -9214,8 +9219,9 @@ class Scheduler:
 
     def _discard_prefill_cache(self, request: Request) -> None:
         """Release fetched cache ownership before pricing a cold fallback."""
-        if getattr(self, "block_aware_cache", None) is not None:
-            self.block_aware_cache.release_cache(request.request_id)
+        block_aware_cache = getattr(self, "block_aware_cache", None)
+        if block_aware_cache is not None:
+            block_aware_cache.release_cache(request.request_id)
         request.prompt_cache = None
         request.block_table = None
         request.shared_prefix_blocks = 0
@@ -9684,7 +9690,7 @@ class Scheduler:
     def _prefill_workspace_units(self, request: Request) -> int:
         # Bound the entire trajectory, including the last chunk's attention
         # offset. A prefix hit reduces KV growth, never the attention context.
-        context = max(1, len(request.prompt_token_ids))
+        context = max(1, _prompt_len(request))
         remaining = max(1, context - request.cached_tokens)
         chunk = min(self.config.prefill_step_size, remaining)
         return chunk * context
@@ -9704,7 +9710,7 @@ class Scheduler:
         units = max(padded_units, self._prefill_workspace_units(request))
         chunk = min(
             self.config.prefill_step_size,
-            max(1, len(request.prompt_token_ids) - request.cached_tokens),
+            max(1, _prompt_len(request) - request.cached_tokens),
         )
         return int(
             max(
@@ -9723,7 +9729,7 @@ class Scheduler:
         if request.request_id in self.running and (
             request.num_output_tokens or request.batch_uid in generation_uids
         ):
-            resident_tokens = len(request.prompt_token_ids) + request.num_output_tokens
+            resident_tokens = _prompt_len(request) + request.num_output_tokens
         resident = per_tok * resident_tokens
         if resident_tokens:
             resident += self._resolve_kv_fixed_baseline_bytes()
@@ -9744,11 +9750,11 @@ class Scheduler:
         padded_chunk = max(
             min(
                 self.config.prefill_step_size,
-                max(1, len(r.prompt_token_ids) - r.cached_tokens),
+                max(1, _prompt_len(r) - r.cached_tokens),
             )
             for r, _ in selected
         )
-        padded_units = padded_chunk * max(len(r.prompt_token_ids) for r, _ in selected)
+        padded_units = padded_chunk * max(_prompt_len(r) for r, _ in selected)
         need += sum(
             self._prefill_workspace_bytes(
                 r, padded_units=padded_units, padded_chunk=padded_chunk
@@ -9800,6 +9806,8 @@ class Scheduler:
         if self._resolve_metal_cap_bytes() <= 0:
             return None
         bg = self.batch_generator
+        if bg is None:
+            return None
         # Use the next segment, exactly as the generator does. Total remaining
         # prompt length can hide a tiny shared-prefix boundary forward.
         segments = dict(
@@ -9838,7 +9846,7 @@ class Scheduler:
         minimum = min(256, self.config.prefill_step_size)
         if not rows or max(chunk for _, chunk in rows) < minimum:
             return
-        units = sum(chunk * max(1, len(r.prompt_token_ids)) for r, chunk in rows)
+        units = sum(chunk * max(1, _prompt_len(r)) for r, chunk in rows)
         chunks = sum(chunk for _, chunk in rows)
         # Include KV allocation and simultaneous decode in the residual rather
         # than trying to subtract uncertain allocator/copy lifetimes. This is

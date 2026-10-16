@@ -1622,6 +1622,13 @@ def test_prefill_singleton_progress_and_disabled_cap(disabled_cap):
     assert [r.request_id for r in sched._schedule_waiting()] == ["b"]
 
 
+def test_prefill_memory_sample_skips_without_generator():
+    sched = _cohort_scheduler()
+    sched._resolve_metal_cap_bytes = lambda: 1000
+    sched.batch_generator = None
+    assert sched._begin_prefill_memory_sample() is None
+
+
 def test_prefill_uncalibrated_cohort_is_narrow_and_high_water_only_rises():
     sched = _cohort_scheduler()
     del sched._prefill_workspace_high_water
