@@ -152,7 +152,7 @@ extension UIFontSettingsTests {
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
         let argument = #"(?:[^(){}]|\([^(){}]*\))*"#
-        let pattern = #"\bImage\s*\(\s*systemName\s*:[ARG]\)(?:\s*\.\w+\([ARG]\))*?\s*(?:\.font\s*\(\s*(?:\.rapid\s*\(|RapidFont\.)|\.scaledSystemFont\s*\()"#
+        let pattern = #"\bImage\s*\([ARG]\)(?:\s*\.\w+\([ARG]\))*?\s*(?:\.font\s*\(\s*(?:\.rapid\s*\(|RapidFont\.)|\.scaledSystemFont\s*\()"#
             .replacingOccurrences(of: "[ARG]", with: argument)
         let regex = try NSRegularExpression(pattern: pattern)
         return regex.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code))
@@ -166,6 +166,9 @@ extension UIFontSettingsTests {
             #"Image(systemName: "checkmark").accessibilityHidden(true).font(RapidFont.caption)"#,
             #"Image(systemName: "magnifyingglass").scaledSystemFont(32, relativeTo: .title)"#,
             "Image(systemName: symbol)\n .foregroundStyle(.secondary)\n .scaledSystemFont(12)",
+            #"Image("logo").scaledSystemFont(12)"#,
+            "Image(nsImage: icon).font(.rapid(.caption))",
+            #"Image(decorative: "mark").resizable().font(RapidFont.caption)"#,
         ] {
             #expect(try Self.scaledImageFonts(in: source) == 1)
         }
@@ -180,7 +183,7 @@ extension UIFontSettingsTests {
         }
     }
 
-    @Test("decorative SF Symbols never use UI text scaling directly")
+    @Test("decorative images never use UI text scaling directly")
     func uiImagesKeepFixedFonts() throws {
         let root = DynamicTypeScaledFontTests.sourceRoot.appendingPathComponent("Sources/Rapid")
         let files = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
