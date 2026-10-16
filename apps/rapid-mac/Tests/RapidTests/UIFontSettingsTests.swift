@@ -152,7 +152,7 @@ extension UIFontSettingsTests {
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
         let argument = #"(?:[^(){}]|\([^(){}]*\))*"#
-        let pattern = #"\bImage\s*\(\s*systemName\s*:[ARG]\)(?:\s*\.\w+\([ARG]\))*?\s*\.font\s*\(\s*(?:\.rapid\s*\(|RapidFont\.)"#
+        let pattern = #"\bImage\s*\(\s*systemName\s*:[ARG]\)(?:\s*\.\w+\([ARG]\))*?\s*(?:\.font\s*\(\s*(?:\.rapid\s*\(|RapidFont\.)|\.scaledSystemFont\s*\()"#
             .replacingOccurrences(of: "[ARG]", with: argument)
         let regex = try NSRegularExpression(pattern: pattern)
         return regex.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code))
@@ -164,12 +164,15 @@ extension UIFontSettingsTests {
             #"Image(systemName: "pin.fill").font(.rapid(size: 9))"#,
             "Image(\n systemName: symbol(for: state)\n)\n .foregroundStyle(.secondary)\n .font(.rapid(.caption))",
             #"Image(systemName: "checkmark").accessibilityHidden(true).font(RapidFont.caption)"#,
+            #"Image(systemName: "magnifyingglass").scaledSystemFont(32, relativeTo: .title)"#,
+            "Image(systemName: symbol)\n .foregroundStyle(.secondary)\n .scaledSystemFont(12)",
         ] {
             #expect(try Self.scaledImageFonts(in: source) == 1)
         }
         for source in [
             #"Image(systemName: "pin.fill").font(.system(size: 9))"#,
             "Image(systemName: symbol)\nText(title).font(.rapid(size: 13))",
+            "Image(systemName: symbol)\nText(title).scaledSystemFont(13)",
             #"HStack { Image(systemName: symbol); Text(title) }.font(.rapid(.body))"#,
             #"// Image(systemName: "pin.fill").font(.rapid(size: 9))"#,
         ] {
