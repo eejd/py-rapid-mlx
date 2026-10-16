@@ -274,7 +274,7 @@ def test_real_tiny_conversion_roundtrip(tmp_path, bits):
     cache.mkdir()
     (cache / "ignored").write_text("ignore")
     assert convert.artifact_size(output) == result["bytes"]
-    assert f"Recommend {128 if bits == 4 else 64} GB+" in convert.model_card(bits, 70e9)
+    assert ("128 GB+" if bits == 4 else "45.903 GB") in convert.model_card(bits, 70e9)
 
 
 @pytest.fixture
@@ -520,15 +520,15 @@ def test_generated_card_published_guidance(bits):
     for internal in ("handoff", "/private/tmp", "PR #", "Memory qualification pending"):
         assert internal not in card
     if bits == 4:
-        assert "Recommend 128 GB+ unified memory" in card
+        assert "Recommend **128 GB+** unified memory" in card
         assert "72.7 GB at 1K context on M3 Ultra" in card
         assert "96 GB Macs may need a raised GPU wired-memory limit" in card
         assert "are not yet verified" in card
     else:
-        assert "Recommend 64 GB+ unified memory" in card
-        assert "45.903 GB for 1,024 prompt + 64 generated tokens" in card
-        assert "prefill chunk 256" in card
-        assert "256 GiB M3 Ultra; physical 64 GB Mac not tested" in card
+        assert "Targets **64 GB** unified" in card
+        assert "for 1,024 prompt tokens plus 64 generated tokens" in card
+        assert "prefill chunks of 256" in card
+        assert "256 GiB M3 Ultra; a physical 64 GB Mac has not been tested" in card
 
 
 @pytest.mark.parametrize(

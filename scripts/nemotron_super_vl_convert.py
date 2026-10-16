@@ -94,14 +94,17 @@ def model_card(bits, size):
         else "mixed: 26 interior MoE layers at 2-bit/group-128, 14 boundary layers at "
         "3-bit/group-128, other eligible projections 4-bit/group-64"
     )
-    memory = (
-        "Recommend 128 GB+ unified memory (measured peak 72.7 GB at 1K context "
-        "on M3 Ultra; 96 GB Macs may need a raised GPU wired-memory limit "
-        "and are not yet verified)."
-        if bits == 4
-        else "Recommend 64 GB+ unified memory (measured MLX allocator peak "
-        "45.903 GB for 1,024 prompt + 64 generated tokens, prefill chunk 256, "
-        "measured on 256 GiB M3 Ultra; physical 64 GB Mac not tested)."
+    memory_guidance = (
+        "Targets **64 GB** unified\n"
+        "  memory for short contexts. Measured MLX allocator peak: **45.903 GB**\n"
+        "  for 1,024 prompt tokens plus 64 generated tokens, with prefill chunks of 256.\n"
+        "  Measurements use a 256 GiB M3 Ultra; a physical 64 GB Mac has not been tested.\n"
+        "  Start at 1K context and leave memory for macOS and other applications."
+        if bits == 3
+        else "Recommend **128 GB+** unified memory (measured peak 72.7 GB at 1K context "
+        "on M3 Ultra; 96 GB Macs may need a raised GPU wired-memory limit and are not "
+        "yet verified).\n"
+        "  Allow headroom beyond the weights for prefill, caches, macOS and applications."
     )
     return f"""---
 license: other
@@ -119,18 +122,14 @@ Text conversion of [{BASE_MODEL}](https://huggingface.co/{BASE_MODEL}).
 
 - Quantization: {recipe}; embeddings 8-bit/group-64. Output head,
   routers and latent projections retain checkpoint precision.
-- Artifact size: {size / 1e9:.3f} GB. {memory}
-  Allow headroom beyond the weights for prefill, caches, macOS and applications.
+- Artifact size: {size / 1e9:.3f} GB. {memory_guidance}
 - Text only: the vision tower, image projector and unused MTP head are omitted.
 - Declared context limit: 1,048,576 tokens; this does not promise that the full
-  window fits the recommended memory. Memory measurements above cover only
-  the stated short-context workload.
+  window fits the recommended memory.
 
 ## Requirements
 
-Requires Rapid-MLX 0.16.2 or newer.
-
-The config retains
+Requires Rapid-MLX 0.16.2 or newer. The config retains
 `nemotron_h` and opts into Rapid's reviewed precision adapter. Stock loaders
 do not apply that adapter; only Rapid-MLX is validated for this conversion.
 
