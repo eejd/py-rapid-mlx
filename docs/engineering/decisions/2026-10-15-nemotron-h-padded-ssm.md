@@ -52,19 +52,63 @@ Left padding, unpadded chunking, loader installation, and ordinary decode
 dispatch have controls. Zero-token rows retain incoming state exactly.
 
 All eight model/prompt-batch cases fail against the unchanged dependency in
-the CPU reproduction. The shim passes all 23 focused tests and the 63-test
-compatibility/loader/CI-roster set on CPU, with 100% changed-line coverage
-(82 executable lines). Environment: Python 3.12.14, MLX 0.32.4, dependency
-0.31.3, fresh worktree `.venv`, installed with `pip install -e '.[dev]'`.
-No production-model quality or performance claim is made. GPU numerical
-validation remains outstanding because another job held the shared lock;
-only this task's waiting lock client was cancelled. The CPU run checks Metal
-decode dispatch with a kernel stub, rather than executing the Metal kernel.
+the original CPU reproduction. The prior CPU compatibility set passed 63 tests.
+GPU validation on Apple M3 Ultra (256 GB), Python 3.12.14, MLX 0.32.4 and model
+dependency 0.31.3 passed all 23 focused tests with default settings and all 48
+focused/Apple-CI-roster/compatibility tests with `MLX_ENABLE_TF32=0`. These runs
+execute Metal decode in the numerical comparisons; only the explicit dispatcher
+contract uses a kernel stub.
 
-CPU reproduction of the fixed contracts:
+## Cached-checkpoint GPU evidence
+
+Checkpoint: `mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, cached
+snapshot `55ac8c89261109b36c04371cd3f479a4594208c8`. No download or checkpoint
+modification was needed. `scripts/validate_nemotron_h_padding.py` loads through
+the canonical loader and uses the production prompt-processing batch. Two
+prompts have 5 and 308 tokens. Their prefixes (4 and 307 tokens) are processed
+with a 256-token prefill step; the final prompt token exposes next-token logits,
+followed by eight greedy tokens. Independent runs use the same chunk size.
+
+The numerical control promotes floating parameters/activations to float32,
+retains packed 4-bit weights, and disables TF32. Base: `origin/main` at
+`ed77e0b33`; candidate implementation: `bc56335f2` plus the validation script.
+
+| Revision | Prompt tokens | First next-token max absolute logit error | Worst error over eight steps | Eight greedy tokens match |
+| --- | ---: | ---: | ---: | --- |
+| Base | 5 | 7.983969 | 18.153801 | No |
+| Candidate | 5 | 0.0000133514 | 0.0000181198 | Yes |
+| Base | 308 | 0.00196362 | 0.00196362 | Yes |
+| Candidate | 308 | 0.00196362 | 0.00196362 | Yes |
+
+The untouched long row supplies a numerical control: its residual error is
+identical on both revisions. The float32 comparison uses `atol=0.003,
+rtol=0.0002` for every logit at every step; the base fails and the candidate
+passes. The initial tighter `atol=0.0002` bound failed only on this unchanged
+long control after the fix. The short-row correction is much tighter than the
+final allowance, with peak error below 0.000019.
+
+At original checkpoint precision, the candidate also matches both eight-token
+greedy continuations, while the base diverges on the short row. Logits are not
+bitwise equivalent: first-step max errors are 1.578125 for the candidate short
+row and 0.8125 for the long row, with the long-row errors again identical on
+both revisions. The checkpoint-precision diagnostic fails its logit bound on
+both revisions. This evidence verifies recurrent padding correctness, not
+bitwise batch invariance at checkpoint precision or a quality/performance claim.
+
+Reproduce on a host with this cached snapshot (all GPU commands require the
+shared lock):
 
 ```sh
-.venv/bin/python -c 'import mlx.core as mx; mx.set_default_device(mx.cpu); import pytest; raise SystemExit(pytest.main(["tests/test_nemotron_h_ssm.py", "-q"]))'
+mkdir -p /private/tmp/nemotron-ssm-fix-validation
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 MLX_ENABLE_TF32=0
+RAPID_MODEL="$HOME/.cache/huggingface/hub/models--mlx-community--NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit/snapshots/55ac8c89261109b36c04371cd3f479a4594208c8"
+lockf -k /var/tmp/rapid-mlx-large-model.lock .venv/bin/python -m pytest tests/test_nemotron_h_ssm.py tests/test_ci_apple_coverage_union.py tests/test_mlx_compat.py -q
+lockf -k /var/tmp/rapid-mlx-large-model.lock .venv/bin/python scripts/validate_nemotron_h_padding.py --float32 --model "$RAPID_MODEL" --output /private/tmp/nemotron-ssm-fix-validation/branch.json
 ```
 
-GPU execution must hold `lockf -k /var/tmp/rapid-mlx-large-model.lock`.
+For the negative control, run the same candidate script and Python environment
+with `PYTHONPATH` pointing at a detached base checkout. Base exits 1 after
+writing its JSON evidence; candidate exits 0. The script reports raw errors,
+allclose decisions, token IDs and decoded continuations before asserting.
+Changed-line coverage against `origin/main` is 135/135 executable lines (100%),
+including the compatibility shim, loader installation and validation script.
