@@ -4347,8 +4347,10 @@ class StreamingPostProcessor:
         # holds even for a separate finish-only chunk that carried no
         # structured call of its own (codex #1761).
         if (
-            self._suppress_tool_calls or self.undeclared_tool_dropped
-        ) and output.finish_reason == "tool_calls":
+            self._tool_calls_emitted_to_wire == 0
+            and (self._suppress_tool_calls or self.undeclared_tool_dropped)
+            and output.finish_reason == "tool_calls"
+        ):
             return "stop"
         return output.finish_reason
 

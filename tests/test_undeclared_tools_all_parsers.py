@@ -32,7 +32,7 @@ VALID = '<tool_call><function=write_file>{"path":"x"}</function></tool_call>'
     [
         ("nemotron", REJECTED, NOTICE, False),
         ("nemotron", "Before. " + REJECTED + " After.", "Before.  After.", False),
-        ("nemotron", VALID + REJECTED, "", True),
+        ("nemotron", REJECTED + VALID, "", True),
         ("gemma4", GEMMA, NOTICE, False),
     ],
 )
@@ -74,68 +74,141 @@ def test_chat_all_formats(stream, parser, text, expected, valid):
             finish = choice["finish_reason"]
         assert content.strip() == expected.strip()
         assert bool(calls) == valid
-        assert all(
-            tc.get("function", {}).get("name", "write_file") == "write_file"
-            for tc in calls
-        )
+        if valid:
+            assert len(calls) == 1
+            call = calls[0]
+            assert isinstance(call["id"], str) and call["id"]
+            assert call == {
+                **({"index": 0} if stream else {}),
+                "id": call["id"],
+                "type": "function",
+                "function": {"name": "write_file", "arguments": '{"path":"x"}'},
+            }
+        else:
+            assert calls == []
         assert finish == ("tool_calls" if valid else "stop")
     finally:
         reset_config()
 
 
 @pytest.mark.parametrize(
-    "parser,text,recognized",
+    "parser,text",
     [
         (
             "hermes",
             '<tool_call>{"name":"send_email","arguments":{"x":1}}</tool_call>',
-            True,
         ),
         (
             "qwen",
             '<tool_call>{"name":"send_email","arguments":{"x":1}}</tool_call>',
-            True,
         ),
         (
             "qwen3_xml",
             '<tool_call>{"name":"send_email","arguments":{"x":1}}</tool_call>',
-            True,
         ),
-        (
-            "hy_v3",
-            '<tool_call:opensource>send_email<tool_sep:opensource>{"x":1}<end_of_tool_call:opensource>',
-            False,
-        ),
-        (
-            "k2_horizon",
-            "<ifm|tool_calls><ifm|tool_call>send_email<ifm|arg_key>x</ifm|arg_key><ifm|arg_value>1</ifm|arg_value></ifm|tool_call></ifm|tool_calls>",
-            False,
-        ),
-        ("gemma4", GEMMA, True),
-        ("nemotron", REJECTED, True),
-        ("llama", '<function=send_email>{"x":1}</function>', True),
-        ("mistral", '[TOOL_CALLS] [{"name":"send_email","arguments":{"x":1}}]', True),
+        ("gemma4", GEMMA),
+        ("nemotron", REJECTED),
+        ("llama", '<function=send_email>{"x":1}</function>'),
+        ("mistral", '[TOOL_CALLS] [{"name":"send_email","arguments":{"x":1}}]'),
         (
             "harmony",
             '<|start|>assistant to=functions.send_email<|channel|>commentary json<|message|>{"x":1}<|call|>',
-            True,
-        ),
-        (
-            "glm47",
-            "<tool_call>send_email<arg_key>x</arg_key><arg_value>1</arg_value></tool_call>",
-            False,
         ),
     ],
 )
-def test_buffered_parser_authorization(monkeypatch, parser, text, recognized):
+def test_buffered_parser_authorization(monkeypatch, parser, text):
     cfg = helpers.get_config()
     monkeypatch.setattr(cfg, "enable_auto_tool_choice", True)
     monkeypatch.setattr(cfg, "tool_call_parser", parser)
     content, calls = helpers._parse_tool_calls_with_parser(text, _Request())
     assert not calls
-    if recognized:
-        assert helpers._was_undeclared_tool_dropped()
-        assert not content.strip()
+    assert helpers._was_undeclared_tool_dropped()
+    assert not content.strip()
+
+
+@pytest.mark.parametrize(
+    "parser,text",
+    [
+        pytest.param(
+            "hy_v3",
+            '<tool_call:opensource>send_email<tool_sep:opensource>{"x":1}<end_of_tool_call:opensource>',
+            id="hy_v3-parser-refusal",
+        ),
+        pytest.param(
+            "k2_horizon",
+            '<ifm|tool_calls><ifm|tool_call>{"name":"send_email","arguments":{"x":1}}</ifm|tool_call></ifm|tool_calls>',
+            id="k2_horizon-parser-refusal",
+        ),
+        pytest.param(
+            "glm47",
+            "<tool_call>send_email<arg_key>x</arg_key><arg_value>1</arg_value></tool_call>",
+            id="glm47-parser-refusal",
+        ),
+    ],
+)
+def test_parser_level_undeclared_refusal(parser, text):
+    """These parsers gate names internally; this does not test shared filtering."""
+    cls = helpers.ToolParserManager.get_tool_parser(parser)
+    parser_instance = cls(None)
+    allowed = {
+        "chat_template_kwargs": {"tool_call_format": "json"},
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_email",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"x": {"type": "integer"}},
+                    },
+                },
+            }
+        ],
+    }
+    accepted = parser_instance.extract_tool_calls(text, allowed)
+    assert accepted.tools_called
+    assert len(accepted.tool_calls) == 1
+    assert accepted.tool_calls[0]["name"] == "send_email"
+    parser_instance.reset()
+    refused = parser_instance.extract_tool_calls(
+        text, {"tools": TOOLS, "chat_template_kwargs": {"tool_call_format": "json"}}
+    )
+    assert not refused.tools_called
+    assert refused.tool_calls == []
+
+
+@pytest.mark.parametrize(
+    "parser_name", ["hy_v3", "k2_horizon", "glm47", "arbitrary_stub"]
+)
+def test_shared_buffered_authorization_of_parser_output(monkeypatch, parser_name):
+    """Any parser returning an undeclared call must pass the shared filter."""
+    cfg = helpers.get_config()
+    monkeypatch.setattr(cfg, "enable_auto_tool_choice", True)
+    monkeypatch.setattr(cfg, "tool_call_parser", parser_name)
+    parser = Mock()
+    parser._undeclared_dropped = 0
+    parser.extract_tool_calls.return_value = ExtractedToolCallInformation(
+        tools_called=True,
+        tool_calls=[
+            {"id": "bad", "name": "send_email", "arguments": "{}"},
+            {"id": "good", "name": "write_file", "arguments": "{}"},
+        ],
+        content="Kept narration",
+    )
+    monkeypatch.setattr(
+        helpers.ToolParserManager, "get_tool_parser", lambda _: lambda _: parser
+    )
+    content, calls = helpers._parse_tool_calls_with_parser("wire", _Request())
+    parser.extract_tool_calls.assert_called_once_with("wire", {"tools": TOOLS})
+    assert content == "Kept narration"
+    assert [call.model_dump() for call in calls] == [
+        {
+            "id": "good",
+            "type": "function",
+            "function": {"name": "write_file", "arguments": "{}"},
+        }
+    ]
+    assert helpers._was_undeclared_tool_dropped()
 
 
 def processor(parser="hermes"):
@@ -300,8 +373,9 @@ def test_nemotron_partial_prefix_flush():
     assert parser.extract_tool_calls_streaming("", "Hello <too", "Hello <too") == {
         "content": "Hello "
     }
-    assert parser.flush_held_content("Hello <too") == "<too"
     assert parser.flush_held_content("Hello <too") == ""
+    assert parser.flush_held_content("Hello <too") == ""
+    parser.reset()
     assert parser.flush_held_content(REJECTED) == ""
 
 
@@ -549,3 +623,47 @@ def test_nemotron_consumed_content_range_stays_empty():
         parser._visible_content_between(wire, len(wire), len(wire), {"tools": TOOLS})
         == ""
     )
+
+
+@pytest.mark.parametrize(
+    "finish_reason,expected", [("tool_calls", "tool_calls"), ("length", "length")]
+)
+def test_mixed_stream_finish_reason(finish_reason, expected):
+    pp = processor()
+    events = pp.process_chunk(
+        _make_output(
+            "",
+            channel="tool_call",
+            tool_calls=[
+                {"name": "send_email", "arguments": "{}"},
+                {"name": "write_file", "arguments": "{}"},
+            ],
+            finished=True,
+            finish_reason=finish_reason,
+        )
+    )
+    assert pp.undeclared_tool_dropped
+    assert pp._tool_calls_emitted_to_wire == 1
+    assert events[-1].finish_reason == expected
+
+
+@pytest.mark.parametrize("prefix", [VALID, REJECTED])
+@pytest.mark.parametrize(
+    "suffix",
+    ["<too", "<function=write_file>{", "<tool_call><function=send_email>{", ""],
+)
+def test_nemotron_flush_releases_only_safe_held_prose(prefix, suffix):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    parser.reset()
+    parser.extract_tool_calls_streaming("", prefix, prefix, request={"tools": TOOLS})
+    tail = "Visible trailing prose. " + suffix
+    wire = prefix + tail
+    result = parser.extract_tool_calls_streaming(
+        prefix, wire, tail, request={"tools": TOOLS}
+    )
+    visible = (result or {}).get("content", "") + parser.flush_held_content(wire)
+    assert visible == "Visible trailing prose. "
+    assert parser._content_upto == len(prefix + "Visible trailing prose. ")
+    assert parser.flush_held_content(wire) == ""

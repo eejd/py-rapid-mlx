@@ -110,11 +110,15 @@ class NemotronToolParser(ToolParser):
         self._undeclared_logged = False
 
     def flush_held_content(self, full_text: str) -> str:
-        if "<tool_call>" in full_text or "<function=" in full_text:
-            return ""
+        # Completed calls are already accounted for by the streaming watermark.
+        # Inspect only the held range: old markers elsewhere in the response
+        # must not hide trailing prose. A full opener or ambiguous suffix still
+        # belongs to markup and must never be flushed onto the content channel.
         held = full_text[self._content_upto :]
-        self._content_upto = len(full_text)
-        return held
+        pending = self._pending_markup_index(held)
+        safe_end = len(held) if pending is None else pending
+        self._content_upto += safe_end
+        return held[:safe_end]
 
     def _undeclared_spans(self, text, request, accepted):
         """Consume bounded, unfenced wrapped attempts at their first close."""
