@@ -53,6 +53,7 @@ def test_emitted_constraints_are_stable_and_complete(constraints) -> None:
         "matplotlib==3.11.2",
         "imageio==2.38.0",
         "imageio-ffmpeg==0.6.0",
+        "pillow==12.3.0",
     ]
 
 
