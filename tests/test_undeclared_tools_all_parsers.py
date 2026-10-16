@@ -248,12 +248,9 @@ def test_nemotron_boundaries_and_logging(caplog):
         "", prefix, prefix, request={"tools": TOOLS}
     ) in (None, {"content": ""})
     delta = "</tool_call>"
-    assert (
-        pp.extract_tool_calls_streaming(
-            prefix, prefix + delta, delta, request={"tools": TOOLS}
-        )
-        is None
-    )
+    assert pp.extract_tool_calls_streaming(
+        prefix, prefix + delta, delta, request={"tools": TOOLS}
+    ) == {"content": ""}
     assert pp._undeclared_dropped == 1
     assert sum("dropped undeclared" in r.message for r in caplog.records) == 1
     assert not any("unhandled variant" in r.message for r in caplog.records)
@@ -397,8 +394,8 @@ def test_buffered_authorization_ignores_forced_choice(monkeypatch):
     assert not helpers._was_undeclared_tool_dropped()
 
 
-LITERAL_CLOSE = (
-    '<tool_call><function=send_email><parameter=body>print("</function></tool_call>")'
+LITERAL_OPEN = (
+    '<tool_call><function=send_email><parameter=body>print("<tool_call>")'
     "</parameter></function></tool_call>"
 )
 FENCED_EXAMPLE = "```xml\n<tool_call>example</tool_call>\n```"
@@ -461,9 +458,9 @@ def _route_reply(
 @pytest.mark.parametrize(
     "text,expected",
     [
-        (LITERAL_CLOSE, NOTICE),
-        ("Before. " + LITERAL_CLOSE + " After.", "Before.  After."),
-        (LITERAL_CLOSE + REJECTED, NOTICE),
+        (LITERAL_OPEN, NOTICE),
+        ("Before. " + LITERAL_OPEN + " After.", "Before.  After."),
+        (LITERAL_OPEN + REJECTED, NOTICE),
         (REJECTED + "\n" + FENCED_EXAMPLE, FENCED_EXAMPLE),
         (FENCED_EXAMPLE + "\n" + REJECTED, FENCED_EXAMPLE),
     ],
@@ -499,3 +496,56 @@ def test_forced_choice_uses_original_authorization(stream, caplog):
     else:
         assert "emitted calls to ['send_email']" in result["detail"]
     assert not any("undeclared" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("with_valid", [False, True])
+def test_nemotron_long_narration_after_rejection(with_valid):
+    narration = "x" * 71000
+    text = REJECTED + narration + (VALID if with_valid else "")
+    expected = (
+        narration,
+        ["write_file"] if with_valid else [],
+        "tool_calls" if with_valid else "stop",
+    )
+    assert _route_reply(text, stream=False) == expected
+    assert (
+        _route_reply(
+            text,
+            stream=True,
+            deltas=[text[i : i + 1024] for i in range(0, len(text), 1024)],
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize("deltas", [[REJECTED, VALID], list(REJECTED + VALID)])
+def test_nemotron_valid_call_after_rejection_has_index_zero(deltas):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    parser.reset()
+    previous = ""
+    calls = []
+    for delta in deltas:
+        current = previous + delta
+        result = parser.extract_tool_calls_streaming(
+            previous, current, delta, request={"tools": TOOLS}
+        )
+        if result:
+            calls.extend(result.get("tool_calls", []))
+        previous = current
+    assert len(calls) == 1
+    assert calls[0]["index"] == 0
+    assert calls[0]["function"]["name"] == "write_file"
+
+
+def test_nemotron_consumed_content_range_stays_empty():
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    # A range already accounted for must not replay rejected markup or prose.
+    wire = REJECTED + " Narration"
+    assert (
+        parser._visible_content_between(wire, len(wire), len(wire), {"tools": TOOLS})
+        == ""
+    )
