@@ -1424,6 +1424,38 @@ def test_refresh_pass_selects_only_stale_idle_folders(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_refresh_stale_with_real_queue_does_not_deadlock(tmp_path, monkeypatch):
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "first.txt").write_text("apple")
+        search = engine(tmp_path)
+        release = asyncio.Event()
+
+        async def blocked_index(_folder):
+            await release.wait()
+
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            indexed_at = (await search.folder(fid))["last_indexed_at"]
+            monkeypatch.setattr(
+                "rapid_mlx.local_search.service.time",
+                SimpleNamespace(time=lambda: indexed_at + search.refresh_interval + 1),
+            )
+            monkeypatch.setattr(search, "_index", blocked_index)
+
+            await asyncio.wait_for(search._refresh_stale(), timeout=5)
+
+            assert fid in search.pending or (
+                search.task is not None and not search.task.done()
+            )
+            assert (await search.folder(fid))["state"] in {"queued", "indexing"}
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
 def test_refresh_loop_recovers_after_store_error(tmp_path, caplog):
     async def scenario():
         search = engine(tmp_path, refresh_interval=0.01)

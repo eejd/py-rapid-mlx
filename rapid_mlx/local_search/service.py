@@ -216,6 +216,9 @@ class LocalSearch:
                 logger.warning("Local-search automatic refresh failed: %s", exc)
 
     async def _refresh_stale(self):
+        # queue() does not take _coordination, as in add_folder(), so selecting
+        # and queueing under this lock is safe and atomic with add/delete and
+        # the worker's claim.
         async with self._coordination:
             if self.closed or self.progress["active"]:
                 return
