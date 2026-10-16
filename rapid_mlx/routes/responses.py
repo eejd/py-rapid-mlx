@@ -2378,10 +2378,10 @@ async def _non_stream(
         if rf is not None and final_content:
             final_content = extract_json_from_response(final_content)
 
-    # Tool deltas can precede token exhaustion; only natural stops complete calls.
+    # Tool deltas can precede token exhaustion; a length finish is never a completed call.
     finish_reason = (
         "tool_calls"
-        if tool_calls and output.finish_reason == "stop"
+        if tool_calls and output.finish_reason != "length"
         else output.finish_reason
     )
     if is_cancellation_finish_reason(finish_reason):

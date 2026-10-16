@@ -109,7 +109,8 @@ def sse(text):
 )
 @pytest.mark.parametrize("separate_finish", [True, False])
 @pytest.mark.parametrize(
-    "finish,complete", [("length", False), ("length", True), ("stop", True)]
+    "finish,complete",
+    [("length", False), ("length", True), ("stop", True), ("tool_calls", True)],
 )
 def test_chat_stream_preserves_engine_length(choice, separate_finish, finish, complete):
     client = client_for(
@@ -145,7 +146,9 @@ def test_chat_stream_preserves_engine_length(choice, separate_finish, finish, co
     assert response.text.endswith("data: [DONE]\n\n")
 
 
-@pytest.mark.parametrize("finish", ["length", "stop"])
+# Only token exhaustion blocks the upgrade; other engine finishes (including a
+# channel-routed engine's own "tool_calls") still report a completed call.
+@pytest.mark.parametrize("finish", ["length", "stop", "tool_calls"])
 @pytest.mark.parametrize("route", ["chat/completions", "responses", "messages"])
 def test_nonstream_tool_finish_reason_parity(route, finish):
     client = client_for(ReplayEngine(COMPLETE, finish))

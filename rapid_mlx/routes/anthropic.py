@@ -1211,7 +1211,7 @@ async def create_anthropic_message(
         # Preserve token exhaustion even when a tool call has already been parsed.
         finish_reason = (
             "tool_calls"
-            if tool_calls and output.finish_reason == "stop"
+            if tool_calls and output.finish_reason != "length"
             else output.finish_reason
         )
         # PR #715 bundle, fuzz finding C: detect helper Case-4 blank
@@ -3279,7 +3279,7 @@ async def _stream_anthropic_messages(
         streamed_any_content_block = True
 
     # Token exhaustion takes precedence even after a tool-use block was sent.
-    # Only a natural stop with calls reports a completed tool-use turn.
+    # Any other finish with calls reports a completed tool-use turn.
     if stream_finish_reason == "length":
         stop_reason = "max_tokens"
     elif tool_calls:
