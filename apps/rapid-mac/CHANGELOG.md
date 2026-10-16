@@ -17,6 +17,26 @@ can actually understand.
 
 ## [Unreleased]
 
+## [0.16.3] — 2026-10-17
+
+Rapid-MLX 0.16.3 is a reliability update with cleaner tool-call replies, better resilience under memory pressure during concurrent serving, safer model loading, Desktop crash fixes, and more helpful Local Search.
+
+### Highlights
+
+- **Concurrent long prompts queue when memory is tight**: long prompts run in groups that fit available memory, so bursts of concurrent requests no longer abort with out-of-memory errors. ([#4738](https://github.com/raullenchai/Rapid-MLX/pull/4738))
+- **The server recovers from out-of-memory errors without a restart**: after a batch fails with insufficient memory, the memory it held is released so later requests can succeed again. ([#4742](https://github.com/raullenchai/Rapid-MLX/pull/4742))
+- **Truncated tool calls no longer leak markup**: replies cut off by the token limit while starting a tool call no longer show partial tool-call markup as text in non-streamed Chat Completions, Messages, and Responses output. ([#4748](https://github.com/raullenchai/Rapid-MLX/pull/4748))
+- **Clearer replies after unavailable tool calls**: unavailable-tool notices now apply to every tool-call format, including Nemotron and Gemma 4. Calls to undeclared tools no longer appear as raw markup in reply text or as returned tool calls. ([#4732](https://github.com/raullenchai/Rapid-MLX/pull/4732))
+- **Safer model startup after incomplete downloads**: checkpoints with missing shards or tensors are refused at startup with a cause and a next step instead of reporting ready and producing invalid replies. Truncated checkpoints and checkpoints without weights show the same concise guidance without a traceback. ([#4731](https://github.com/raullenchai/Rapid-MLX/pull/4731))
+- **Logprobs requests work with MTP speculative decoding**: requests for token log probabilities no longer fail with HTTP 500 or crash the server when MTP speculative decoding is active. ([#4733](https://github.com/raullenchai/Rapid-MLX/pull/4733))
+- **Correct concurrent Nemotron-H text responses**: when Nemotron 3.5 text models (Nemotron-H architecture) serve several prompts of different lengths at once, shorter prompts no longer produce different or prematurely stopped responses than when sent alone. Prefix-cache restores stay consistent too. ([#4711](https://github.com/raullenchai/Rapid-MLX/pull/4711))
+- **Fresh installs no longer break image generation**: Rapid-MLX keeps Pillow below 13 to avoid an incompatible release that prevented the image runtime from loading on supported Python versions. ([#4741](https://github.com/raullenchai/Rapid-MLX/pull/4741))
+- **Experimental Local Search keeps indexed folders fresh**: newly saved or edited files in added folders appear automatically without manual Reindex, with Desktop refreshing stale folders when Search opens and the engine rescanning folders in the background about every 30 minutes. The Whole Mac location refreshes only on that background interval. ([#4735](https://github.com/raullenchai/Rapid-MLX/pull/4735))
+- **Local Search shows the closest files instead of an empty page**: when a meaning-based search finds no match, experimental Local Search shows up to three of the most similar files under a "No exact matches · Closest files" header. Searches that already return results are unchanged, and keyword-only search still shows no results. ([#4736](https://github.com/raullenchai/Rapid-MLX/pull/4736))
+- **Clear guidance when macOS blocks a Local Search folder**: adding a folder that macOS privacy settings block now keeps the Search page open and explains how to allow access, with Open Privacy Settings and Try Again buttons, instead of a generic error and a page that cannot recover. ([#4661](https://github.com/raullenchai/Rapid-MLX/pull/4661))
+- **Quick Look in Local Search no longer crashes Desktop**: choosing Quick Look on a search result or pressing Space opens the preview reliably instead of occasionally quitting the app. ([#4737](https://github.com/raullenchai/Rapid-MLX/pull/4737))
+- **Desktop no longer quits when you open What's New after an update**: clicking "See what's new" on the post-update banner opens the release notes and dismisses the banner without crashing. The "Star on GitHub" prompt is fixed too. ([#4729](https://github.com/raullenchai/Rapid-MLX/pull/4729))
+
 ## [0.16.2] — 2026-10-16
 
 Rapid-MLX 0.16.2 adds new text-model support and experimental Local Search, and improves concurrent serving, cache reuse, agent setup, and Desktop Share Compute.
@@ -4318,7 +4338,8 @@ Older versions: see the
 [GitHub Releases page](https://github.com/machinefi/rapid-desktop/releases)
 for auto-generated notes against earlier tags.
 
-[Unreleased]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.2...HEAD
+[Unreleased]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.3...HEAD
+[0.16.3]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.2...rapid-mac-v0.16.3
 [0.16.2]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.1...rapid-mac-v0.16.2
 [0.16.1]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.16.0...rapid-mac-v0.16.1
 [0.15.7]: https://github.com/raullenchai/Rapid-MLX/compare/rapid-mac-v0.15.6...rapid-mac-v0.15.7
