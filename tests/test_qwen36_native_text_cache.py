@@ -236,7 +236,7 @@ def test_wrapper_sizes_text_lane_mrope_deltas_to_each_batch(first_rows, next_row
     wrapper = Qwen36NativeCacheTextWrapper(model)
 
     wrapper(mx.zeros((first_rows, 4), dtype=mx.int32))
-    out = wrapper(mx.zeros((next_rows, 1), dtype=mx.int32))
+    out = wrapper(inputs=mx.zeros((next_rows, 1), dtype=mx.int32))
 
     assert out.shape == (next_rows,)
     assert seen == [(first_rows, 1), (next_rows, 1)]
