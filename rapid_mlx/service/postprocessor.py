@@ -2846,7 +2846,7 @@ class StreamingPostProcessor:
                 StreamEvent(
                     type="tool_call",
                     tool_calls=structured,
-                    finish_reason="tool_calls" if output.finished else None,
+                    finish_reason=self._compute_finish_reason(output),
                     tool_calls_detected=True,
                 )
             ]
@@ -2975,7 +2975,7 @@ class StreamingPostProcessor:
                     StreamEvent(
                         type="tool_call",
                         tool_calls=allowed_tcs,
-                        finish_reason="tool_calls" if output.finished else None,
+                        finish_reason=self._compute_finish_reason(output),
                         tool_calls_detected=True,
                     )
                 )
@@ -3384,7 +3384,7 @@ class StreamingPostProcessor:
                     StreamEvent(
                         type="tool_call",
                         tool_calls=allowed_tcs,
-                        finish_reason="tool_calls" if output.finished else None,
+                        finish_reason=self._compute_finish_reason(output),
                         tool_calls_detected=True,
                     )
                 )
@@ -3611,7 +3611,7 @@ class StreamingPostProcessor:
                     StreamEvent(
                         type="tool_call",
                         tool_calls=allowed_tcs,
-                        finish_reason="tool_calls" if output.finished else None,
+                        finish_reason=self._compute_finish_reason(output),
                         tool_calls_detected=True,
                     )
                 )
@@ -4246,9 +4246,9 @@ class StreamingPostProcessor:
         # The route layer separately re-stamps ``finish_reason`` to
         # ``"tool_calls"`` when ``finalize()`` recovers a call via the
         # cross-format fallback (see ``routes/chat.py`` buffered-finish
-        # merge), so this gate is the floor — the route-layer override
-        # only fires UP from ``output.finish_reason``, never DOWN.
-        if self._tool_calls_emitted_to_wire > 0:
+        # merge). Both paths upgrade only natural stops: a streamed anchor
+        # may still have incomplete arguments at the token limit.
+        if self._tool_calls_emitted_to_wire > 0 and output.finish_reason == "stop":
             return "tool_calls"
         # ``tool_choice="none"``: no call can ever reach the wire this turn,
         # so a channel-routed engine's ``finish_reason="tool_calls"`` (stamped
