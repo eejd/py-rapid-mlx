@@ -886,7 +886,7 @@ def test_prefill_reclaim_reads_mlx_lm_model_args(monkeypatch):
     assert getattr(model, "config", None) is None
     sched = _scheduler(monkeypatch)
     sched.model = model
-    assert sched._resolve_kv_bytes_per_token() == 0  # the config-only resolver
+    assert sched._resolve_kv_bytes_per_token() == 8 * 2 * 4 * 256 * 2
     per_tok, fixed = sched._prefill_reclaim_footprint()
     assert per_tok == 8 * 2 * 4 * 256 * 2  # 8 full-attention layers, bf16
     assert fixed > 0

@@ -38,6 +38,7 @@ def _selector(*requests: Request, max_deferrals: int = 8) -> Scheduler:
     scheduler.waiting = deque(requests)
     scheduler.running = {}
     scheduler.batch_generator = None
+    scheduler._resolve_metal_cap_bytes = lambda: 0
     scheduler._current_sampler_params = None
     scheduler._admission_prefill_uids = set()
     scheduler.num_admission_deferrals = 0

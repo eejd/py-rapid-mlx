@@ -5592,8 +5592,14 @@ class Scheduler:
             if key in mac._entries:  # noqa: SLF001
                 mac._entries.move_to_end(key)  # noqa: SLF001
 
-    def _reclaim_prefix_cache_for_prefill(self, request: Any) -> int:
-        """Let the prefix cache yield to a long hybrid prefill's transient peak.
+    def _reclaim_prefix_cache_for_prefill(
+        self, request: Any, *, cohort_need: int | None = None
+    ) -> int:
+        """Let the prefix cache yield to singleton or cohort prefill workspace.
+
+        ``cohort_need`` includes all pending rows and decode reservations and
+        uses the resolved cap directly; the legacy singleton guard below uses
+        the pressure watermark. Both share bounded LRU reclamation.
 
         The admission gate projects KV only. On the hybrid (recurrent-state)
         layout this was measured on — Qwen3.5-9B, whose head_dim-256 attention
@@ -5614,9 +5620,9 @@ class Scheduler:
         if cap <= 0 or mac is None or not mac._entries:  # noqa: SLF001
             return 0
         footprint = self._prefill_reclaim_footprint()
-        if footprint is None:
+        if footprint is None and cohort_need is None:
             return 0
-        per_tok, fixed_baseline = footprint
+        per_tok, fixed_baseline = footprint or (0, 0)
         prefill_tokens = len(getattr(request, "remaining_tokens", None) or [])
         # The prefill's own peak: the recurrent state, the remaining prompt's
         # KV and its transients. Decode growth (max_tokens) is not part of
@@ -5629,9 +5635,12 @@ class Scheduler:
         # Aim below the pressure threshold, not the cap itself, so the
         # prefill stays out of the evictor's soft zone.
         threshold = int(cap * self._resolve_pressure_evict_fraction())
+        if cohort_need is not None:
+            need = cohort_need
+            threshold = cap
         evicted = 0
         active = self._current_metal_active_bytes()
-        while active + need >= threshold:
+        while active + need >= threshold and evicted < 64:
             if not self._evict_one_prefix_cache_entry():
                 break
             evicted += 1
@@ -7069,6 +7078,13 @@ class Scheduler:
         sliding_window = 0
         try:
             model_config = getattr(self.model, "config", None)
+            if model_config is None:
+                estimate = self._footprint_from_model_dims()
+                if estimate is not None:
+                    per_tok = estimate.per_token_growth_bytes
+                    fixed_baseline = estimate.fixed_baseline_bytes
+                    sliding_slot_bytes = estimate.sliding_slot_bytes
+                    sliding_window = estimate.sliding_window
             if model_config is not None:
                 # Multimodal architectures nest the text-tower dims
                 # (num_hidden_layers, num_key_value_heads, head_dim, layer_types)
@@ -7195,14 +7211,7 @@ class Scheduler:
         return per_tok
 
     def _footprint_from_model_dims(self) -> KVFootprintEstimate | None:
-        """Hybrid-aware KV footprint read off the model itself, or ``None``.
-
-        mlx-lm models expose their dims on ``.args``, not ``.config``, so the
-        config-only ``_resolve_kv_bytes_per_token`` reads 0 for them. This
-        runs the same estimator on ``_read_kv_dims`` (``.config`` or
-        ``.args``, text tower preferred) for callers that need real numbers
-        without switching on the admission gate's projection.
-        """
+        """Architecture-aware footprint from live config/args, text tower first."""
         dims = _read_kv_dims(self.model)
         if dims is None:
             return None
@@ -7607,10 +7616,12 @@ class Scheduler:
     def _enforce_metal_cap_at_admission(self, request: Request) -> None:
         """D-METAL-CAP: reject the request if Metal active exceeds the cap.
 
-        Runs as the second admission check in ``add_request`` —
-        immediately after the concurrent-requests cap and BEFORE any
-        tokenization / prefix-cache lookup so the rejection cost is a
-        single ``mx.get_active_memory`` syscall plus a dict lookup.
+        Runs after the concurrent-requests cap and before prefix-cache lookup
+        or streaming. Resolve exact prompt tokens when the cap is enabled so
+        a byte-length upper bound cannot reject valid long prompts. Waiting
+        reservations are charged only by the prefill cohort promotion gate;
+        this gate still rejects already-over-cap or individually non-fitting
+        work after bounded reclamation.
 
         Two-stage check (codex round 3 BLOCKING #1 closure):
         1. Cheap path — ``active >= cap`` rejects when the allocator
@@ -7645,17 +7656,22 @@ class Scheduler:
         if cap <= 0:
             return
         active = self._current_metal_active_bytes()
+        # Resolve actual tokens before projecting: the UTF-8 upper bound can
+        # falsely reject a valid long prompt once live model geometry resolves.
+        if request.prompt_token_ids is None:
+            request.prompt_token_ids = (
+                self._encode_prompt_string(request.prompt)
+                if isinstance(request.prompt, str)
+                else list(request.prompt)
+            )
+            request.num_prompt_tokens = len(request.prompt_token_ids)
         projected_kv = self._estimate_request_kv_bytes(request)
-        # Codex round 5 BLOCKING #1: count KV reservations of every
-        # request already admitted but not yet finished. Without this,
-        # a burst of small admits each individually fitting under the
-        # cap stacks up to BLOW the cap collectively — ``active`` lags
-        # the allocator until prefill actually runs.
-        reserved_kv = self._sum_in_flight_kv_bytes()
-        # Reject when ALREADY over cap OR when admitting the request
-        # would push the allocator over cap on its own KV grow path
-        # OR when the sum of in-flight reservations + this request
-        # would exceed the cap.
+        # Waiting work owns no allocations. Its reservations belong only to
+        # the selected prefill cohort, otherwise a fitting burst gets 503s
+        # before the scheduler has a chance to queue it.
+        reserved_kv = 0
+        # Preserve rejection when already over cap or this request's own KV
+        # cannot coexist with the current allocator state.
         if active < cap and (active + reserved_kv + projected_kv) < cap:
             return
 
@@ -7671,7 +7687,6 @@ class Scheduler:
         # step loop for a full collection.
         if (active >= cap or not self.requests) and self._reclaim_unreachable_metal():
             active = self._current_metal_active_bytes()
-            reserved_kv = self._sum_in_flight_kv_bytes()
             if active < cap and (active + reserved_kv + projected_kv) < cap:
                 return
 
@@ -7687,7 +7702,6 @@ class Scheduler:
                     break
                 self.num_prefix_cache_pressure_evictions += 1
                 active = self._current_metal_active_bytes()
-                reserved_kv = self._sum_in_flight_kv_bytes()
                 if active < cap and (active + reserved_kv + projected_kv) < cap:
                     logger.info(
                         "[D-METAL-CAP-force-evict] evicted %d prefix-cache "
@@ -7726,7 +7740,6 @@ class Scheduler:
                     )
             if freed:
                 active = self._current_metal_active_bytes()
-                reserved_kv = self._sum_in_flight_kv_bytes()
                 if active < cap and (active + reserved_kv + projected_kv) < cap:
                     logger.info(
                         "[D-METAL-CAP-force-evict] released %d paged KV "
@@ -9631,6 +9644,174 @@ class Scheduler:
             return request
         return None
 
+    def _prefill_memory_rows(self) -> list[tuple[Request, int]]:
+        """Live prompt rows, including inserts not yet consumed by mlx-lm."""
+        bg = self.batch_generator
+        if bg is None:
+            return []
+        processed = dict(
+            zip(
+                getattr(getattr(bg, "_prompt_batch", None), "uids", ()),
+                (int(seq[1]) for seq in getattr(bg, "_currently_processing", ())),
+            )
+        )
+        processed.update((seq[0], 0) for seq in bg._unprocessed_sequences)
+        return [
+            (req, processed[req.batch_uid])
+            for req in self.running.values()
+            if req.batch_uid in processed
+        ]
+
+    def _prefill_workspace_units(self, request: Request) -> int:
+        # Bound the entire trajectory, including the last chunk's attention
+        # offset. A prefix hit reduces KV growth, never the attention context.
+        context = max(1, len(request.prompt_token_ids))
+        remaining = max(1, context - request.cached_tokens)
+        chunk = min(self.config.prefill_step_size, remaining)
+        return chunk * context
+
+    def _prefill_workspace_bytes(
+        self, request: Request, *, padded_units: int = 0, padded_chunk: int = 0
+    ) -> int:
+        # The geometry-based cold prior is a floor, not a universal workspace
+        # coefficient. Until measured, admit only one prefill row. Thereafter
+        # retain the monotonic observed peak delta / sum(chunk * final_context).
+        prior = (
+            _COLD_PREFILL_TRANSIENT_KV_MULTIPLE
+            * self._resolve_kv_bytes_per_token()
+            / 2048
+        )
+        coefficient = max(prior, getattr(self, "_prefill_workspace_high_water", 0.0))
+        units = max(padded_units, self._prefill_workspace_units(request))
+        chunk = min(
+            self.config.prefill_step_size,
+            max(1, len(request.prompt_token_ids) - request.cached_tokens),
+        )
+        return int(
+            max(
+                coefficient * units,
+                getattr(self, "_prefill_workspace_per_chunk", 0.0)
+                * max(chunk, padded_chunk),
+            )
+        )
+
+    def _prefill_unmaterialized_bytes(self, request: Request, processed: int) -> int:
+        per_tok = self._resolve_kv_bytes_per_token()
+        resident_tokens = request.cached_tokens + processed
+        if request.request_id in self.running and request.num_output_tokens:
+            resident_tokens = len(request.prompt_token_ids) + request.num_output_tokens
+        resident = per_tok * resident_tokens
+        if resident_tokens:
+            resident += self._resolve_kv_fixed_baseline_bytes()
+            resident += self._kv_sliding_slot_bytes * rotating_cache_slots(
+                self._kv_sliding_window, resident_tokens
+            )
+        return max(0, self._estimate_request_kv_bytes(request) - resident)
+
+    def _prefill_cohort_fits(self, request: Request) -> bool:
+        cap = self._resolve_metal_cap_bytes()
+        if cap <= 0:
+            return True
+        rows = self._prefill_memory_rows()
+        # The first chunk does not characterize later chunks or batch-cache
+        # merge peaks. Finish one complete prefill trajectory before trusting
+        # calibration to widen a cohort; tiny startup warmups never calibrate.
+        if not rows and getattr(self, "_prefill_workspace_high_water", 0.0):
+            self._prefill_workspace_calibrated = True
+        selected = rows + [(request, 0)]
+        need = sum(self._prefill_unmaterialized_bytes(r, n) for r, n in selected)
+        padded_chunk = max(
+            min(
+                self.config.prefill_step_size,
+                max(1, len(r.prompt_token_ids) - r.cached_tokens),
+            )
+            for r, _ in selected
+        )
+        padded_units = padded_chunk * max(len(r.prompt_token_ids) for r, _ in selected)
+        need += sum(
+            self._prefill_workspace_bytes(
+                r, padded_units=padded_units, padded_chunk=padded_chunk
+            )
+            for r, _ in selected
+        )
+        prefilling = {r.request_id for r, _ in rows}
+        need += sum(
+            self._prefill_unmaterialized_bytes(r, 0)
+            for r in self.running.values()
+            if r.request_id not in prefilling
+        )
+        # Reclaim reusable prefixes first, using the same bounded path as the
+        # singleton guard. Use the resolved cap, without the eviction pressure
+        # discount: workspace already reserves headroom and an extra discount
+        # unnecessarily serializes otherwise fitting fresh cohorts.
+        self._reclaim_prefix_cache_for_prefill(request, cohort_need=need)
+        fits = self._current_metal_active_bytes() + need <= cap
+        # A measured cold forward does not bound merging new caches into a
+        # partially processed prompt batch. Seal a cohort once it has stepped;
+        # later work can join the next cold cohort while these rows decode.
+        if rows and (
+            not getattr(self, "_prefill_workspace_calibrated", False)
+            or any(processed > 0 for _, processed in rows)
+        ):
+            fits = False
+        if fits or not self.running:
+            return True  # Preserve singleton progress, even with an uncertain prior.
+        self._prefill_cohort_deferrals = (
+            getattr(self, "_prefill_cohort_deferrals", 0) + 1
+        )
+        now = time.monotonic()
+        if now - getattr(self, "_prefill_deferral_logged_at", -float("inf")) >= 5:
+            self._prefill_deferral_logged_at = now
+            logger.info(
+                "[prefill-cohort] deferred=%d running=%d waiting=%d rows=%d need=%d cap=%d",
+                self._prefill_cohort_deferrals,
+                len(self.running),
+                len(self.waiting),
+                len(rows),
+                need,
+                cap,
+            )
+        return False
+
+    def _begin_prefill_memory_sample(self) -> tuple[int, int, int] | None:
+        if self._resolve_metal_cap_bytes() <= 0:
+            return None
+        rows = self._prefill_memory_rows()
+        # Tiny warmup/exact-hit steps are dominated by fixed initialization
+        # allocations and cannot calibrate a full-sized prefill workspace.
+        chunk_size = int(self.batch_generator.prefill_step_size)
+        chunks = [
+            min(chunk_size, max(1, len(r.prompt_token_ids) - r.cached_tokens - n))
+            for r, n in rows
+        ]
+        if not chunks or max(chunks) < min(256, self.config.prefill_step_size):
+            return None
+        units = sum(
+            c * max(1, len(r.prompt_token_ids)) for c, (r, _) in zip(chunks, rows)
+        )
+        active = self._current_metal_active_bytes()
+        mx.reset_peak_memory()
+        return active, units, sum(chunks)
+
+    def _finish_prefill_memory_sample(
+        self, before: tuple[int, int, int] | None
+    ) -> None:
+        if before is None:
+            return
+        active, units, chunks = before
+        # Include KV allocation and simultaneous decode in the residual rather
+        # than trying to subtract uncertain allocator/copy lifetimes. This is
+        # deliberately conservative; the high-water can only rise.
+        delta = max(0, int(mx.get_peak_memory()) - active)
+        self._prefill_workspace_high_water = max(
+            getattr(self, "_prefill_workspace_high_water", 0.0), delta / max(1, units)
+        )
+        # A long-context observation must not underprice shorter contexts:
+        # activation/recurrent workspace can be independent of context length.
+        self._prefill_workspace_per_chunk = max(
+            getattr(self, "_prefill_workspace_per_chunk", 0.0), delta / max(1, chunks)
+        )
+
     def _schedule_waiting(self) -> list[Request]:
         """
         Move requests from waiting queue to running.
@@ -9658,11 +9839,31 @@ class Scheduler:
                     break
                 request, selection_forced = selection
             else:
+                waiting_order = tuple(self.waiting)
                 popped = self._pop_waiting_for_admission()
                 if popped is None:
                     break
                 request = popped
                 selection_forced = False
+
+            # Resolve invalid-prefix fallback before pricing the cohort. A
+            # cold retry needs the whole prompt, not the stale hit's suffix.
+            # Do this before exact-hit kickoff can trim a cache in place.
+            if request.prompt_cache is not None and not self._validate_cache(
+                request.prompt_cache
+            ):
+                logger.debug(
+                    f"Request {request.request_id}: invalid cache detected, "
+                    f"proceeding without cache"
+                )
+                request.prompt_cache = None
+                request.cached_tokens = 0
+                request.remaining_tokens = request.prompt_token_ids
+
+            if not self._prefill_cohort_fits(request):
+                if not shortest_tail:
+                    self.waiting.insert(waiting_order.index(request), request)
+                break
 
             # Ensure we have a batch generator. The False return means
             # the live generator has incompatible stop_tokens / sampler
@@ -9721,18 +9922,6 @@ class Scheduler:
             else:
                 tokens_to_process = request.prompt_token_ids
             cache_to_use = request.prompt_cache  # May be None
-
-            # Validate cache before using it
-            if cache_to_use is not None and not self._validate_cache(cache_to_use):
-                logger.debug(
-                    f"Request {request.request_id}: invalid cache detected, "
-                    f"proceeding without cache"
-                )
-                cache_to_use = None
-                request.prompt_cache = None
-                request.cached_tokens = 0
-                request.remaining_tokens = request.prompt_token_ids
-                tokens_to_process = request.prompt_token_ids
 
             # Prefix-cache HIT with live quantization on: normalize the restored
             # KVCache layers into the same _QuantizableKVCache the MISS path uses,
@@ -9965,6 +10154,10 @@ class Scheduler:
                     request.cached_tokens = 0
                     request.remaining_tokens = request.prompt_token_ids
                     tokens_to_process = request.prompt_token_ids
+                    if not self._prefill_cohort_fits(request):
+                        if not shortest_tail:
+                            self.waiting.insert(waiting_order.index(request), request)
+                        break
                     # The retry keeps only the message boundary split.
                     request.shared_prefix_snapshot_at = 0
                     # Recompute split against the now-full prompt
@@ -10998,6 +11191,7 @@ class Scheduler:
                     # cache-miss prefill is approaching the unified-memory cap.
                     self._apply_adaptive_prefill_size()
                     _prefill_cost_before = self._prefill_cost_probe()
+                    _prefill_memory_before = self._begin_prefill_memory_sample()
                     if self._step_timing_enabled:
                         st = getattr(self, "_steptime", None)
                         if st is None:
@@ -11030,6 +11224,7 @@ class Scheduler:
                             st[0], st[1] = [], []
                     else:
                         raw_next = self.batch_generator.next()
+                    self._finish_prefill_memory_sample(_prefill_memory_before)
                     self._record_prefill_cost(_prefill_cost_before)
                     # Bound functional recurrent-state graphs without forcing
                     # a host synchronization on every token. The barrier fires
