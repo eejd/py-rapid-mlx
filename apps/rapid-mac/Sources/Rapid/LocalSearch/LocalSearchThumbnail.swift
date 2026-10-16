@@ -84,6 +84,12 @@ final class LocalSearchThumbnailCache: @unchecked Sendable {
             }
         }
     }
+    /// Main-actor callers receive the image through a Sendable box: Swift 6.1
+    /// rejects returning non-Sendable `NSImage?` across the isolation boundary.
+    struct Delivered: @unchecked Sendable { let image: NSImage? }
+    func deliveredThumbnail(path: String, modifiedAt: Double, size: Int, timestamp: Double? = nil) async -> Delivered {
+        Delivered(image: await thumbnail(path: path, modifiedAt: modifiedAt, size: size, timestamp: timestamp))
+    }
     private func pump() {
         while active < maximumConcurrent, !pending.isEmpty {
             let key = pending.removeFirst()
@@ -182,11 +188,11 @@ struct LocalSearchThumbnail: View {
         .accessibilityHidden(true)
         .task(id: "\(result.path):\(result.modifiedAt):\(result.size):\(result.timestamp ?? -1)") {
             image = nil
-            let thumbnail = await LocalSearchThumbnailCache.shared.thumbnail(
+            let delivered = await LocalSearchThumbnailCache.shared.deliveredThumbnail(
                 path: result.path, modifiedAt: result.modifiedAt, size: result.size,
                 timestamp: result.kind == .video ? result.timestamp : nil)
             guard !Task.isCancelled else { return }
-            image = thumbnail
+            image = delivered.image
         }
     }
 }
