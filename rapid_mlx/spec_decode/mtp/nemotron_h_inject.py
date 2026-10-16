@@ -183,6 +183,11 @@ def inject_mtp_support(model, mtp_sidecar=None, allow_random_init=False):
         mtp_recursive_draft_depth = 2
         mtp_max_speculative_tokens = 2
 
+        @property
+        def mtp_target_cache_count(self):
+            # Stateless MoE blocks deliberately own no cache entry.
+            return sum(layer.block_type in ("M", "*") for layer in self.layers)
+
         def make_cache(self):
             return [
                 NemotronMambaCache(2) if layer.block_type == "M" else KVCache()

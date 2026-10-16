@@ -669,11 +669,14 @@ def test_mtp_sidecar_strict_loading_opt_in_and_generation(tmp_path):
     assert dispatch_mtp_validate(model, "nemotron_h")
     assert model.make_mtp_cache()[0].offset == 0
     prompt = mx.array([1, 2, 3, 4])
+    outputs = {}
     for k in (0, 1, 2):
         out = list(
             mtp_generate_step(prompt, model, max_tokens=8, max_k=k, disable_auto_k=True)
         )
         assert len(out) == 8
+        outputs[k] = [int(item[0]) for item in out]
+    assert outputs[0] == outputs[1] == outputs[2]
     # Ordinary and hidden-state target routes agree without a cache.
     ordinary = model(prompt[None])
     hidden_logits, hidden = model(prompt[None], return_hidden=True)
@@ -929,3 +932,31 @@ def test_mtp_cache_batch_handoff_and_prefix_type(tmp_path):
     extracted = gb.extract_cache(0)
     assert isinstance(extracted[0], NemotronMambaCache)
     assert extracted[0].rollback_state is None
+
+
+def test_mtp_prebuilt_cache_split_uses_stateful_count(tmp_path, monkeypatch):
+    from rapid_mlx.spec_decode.mtp.generator import mtp_generate_step
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import inject_mtp_support
+
+    model = mtp_fixture(tmp_path)
+    assert inject_mtp_support(model, tmp_path)
+    target, draft = model.make_cache(), model.make_mtp_cache()
+    assert model.mtp_target_cache_count == len(target) == 2
+    assert len(model.layers) == 4
+
+    def unexpected_factory():
+        pytest.fail("The supplied MTP cache must be reused")
+
+    monkeypatch.setattr(model, "make_mtp_cache", unexpected_factory)
+    output = list(
+        mtp_generate_step(
+            mx.array([1, 2, 3, 4]),
+            model,
+            prompt_cache=target + draft,
+            max_tokens=8,
+            max_k=1,
+            disable_auto_k=True,
+        )
+    )
+    assert len(output) == 8
+    assert draft[0].offset > 0

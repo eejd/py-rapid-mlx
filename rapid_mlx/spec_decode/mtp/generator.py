@@ -622,7 +622,7 @@ def mtp_generate_step(
         # Split a pre-built cache at backbone length. If MTP entries
         # are absent (e.g. cache made by make_prompt_cache), construct
         # them.
-        n_main = len(model.layers)
+        n_main = getattr(model, "mtp_target_cache_count", len(model.layers))
         model_cache = prompt_cache[:n_main]
         mtp_cache = prompt_cache[n_main:] or model.make_mtp_cache()
 
