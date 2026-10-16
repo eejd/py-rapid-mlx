@@ -1525,7 +1525,7 @@ def _cohort_scheduler():
     sched._resolve_kv_fixed_baseline_bytes = lambda: 0
     sched._kv_sliding_slot_bytes = 0
     sched._kv_sliding_window = 0
-    sched._estimate_request_kv_bytes = lambda r: 50
+    sched._estimate_request_kv_bytes = lambda r, **kwargs: 50
     sched._prefill_workspace_high_water = 1.5
     sched._prefill_workspace_calibrated = True
     sched.config.prefill_step_size = 10
@@ -1599,7 +1599,7 @@ def test_prefill_prefix_and_processed_kv_are_not_double_charged():
     r = _make_request(tokens=10)
     sched._resolve_kv_bytes_per_token = lambda: 10
     sched._resolve_kv_fixed_baseline_bytes = lambda: 20
-    sched._estimate_request_kv_bytes = lambda r: 130
+    sched._estimate_request_kv_bytes = lambda r, **kwargs: 130
     assert sched._prefill_unmaterialized_bytes(r, 0) == 130
     r.cached_tokens = 6
     assert sched._prefill_unmaterialized_bytes(r, 2) == 30
@@ -1636,6 +1636,21 @@ def test_prefill_uncalibrated_cohort_is_narrow_and_high_water_only_rises():
         sched._finish_prefill_memory_sample(before)
     assert sched._prefill_workspace_high_water == 1
     assert sched._schedule_waiting() == []  # one chunk cannot widen the cohort
+    req = next(iter(sched.running.values()))
+    sched._process_batch_responses(
+        [
+            SimpleNamespace(
+                uid=req.batch_uid,
+                token=1,
+                finish_reason="stop",
+                logprobs=None,
+                prompt_cache=None,
+                all_tokens=req.prompt_token_ids,
+            )
+        ]
+    )
+    assert sched._prefill_workspace_calibrated
+    assert not req._prefill_memory_sampled
     sched.running.clear()
     sched.batch_generator._unprocessed_sequences.clear()
     assert len(sched._schedule_waiting()) == 4
@@ -1815,6 +1830,9 @@ def test_prefill_failed_cache_insert_rechecks_cold_retry_budget():
     stale.cached_tokens = 9
     stale.remaining_tokens = [9]
     sched._validate_cache = lambda cache: True
+    sched.block_aware_cache = MagicMock()
+    stale.block_table = object()
+    stale.shared_prefix_blocks = 2
     original = sched.batch_generator.insert
 
     def insert(tokens, **kwargs):
@@ -1827,6 +1845,9 @@ def test_prefill_failed_cache_insert_rechecks_cold_retry_budget():
     assert sched._schedule_waiting() == []
     assert list(sched.waiting) == [stale]
     assert stale.cached_tokens == 0
+    assert stale.block_table is None
+    assert stale.shared_prefix_blocks == 0
+    sched.block_aware_cache.release_cache.assert_called_once_with(stale.request_id)
     assert len(sched.batch_generator._unprocessed_sequences) == 2
 
 
@@ -1954,3 +1975,120 @@ def test_mllm_stats_keep_cumulative_peak_after_prefill_sample(monkeypatch):
     monkeypatch.setattr(memory_peak.mx.metal, "is_available", lambda: True)
     memory_peak.reset_peak_for_sample()
     assert scheduler.get_stats()["metal_peak_memory_gb"] == 9.0
+
+
+@pytest.mark.parametrize("failure", ["nontrimmable", "inspection", "trim"])
+def test_review_exact_hit_cold_fallback_defers_and_releases_refs(failure):
+    sched = _cohort_scheduler()
+    decode = _make_request("decode", 1)
+    decode.output_token_ids = [1]
+    sched.running[decode.request_id] = decode
+    req = _make_request("exact", 100)
+    req.prompt_cache = [object()]
+    req.cached_tokens = 100
+    req.remaining_tokens = []
+    req.block_table = object()
+    req.shared_prefix_blocks = 3
+    sched._validate_cache = lambda cache: True
+    sched.block_aware_cache = MagicMock()
+    sched.waiting.append(req)
+    with (
+        patch(
+            "mlx_lm.models.cache.can_trim_prompt_cache",
+            return_value=failure != "nontrimmable",
+            side_effect=ValueError("inspect") if failure == "inspection" else None,
+        ),
+        patch(
+            "mlx_lm.models.cache.trim_prompt_cache",
+            side_effect=ValueError("trim") if failure == "trim" else None,
+        ),
+    ):
+        assert sched._schedule_waiting() == []
+    assert list(sched.waiting) == [req]
+    assert req.prompt_cache is None
+    assert req.cached_tokens == 0
+    assert req.block_table is None
+    assert req.shared_prefix_blocks == 0
+    sched.block_aware_cache.release_cache.assert_called_once_with("exact")
+    assert not sched.batch_generator._unprocessed_sequences
+    assert not sched._hybrid_checkpoints
+    # Cold retry proceeds normally once the decoding row drains.
+    sched.running.clear()
+    assert sched._schedule_waiting() == [req]
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "abort", "error"])
+def test_review_interrupted_sample_does_not_qualify_calibration(interruption):
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_calibrated
+    sched.waiting.append(_make_request("sample", 10))
+    req = sched._schedule_waiting()[0]
+    sched.requests[req.request_id] = req
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
+        before = sched._begin_prefill_memory_sample()
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=500):
+        sched._finish_prefill_memory_sample(before)
+    if interruption == "error":
+        with patch("rapid_mlx.scheduler.mx.clear_cache"):
+            sched._recover_from_generation_error()
+        # Simulate the newly created compatible generator.
+        sched.batch_generator = _cohort_scheduler().batch_generator
+    else:
+        sched.batch_generator.remove = lambda uids: None
+        if interruption == "cancel":
+            sched.abort_request(req.request_id)
+            sched._process_pending_aborts()
+        else:
+            sched._do_abort_request(req.request_id)
+        sched.batch_generator._unprocessed_sequences.clear()
+    sched.waiting.extend(_make_request(str(i), 10) for i in range(3))
+    assert len(sched._schedule_waiting()) == 1
+    assert not getattr(sched, "_prefill_workspace_calibrated", False)
+    assert not getattr(req, "_prefill_memory_sampled", False)
+
+
+def test_review_pflash_physical_kv_reservation_preserves_usage_and_add_gate():
+    sched = _cohort_scheduler()
+    del sched._estimate_request_kv_bytes
+    sched._resolve_kv_bytes_per_token = lambda: 10
+    req = _make_request("compressed", 100)
+    req.prompt_token_ids = req.prompt_token_ids[:10]
+    req.model_prompt_tokens = 10
+    assert sched._estimate_request_kv_bytes(req) == 1010  # pre-transform add gate
+    sched.waiting.append(req)
+    assert sched._sum_in_flight_kv_bytes() == 1010
+    sched.waiting.clear()
+    assert sched._prefill_unmaterialized_bytes(req, 0) == 110
+    req.cached_tokens = 3
+    assert sched._prefill_unmaterialized_bytes(req, 2) == 60
+    req.cached_tokens = 0
+    req.output_token_ids = [1]
+    sched.running[req.request_id] = req
+    assert sched._prefill_unmaterialized_bytes(req, 0) == 0
+    assert sched._prefill_cohort_fits(_make_request("candidate", 1))
+    assert req.num_prompt_tokens == 100
+
+
+def test_review_abort_response_cannot_qualify_sample():
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_calibrated
+    req = _make_request("aborted-response", 10)
+    sched.waiting.append(req)
+    sched._schedule_waiting()
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
+        sched._begin_prefill_memory_sample()
+    sched._process_batch_responses(
+        [
+            SimpleNamespace(
+                uid=req.batch_uid,
+                token=1,
+                finish_reason="abort",
+                logprobs=None,
+                prompt_cache=None,
+                all_tokens=req.prompt_token_ids,
+            )
+        ]
+    )
+    assert not getattr(sched, "_prefill_workspace_calibrated", False)
+    assert not req._prefill_memory_sampled
+    assert req.status == RequestStatus.FINISHED_ABORTED

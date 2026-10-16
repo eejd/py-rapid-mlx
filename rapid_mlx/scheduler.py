@@ -7363,7 +7363,9 @@ class Scheduler:
             # Never let a memory-probe failure break the models endpoint.
             return None
 
-    def _estimate_request_kv_bytes(self, request: Request) -> int:
+    def _estimate_request_kv_bytes(
+        self, request: Request, *, model_prompt: bool = False
+    ) -> int:
         """Project KV-cache memory the new request would consume.
 
         With ``T = num_prompt_tokens + max_tokens`` this returns::
@@ -7415,7 +7417,13 @@ class Scheduler:
         # of the raw prompt as a best-effort proxy in the zero case so
         # the cap still bites on a 32k-string prompt that has not been
         # tokenized yet.
-        prompt_tokens = int(getattr(request, "num_prompt_tokens", 0) or 0)
+        # Promotion runs after prompt compression; admission runs before it.
+        # Keep logical usage intact while reserving only physical model KV.
+        prompt_tokens = (
+            len(request.prompt_token_ids)
+            if model_prompt
+            else int(getattr(request, "num_prompt_tokens", 0) or 0)
+        )
         if prompt_tokens <= 0:
             raw_prompt = getattr(request, "prompt_token_ids", None)
             if raw_prompt is not None:
@@ -9153,6 +9161,7 @@ class Scheduler:
 
         if request is not None:
             self.performance.record_cancelled_performance(request)
+            request._prefill_memory_sampled = False
             request.set_finished(RequestStatus.FINISHED_CANCELLED)
             # Release cache references so Metal buffers can be freed
             request.prompt_cache = None
@@ -9203,6 +9212,17 @@ class Scheduler:
         """Get number of running requests."""
         return len(self.running)
 
+    def _discard_prefill_cache(self, request: Request) -> None:
+        """Release fetched cache ownership before pricing a cold fallback."""
+        if getattr(self, "block_aware_cache", None) is not None:
+            self.block_aware_cache.release_cache(request.request_id)
+        request.prompt_cache = None
+        request.block_table = None
+        request.shared_prefix_blocks = 0
+        request.cached_tokens = 0
+        request.remaining_tokens = request.prompt_token_ids
+        request.shared_prefix_snapshot_at = 0
+
     def _resolve_exact_hit_tokens(self, request) -> list:
         """Resolve ``tokens_to_process`` for an exact cache hit (remaining == []).
 
@@ -9242,9 +9262,7 @@ class Scheduler:
                     "byte-equal to cold",
                     request.request_id[:12],
                 )
-                request.prompt_cache = None
-                request.cached_tokens = 0
-                request.remaining_tokens = request.prompt_token_ids
+                self._discard_prefill_cache(request)
                 tokens_to_process = request.prompt_token_ids
         except Exception as _trim_exc:  # noqa: BLE001
             # Any trim failure (inspection raised, or a partial/half-applied
@@ -9260,9 +9278,7 @@ class Scheduler:
                 request.request_id[:12],
                 _trim_exc,
             )
-            request.prompt_cache = None
-            request.cached_tokens = 0
-            request.remaining_tokens = request.prompt_token_ids
+            self._discard_prefill_cache(request)
             return request.prompt_token_ids
         return tokens_to_process
 
@@ -9709,18 +9725,15 @@ class Scheduler:
             resident += self._kv_sliding_slot_bytes * rotating_cache_slots(
                 self._kv_sliding_window, resident_tokens
             )
-        return max(0, self._estimate_request_kv_bytes(request) - resident)
+        return max(
+            0, self._estimate_request_kv_bytes(request, model_prompt=True) - resident
+        )
 
     def _prefill_cohort_fits(self, request: Request) -> bool:
         cap = self._resolve_metal_cap_bytes()
         if cap <= 0:
             return True
         rows = self._prefill_memory_rows()
-        # The first chunk does not characterize later chunks or batch-cache
-        # merge peaks. Finish one complete prefill trajectory before trusting
-        # calibration to widen a cohort; tiny startup warmups never calibrate.
-        if not rows and getattr(self, "_prefill_workspace_high_water", 0.0):
-            self._prefill_workspace_calibrated = True
         selected = rows + [(request, 0)]
         need = sum(self._prefill_unmaterialized_bytes(r, n) for r, n in selected)
         padded_chunk = max(
@@ -9794,6 +9807,8 @@ class Scheduler:
         )
         active = self._current_metal_active_bytes()
         reset_peak_for_sample()
+        for request, _ in rows:
+            request._prefill_memory_sampled = True
         return active, units, sum(chunks)
 
     def _finish_prefill_memory_sample(
@@ -9859,9 +9874,7 @@ class Scheduler:
                     f"Request {request.request_id}: invalid cache detected, "
                     f"proceeding without cache"
                 )
-                request.prompt_cache = None
-                request.cached_tokens = 0
-                request.remaining_tokens = request.prompt_token_ids
+                self._discard_prefill_cache(request)
 
             if not self._prefill_cohort_fits(request):
                 if not shortest_tail:
@@ -9920,6 +9933,14 @@ class Scheduler:
                 # the correctness-critical branch is unit-testable in isolation
                 # (see tests/test_sliding_window_prefix_reuse.py).
                 tokens_to_process = self._resolve_exact_hit_tokens(request)
+                # Inspection or trim may fail after the optimistic hit price.
+                # Reprice cold work before taking processors/UID/checkpoints.
+                if request.prompt_cache is None and not self._prefill_cohort_fits(
+                    request
+                ):
+                    if not shortest_tail:
+                        self.waiting.insert(waiting_order.index(request), request)
+                    break
             elif request.remaining_tokens:
                 tokens_to_process = request.remaining_tokens
             else:
@@ -10153,9 +10174,7 @@ class Scheduler:
                         f"cache insert failed ({e}), retrying without cache"
                     )
                     cache_to_use = None
-                    request.prompt_cache = None
-                    request.cached_tokens = 0
-                    request.remaining_tokens = request.prompt_token_ids
+                    self._discard_prefill_cache(request)
                     tokens_to_process = request.prompt_token_ids
                     if not self._prefill_cohort_fits(request):
                         if not shortest_tail:
@@ -10214,6 +10233,7 @@ class Scheduler:
                     self._admission_prefill_uids.add(uid)
                 request.batch_uid = uid
                 request.status = RequestStatus.RUNNING
+                request._prefill_memory_sampled = False
                 request._prefill_started_at = time.time()
                 # #558 PR-3 / #558 budget: record this request's FULL processor
                 # list (grammar + penalties + budget) by uid as the authoritative
@@ -10307,6 +10327,14 @@ class Scheduler:
             request = self.running.get(request_id)
             if request is None:
                 continue
+
+            # A first generated token proves this sampled trajectory finished
+            # prefill successfully, including runtimes with flat responses.
+            # Merely draining prompt rows (abort/error) must never qualify it.
+            if getattr(request, "_prefill_memory_sampled", False):
+                if response.finish_reason != "abort":
+                    self._prefill_workspace_calibrated = True
+                request._prefill_memory_sampled = False
 
             # Append token to request
             request.append_output_token(response.token)
@@ -11101,6 +11129,7 @@ class Scheduler:
             request = self.running.get(request_id)
             if request is not None:
                 self.performance.record_failed_performance(request)
+                request._prefill_memory_sampled = False
                 request.set_finished(RequestStatus.FINISHED_ABORTED)
             aborted_ids.add(request_id)
             self.finished_req_ids.add(request_id)
