@@ -1911,24 +1911,75 @@ def _load_model_with_fallback_impl(
                 model_name, enable_dspark=enable_dspark
             )
         # Fallback for models with extra/missing weights (e.g., vision tower, MTP layers).
-        # Retry with strict=False to discard extra weights.
+        # Retry with strict=False to discard extra weights. The retry itself
+        # refuses checkpoints that are incomplete rather than merely carrying
+        # optional extra/absent modules (see _refuse_unsafe_strict_false_retry).
         elif "parameters not in model" in original_text or (
             "Missing" in original_text and "parameters" in original_text
         ):
-            logger.warning(
-                f"Model has extra/missing parameters (likely VLM / MTP weights), "
-                f"retrying with strict=False: {e}"
-            )
-            return _load_strict_false(model_name, tokenizer_config)
+            return _load_strict_false(model_name, tokenizer_config, load_error=e)
         else:
             raise
 
 
-def _load_strict_false(model_name: str, tokenizer_config: dict = None):
-    """Load model with strict=False to discard extra weights (e.g., vision tower, MTP)."""
+def _is_optional_missing_weight(name: str) -> bool:
+    """Whether a missing parameter belongs to an optional add-on module.
+
+    Multimodal towers/projectors and multi-token-prediction heads may be
+    absent from a text checkpoint without affecting next-token generation.
+    Everything else is part of the language backbone.
+    """
+    from ..models.mllm import _name_is_multimodal_tensor
+
+    return _name_is_multimodal_tensor(name) or "mtp" in name.split(".")
+
+
+def _refuse_unsafe_strict_false_retry(
+    model_path: Path, load_error: BaseException
+) -> None:
+    """Fail closed when a strict=False retry would leave core weights unset.
+
+    ``strict=False`` keeps whatever parameters the checkpoint lacks at their
+    random initialization, so the model starts and generates garbage. The
+    retry exists for optional extra/absent modules only; an interrupted
+    download or a checkpoint missing backbone weights must stop startup.
+    """
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+    from rapid_mlx.model_load_errors import IncompleteCheckpoint
+
+    from ..models.mllm import _parse_missing_count, _parse_missing_param_names
+
+    reason = incomplete_checkpoint_reason(model_path)
+    if reason is not None:
+        raise IncompleteCheckpoint(
+            f"The model checkpoint is incomplete: {reason}."
+        ) from load_error
+    original = load_error.__cause__ if load_error.__cause__ is not None else load_error
+    text = str(original)
+    names = _parse_missing_param_names(text)
+    if (
+        names
+        and _parse_missing_count(text) == len(names)
+        and not all(_is_optional_missing_weight(name) for name in names)
+    ):
+        raise load_error
+
+
+def _load_strict_false(
+    model_name: str,
+    tokenizer_config: dict = None,
+    *,
+    load_error: BaseException | None = None,
+):
+    """Load model with strict=False to discard extra weights (e.g., vision tower, MTP).
+
+    ``load_error`` is the strict load failure that triggered this retry; when
+    given, the retry is refused for incomplete checkpoints before any weights
+    are loaded.
+    """
     from mlx_lm.utils import load_model, load_tokenizer
 
-    local_path = Path(model_name)
+    local_path = Path(model_name).expanduser()
     if local_path.is_dir():
         model_path = local_path
     else:
@@ -1936,6 +1987,12 @@ def _load_strict_false(model_name: str, tokenizer_config: dict = None):
 
         model_path = Path(snapshot_download(model_name))
 
+    if load_error is not None:
+        _refuse_unsafe_strict_false_retry(model_path, load_error)
+        logger.warning(
+            f"Model has extra/missing parameters (likely VLM / MTP weights), "
+            f"retrying with strict=False: {load_error}"
+        )
     model, config = load_model_checked(load_model, model_path, strict=False)
     tokenizer = load_tokenizer_checked(
         load_tokenizer,

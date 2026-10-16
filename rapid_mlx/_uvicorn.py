@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
@@ -29,6 +30,46 @@ def _port_is_in_use(host: str, port: int) -> bool:
     except OSError as exc:
         return exc.errno in {48, 98}  # macOS/Linux EADDRINUSE
     return False
+
+
+class _DiagnosedStartupTracebackFilter(logging.Filter):
+    """Drop Uvicorn's lifespan traceback once a startup failure was explained."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.armed = False
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self.armed or record.levelno != logging.ERROR:
+            return True
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        if not message.startswith("Traceback (most recent call last):"):
+            return True
+        self.armed = False
+        return False
+
+
+def suppress_next_lifespan_traceback() -> None:
+    """Hide the diagnosed lifespan traceback until the next event-loop turn.
+
+    Uvicorn logs the startup failure synchronously as the lifespan unwinds.
+    Expire the filter even if an in-process caller catches the exception
+    without forwarding it to Uvicorn. Debug logging retains the traceback.
+    """
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    if uvicorn_logger.isEnabledFor(logging.DEBUG):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    traceback_filter = _DiagnosedStartupTracebackFilter()
+    traceback_filter.armed = True
+    uvicorn_logger.addFilter(traceback_filter)
+    loop.call_soon(uvicorn_logger.removeFilter, traceback_filter)
 
 
 class AcceptingConnectionsServer(uvicorn.Server):

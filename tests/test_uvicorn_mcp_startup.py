@@ -247,3 +247,117 @@ def test_custom_runner_retains_uvicorn_keyword_contract():
         port=12345,
     )
     assert calls == [("unused:app", "127.0.0.1", 12345)]
+
+
+def test_diagnosed_traceback_filter_is_one_shot():
+    import logging
+
+    from rapid_mlx._uvicorn import _DiagnosedStartupTracebackFilter
+
+    def record(message, level=logging.ERROR):
+        return logging.LogRecord("uvicorn.error", level, __file__, 0, message, (), None)
+
+    traceback = record("Traceback (most recent call last):\nfixture")
+    guard = _DiagnosedStartupTracebackFilter()
+    assert guard.filter(traceback)
+    guard.armed = True
+    assert guard.filter(record("Application startup failed. Exiting."))
+    assert guard.filter(record("Traceback (most recent call last):", logging.WARNING))
+
+    class HostileMessage:
+        def __str__(self):
+            raise ValueError("cannot render")
+
+    assert guard.filter(record(HostileMessage()))
+    assert not guard.filter(traceback)
+    assert guard.filter(traceback)
+
+
+@pytest.mark.asyncio
+async def test_diagnosed_traceback_filter_expires_and_respects_debug(monkeypatch):
+    import asyncio
+    import logging
+
+    from rapid_mlx._uvicorn import suppress_next_lifespan_traceback
+
+    log = logging.getLogger("uvicorn.error")
+    monkeypatch.setattr(log, "filters", [])
+    previous_level = log.level
+    try:
+        log.setLevel(logging.DEBUG)
+        suppress_next_lifespan_traceback()
+        assert log.filters == []
+        log.setLevel(logging.INFO)
+        suppress_next_lifespan_traceback()
+        assert len(log.filters) == 1
+        trace = logging.LogRecord(
+            "uvicorn.error",
+            logging.ERROR,
+            __file__,
+            0,
+            "Traceback (most recent call last):",
+            (),
+            None,
+        )
+        assert not log.filter(trace)
+        assert log.filter(trace)
+        await asyncio.sleep(0)
+        assert log.filters == []
+        suppress_next_lifespan_traceback()
+        assert len(log.filters) == 1
+        await asyncio.sleep(0)
+        assert log.filters == []
+        assert log.filter(trace)
+    finally:
+        log.setLevel(previous_level)
+
+
+def test_diagnosed_traceback_filter_without_event_loop(monkeypatch):
+    import logging
+
+    from rapid_mlx._uvicorn import suppress_next_lifespan_traceback
+
+    log = logging.getLogger("uvicorn.error")
+    monkeypatch.setattr(log, "filters", [])
+    previous_level = log.level
+    try:
+        log.setLevel(logging.INFO)
+        suppress_next_lifespan_traceback()
+        assert log.filters == []
+    finally:
+        log.setLevel(previous_level)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("debug", [False, True])
+async def test_diagnosed_failure_through_real_lifespan(monkeypatch, caplog, debug):
+    import logging
+    from contextlib import asynccontextmanager
+
+    import uvicorn
+    from fastapi import FastAPI
+    from uvicorn.lifespan.on import LifespanOn
+
+    from rapid_mlx._uvicorn import suppress_next_lifespan_traceback
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        suppress_next_lifespan_traceback()
+        raise ValueError("diagnosed startup failure")
+        yield
+
+    config = uvicorn.Config(FastAPI(lifespan=lifespan), lifespan="on", log_config=None)
+    caplog.set_level(logging.DEBUG if debug else logging.INFO, logger="uvicorn.error")
+    log = logging.getLogger("uvicorn.error")
+    monkeypatch.setattr(log, "handlers", [caplog.handler])
+    monkeypatch.setattr(log, "propagate", False)
+    driver = LifespanOn(config)
+    await driver.startup()
+    assert driver.should_exit
+    traces = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Traceback (most recent call last):")
+    ]
+    assert len(traces) == int(debug)
+    assert "Application startup failed" in caplog.text
