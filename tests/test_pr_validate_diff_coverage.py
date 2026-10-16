@@ -513,8 +513,19 @@ class TestAdvisoryContract:
                 return subprocess.CompletedProcess(
                     cmd,
                     1,
-                    stdout="E   AssertionError: expected 'node down' / "
-                    "'replacing crashed worker gw0' in output\n",
+                    stdout=(
+                        "=================================== FAILURES "
+                        "===================================\n"
+                        "_________________ test_prints _________________\n"
+                        "----------------------------- Captured stdout call "
+                        "-----------------------------\n"
+                        "replacing crashed worker gw0\n"
+                        "[gw1] node down: simulated by the test\n"
+                        "=========================== short test summary info "
+                        "============================\n"
+                        "FAILED tests/test_x.py::test_prints\n"
+                        "========== 1 failed, 9 passed in 1.00s ==========\n"
+                    ),
                     stderr="",
                 )
             return subprocess.CompletedProcess(cmd, 0, stdout=_DC_WITH_LINES, stderr="")

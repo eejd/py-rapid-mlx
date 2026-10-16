@@ -103,6 +103,36 @@ _CAPTURE_BLOCK_BYTES = 65536  # pipe read granularity
 _LOG_TAIL_CHARS = 4000
 
 
+# Line-start diagnostics xdist / pytest-cov print when a worker's results or
+# coverage data are lost.
+_WORKER_LOSS_RE = re.compile(
+    r"^(?:\[gw\d+\] node down:|replacing crashed worker gw\d+|"
+    r"worker '?gw\d+'? crashed|maximum crashed workers reached:|"
+    r"The following workers failed to return coverage data)"
+)
+# pytest's FAILURES / ERRORS sections replay captured test output verbatim.
+_CAPTURED_SECTIONS = {"FAILURES", "ERRORS"}
+_SECTION_RE = re.compile(r"^=+ (.+?) =+$")
+
+
+def _worker_data_lost(stdout: str | None, stderr: str | None) -> bool:
+    """True if the plugins themselves reported lost worker data.
+
+    Lines inside the FAILURES / ERRORS sections are a test's own captured
+    output, so a test that prints similar words cannot discard a valid
+    measurement.
+    """
+    in_captured = False
+    for line in (stdout or "").splitlines():
+        header = _SECTION_RE.match(line)
+        if header:
+            in_captured = header.group(1).strip() in _CAPTURED_SECTIONS
+            continue
+        if not in_captured and _WORKER_LOSS_RE.match(line):
+            return True
+    return any(_WORKER_LOSS_RE.match(line) for line in (stderr or "").splitlines())
+
+
 class DiffCoverageStep(Step):
     name = "diff_coverage"
     description = "advisory patch (diff) coverage — measure-only, never gates"
@@ -261,15 +291,7 @@ class DiffCoverageStep(Step):
 
         # xdist can replace a crashed worker and exit 1 while pytest-cov
         # still writes XML from surviving workers. That data is incomplete.
-        # Match only the plugins' own line-start diagnostics so a test that
-        # merely prints similar words cannot discard a valid measurement.
-        if re.search(
-            r"^(?:\[gw\d+\] node down:|replacing crashed worker gw\d+|"
-            r"worker '?gw\d+'? crashed|maximum crashed workers reached:|"
-            r"The following workers failed to return coverage data)",
-            (pytest_proc.stdout or "") + "\n" + (pytest_proc.stderr or ""),
-            re.MULTILINE,
-        ):
+        if _worker_data_lost(pytest_proc.stdout, pytest_proc.stderr):
             wrote = _safe_write(log_path, _pytest_dump(pytest_cmd, pytest_proc))
             return self._skip(
                 "advisory coverage skipped (xdist worker crash or missing "
