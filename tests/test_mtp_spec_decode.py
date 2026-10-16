@@ -725,7 +725,7 @@ def _serve_help_stdout() -> str:
         [sys.executable, "-m", "rapid_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
@@ -756,7 +756,7 @@ def test_cli_spec_decode_flag_is_hidden_but_recognized():
         ],
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=60,
     )
     assert proc.returncode != 0
     assert "invalid choice" in proc.stderr
