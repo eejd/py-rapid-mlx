@@ -1695,8 +1695,26 @@ enum RecommendedCardLayout {
 /// between them. Serving rows now carry measured size, status, and a delete
 /// control, so the column is wide enough for all three without truncation.
 enum ModelTableLayout {
-    /// Shared width of the Size column.
-    static let sizeColumnWidth: CGFloat = 124
+    /// Shared width of the Size column at the current Settings text size.
+    static var sizeColumnWidth: CGFloat { sizeColumnWidth(cellFontSize: cellFontSize) }
+
+    /// Never narrower than the original 124pt; grows with the cell font so
+    /// the widest serving cell ("123.4 GiB · Serving · trash") never clips.
+    static func sizeColumnWidth(cellFontSize: CGFloat) -> CGFloat {
+        max(124, inUseCellWidth(size: "123.4 GiB", cellFontSize: cellFontSize).rounded(.up))
+    }
+
+    /// The cells render in ``RapidFont/caption`` (11pt base through the
+    /// shared text size, so ≥ 12pt).
+    static var cellFontSize: CGFloat { UIFontSettings.shared.pointSize(11) }
+
+    private static func cellTextWidth(
+        _ text: String, cellFontSize: CGFloat, weight: NSFont.Weight = .regular
+    ) -> CGFloat {
+        (text as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: cellFontSize, weight: weight)
+        ]).width
+    }
 
     /// Shared width of the Quality·Speed meters column.
     ///
@@ -1757,30 +1775,35 @@ enum ModelTableLayout {
         needed * scale * cellMinimumScaleFactor <= sizeColumnWidth
     }
 
-    /// A `.caption`-sized SF Symbol (state glyph) or the 11pt trash.
-    static let glyphWidth: CGFloat = 15
+    /// A caption-sized SF Symbol (state glyph) or the trash button; 15pt
+    /// at the 12pt cell font, growing with it.
+    static func glyphWidth(cellFontSize: CGFloat) -> CGFloat {
+        max(15, (cellFontSize * 1.25).rounded(.up))
+    }
 
     /// Width a cached cell needs: state glyph + measured size + delete.
-    static func cachedCellWidth(size: String) -> CGFloat {
-        glyphWidth
+    static func cachedCellWidth(size: String, cellFontSize: CGFloat = cellFontSize) -> CGFloat {
+        glyphWidth(cellFontSize: cellFontSize)
             + cellSpacing
-            + RecommendedCardLayout.captionWidth(size)
+            + cellTextWidth(size, cellFontSize: cellFontSize)
             + cellSpacing
-            + glyphWidth
+            + glyphWidth(cellFontSize: cellFontSize)
     }
 
     /// Width a not-cached cell needs: estimate + download glyph. The 8pt
     /// spacing is the one that branch renders.
-    static func notCachedCellWidth(size: String) -> CGFloat {
-        RecommendedCardLayout.captionWidth("~" + size) + 8 + glyphWidth
+    static func notCachedCellWidth(size: String, cellFontSize: CGFloat = cellFontSize) -> CGFloat {
+        cellTextWidth("~" + size, cellFontSize: cellFontSize) + 8 + glyphWidth(cellFontSize: cellFontSize)
     }
 
     /// Width a serving cell needs: measured size + status + stop-and-delete.
-    static func inUseCellWidth(size: String) -> CGFloat {
-        RecommendedCardLayout.captionWidth(size)
+    /// "Serving" is measured at medium weight — slightly wider than the
+    /// regular weight it renders in, so the bound is conservative.
+    static func inUseCellWidth(size: String, cellFontSize: CGFloat = cellFontSize) -> CGFloat {
+        cellTextWidth(size, cellFontSize: cellFontSize)
             + cellSpacing
-            + RecommendedCardLayout.captionMediumWidth(String(localized: "Serving"))
+            + cellTextWidth(String(localized: "Serving"), cellFontSize: cellFontSize, weight: .medium)
             + cellSpacing
-            + glyphWidth
+            + glyphWidth(cellFontSize: cellFontSize)
     }
 }

@@ -3228,6 +3228,11 @@ struct ComposeTextEditor: NSViewRepresentable {
         !viewHasMarkedText && editorText != bindingText
     }
 
+    /// 15pt base (matches the transcript body) through the Settings text size.
+    static var editorFont: NSFont {
+        .systemFont(ofSize: UIFontSettings.shared.pointSize(15))
+    }
+
     func makeNSView(context: Context) -> NSScrollView {
         let tv = AutosizingTextView.makeForComposer()
         tv.delegate = context.coordinator
@@ -3246,7 +3251,7 @@ struct ComposeTextEditor: NSViewRepresentable {
         // sweep) — was NSFont.systemFontSize (13). NSTextView ignores
         // Dynamic Type either way (documented in DynamicTypeClamp);
         // this only aligns the default-size look with the chat.
-        tv.font = NSFont.systemFont(ofSize: 15)
+        tv.font = Self.editorFont
         // Width tracks the view (so wrapping matches the visible width),
         // height is unbounded so ``usedRect`` reflects every line. This
         // is what lets us measure the true content height below.
@@ -3305,6 +3310,13 @@ struct ComposeTextEditor: NSViewRepresentable {
             // A programmatic assignment does not fire ``didChangeText``,
             // so the parent would keep the height of the previous draft
             // (e.g. after Send clears it, or after Up-arrow recall).
+            view.remeasure()
+        }
+        // Settings "Text size": NSTextView does not observe it, so re-apply.
+        // Skipped during IME composition, which a font swap would disturb.
+        let font = Self.editorFont
+        if view.font != font, !view.hasMarkedText() {
+            view.font = font
             view.remeasure()
         }
         view.onMeasuredHeight = onMeasuredHeight

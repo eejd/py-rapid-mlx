@@ -47,6 +47,21 @@ struct UIFontSettingsTests {
         #expect(UIFontSettings(defaults: d).scale == 1.0)
     }
 
+    /// Chat body, code, code-block header and composer all route through
+    /// the shared setting. At the default multiplier they keep their
+    /// designed sizes, except the 11pt header which the floor lifts to 12.
+    @Test("chat surfaces use the shared setting and keep their default sizes")
+    @MainActor
+    func chatSurfacesAtDefault() {
+        guard UIFontSettings.shared.isDefault else { return }
+        let options = TextKitMarkdownView.options(basePointSize: 15)
+        #expect(options.textPointSize == 15)
+        #expect(options.codePointSize == 13)
+        #expect(options.codeLineHeight == 16)
+        #expect(MarkdownCodeBlockView.headerFont.pointSize == 12)
+        #expect(ComposeTextEditor.editorFont.pointSize == 15)
+    }
+
     @Test("every text style resolves to at least the floor")
     func textStylesFloored() {
         let s = UIFontSettings(defaults: makeDefaults())
