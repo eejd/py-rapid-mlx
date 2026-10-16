@@ -49,6 +49,7 @@ import time
 import traceback
 from pathlib import Path
 
+from .._xdist import pytest_parallel_args
 from ..base import Step, StepResult
 from ..context import Context
 
@@ -201,6 +202,8 @@ class DiffCoverageStep(Step):
         #    early and hand us partial exit-1 coverage that we would then
         #    publish as the PR's number. With this override the argv here is the
         #    complete, self-contained spec of the run (codex #1220 r17).
+        parallel_args, parallel_note = pytest_parallel_args()
+        ctx.run_log(parallel_note)
         pytest_cmd = [
             sys.executable,
             "-m",
@@ -218,6 +221,7 @@ class DiffCoverageStep(Step):
             "--no-header",
             "-p",
             "no:cacheprovider",
+            *parallel_args,
         ]
         ctx.run_log("diff_coverage: running instrumented suite (advisory)…")
         try:

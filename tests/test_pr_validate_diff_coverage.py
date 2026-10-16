@@ -336,7 +336,10 @@ class TestAdvisoryContract:
         assert dc[4] == "--compare-branch"
         assert dc[5] == expected_ref
 
-    def test_pytest_cmd_neutralizes_repo_addopts(self, ctx_factory, monkeypatch):
+    @pytest.mark.parametrize("parallel", [False, True])
+    def test_pytest_cmd_neutralizes_repo_addopts(
+        self, ctx_factory, monkeypatch, parallel
+    ):
         # codex #1220 r17 (N1): stripping the PYTEST_ADDOPTS env var is not
         # enough — a repo-level ``addopts`` in pyproject.toml / pytest.ini (e.g.
         # ``-x`` / ``--maxfail``) would still stop the suite early and hand us
@@ -345,6 +348,11 @@ class TestAdvisoryContract:
         # complete, self-contained spec of the run; the env strip covers the
         # other layer.
         _both_tools_present(monkeypatch)
+        monkeypatch.setenv("PR_VALIDATE_UNIT_WORKERS", "4")
+        monkeypatch.setattr(
+            "scripts.pr_validate._xdist.importlib.util.find_spec",
+            lambda name: None if name == "xdist" and not parallel else object(),
+        )
         ctx = ctx_factory(["rapid_mlx/quantized_batch_cache.py"])
         captured: dict[str, object] = {}
 
@@ -361,6 +369,24 @@ class TestAdvisoryContract:
         )
         assert DiffCoverageStep().run(ctx).status == "pass"
         cmd = captured["pytest_cmd"]
+        assert cmd == [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-o",
+            "addopts=",
+            "tests/",
+            "--ignore=tests/integrations",
+            "--ignore=tests/test_event_loop.py",
+            "--cov=rapid_mlx",
+            "--cov-report=",
+            f"--cov-report=xml:{ctx.artifact_path('coverage.xml')}",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+            *(["-n", "4", "--dist", "loadgroup"] if parallel else []),
+        ]
         # ``-o addopts=`` present as consecutive argv items → clears any
         # configured addopts from pyproject.toml / pytest.ini.
         assert "-o" in cmd

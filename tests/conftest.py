@@ -48,6 +48,30 @@ def _posthog_transport_guard_assertion():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_admission_context():
+    """A reservation made by a test must not enter the next test's ASGI task.
+
+    Direct admission tests can intentionally leave a reservation outstanding.
+    Restore both request-local ContextVars, including on assertion failure.
+    Avoid importing the MLX engine in the pure-Python test lane.
+    """
+    engine_module = sys.modules.get("rapid_mlx.engine.batched")
+    if engine_module is None:
+        yield
+        return
+    contexts = (
+        engine_module._admission_engine_context,
+        engine_module._admission_token_context,
+    )
+    tokens = [context.set(None) for context in contexts]
+    try:
+        yield
+    finally:
+        for context, token in zip(contexts, tokens):
+            context.reset(token)
+
+
+@pytest.fixture(autouse=True)
 def _reset_hub_guidance_latch():
     """Keep process-wide Hub guidance state isolated between every test."""
     try:
@@ -120,6 +144,16 @@ def _isolate_v2_telemetry_process_state(monkeypatch, tmp_path):
     model_events._reset_for_tests()
     server_start._reset_for_tests()
     consent_runtime._reset_runtime_state_for_tests()
+    # Server lane latches are process singletons too: a pending/emitted model
+    # event from one test must not suppress the next test's lifecycle event.
+    server_module = sys.modules.get("rapid_mlx.server")
+    if server_module is not None:
+        for name in (
+            "_telemetry_model_served_state",
+            "_telemetry_audio_model_served_state",
+            "_telemetry_embedding_model_served_state",
+        ):
+            monkeypatch.setattr(server_module, name, "idle")
     monkeypatch.setattr(posthog_sender, "install_atexit", lambda: None)
     yield
     posthog_sender._reset_for_tests()
@@ -259,6 +293,21 @@ def _hf_offline_from_env() -> bool:
     """``huggingface_hub.constants._is_true`` semantics for the offline switches."""
     raw = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
     return raw is not None and raw.lower() in {"1", "on", "yes", "true"}
+
+
+# Capture before any test can import the hub under a patched environment.
+_ORIGINAL_HF_OFFLINE_ENV = os.environ.get("HF_HUB_OFFLINE")
+_ORIGINAL_HF_OFFLINE = _hf_offline_from_env()
+if importlib.util.find_spec("huggingface_hub") is not None:
+    from huggingface_hub.constants import HF_HUB_CACHE as _ORIGINAL_HF_CACHE
+else:
+    _ORIGINAL_HF_CACHE = None
+
+
+@pytest.fixture(scope="module")
+def original_hf_settings():
+    """Process-original hub settings for module-scoped tokenizer loading."""
+    return _ORIGINAL_HF_OFFLINE_ENV, _ORIGINAL_HF_OFFLINE, _ORIGINAL_HF_CACHE
 
 
 def _reset_hf_sessions() -> None:
