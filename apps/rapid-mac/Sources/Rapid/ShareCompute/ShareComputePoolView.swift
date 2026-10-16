@@ -475,7 +475,7 @@ struct ShareComputePoolTab: View {
                     .tracking(0.4)
                     .foregroundStyle(pickerStateTint(row))
                     .lineLimit(1)
-                    .frame(width: 92, alignment: .trailing)
+                    .frame(width: UIFontSettings.shared.scaled(92), alignment: .trailing)
             }
             .padding(.horizontal, 12)
             .frame(height: 42)
@@ -562,10 +562,14 @@ struct ShareComputePoolRowView: View {
     var isNarrow = false
     let onSelect: () -> Void
 
-    /// Paper's lane widths, narrowed at 720pt. 70 rather than 62 because
-    /// "CONNECTED" is the longest label and truncating it to "CONNECT…" makes
-    /// the column meaningless — the number above it could be anything.
-    private var metricWidth: CGFloat { isNarrow ? 70 : 86 }
+    /// Counter lanes preserve the full CONNECTED label at the 12pt floor
+    /// and grow with the text preference, including in narrow rows.
+    private var metricWidth: CGFloat { Self.metricWidth() }
+
+    static func metricWidth(fonts: UIFontSettings = .shared) -> CGFloat {
+        // CONNECTED needs 86pt at the 12pt font floor, even in narrow rows.
+        fonts.scaled(86)
+    }
 
     var body: some View {
         Button(action: onSelect) {

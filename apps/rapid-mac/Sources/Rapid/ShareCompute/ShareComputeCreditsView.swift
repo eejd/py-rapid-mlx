@@ -1,5 +1,24 @@
 import SwiftUI
 
+/// Shared text lanes keep headers and values aligned at every text size.
+enum ShareComputeLedgerLayout {
+    enum Column: CaseIterable {
+        case window, model, requests, tokens, credit, status
+
+        func width(fonts: UIFontSettings = .shared) -> CGFloat {
+            let base: CGFloat = switch self {
+            case .window: 140
+            case .model: 210
+            case .requests: 82
+            case .tokens: 120
+            case .credit: 100
+            case .status: 90
+            }
+            return fonts.scaled(base)
+        }
+    }
+}
+
 /// "What have I earned?" — now backed by QuickSilver's contributor ledger.
 ///
 /// ## The ownership split, made literal
@@ -212,9 +231,20 @@ struct ShareComputeCreditsTab: View {
                         .padding(.bottom, 10)
                         .accessibilityIdentifier("ShareCompute.Credits.Stale")
                 }
-                columnHeaders
-                ForEach(account.windows.prefix(Self.visibleRowLimit)) { window in
-                    ShareComputeLedgerRowView(window: window, isNarrow: isNarrow)
+                // Keep the columns at their readable widths even when the
+                // enlarged table is wider than the ledger panel.
+                ScrollView(.horizontal) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        columnHeaders
+                        ForEach(account.windows.prefix(Self.visibleRowLimit)) { window in
+                            ShareComputeLedgerRowView(window: window, isNarrow: isNarrow)
+                        }
+                    }
+                    .fixedSize(horizontal: !isNarrow, vertical: false)
+                    .containerRelativeFrame(.horizontal, alignment: .leading) { width, _ in
+                        isNarrow ? width : max(width, ShareComputeLedgerLayout.Column.allCases
+                            .reduce(CGFloat(20)) { $0 + $1.width() })
+                    }
                 }
                 footer(account)
             }
@@ -230,12 +260,12 @@ struct ShareComputeCreditsTab: View {
         Group {
             if !isNarrow {
                 HStack(spacing: 0) {
-                    headerLabel(String(localized: "Window"), width: 140)
-                    headerLabel(String(localized: "Node · Model"), width: 210)
-                    headerLabel(String(localized: "Requests"), width: UIFontSettings.shared.scaled(70))
-                    headerLabel(String(localized: "Tokens in/out"), width: 100)
-                    headerLabel(String(localized: "Credit"), width: UIFontSettings.shared.scaled(80))
-                    headerLabel(String(localized: "Status"), width: UIFontSettings.shared.scaled(70))
+                    headerLabel(String(localized: "Window"), width: ShareComputeLedgerLayout.Column.window.width())
+                    headerLabel(String(localized: "Node · Model"), width: ShareComputeLedgerLayout.Column.model.width())
+                    headerLabel(String(localized: "Requests"), width: ShareComputeLedgerLayout.Column.requests.width())
+                    headerLabel(String(localized: "Tokens in/out"), width: ShareComputeLedgerLayout.Column.tokens.width())
+                    headerLabel(String(localized: "Credit"), width: ShareComputeLedgerLayout.Column.credit.width())
+                    headerLabel(String(localized: "Status"), width: ShareComputeLedgerLayout.Column.status.width())
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 4)
@@ -764,7 +794,7 @@ struct ShareComputeLedgerRowView: View {
                 .font(.rapid(size: 11))
                 .foregroundStyle(RapidTheme.bandInk)
                 .lineLimit(1)
-                .frame(width: 140, alignment: .leading)
+                .frame(width: ShareComputeLedgerLayout.Column.window.width(), alignment: .leading)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(modelLabel)
@@ -777,28 +807,28 @@ struct ShareComputeLedgerRowView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .frame(width: 210, alignment: .leading)
+            .frame(width: ShareComputeLedgerLayout.Column.model.width(), alignment: .leading)
 
             Text("\(window.requestCount)")
                 .font(.rapid(size: 12))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInk)
-                .frame(width: UIFontSettings.shared.scaled(70), alignment: .leading)
+                .frame(width: ShareComputeLedgerLayout.Column.requests.width(), alignment: .leading)
 
             Text("\(ShareComputeCreditFormatter.count(window.inputTokens)) / \(ShareComputeCreditFormatter.count(window.outputTokens))")
                 .font(.rapid(size: 11))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
-                .frame(width: 100, alignment: .leading)
+                .frame(width: ShareComputeLedgerLayout.Column.tokens.width(), alignment: .leading)
 
             Text(ShareComputeCreditFormatter.credit(window.finalCredit))
                 .font(.rapid(size: 12, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInk)
-                .frame(width: UIFontSettings.shared.scaled(80), alignment: .leading)
+                .frame(width: ShareComputeLedgerLayout.Column.credit.width(), alignment: .leading)
 
-            statusTag.frame(width: UIFontSettings.shared.scaled(70), alignment: .leading)
+            statusTag.frame(width: ShareComputeLedgerLayout.Column.status.width(), alignment: .leading)
         }
     }
 

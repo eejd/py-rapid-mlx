@@ -81,7 +81,7 @@ struct CommunityBenchmarkResultView: View {
                         CommunityWorkloadBadge(workload: scope.workload)
                         Spacer(minLength: 0)
                     }
-                    HStack(spacing: RapidTheme.Space.sm) {
+                    HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                         provenanceText
                         Spacer(minLength: RapidTheme.Space.sm)
                         statusChip
@@ -114,13 +114,17 @@ struct CommunityBenchmarkResultView: View {
     }
 
     private var provenanceText: some View {
-        Text(
+        Self.provenanceText(
             "\(scope.macProfile.displayName) · "
                 + CommunityBenchmarkResult.formatCompletedAt(result.completedAt)
         )
-        .font(RapidFont.metric)
-        .foregroundStyle(RapidTheme.textSecondary)
-        .lineLimit(1)
+    }
+
+    static func provenanceText(_ text: String) -> some View {
+        Text(text)
+            .font(RapidFont.metric)
+            .foregroundStyle(RapidTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private var statusLabel: String {

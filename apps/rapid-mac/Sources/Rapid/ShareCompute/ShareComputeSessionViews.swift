@@ -292,7 +292,7 @@ struct ShareComputeStepRail: View {
     }
 
     @ViewBuilder
-    private func circle(for row: ShareComputePreparationRow) -> some View {
+    func circle(for row: ShareComputePreparationRow) -> some View {
         // Status carries a distinct GLYPH as well as a colour — a tick, a
         // number, an exclamation mark — so the rail stays readable in
         // monochrome and to a colour-blind reader.
@@ -307,13 +307,13 @@ struct ShareComputeStepRail: View {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
-                    .frame(width: 26, height: 26)
+                    .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.bandReady, in: Circle())
             case .failed:
                 Image(systemName: "exclamationmark")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
-                    .frame(width: 26, height: 26)
+                    .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.bandDestructive, in: Circle())
             case .inProgress:
                 Text("\(row.step.number)")
