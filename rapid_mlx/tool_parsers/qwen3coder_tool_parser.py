@@ -163,6 +163,21 @@ class _MarkdownCodeTracker:
         return opener_length is not None
 
 
+def _trailing_tool_envelopes(text: str, opener: str, closer: str):
+    """Yield unclosed wrappers outside Markdown code, after complete blocks."""
+    code = _MarkdownCodeTracker()
+    cursor = 0
+    while (start := text.find(opener, cursor)) >= 0:
+        body_start = start + len(opener)
+        close = text.find(closer, body_start)
+        if close >= 0:
+            cursor = close + len(closer)
+            continue
+        if not code.inside(text, start):
+            yield start, text[body_start:].lstrip()
+        cursor = body_start
+
+
 def _merge_content(
     content: str, result: dict[str, Any] | None
 ) -> dict[str, Any] | None:
@@ -422,12 +437,13 @@ class Qwen3CoderToolParser(ToolParser):
 
         return _info
 
+    tool_call_start_token = "<tool_call>"
+    tool_call_end_token = "</tool_call>"
+    tool_call_prefix = "<function="
+
     def __init__(self, tokenizer=None):
         super().__init__(tokenizer)
 
-        self.tool_call_start_token = "<tool_call>"
-        self.tool_call_end_token = "</tool_call>"
-        self.tool_call_prefix = "<function="
         self.function_end_token = "</function>"
         self.parameter_prefix = "<parameter="
         self.parameter_end_token = "</parameter>"
@@ -1230,6 +1246,24 @@ class Qwen3CoderToolParser(ToolParser):
         if not rest:
             return {"content": released}
         return _Continue(released, rest)
+
+    @classmethod
+    def strip_trailing_tool_envelope(cls, text: str, request=None) -> str:
+        declared = cls._declared_tool_names(request) if request is not None else None
+        if declared is not None and not declared:
+            return text
+        for start, body in _trailing_tool_envelopes(
+            text, cls.tool_call_start_token, cls.tool_call_end_token
+        ):
+            header = re.match(r"<function=([^>]+)>", body)
+            if header and declared is not None and header.group(1) not in declared:
+                # Streaming releases an unfinished undeclared block at EOF.
+                return text
+            if cls.tool_call_prefix.startswith(body) or body.startswith(
+                cls.tool_call_prefix
+            ):
+                return text[:start].rstrip()
+        return text
 
     def flush_held_content(self, full_text: str) -> str:
         """Text of an undeclared-tool block still held when the stream ends.

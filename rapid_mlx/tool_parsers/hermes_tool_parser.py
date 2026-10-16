@@ -676,6 +676,45 @@ class HermesToolParser(ToolParser):
             return None
         return {"content": safe_current[len(safe_previous) :]}
 
+    @classmethod
+    def _trailing_header_example(cls, text: str) -> int | None:
+        from .qwen3coder_tool_parser import _trailing_tool_envelopes
+
+        for start, body in _trailing_tool_envelopes(
+            text, cls._STREAMING_SENTINELS[0], "</tool_call>"
+        ):
+            if text[:start].strip() and re.fullmatch(r"<function=[^>]+>", body):
+                return start
+        return None
+
+    @classmethod
+    def strip_trailing_tool_envelope(cls, text: str, request=None) -> str:
+        from .qwen3coder_tool_parser import _trailing_tool_envelopes
+
+        if request is not None and request.get("tool_choice") == "none":
+            return text
+        for start, body in _trailing_tool_envelopes(
+            text, cls._STREAMING_SENTINELS[0], "</tool_call>"
+        ):
+            # A complete header with no body after prose is also the
+            # established unclosed documentation shape. Keep it ambiguous
+            # until a payload starts; incomplete headers are still held.
+            if cls._trailing_header_example(text) == start:
+                continue
+            # Preserve prose mentioning a tag; admit only a started payload.
+            if (
+                not body
+                or body.startswith("{")
+                or any(
+                    sentinel.startswith(body) or body.startswith(sentinel)
+                    for sentinel in cls._STREAMING_SENTINELS[1:]
+                )
+            ):
+                # EOF releases proper sentinel prefixes even inside an open
+                # wrapper (e.g. <tool_call> followed by <fun). Keep that quirk.
+                return text[:start] + text[len(cls._safe_content_prefix(text)) :]
+        return text
+
     def flush_held_content(self, full_text: str) -> str:
         """Release the prefix-held suffix at stream end.
 
@@ -687,6 +726,11 @@ class HermesToolParser(ToolParser):
         ``abc<`` would surface as ``abc`` to the user (codex round-3
         CRITICAL).
         """
+        example = self._trailing_header_example(full_text)
+        if example is not None:
+            # A narrated complete header with no payload is ambiguous until
+            # EOF. Release the held example, matching buffered preservation.
+            return full_text[example:]
         return full_text[len(self._safe_content_prefix(full_text)) :]
 
     @classmethod
@@ -837,7 +881,16 @@ class HermesToolParser(ToolParser):
                     if function_end >= 0 and parameter_end > function_end:
                         return None
             if self._has_incomplete_structured_block(current_text, request):
-                # Inside an incomplete structured block — suppress output.
+                # Hold the envelope but emit narration in the same chunk.
+                # Use the buffered rule so framing and Markdown decisions
+                # agree; EOF-held partial sentinels are released by finalize.
+                visible = self.strip_trailing_tool_envelope(current_text, request)
+                example = self._trailing_header_example(current_text)
+                if example is not None:
+                    visible = current_text[:example]
+                if visible != current_text:
+                    visible = self._safe_content_prefix(visible)
+                    return self._emit_safe_content(previous_text, visible)
                 return None
 
             # Count COMPLETED structured-shape blocks so the streaming

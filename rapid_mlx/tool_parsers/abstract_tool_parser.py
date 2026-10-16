@@ -372,6 +372,18 @@ class ToolParser(ABC):
         """
         return "<tool_call>" in text or self.has_text_format_tool_call(text)
 
+    @classmethod
+    def strip_trailing_tool_envelope(
+        cls, text: str, request: dict[str, Any] | None = None
+    ) -> str:
+        """Buffered EOF visibility policy; opt in only with streaming parity tests.
+
+        Keep complete calls and examples under the normal extractor's policy.
+        Parsers overriding this must preserve suffixes released by
+        ``flush_held_content`` at EOF.
+        """
+        return text
+
     def flush_held_content(self, full_text: str) -> str:
         """Return any prefix-held content suffix to release at stream end.
 

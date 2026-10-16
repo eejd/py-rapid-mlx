@@ -475,7 +475,9 @@ def _finalize_content_and_reasoning(
     if tool_calls:
         reasoning_text, _ = extract(raw_text)
     else:
-        text_to_parse = cleaned_text or raw_text
+        # An empty cleaned buffer can be intentional: do not resurrect a
+        # trailing tool envelope while recovering reasoning from raw output.
+        text_to_parse = cleaned_text or _strip_trailing_tool_envelope(raw_text)
         new_reasoning, new_cleaned = extract(text_to_parse)
         # Capture the FIRST-parse Case-4 signal BEFORE the harmony
         # retry overwrites ``new_reasoning``. The leak plug below
@@ -3530,6 +3532,20 @@ def _request_declared_tool_names(request_dict: dict | None) -> set[str]:
     return names
 
 
+def _strip_trailing_tool_envelope(text: str, request=None) -> str:
+    """Apply the configured parser's EOF visibility rule to buffered content."""
+    cfg = get_config()
+    if not cfg.enable_auto_tool_choice or not cfg.tool_call_parser:
+        return text
+    try:
+        parser_cls = ToolParserManager.get_tool_parser(cfg.tool_call_parser)
+    except (KeyError, ValueError):
+        return text
+    return parser_cls.strip_trailing_tool_envelope(
+        text, request.model_dump() if request is not None else None
+    )
+
+
 def _parse_tool_calls_with_parser(
     output_text: str,
     request=None,
@@ -3552,6 +3568,8 @@ def _parse_tool_calls_with_parser(
     content, tool_calls = _run_tool_parser(
         output_text, request, structured_tool_calls=structured_tool_calls
     )
+    if request and request.tools and not structured_tool_calls:
+        content = _strip_trailing_tool_envelope(content, request)
     if tool_choice_is_none(request):
         return content, None
     declared = declared_names(request)
