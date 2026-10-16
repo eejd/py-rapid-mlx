@@ -587,3 +587,40 @@ def test_all_mlx_vlm_specs_match_validated_desktop_pin() -> None:
         + "\n\nPin every mlx-vlm-bearing extra to ==0.7.2. Move the pin only "
         "after the Desktop and dependency-coherence sweeps validate a new release."
     )
+
+
+def test_every_pillow_spec_excludes_the_broken_13_series() -> None:
+    """Pillow 13.0.0 imports a name missing from Python < 3.15 at module
+    load (``PIL._typing``), which breaks the image runtime on supported
+    interpreters. Every declared pillow spec must keep 13.x out."""
+    root = Path(__file__).resolve().parents[1]
+    pyproject = _load_pyproject()["project"]
+    raw_specs = list(pyproject.get("dependencies", []))
+    for specs in pyproject.get("optional-dependencies", {}).values():
+        raw_specs.extend(specs)
+    for name in ("config/requirements-ci-linux.txt", "config/pr-validate-deps.txt"):
+        raw_specs.extend(
+            line.strip()
+            for line in (root / name).read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+    pillow = [
+        Requirement(spec)
+        for spec in raw_specs
+        if Requirement(spec).name.lower() == "pillow"
+    ]
+    assert pillow, "expected pillow to be declared"
+    for requirement in pillow:
+        assert not requirement.specifier.contains("13.0.0"), str(requirement)
+        assert requirement.specifier.contains("12.3.0"), str(requirement)
+
+    constraints = [
+        Requirement(line.strip())
+        for line in (root / "apps/rapid-mac/scripts/sidecar-constraints.txt")
+        .read_text()
+        .splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    sidecar = [c for c in constraints if c.name.lower() == "pillow"]
+    assert len(sidecar) == 1
+    assert not sidecar[0].specifier.contains("13.0.0")
