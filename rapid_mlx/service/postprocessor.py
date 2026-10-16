@@ -2846,7 +2846,9 @@ class StreamingPostProcessor:
                 StreamEvent(
                     type="tool_call",
                     tool_calls=structured,
-                    finish_reason=self._compute_finish_reason(output),
+                    finish_reason=(
+                        self._compute_finish_reason(output) if output.finished else None
+                    ),
                     tool_calls_detected=True,
                 )
             ]
@@ -2975,7 +2977,11 @@ class StreamingPostProcessor:
                     StreamEvent(
                         type="tool_call",
                         tool_calls=allowed_tcs,
-                        finish_reason=self._compute_finish_reason(output),
+                        finish_reason=(
+                            self._compute_finish_reason(output)
+                            if output.finished
+                            else None
+                        ),
                         tool_calls_detected=True,
                     )
                 )
@@ -3384,7 +3390,11 @@ class StreamingPostProcessor:
                     StreamEvent(
                         type="tool_call",
                         tool_calls=allowed_tcs,
-                        finish_reason=self._compute_finish_reason(output),
+                        finish_reason=(
+                            self._compute_finish_reason(output)
+                            if output.finished
+                            else None
+                        ),
                         tool_calls_detected=True,
                     )
                 )
@@ -3611,7 +3621,11 @@ class StreamingPostProcessor:
                     StreamEvent(
                         type="tool_call",
                         tool_calls=allowed_tcs,
-                        finish_reason=self._compute_finish_reason(output),
+                        finish_reason=(
+                            self._compute_finish_reason(output)
+                            if output.finished
+                            else None
+                        ),
                         tool_calls_detected=True,
                     )
                 )
