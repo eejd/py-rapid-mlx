@@ -1079,7 +1079,7 @@ class LocalSearch:
             hits.append(hit)
             if not include_groups and len(hits) == limit:
                 break
-        if not hits and mode == "hybrid":
+        if not hits and mode == "hybrid" and semantic_scores is not None:
             # Reuse scoped scores and per-file/safety checks only on empty results.
             closest = sorted(
                 semantic_scores.items(), key=lambda item: (-item[1], item[0])
@@ -1099,15 +1099,19 @@ class LocalSearch:
                 "mode": mode,
             }
             if include_groups:
-                fallback["groups"] = [
-                    {
-                        "kind": kind,
-                        "results": [await result(hit) for hit in group[:group_limit]],
-                        "total": len(group),
-                    }
-                    for kind in dict.fromkeys(rows[hit[0]]["kind"] for hit in hits)
-                    if (group := [hit for hit in hits if rows[hit[0]]["kind"] == kind])
-                ]
+                fallback_groups: list[dict[str, object]] = []
+                for kind in dict.fromkeys(rows[hit[0]]["kind"] for hit in hits):
+                    group = [hit for hit in hits if rows[hit[0]]["kind"] == kind]
+                    fallback_groups.append(
+                        {
+                            "kind": kind,
+                            "results": [
+                                await result(hit) for hit in group[:group_limit]
+                            ],
+                            "total": len(group),
+                        }
+                    )
+                fallback["groups"] = fallback_groups
             fallback["took_ms"] = (time.perf_counter() - start) * 1000
             return fallback
         response: dict[str, object] = {
