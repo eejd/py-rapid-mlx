@@ -571,3 +571,355 @@ def test_shard_path_allows_contained_nested_file(tmp_path):
     assert convert.shard_path(tmp_path, "nested/shard.safetensors") == (
         tmp_path / "nested/shard.safetensors"
     )
+
+
+def mtp_fixture(tmp_path):
+    import mlx.nn as nn
+
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import (
+        MTPHead,
+        quantization_predicate,
+        sidecar_manifest,
+    )
+
+    args = super_h.ModelArgs.from_dict(config())
+    model = super_h.Model(args)
+    model.set_dtype(mx.bfloat16 if mx.default_device() == mx.gpu else mx.float32)
+    head = MTPHead(args)
+    head.set_dtype(mx.bfloat16 if mx.default_device() == mx.gpu else mx.float32)
+    nn.quantize(head, bits=4, group_size=64, class_predicate=quantization_predicate)
+    mx.save_safetensors(
+        str(tmp_path / "model.safetensors"), dict(tree_flatten(head.parameters()))
+    )
+    (tmp_path / "nemotron_mtp.json").write_text(json.dumps(sidecar_manifest(args)))
+    return model
+
+
+@pytest.mark.parametrize("keep", [1, 2])
+def test_mtp_mamba_partial_acceptance(tmp_path, keep):
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import (
+        NemotronMambaCache,
+        inject_mtp_support,
+    )
+
+    model = mtp_fixture(tmp_path)
+    assert inject_mtp_support(model, tmp_path)
+    serial, verified = model.make_cache(), model.make_cache()
+    prefix = mx.array([[1, 2, 3, 4]])
+    model(prefix, cache=serial)
+    model(prefix, cache=verified)
+    tokens = mx.array([[5, 6, 7]])
+    expected = []
+    for p in range(keep):
+        expected.append(model(tokens[:, p : p + 1], cache=serial))
+    logits, _ = model(tokens, cache=verified, return_hidden=True, n_confirmed=1)
+    mx.eval(logits, [c.state for c in verified], expected)
+    recurrent = verified[0]
+    assert isinstance(recurrent, NemotronMambaCache)
+    assert len(recurrent.rollback_state) == 2
+    with pytest.raises(ValueError, match="boundary"):
+        recurrent.restore_rollback(3, 3)
+    recurrent.restore_rollback(3 - keep, 3)
+    verified[1].trim(3 - keep)
+    for a, b in zip(serial[0].state, verified[0].state):
+        assert bool(mx.allclose(a, b, atol=2e-3, rtol=2e-3))
+    assert recurrent.rollback_state is None
+    assert recurrent.n_confirmed_for_mtp == 0
+    actual = model(mx.array([[8]]), cache=verified)
+    target = model(mx.array([[8]]), cache=serial)
+    assert bool(
+        mx.allclose(
+            actual.astype(mx.float32), target.astype(mx.float32), atol=0.08, rtol=0.08
+        )
+    )
+
+
+def test_mtp_sidecar_strict_loading_opt_in_and_generation(tmp_path):
+    from rapid_mlx.spec_decode.mtp.detect import MTPEligibility, detect_mtp_eligibility
+    from rapid_mlx.spec_decode.mtp.dispatch import (
+        dispatch_mtp_inject,
+        dispatch_mtp_validate,
+    )
+    from rapid_mlx.spec_decode.mtp.generator import mtp_generate_step
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import inject_mtp_support
+
+    model = mtp_fixture(tmp_path)
+    assert not hasattr(model, "mtp")
+    cfg = super_h.text_config(config())
+    assert detect_mtp_eligibility(cfg) is MTPEligibility.NONE
+    assert (
+        detect_mtp_eligibility(cfg, has_external_sidecar=True) is MTPEligibility.CHAIN
+    )
+    assert (
+        detect_mtp_eligibility(config(), has_external_sidecar=True)
+        is MTPEligibility.NONE
+    )
+    assert not inject_mtp_support(model)
+    assert not inject_mtp_support(object(), tmp_path)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert not inject_mtp_support(model, empty)
+    assert not dispatch_mtp_validate(model, "nemotron_h")
+    manifest = tmp_path / "nemotron_mtp.json"
+    good = manifest.read_text()
+    manifest.write_text("{}")
+    assert not inject_mtp_support(model, tmp_path)
+    manifest.write_text(good)
+    assert dispatch_mtp_inject(model, "nemotron_h", mtp_sidecar=tmp_path)
+    assert dispatch_mtp_validate(model, "nemotron_h")
+    assert model.make_mtp_cache()[0].offset == 0
+    prompt = mx.array([1, 2, 3, 4])
+    for k in (0, 1, 2):
+        out = list(
+            mtp_generate_step(prompt, model, max_tokens=8, max_k=k, disable_auto_k=True)
+        )
+        assert len(out) == 8
+    # Ordinary and hidden-state target routes agree without a cache.
+    ordinary = model(prompt[None])
+    hidden_logits, hidden = model(prompt[None], return_hidden=True)
+    assert bool(mx.array_equal(ordinary, hidden_logits))
+    assert hidden.shape == (1, 4, 128)
+    cache = model.make_cache()
+    cache[0].lengths = mx.array([3])
+    with pytest.raises(ValueError, match="unpadded"):
+        model(prompt[None], cache=cache, n_confirmed=1)
+    assert cache[0].n_confirmed_for_mtp == 0
+    from mlx_lm.models.cache import ArraysCache
+
+    cache = [ArraysCache(2), model.make_cache()[1]]
+    with pytest.raises(ValueError, match="fresh"):
+        model(prompt[None], cache=cache, n_confirmed=1)
+
+
+def test_mtp_cli_alias_gates():
+    from rapid_mlx.cli import (
+        _alias_mtp_declaration,
+        _alias_mtp_default_enabled,
+        _resolve_mtp_depth_for_model,
+    )
+    from rapid_mlx.scheduler import _config_vetted_mtp_supports_spec_decode
+
+    for alias in ("nemotron-3.5-super-vl", "nemotron-3.5-super-vl-3bit"):
+        assert _alias_mtp_declaration(alias)[1] == 1
+        assert not _alias_mtp_default_enabled(alias)
+    assert _config_vetted_mtp_supports_spec_decode("nemotron_h")
+    assert _resolve_mtp_depth_for_model("nemotron_h", 2, explicit=True) == 2
+    assert _resolve_mtp_depth_for_model("nemotron_h", 2, explicit=False) == 1
+    assert _resolve_mtp_depth_for_model("nemotron_h", 0, explicit=True) == 0
+    with pytest.raises(ValueError, match="Nemotron"):
+        _resolve_mtp_depth_for_model("nemotron_h", 3, explicit=True)
+
+
+def test_additive_mtp_conversion_and_failure_cleanup(tmp_path, monkeypatch):
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import MTPHead, inject_mtp_support
+
+    source = tmp_path / "source"
+    source.mkdir()
+    cfg = config()
+    (source / "config.json").write_text(
+        json.dumps({"model_type": "nemotron_h_omni", "llm_config": cfg})
+    )
+    args = super_h.ModelArgs.from_dict(cfg)
+    head = MTPHead(args)
+    head.set_dtype(mx.bfloat16)
+    weights = dict(tree_flatten(head.parameters()))
+    for target, original in (("fc1", "up_proj"), ("fc2", "down_proj")):
+        packed = weights.pop(f"layers.1.mixer.switch_mlp.{target}.weight")
+        for expert in range(args.n_routed_experts):
+            weights[f"layers.1.mixer.experts.{expert}.{original}.weight"] = packed[
+                expert
+            ]
+    weights = {"language_model.mtp." + name: value for name, value in weights.items()}
+    mx.save_safetensors(str(source / "model.safetensors"), weights)
+    index = {"weight_map": {name: "model.safetensors" for name in weights}}
+    (source / "model.safetensors.index.json").write_text(json.dumps(index))
+    output = tmp_path / "sidecar"
+    result = convert.main(
+        ["--source", str(source), "--output", str(output), "--bits", "3", "--mtp-only"]
+    )
+    assert result["bytes"] > 0
+    assert sorted(
+        str(p.relative_to(output)) for p in output.rglob("*") if p.is_file()
+    ) == ["mtp/model.safetensors", "mtp/nemotron_mtp.json"]
+    assert inject_mtp_support(super_h.Model(args), output)
+    with pytest.raises(FileExistsError):
+        convert.convert_mtp_sidecar(source, output)
+    bad = tmp_path / "bad"
+    (source / "config.json").write_text(
+        json.dumps(cfg | {"num_nextn_predict_layers": 0})
+    )
+    with pytest.raises(ValueError, match="attention/MoE"):
+        convert.convert_mtp_sidecar(source, bad)
+    (source / "config.json").write_text(json.dumps(cfg))
+    (source / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {}}))
+    with pytest.raises(ValueError, match="no native"):
+        convert.convert_mtp_sidecar(source, bad)
+    (source / "model.safetensors.index.json").write_text(json.dumps(index))
+    original_save = mx.save_safetensors
+
+    def fail_save(*args, **kwargs):
+        raise OSError("test failure")
+
+    monkeypatch.setattr(mx, "save_safetensors", fail_save)
+    with pytest.raises(OSError, match="test failure"):
+        convert.convert_mtp_sidecar(source, bad)
+    assert not bad.exists()
+    assert not list(tmp_path.glob(".bad.partial-*"))
+    monkeypatch.setattr(mx, "save_safetensors", original_save)
+
+    def raced_save(*args, **kwargs):
+        original_save(*args, **kwargs)
+        bad.mkdir()
+
+    monkeypatch.setattr(mx, "save_safetensors", raced_save)
+    with pytest.raises(FileExistsError):
+        convert.convert_mtp_sidecar(source, bad)
+    assert not list(tmp_path.glob(".bad.partial-*"))
+
+
+def test_mtp_shared_cache_symlink_containment(tmp_path, monkeypatch):
+    import huggingface_hub.constants as constants
+
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path))
+    repo = tmp_path / "models--org--model"
+    source = repo / "snapshots" / "revision"
+    source.mkdir(parents=True)
+    blobs = repo / "blobs"
+    blobs.mkdir()
+    (blobs / "hash").write_bytes(b"weights")
+    (source / "model.safetensors").symlink_to(blobs / "hash")
+    assert (
+        convert.mtp_source_shard(source, "model.safetensors").read_bytes() == b"weights"
+    )
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"forbidden")
+    (source / "evil.safetensors").symlink_to(outside)
+    with pytest.raises(ValueError, match="escapes"):
+        convert.mtp_source_shard(source, "evil.safetensors")
+
+
+@pytest.mark.parametrize("stop", [False, True])
+def test_mtp_benchmark_harness_tiny(tmp_path, monkeypatch, stop):
+    import sys
+
+    from scripts import benchmark_nemotron_mtp as bench
+
+    sidecar = tmp_path / "sidecar"
+    sidecar.mkdir()
+    model = mtp_fixture(sidecar)
+
+    class Tokenizer:
+        eos_token_ids = set(range(128)) if stop else set()
+
+        def encode(self, text):
+            return [1, 2, 3]
+
+        def apply_chat_template(self, *args, **kwargs):
+            return [4, 5, 6]
+
+    monkeypatch.setattr(
+        bench, "load_model_with_fallback", lambda path: (model, Tokenizer())
+    )
+    output = tmp_path / "results.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bench",
+            "--model",
+            "tiny",
+            "--sidecar",
+            str(sidecar),
+            "--output",
+            str(output),
+            "--contexts",
+            "16",
+            "--tokens",
+            "4",
+            "--repeats",
+            "2",
+        ],
+    )
+    result = bench.main()
+    assert len(result["rows"]) == 24
+    assert all(
+        len(r["tokens"]) == (1 if stop else 4) and r["tok_s"] >= 0
+        for r in result["rows"]
+    )
+
+
+def test_mtp_empty_cache_mask_history_and_corrupt_sidecar(tmp_path):
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import inject_mtp_support
+
+    model = mtp_fixture(tmp_path)
+    weights_file = tmp_path / "model.safetensors"
+    good = mx.load(str(weights_file))
+    corrupt = dict(good)
+    key = next(k for k in good if good[k].dtype == mx.uint32)
+    corrupt[key] = good[key].astype(mx.float32)
+    mx.save_safetensors(str(weights_file), corrupt)
+    with pytest.raises(ValueError, match="dtype"):
+        inject_mtp_support(model, tmp_path)
+    assert not hasattr(model, "mtp")
+    corrupt = dict(good)
+    corrupt.pop(key)
+    mx.save_safetensors(str(weights_file), corrupt)
+    with pytest.raises(ValueError):
+        inject_mtp_support(model, tmp_path)
+    mx.save_safetensors(str(weights_file), good)
+    assert inject_mtp_support(model, tmp_path)
+    cache = model.make_cache()[0]
+    mixer = model.layers[0].mixer
+    x = model.backbone.embeddings(mx.array([[1, 2, 3]]))
+    cache.n_confirmed_for_mtp = 1
+    y = mixer(x, mask=mx.array([[True, True, False]]), cache=cache)
+    mx.eval(y, cache.state)
+    assert len(cache.rollback_state) == 2
+    assert cache.rollback_state[0][1] is not None
+    cache.restore_rollback(2, 3)
+    assert cache[0].shape[1] == model.args.conv_kernel - 1
+
+
+def test_mtp_real_cli_default_and_explicit_preset():
+    from rapid_mlx.cli import _normalize_speculative_config_or_exit
+    from tests.test_mtp_default_off_3115 import _args
+
+    for alias in ("nemotron-3.5-super-vl", "nemotron-3.5-super-vl-3bit"):
+        args = _args(alias)
+        _normalize_speculative_config_or_exit(args)
+        assert args.spec_decode == "none"
+        assert args._speculative_config is None
+        args = _args(alias, '{"method":"mtp"}')
+        _normalize_speculative_config_or_exit(args)
+        assert args.spec_decode == "mtp"
+        assert args.mtp_sidecar.endswith(
+            "MLX-3bit" if alias.endswith("3bit") else "MLX-4bit"
+        )
+        assert args.mtp_max_k == 1
+
+
+def test_mtp_cache_batch_handoff_and_prefix_type(tmp_path):
+    from mlx_lm.generate import PromptProcessingBatch
+
+    from rapid_mlx.memory_cache import _class_name_is_recurrent
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import (
+        NemotronMambaCache,
+        inject_mtp_support,
+    )
+
+    model = mtp_fixture(tmp_path)
+    assert inject_mtp_support(model, tmp_path)
+    assert _class_name_is_recurrent(NemotronMambaCache.__name__)
+    empty = NemotronMambaCache(2)
+    assert empty.extract(0).state == [None, None]
+    merged = NemotronMambaCache.merge([empty, NemotronMambaCache(2)])
+    assert isinstance(merged, NemotronMambaCache)
+    batch = PromptProcessingBatch(model, [1], [model.make_cache()], prefill_step_size=2)
+    batch.prompt([[1, 2, 3]])
+    gb = batch.generate([[4]])
+    assert isinstance(gb.prompt_cache[0], NemotronMambaCache)
+    assert gb.prompt_cache[0].left_padding is None
+    model(mx.array([[5, 6]]), cache=gb.prompt_cache, return_hidden=True, n_confirmed=1)
+    extracted = gb.extract_cache(0)
+    assert isinstance(extracted[0], NemotronMambaCache)
+    assert extracted[0].rollback_state is None

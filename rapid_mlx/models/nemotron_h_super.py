@@ -34,7 +34,8 @@ def text_config(config):
     if limit == [0.0, {"__float__": "Infinity"}]:
         config.pop("time_step_limit")
     config["rapid_mlx_nemotron_h"] = True
-    # No Rapid consumer implements Nemotron-H MTP; its tensors are dropped.
+    # Native MTP is loaded explicitly from its additive sidecar, whose manifest
+    # owns the head metadata. The ordinary target remains independently loadable.
     config.pop("num_nextn_predict_layers", None)
     config.pop("mtp_layers_block_type", None)
     return config

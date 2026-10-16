@@ -22,7 +22,10 @@ def test_super_catalog_contract(alias, bits, size):
     assert profile.reasoning_parser == "qwen3"
     assert profile.is_hybrid and profile.is_hybrid_explicit and profile.is_moe
     assert profile.is_text_only
-    assert not profile.supports_spec_decode
+    assert profile.supports_spec_decode
+    assert profile.mtp_draft_model == profile.hf_path
+    assert profile.mtp_speculative_tokens == 1
+    assert profile.mtp_default_enabled is False
     # Same suffix filter as scripts/gen_model_sizes.py: includes tokenizer and
     # config JSON; excludes README, license and chat-template Jinja sidecar.
     assert size_bytes(profile.hf_path) == size

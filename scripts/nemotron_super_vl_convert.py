@@ -156,6 +156,103 @@ def shard_path(root, name):
     return candidate
 
 
+def mtp_source_shard(source, name):
+    """Accept ordinary contained shards or standard shared-cache blob links."""
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    candidate = source / name
+    repo = source.parent.parent
+    if (
+        source.parent.name == "snapshots"
+        and repo.parent == Path(HF_HUB_CACHE)
+        and repo.name.startswith("models--")
+        and Path(name).name == name
+        and candidate.is_symlink()
+        and candidate.resolve().is_relative_to((repo / "blobs").resolve())
+    ):
+        return candidate
+    return shard_path(source, name)
+
+
+def convert_mtp_sidecar(source, output):
+    """Extract only MTP into a new nested sidecar, preserving target files."""
+    from mlx.utils import tree_flatten
+
+    from rapid_mlx.models.nemotron_h_super import ModelArgs
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import (
+        MTPHead,
+        sidecar_manifest,
+    )
+    from rapid_mlx.spec_decode.mtp.nemotron_h_inject import (
+        quantization_predicate as mtp_quantization_predicate,
+    )
+
+    if output.exists():
+        raise FileExistsError(output)
+    raw = json.loads((source / "config.json").read_text())
+    config = raw.get("llm_config", raw)
+    if config.get("num_nextn_predict_layers") != 1 or config.get(
+        "mtp_layers_block_type"
+    ) != ["attention", "moe"]:
+        raise ValueError("Expected one attention/MoE native MTP module")
+    args = ModelArgs.from_dict(raw)
+    index = json.loads((source / "model.safetensors.index.json").read_text())[
+        "weight_map"
+    ]
+    prefix = "language_model.mtp."
+    names = {
+        name: mtp_source_shard(source, file)
+        for name, file in index.items()
+        if name.startswith(prefix)
+    }
+    if not names:
+        raise ValueError("Checkpoint contains no native MTP weights")
+    mx.set_default_device(mx.cpu)
+    weights = {}
+    for file in set(names.values()):
+        tensors = mx.load(str(file))
+        weights.update(
+            {
+                name.removeprefix(prefix): tensors[name]
+                for name, path in names.items()
+                if path == file
+            }
+        )
+    for target, original in (("fc1", "up_proj"), ("fc2", "down_proj")):
+        base = "layers.1.mixer"
+        weights[f"{base}.switch_mlp.{target}.weight"] = mx.stack(
+            [
+                weights.pop(f"{base}.experts.{e}.{original}.weight")
+                for e in range(args.n_routed_experts)
+            ]
+        )
+    head = MTPHead(args)
+    head.load_weights(list(weights.items()), strict=True)
+    import mlx.nn as nn
+
+    nn.quantize(head, group_size=64, bits=4, class_predicate=mtp_quantization_predicate)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{output.name}.partial-", dir=output.parent)
+    )
+    try:
+        nested = staging / "mtp"
+        nested.mkdir()
+        mx.save_safetensors(
+            str(nested / "model.safetensors"), dict(tree_flatten(head.parameters()))
+        )
+        (nested / "nemotron_mtp.json").write_text(
+            json.dumps(sidecar_manifest(args), indent=2) + "\n"
+        )
+        if output.exists():
+            raise FileExistsError(output)
+        staging.rename(output)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return {"output": str(output), "bytes": artifact_size(output)}
+
+
 def main(argv=None):
     import os
 
@@ -163,7 +260,14 @@ def main(argv=None):
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--bits", required=True, type=int, choices=(3, 4))
+    parser.add_argument(
+        "--mtp-only", action="store_true", help="Write only additive MTP sidecar files"
+    )
     args = parser.parse_args(argv)
+    if args.mtp_only:
+        result = convert_mtp_sidecar(args.source, args.output)
+        print(json.dumps(result), flush=True)
+        return result
     if args.output.exists():
         raise FileExistsError(args.output)
     config = text_config(json.loads((args.source / "config.json").read_text()))

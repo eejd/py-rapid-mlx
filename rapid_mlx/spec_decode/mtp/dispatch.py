@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 # entry_function_name)``. The module is imported lazily on first
 # dispatch so this file stays cheap to import from top-level MTP.
 _MTP_INJECT_DISPATCH: dict[str, tuple[str, str]] = {
+    "nemotron_h": (
+        "rapid_mlx.spec_decode.mtp.nemotron_h_inject",
+        "inject_mtp_support",
+    ),
     # Qwen3.5 dense + MoE (vendored mlx-lm PR #990 MTP head).
     "qwen3_5": (
         "rapid_mlx.spec_decode.mtp.qwen3_5_inject",
@@ -79,6 +83,10 @@ _MTP_INJECT_DISPATCH: dict[str, tuple[str, str]] = {
 # table so a family with a bespoke validator can register it
 # independently of the inject entry.
 _MTP_VALIDATE_DISPATCH: dict[str, tuple[str, str]] = {
+    "nemotron_h": (
+        "rapid_mlx.spec_decode.mtp.nemotron_h_inject",
+        "validate_mtp_support",
+    ),
     "qwen3_5": (
         "rapid_mlx.spec_decode.mtp.qwen3_5_inject",
         "validate_mtp_support",

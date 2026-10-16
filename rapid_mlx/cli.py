@@ -1873,6 +1873,12 @@ def _resolve_mtp_depth_for_model(
 ) -> int:
     """Return the validated native-MTP depth for a checkpoint family."""
 
+    if model_type == "nemotron_h":
+        if requested not in {0, 1, 2}:
+            raise ValueError(
+                "Nemotron native MTP supports num_speculative_tokens in [0, 2]"
+            )
+        return requested if explicit else 1
     if model_type != "qwen4_exp":
         return requested
     if not explicit:

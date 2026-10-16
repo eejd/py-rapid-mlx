@@ -2724,6 +2724,7 @@ def _config_vetted_mtp_supports_spec_decode(model_type: str | None) -> bool:
     """
 
     return model_type in {
+        "nemotron_h",
         "qwen3_5",
         "qwen3_5_moe",
         "hy_v3",

@@ -215,6 +215,17 @@ def _detect_mtp_eligibility_verbose(
             MTPEligibility.NONE, None, 0, "model_type missing or not a string"
         )
 
+    # Published text artifacts stripped MTP metadata; the additive sidecar
+    # carries its own strictly validated manifest. Never admit stock variants.
+    if model_type == "nemotron_h":
+        ready = has_external_sidecar and config.get("rapid_mlx_nemotron_h") is True
+        return _DetectionResult(
+            MTPEligibility.CHAIN if ready else MTPEligibility.NONE,
+            model_type,
+            1 if ready else 0,
+            "explicit native sidecar" if ready else "reviewed native sidecar required",
+        )
+
     if model_type in _EXTERNAL_SIDECAR_MODEL_TYPES:
         if has_external_sidecar:
             if _external_sidecar_target_has_shared_kv(config):
