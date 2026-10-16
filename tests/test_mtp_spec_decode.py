@@ -725,7 +725,7 @@ def _serve_help_stdout() -> str:
         [sys.executable, "-m", "rapid_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=10,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
@@ -756,7 +756,7 @@ def test_cli_spec_decode_flag_is_hidden_but_recognized():
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=10,
     )
     assert proc.returncode != 0
     assert "invalid choice" in proc.stderr
@@ -3004,6 +3004,106 @@ def test_generator_emits_first_token_from_backbone_then_draft():
     assert snap.correction_tokens == 0
     assert snap.drafted_by_depth == ((1, 1),)
     assert snap.accepted_by_depth == ((1, 1),)
+
+
+@pytest.mark.parametrize(
+    ("targets", "drafts", "depth", "expected"),
+    [
+        (
+            [7, 11, 12, 13],
+            [11, 12],
+            2,
+            [(7, False), (11, True), (12, True), (13, False)],
+        ),
+        ([7, 11, 13, 14], [11, 12], 2, [(7, False), (11, True), (13, False)]),
+        ([7, 13, 14], [11], 1, [(7, False), (13, False)]),
+        ([7, 11, 13], [], 0, [(7, False), (11, False), (13, False)]),
+    ],
+    ids=["accept-bonus", "accept-reject", "reject-first", "park"],
+)
+def test_generator_logprobs_cross_thread(targets, drafts, depth, expected):
+    """Exact emitted rows must be ready before leaving the worker stream.
+
+    CPU MLX can abort natively on a foreign lazy stream, so isolate the
+    handoff in a subprocess. The module's importorskip gates this like the
+    other MLX generator tests here.
+    """
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import numpy as np
+
+    script = textwrap.dedent(
+        """
+        import concurrent.futures
+        import json
+        import runpy
+        import sys
+
+        import mlx.core as mx
+        mx.set_default_device(mx.cpu)
+
+        import numpy as np
+        from rapid_mlx.spec_decode.mtp.generator import mtp_generate_step
+
+        Base = runpy.run_path(sys.argv[1])["_MockedQwen35Model"]
+        targets, drafts, depth, count = json.loads(sys.argv[2])
+
+        class SoftTarget(Base):
+            def _logits_for_positions(self, target_ids, batch):
+                return super()._logits_for_positions(target_ids, batch) / 25.0
+
+            def mtp_forward(self, hidden, next_token_ids, mtp_cache):
+                # Different draft probabilities catch accidentally serving q.
+                return super().mtp_forward(hidden, next_token_ids, mtp_cache) * 4.0
+
+        def generate():
+            stream = mx.new_stream(mx.default_device())
+            mx.set_default_stream(stream)
+            with mx.stream(stream):
+                return list(mtp_generate_step(
+                    mx.array([1], dtype=mx.uint32),
+                    SoftTarget(targets, drafts),
+                    max_tokens=count,
+                    max_k=depth,
+                    disable_auto_k=True,
+                ))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as worker:
+            emitted = worker.submit(generate).result()
+        # Convert on main only after the generating thread has exited.
+        print(json.dumps([
+            [token, drafted, np.array(lp).tolist()]
+            for token, lp, drafted in emitted
+        ]))
+        """
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(Path(__file__).resolve()),
+            json.dumps([targets, drafts, depth, len(expected)]),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    emitted = json.loads(result.stdout)
+    assert [(token, drafted) for token, drafted, _ in emitted] == expected
+    for token, _drafted, values in emitted:
+        row = np.asarray(values)
+        assert row.shape == (32,)
+        assert np.isfinite(row).all()
+        logits = np.zeros(32)
+        logits[token] = 2.0
+        target_lp = logits - np.log(np.exp(logits).sum())
+        np.testing.assert_allclose(row, target_lp, atol=1e-6)
+        assert row[token] == pytest.approx(target_lp[token], abs=1e-6)
 
 
 def test_generator_sampled_verify_accepts_matching_draft():
