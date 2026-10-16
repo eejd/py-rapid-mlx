@@ -100,13 +100,21 @@ import Testing
         weak var delegate: LocalSearchPreviewController?
         var calls: [String] = []
         var onShow: (() -> Void)?
+        var defersVisibility = false
+        var opening = false
+        func finishOpening() { if opening { isVisible = true; opening = false } }
         func acquire(_ controller: LocalSearchPreviewController) -> Bool {
             calls.append("acquire"); dataSource = controller; delegate = controller; return true
         }
         func reload() { calls.append("reload") }
-        func show() { calls.append("show"); isVisible = true; onShow?() }
+        func show() {
+            calls.append("show")
+            opening = true
+            if !defersVisibility { finishOpening() }
+            onShow?()
+        }
         func release(_ controller: LocalSearchPreviewController) {
-            calls.append("release"); isVisible = false; dataSource = nil; delegate = nil
+            calls.append("release"); opening = false; isVisible = false; dataSource = nil; delegate = nil
         }
     }
     private func nextTurn() async {
@@ -197,6 +205,62 @@ import Testing
         for _ in 0..<5 { await nextTurn() }
         #expect(panel.calls == ["acquire", "reload", "show", "release", "acquire", "reload", "show", "release"])
         #expect(!panel.isVisible && panel.dataSource == nil && panel.delegate == nil)
+    }
+    @Test func sameFileToggleClosesBeforePanelBecomesVisible() async {
+        let panel = Panel()
+        panel.defersVisibility = true
+        let controller = LocalSearchPreviewController(driver: panel)
+        let url = URL(fileURLWithPath: "/tmp/a.txt")
+        controller.toggle(url); await nextTurn()
+        #expect(!panel.isVisible && panel.opening)
+        controller.toggle(url); await nextTurn()
+        panel.finishOpening()
+        #expect(!panel.isVisible)
+        #expect(controller.item == nil)
+        #expect(panel.dataSource == nil && panel.delegate == nil)
+        #expect(panel.calls == ["acquire", "reload", "show", "release"])
+        controller.close(); await nextTurn()
+    }
+    @Test func tripleToggleDuringOpeningRebindsExpectedItem() async {
+        let panel = Panel()
+        panel.defersVisibility = true
+        let controller = LocalSearchPreviewController(driver: panel)
+        let url = URL(fileURLWithPath: "/tmp/a.png")
+        controller.toggle(url)
+        controller.toggle(url)
+        controller.toggle(url)
+        for _ in 0..<4 { await nextTurn() }
+        panel.finishOpening()
+        #expect(panel.isVisible)
+        #expect(panel.dataSource === controller && panel.delegate === controller)
+        #expect(panel.dataSource?.previewPanel(nil, previewItemAt: 0)?.previewItemURL == url)
+        #expect(panel.calls == ["acquire", "reload", "show", "release", "acquire", "reload", "show"])
+        controller.close(); await nextTurn()
+    }
+    @Test func selectionDuringOpeningUsesIntendedOpenState() async {
+        let panel = Panel()
+        panel.defersVisibility = true
+        let controller = LocalSearchPreviewController(driver: panel)
+        let second = URL(fileURLWithPath: "/tmp/b.txt")
+        controller.toggle(URL(fileURLWithPath: "/tmp/a.pdf")); await nextTurn()
+        controller.selectionChanged(to: second); await nextTurn()
+        panel.finishOpening()
+        #expect(controller.item == second as NSURL)
+        #expect(panel.calls.last == "reload")
+        controller.close(); await nextTurn()
+    }
+    @Test func nativeDismissalClearsIntentBeforeSameFileToggle() async {
+        let panel = Panel()
+        let controller = LocalSearchPreviewController(driver: panel)
+        let url = URL(fileURLWithPath: "/tmp/a.pdf")
+        controller.toggle(url); await nextTurn()
+        panel.isVisible = false
+        LocalSearchSystemPreviewPanel().didEndControl(controller)
+        await nextTurn()
+        #expect(controller.item == nil)
+        controller.toggle(url); await nextTurn()
+        #expect(panel.isVisible && controller.item == url as NSURL)
+        controller.close(); await nextTurn()
     }
     @Test func localSearchDoesNotUseSwiftUIPreviewBinding() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()

@@ -9,6 +9,11 @@ import SwiftUI
     func reload()
     func show()
     func release(_ controller: LocalSearchPreviewController)
+    func didEndControl(_ controller: LocalSearchPreviewController)
+}
+
+extension LocalSearchPreviewPanelDriving {
+    func didEndControl(_ controller: LocalSearchPreviewController) {}
 }
 
 /// A view-lifetime reference, independent of result rows and SwiftUI value updates.
@@ -30,7 +35,7 @@ import SwiftUI
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func enqueue(_ action: @escaping @MainActor () -> Void) {
+    fileprivate func enqueue(_ action: @escaping @MainActor () -> Void) {
         pending.append(action)
         DispatchQueue.main.async { [self] in drain() }
     }
@@ -44,7 +49,9 @@ import SwiftUI
     }
     func toggle(_ url: URL) {
         enqueue { [self] in
-            if driver.isVisible, item == url as NSURL { closeNow(); return }
+            // Visibility can lag both opening and animated dismissal. Toggle the
+            // requested item, just as the original view binding toggled its URL.
+            if wantsControl, item == url as NSURL { closeNow(); return }
             item = url as NSURL
             wantsControl = true
             guard driver.acquire(self) else { closeNow(); return }
@@ -54,7 +61,7 @@ import SwiftUI
     }
     func selectionChanged(to url: URL?) {
         enqueue { [self] in
-            guard driver.isVisible, wantsControl else { return }
+            guard wantsControl else { return }
             guard let url else { closeNow(); return }
             item = url as NSURL
             driver.reload()
@@ -77,7 +84,10 @@ import SwiftUI
         MainActor.assumeIsolated { bind(panel) }
     }
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        MainActor.assumeIsolated { unbind(panel) }
+        MainActor.assumeIsolated {
+            unbind(panel)
+            driver.didEndControl(self)
+        }
     }
     fileprivate func bind(_ panel: QLPreviewPanel) {
         controlLifetime = self
@@ -101,7 +111,6 @@ import SwiftUI
     private weak var owner: LocalSearchPreviewController?
     private var presented = false
     private var closing = false
-    private var pendingShow = false
     private var closeObserver: NSObjectProtocol?
     var isVisible: Bool { panel?.isVisible == true }
     func acquire(_ controller: LocalSearchPreviewController) -> Bool {
@@ -125,7 +134,7 @@ import SwiftUI
         panel?.reloadData()
     }
     func show() {
-        if closing { pendingShow = true; return }
+        if closing { return }
         panel?.makeKeyAndOrderFront(nil)
         presented = true
         // Hidden panels can grant control during opening. Reload after that
@@ -133,7 +142,6 @@ import SwiftUI
         reload()
     }
     func release(_ controller: LocalSearchPreviewController) {
-        pendingShow = false
         let owned = panel?.currentController as AnyObject? === controller
         // Remove only our responder, preserving any other hooks in the chain.
         var predecessor: NSResponder? = ownerWindow
@@ -144,7 +152,7 @@ import SwiftUI
             }
             predecessor = responder.nextResponder
         }
-        if owned {
+        if owned, !closing {
             // Notify Quick Look after changing the responder chain, while visible,
             // so endPreviewPanelControl releases the assign references.
             panel?.updateController()
@@ -154,8 +162,14 @@ import SwiftUI
         let shouldHide = (owned || presented)
             && (panel?.currentController == nil || panel?.currentController as AnyObject? === controller)
         presented = false
-        if shouldHide {
+        // A later open/close can arrive while the previous dismissal is still
+        // running. Leave QL's controller and data untouched until it finishes;
+        // updating/reloading an already dismissing panel can strand it busy.
+        if shouldHide, !closing {
             if let panel, panel.isVisible {
+                // A new intent can open and close again while the previous
+                // session is still dismissing. Reissuing orderOut cancels QL's
+                // animation and can strand the panel without a data source.
                 closing = true
                 if closeObserver == nil {
                     closeObserver = NotificationCenter.default.addObserver(
@@ -163,11 +177,13 @@ import SwiftUI
                     ) { [self] _ in
                         // Keep the adapter alive through dismissal even if its view
                         // is gone; finishClosing removes this observer and its hold.
-                        DispatchQueue.main.async { [self] in finishClosingIfHidden() }
+                        DispatchQueue.main.async { [self, controller] in
+                            controller.enqueue { [self] in finishClosingIfHidden() }
+                        }
                     }
                 }
                 panel.orderOut(nil)
-                DispatchQueue.main.async { [weak self] in self?.finishClosingIfHidden() }
+                controller.enqueue { [self] in finishClosingIfHidden() }
             }
             // Quick Look can cache currentController across hidden sessions without
             // sending endControl. Detach assign references while still the owner.
@@ -180,13 +196,17 @@ import SwiftUI
         ownerWindow = nil
         owner = nil
     }
+    func didEndControl(_ controller: LocalSearchPreviewController) {
+        // Native Space/Escape dismissal ends intent too. A programmatic close
+        // may already have a later open waiting for its animation to finish.
+        if !closing, controller.wantsControl { controller.close() }
+    }
     private func finishClosingIfHidden() {
         guard closing, panel?.isVisible != true else { return }
         closing = false
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
         closeObserver = nil
-        if pendingShow, let owner, owner.wantsControl {
-            pendingShow = false
+        if let owner, owner.wantsControl {
             if acquire(owner) { reload(); show() }
         }
     }
