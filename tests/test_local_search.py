@@ -8680,9 +8680,9 @@ def test_search_query_evidence_skip_path(
     async def scenario():
         search = engine(tmp_path)
         rows = {
-            1: {"path": "image", "file_id": 1, "kind": "image"},
-            2: {"path": "text", "file_id": 2, "kind": "text"},
-            3: {"path": "text", "file_id": 2, "kind": "text"},
+            1: {"path": "image", "file_id": 1, "kind": "image", "folder_id": "missing"},
+            2: {"path": "text", "file_id": 2, "kind": "text", "folder_id": "missing"},
+            3: {"path": "text", "file_id": 2, "kind": "text", "folder_id": "missing"},
         }
         calls = []
 
@@ -9099,6 +9099,218 @@ def test_search_damaged_file_signature_is_neutral(tmp_path, monkeypatch, damage)
                 "valid.txt",
                 "other.txt",
             }
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("group_limit", [None, 1, 3])
+def test_closest_only_after_empty_normal_results(tmp_path, monkeypatch, group_limit):
+    async def scenario():
+        root = folder(tmp_path)
+        for n in range(8):
+            (root / f"file{n}.txt").write_text(f"apple contract section {n}")
+        search = engine(tmp_path)
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+
+            # A diffuse query: positive similarities, all below the index
+            # background, with no query-specific outlier. Reverse input order
+            # to prove fallback orders by similarity, rather than store order.
+            def scores(_, rows):
+                return [(i, 0.1 + 0.01 * n) for n, i in enumerate(rows)]
+
+            monkeypatch.setattr(search.store._store, "semantic_scores", scores)
+            monkeypatch.setattr(
+                search.store._store,
+                "semantic_background",
+                lambda _: dict.fromkeys(("text", "image", "video"), 1.0),
+            )
+            rows = search.store.search_rows()
+            expected = sorted(scores(None, rows), key=lambda item: -item[1])[:3]
+            response = await search.search(
+                "departing staff customer lists", 20, None, group_limit=group_limit
+            )
+            assert response["mode"] == "hybrid"
+            assert [h["path"] for h in response["results"]] == [
+                rows[i]["path"] for i, _ in expected
+            ]
+            assert [h["score"] for h in response["results"]] == [s for _, s in expected]
+            assert all(h["matched"] == ["closest"] for h in response["results"])
+            if group_limit is not None:
+                assert response["groups"] == [
+                    {
+                        "kind": "text",
+                        "results": response["results"][:group_limit],
+                        "total": 3,
+                    }
+                ]
+            limited = await search.search("departing staff customer lists", 1, None)
+            assert limited["results"] == response["results"][:1]
+            # Exact normal results must equal the pre-change implementation,
+            # including scores, markers, representatives, and group previews.
+            import types
+
+            baseline = subprocess.check_output(
+                ["git", "show", "origin/main:rapid_mlx/local_search/service.py"],
+                text=True,
+            )
+            module = types.ModuleType("rapid_mlx.local_search._baseline_service")
+            module.__package__ = "rapid_mlx.local_search"
+            exec(compile(baseline, "baseline_service.py", "exec"), module.__dict__)
+            old = await module.LocalSearch.search(
+                search, "apple", 20, None, group_limit=group_limit
+            )
+            new = await search.search("apple", 20, None, group_limit=group_limit)
+            old.pop("took_ms")
+            new.pop("took_ms")
+            assert new == old
+            assert new["results"] and all(
+                "closest" not in h["matched"] for h in new["results"]
+            )
+            # A semantic-only normal hit also preserves the baseline exactly.
+            monkeypatch.setattr(
+                search.store._store,
+                "semantic_background",
+                lambda _: dict.fromkeys(("text", "image", "video"), 0.01),
+            )
+            old = await module.LocalSearch.search(
+                search, "paraphrase", 20, None, group_limit=group_limit
+            )
+            new = await search.search("paraphrase", 20, None, group_limit=group_limit)
+            old.pop("took_ms")
+            new.pop("took_ms")
+            assert new == old
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("content_indexed", [True, False])
+@pytest.mark.parametrize("limit", [1, 20])
+def test_closest_stops_safety_checks_after_admitted_limit(
+    tmp_path, monkeypatch, content_indexed, limit
+):
+    from rapid_mlx.local_search import service
+
+    async def scenario():
+        root = folder(tmp_path)
+        for n in range(20):
+            (root / f"file{n}.txt").write_text("apple contract")
+        search = engine(tmp_path)
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+            monkeypatch.setattr(service, "semantic_ranking", lambda *a, **kw: [])
+            monkeypatch.setattr(
+                search.store._store,
+                "semantic_scores",
+                lambda _, rows: [
+                    (i, 1.0 - int(Path(row["path"]).stem.removeprefix("file")) * 0.01)
+                    for i, row in rows.items()
+                ],
+            )
+            search_rows = search.store._store.search_rows
+
+            def rows(*args):
+                return {
+                    i: {**row, "content_indexed": content_indexed}
+                    for i, row in search_rows(*args).items()
+                }
+
+            monkeypatch.setattr(search.store._store, "search_rows", rows)
+            calls = {"open_safe": [], "stat_safe": []}
+
+            def counted(name, original):
+                def check(path, *args):
+                    calls[name].append(path.name)
+                    return original(path, *args)
+
+                return check
+
+            for name in calls:
+                monkeypatch.setattr(
+                    service, name, counted(name, getattr(service, name))
+                )
+            (root / "file0.txt").unlink()
+            response = await search.search("paraphrase", limit, None, group_limit=1)
+            count = min(limit, 3)
+            assert [Path(hit["path"]).name for hit in response["results"]] == [
+                f"file{n}.txt" for n in range(1, count + 1)
+            ]
+            assert all(hit["matched"] == ["closest"] for hit in response["results"])
+            checked = "open_safe" if content_indexed else "stat_safe"
+            assert calls[checked] == [f"file{n}.txt" for n in range(count + 1)]
+            assert calls["stat_safe" if content_indexed else "open_safe"] == []
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_closest_respects_scope_safety_grouping_and_positive_scores(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        root = folder(tmp_path)
+        other = folder(tmp_path, "other")
+        for n in range(8):
+            (root / f"file{n}.txt").write_text("apple contract\n" * 400)
+        (other / "outside.txt").write_text("apple")
+        search = engine(tmp_path)
+        try:
+            f, _ = await search.add_folder(str(root))
+            await search.add_folder(str(other))
+            await search.wait_idle()
+            # Force admission empty to isolate downstream fallback boundaries,
+            # including repeated chunks per file and stale normal candidates.
+            monkeypatch.setattr(
+                "rapid_mlx.local_search.service.semantic_ranking", lambda *a, **kw: []
+            )
+
+            def scores(_, rows):
+                return [
+                    (i, 0.8 - int(Path(row["path"]).stem.removeprefix("file")) * 0.1)
+                    for i, row in rows.items()
+                ]
+
+            monkeypatch.setattr(search.store._store, "semantic_scores", scores)
+            (root / "file0.txt").unlink()
+            response = await search.search(
+                "paraphrase", 20, [f["id"]], ["text"], group_limit=1
+            )
+            assert [Path(h["path"]).name for h in response["results"]] == [
+                "file1.txt",
+                "file2.txt",
+                "file3.txt",
+            ]
+            assert "groups" not in response
+            assert all(
+                h["folder_id"] == f["id"] and h["kind"] == "text"
+                for h in response["results"]
+            )
+            # Keyword ranking is nonempty, but only stale file0 matches.
+            stale = await search.search("file0", 20, [f["id"]], ["text"])
+            assert all(h["matched"] == ["closest"] for h in stale["results"])
+            assert (
+                await search.search(
+                    "paraphrase", 20, [f["id"]], ["image"], group_limit=1
+                )
+            )["results"] == []
+            assert (await search.search("paraphrase", 20, ["missing"]))["results"] == []
+            monkeypatch.setattr(
+                search.store._store,
+                "semantic_scores",
+                lambda _, rows: [(i, 0.0 if i % 2 else -0.1) for i in rows],
+            )
+            assert (await search.search("paraphrase", 20, [f["id"]], group_limit=1))[
+                "results"
+            ] == []
+            search._embed = lambda _: None
+            assert (await search.search("paraphrase", 20, [f["id"]]))["results"] == []
         finally:
             await search.close()
 

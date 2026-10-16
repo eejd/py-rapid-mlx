@@ -2,6 +2,16 @@
   "sourceLanguage" : "en",
   "version" : "1.0",
   "strings" : {
+    "No exact matches · Closest files" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无精确匹配 · 最接近的文件"
+          }
+        }
+      }
+    },
     "Text size" : {
       "localizations" : {
         "zh-Hans" : {
