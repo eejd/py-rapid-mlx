@@ -49,6 +49,15 @@ from rapid_mlx.speculative.dflash import server
 from rapid_mlx.speculative.tensorfold_qwen27_server import ProviderChunk, ProviderResult
 
 
+@pytest.mark.parametrize("capacity", [0, -1, True, 1.5])
+def test_execution_policy_rejects_invalid_capacity(capacity):
+    with (
+        ThreadPoolExecutor(max_workers=1) as executor,
+        pytest.raises(ValueError, match="capacity must be a positive integer"),
+    ):
+        server.BackendExecutionPolicy(capacity, executor)
+
+
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("concurrent", [False, True])
 async def test_http_execution_policy_preserves_default_and_capacity(
@@ -222,6 +231,72 @@ async def test_concurrent_timeout_retains_capacity_without_global_lock(monkeypat
             if admission._reservations == 0:
                 break
             await asyncio.sleep(0.01)
+        assert admission._reservations == 0
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+async def test_cancelled_nonstream_retains_resources_until_worker_finishes(
+    monkeypatch, concurrent
+):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(server, "_dflash_lock", asyncio.Lock())
+    release, started, finished = Event(), Event(), Event()
+    admission = server._DFlashAdmission(1)
+    reservation = admission.reserve()
+    reservation.claim()
+
+    def generate(*_args, **_kwargs):
+        started.set()
+        try:
+            assert release.wait(5)
+            return ProviderResult("ok", [7], 1, 2)
+        finally:
+            finished.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(server, "_dflash_executor", executor)
+        task = asyncio.create_task(
+            server._non_stream_completion(
+                prompt="prompt",
+                request=SimpleNamespace(),
+                served_model_name="pilot",
+                gen_kwargs={},
+                model=None,
+                processor=SimpleNamespace(),
+                timeout=0,
+                admission_reservation=reservation,
+                generate_fn=generate,
+                execution_policy=server.BackendExecutionPolicy(1, executor)
+                if concurrent
+                else None,
+            )
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            reservation.release()  # Request teardown must respect deferred ownership.
+            assert not finished.is_set()
+            assert admission._reservations == 1
+            assert server._dflash_lock.locked() is (not concurrent)
+            with pytest.raises(HTTPException) as exc:
+                admission.reserve()
+            assert exc.value.status_code == 503
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        for _ in range(100):
+            if admission._reservations == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert finished.is_set()
+        assert admission._reservations == 0
+        assert not server._dflash_lock.locked()
+        replacement = admission.reserve()
+        replacement.release()
         assert admission._reservations == 0
 
 
