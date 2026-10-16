@@ -984,7 +984,7 @@ struct ChatView: View {
                 showsAttachmentMenu.toggle()
             } label: {
                 Image(systemName: "plus")
-                    .font(.rapid(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.primary)
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(Color.primary.opacity(0.06)))
@@ -1004,6 +1004,7 @@ struct ChatView: View {
                     } label: {
                         HStack(spacing: RapidTheme.Space.sm) {
                             Image(systemName: "doc")
+                                .font(.system(size: 13))
                                 .frame(width: 16, alignment: .center)
                             Text("Upload file")
                         }
@@ -1021,6 +1022,7 @@ struct ChatView: View {
                     } label: {
                         HStack(spacing: RapidTheme.Space.sm) {
                             Image(systemName: "photo")
+                                .font(.system(size: 13))
                                 .frame(width: 16, alignment: .center)
                             Text("Upload photo")
                         }
@@ -1050,7 +1052,7 @@ struct ChatView: View {
                 showsConversationInstructions = true
             } label: {
                 Image(systemName: "text.bubble")
-                    .font(.rapid(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(
                         CustomInstructionsConfig.normalized(
                             viewModel.conversationInstructions
@@ -1295,7 +1297,7 @@ struct ChatView: View {
         if viewModel.isStreaming {
             Button(action: { viewModel.stop() }) {
                 Image(systemName: "stop.fill")
-                    .font(.rapid(size: 12, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(RapidTheme.sendButtonIcon)
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(RapidTheme.sendButton))
@@ -1307,7 +1309,7 @@ struct ChatView: View {
         } else {
             Button(action: send) {
                 Image(systemName: "arrow.up")
-                    .font(.rapid(size: 12, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(
                         sendEnabled ? RapidTheme.onBrandPrimary : Color.secondary
                     )
@@ -1582,7 +1584,7 @@ struct ChatView: View {
                 ForEach(attachmentDraft.files) { attachment in
                     HStack(spacing: RapidTheme.Space.sm) {
                         Image(systemName: attachment.kind.systemImage)
-                            .font(.rapid(size: 20))
+                            .font(.system(size: 20))
                             .foregroundStyle(RapidTheme.brandPrimary)
                             .frame(width: 28)
                         VStack(alignment: .leading, spacing: 2) {
@@ -2030,6 +2032,7 @@ private struct MessageRow: View {
                                 ForEach(message.fileAttachments) { attachment in
                                     HStack(spacing: RapidTheme.Space.sm) {
                                         Image(systemName: attachment.kind.systemImage)
+                                            .font(.system(size: 13))
                                             .foregroundStyle(RapidTheme.userBubbleText.opacity(0.8))
                                             .frame(width: 20)
                                         VStack(alignment: .leading, spacing: 1) {

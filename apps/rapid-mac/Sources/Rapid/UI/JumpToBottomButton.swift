@@ -48,7 +48,7 @@ struct JumpToBottomButton: View {
                 }
 
                 Image(systemName: "arrow.down")
-                    .font(.rapid(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.primary)
             }
             .frame(width: diameter, height: diameter)

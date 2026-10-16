@@ -106,7 +106,7 @@ struct CommunityBenchmarkResultView: View {
 
     private var resultBadge: some View {
         Image(systemName: "checkmark")
-            .font(.rapid(size: 12, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(RapidTheme.statusReady)
             .frame(width: 26, height: 26)
             .background(RapidTheme.statusReadyTint, in: RoundedRectangle(cornerRadius: 7))
@@ -121,9 +121,6 @@ struct CommunityBenchmarkResultView: View {
         .font(RapidFont.metric)
         .foregroundStyle(RapidTheme.textSecondary)
         .lineLimit(1)
-        // The date is the point of this line; letting it shrink a little beats
-        // truncating it to "Sep…".
-        .minimumScaleFactor(isNarrow ? 0.85 : 1)
     }
 
     private var statusLabel: String {

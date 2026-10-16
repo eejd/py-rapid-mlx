@@ -54,7 +54,7 @@ struct GitHubStarPromptCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
             Image(systemName: "star.fill")
-                .font(.rapid(size: 17, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(RapidTheme.amberDeep)
                 .frame(width: 22, height: 22)
                 .accessibilityHidden(true)
@@ -109,7 +109,7 @@ struct GitHubStarPromptCard: View {
                             } else {
                                 Text("Star on GitHub")
                                 Image(systemName: "star")
-                                    .font(.rapid(size: 10, weight: .semibold))
+                                    .font(.system(size: 10, weight: .semibold))
                             }
                         }
                         .fixedSize(horizontal: true, vertical: false)
@@ -179,7 +179,7 @@ struct GitHubStarPromptCard: View {
         .overlay(alignment: .topTrailing) {
             Button { prompt.deferPrompt() } label: {
                 Image(systemName: "xmark")
-                    .font(.rapid(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }

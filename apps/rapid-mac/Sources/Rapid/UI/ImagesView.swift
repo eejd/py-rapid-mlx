@@ -136,7 +136,7 @@ struct ImagesView: View {
                         viewModel.beginEdit(image)
                     } label: {
                         Image(systemName: "pencil")
-                            .font(.rapid(size: 12, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                             .frame(width: 28, height: 28)
                             .background(.ultraThinMaterial, in: Circle())
                     }
@@ -150,7 +150,7 @@ struct ImagesView: View {
                     save(image)
                 } label: {
                     Image(systemName: "square.and.arrow.down")
-                        .font(.rapid(size: 12, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .frame(width: 28, height: 28)
                         .background(.ultraThinMaterial, in: Circle())
                 }
@@ -163,7 +163,7 @@ struct ImagesView: View {
                     pendingDeletion = image
                 } label: {
                     Image(systemName: "trash")
-                        .font(.rapid(size: 12, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.red)
                         .frame(width: 28, height: 28)
                         .background(.ultraThinMaterial, in: Circle())
@@ -437,7 +437,7 @@ struct ImagesView: View {
                         }
                         Button { viewModel.cancel() } label: {
                             Image(systemName: "xmark")
-                                .font(.rapid(size: 10, weight: .bold))
+                                .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(RapidTheme.bandInk)
                                 .frame(width: 22, height: 22)
                                 .background(RapidTheme.bandTrack, in: Circle())
@@ -719,7 +719,7 @@ struct ImagesView: View {
             Spacer(minLength: 8)
             Button { viewModel.cancelEdit() } label: {
                 Image(systemName: "xmark")
-                    .font(.rapid(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
@@ -736,7 +736,7 @@ struct ImagesView: View {
     private var importButton: some View {
         Button(action: chooseEditImage) {
             Image(systemName: "photo.badge.plus")
-                .font(.rapid(size: 12, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .frame(width: 28, height: RapidTheme.ControlHeight.small)
                 .contentShape(Rectangle())
         }
@@ -832,7 +832,7 @@ struct ImagesView: View {
                     .font(.rapid(size: 11, weight: .medium))
                     .monospacedDigit()
                 Image(systemName: "chevron.down")
-                    .font(.rapid(size: 8, weight: .semibold))
+                    .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
@@ -887,7 +887,7 @@ struct ImagesView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.rapid(size: 10, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(pickerHovering ? .primary : .secondary)
                     .accessibilityHidden(true)
             }
@@ -933,7 +933,7 @@ struct ImagesView: View {
         if viewModel.isGenerating {
             Button { viewModel.cancel() } label: {
                 Image(systemName: "stop.fill")
-                    .font(.rapid(size: 12, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(RapidTheme.sendButtonIcon)
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(RapidTheme.sendButton))
@@ -946,7 +946,7 @@ struct ImagesView: View {
         } else {
             Button(action: runSubmit) {
                 Image(systemName: "arrow.up")
-                    .font(.rapid(size: 12, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(sendEnabled ? RapidTheme.onBrandPrimary : Color.secondary)
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(sendEnabled ? RapidTheme.brandPrimary : Color.clear))

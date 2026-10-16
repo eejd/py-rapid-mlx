@@ -90,7 +90,7 @@ struct ShareComputeConnectionReview: View {
     ) -> some View {
         HStack(alignment: .top, spacing: RapidTheme.Space.md) {
             Image(systemName: systemImage)
-                .font(.rapid(size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(RapidTheme.textSecondary)
                 // Fixed slot so the three titles align down a lane regardless
                 // of glyph width.

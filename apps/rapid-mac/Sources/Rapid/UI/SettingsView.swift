@@ -231,7 +231,7 @@ struct SettingsView: View {
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: cat.iconName)
                     .symbolRenderingMode(.monochrome)
-                    .font(.rapid(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .frame(width: RapidTheme.Layout.iconSlot, alignment: .center)
                 Text(cat.title)
                     .font(RapidFont.body)

@@ -73,12 +73,11 @@ struct OnboardingModelTile: View {
     var body: some View {
         RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
             .fill(background)
-            .frame(width: size, height: size)
+            .frame(width: UIFontSettings.shared.scaled(size), height: UIFontSettings.shared.scaled(size))
             .overlay {
                 Text(monogram)
                     .scaledSystemFont(size * 0.42, relativeTo: .body, weight: .semibold)
                     .foregroundStyle(foreground)
-                    .minimumScaleFactor(0.6)
                     .lineLimit(1)
             }
             .accessibilityHidden(true)
@@ -423,15 +422,15 @@ struct OnboardingCatalogRow: View {
                         OnboardingBadge(text: badge.text, tone: badge.tone)
                     }
                 }
-                .frame(width: OnboardingD.rowBadgeSlot, alignment: .trailing)
+                .frame(width: UIFontSettings.shared.scaled(OnboardingD.rowBadgeSlot), alignment: .trailing)
                 Text(sizeText)
                     .scaledSystemFont(12, design: .monospaced)
                     .foregroundStyle(isAvailable ? RapidTheme.textSecondary : RapidTheme.textTertiary)
-                    .frame(width: OnboardingD.rowSizeSlot, alignment: .trailing)
+                    .frame(width: UIFontSettings.shared.scaled(OnboardingD.rowSizeSlot), alignment: .trailing)
                 OnboardingSelectionGlyph(isSelected: selected, isEnabled: isAvailable)
             }
             .padding(.horizontal, selected ? 17 : 18)
-            .frame(height: OnboardingD.rowHeight)
+            .frame(height: UIFontSettings.shared.scaled(OnboardingD.rowHeight))
             .background(
                 RoundedRectangle(cornerRadius: OnboardingD.cardRadius, style: .continuous)
                     .fill(isAvailable ? RapidTheme.surfaceRaised : RapidTheme.surfaceCanvas)

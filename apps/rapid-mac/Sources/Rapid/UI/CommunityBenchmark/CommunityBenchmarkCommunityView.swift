@@ -136,7 +136,7 @@ struct CommunityBenchmarkCommunityView: View {
                         .font(.rapid(size: 11, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(RapidTheme.textSecondary)
-                        .frame(width: 52, height: 30)
+                        .frame(width: UIFontSettings.shared.scaled(52), height: UIFontSettings.shared.scaled(30))
                         .background(
                             RapidTheme.surfaceCanvas,
                             in: RoundedRectangle(cornerRadius: 7)

@@ -42,7 +42,7 @@ struct UpdateDiscoveryCard: View {
 
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
-                        .font(.rapid(size: 11, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }

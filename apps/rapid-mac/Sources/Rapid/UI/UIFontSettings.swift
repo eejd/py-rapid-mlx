@@ -44,6 +44,12 @@ final class UIFontSettings: @unchecked Sendable {
         self.scale = Self.range.contains(saved) ? saved : Self.defaultScale
     }
 
+    /// Layout slots that contain scaled text grow by the same multiplier.
+    /// Unlike fonts, dimensions have no 12 pt floor.
+    func scaled(_ points: CGFloat) -> CGFloat {
+        points * scale
+    }
+
     func pointSize(_ base: CGFloat) -> CGFloat {
         max(Self.minimumPointSize, (base * scale).rounded())
     }

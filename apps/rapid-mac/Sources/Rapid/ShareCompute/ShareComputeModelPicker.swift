@@ -125,7 +125,7 @@ struct ShareComputeModelOption: View {
                 // Fixed trailing slot so the tick's presence on one row cannot
                 // shift the readiness label on the rows around it.
                 Image(systemName: "checkmark")
-                    .font(.rapid(size: 12, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(RapidTheme.brandPrimary)
                     .opacity(isSelected ? 1 : 0)
                     .frame(width: 16)

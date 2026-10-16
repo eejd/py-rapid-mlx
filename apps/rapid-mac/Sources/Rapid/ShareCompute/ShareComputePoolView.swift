@@ -196,13 +196,11 @@ struct ShareComputePoolTab: View {
                 .monospacedDigit()
                 .foregroundStyle(value == nil ? RapidTheme.bandInkTertiary : tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
             Text(label.uppercased())
                 .font(.rapid(size: 10, weight: .semibold))
                 .tracking(0.5)
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, isFirst ? 0 : 18)
@@ -469,7 +467,6 @@ struct ShareComputePoolTab: View {
                     .font(.rapid(size: 13, weight: .semibold))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.78)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // Fixed trailing slot so the state words form one lane down the
                 // list instead of drifting with each model name's length.
@@ -533,9 +530,8 @@ struct ShareComputePoolTab: View {
                 Text(plan.title)
                     .font(.rapid(size: 14, weight: .semibold))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
                 Image(systemName: plan.startsDownload ? "arrow.down.circle" : "arrow.right")
-                    .font(.rapid(size: 12, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .accessibilityHidden(true)
             }
             .foregroundStyle(RapidTheme.bandInk)
@@ -579,7 +575,6 @@ struct ShareComputePoolRowView: View {
                         .font(.rapid(size: isNarrow ? 14 : 15, weight: .semibold))
                         .foregroundStyle(RapidTheme.bandInk)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
                     Text(subtitle)
                         .font(.rapid(size: 12))
                         .foregroundStyle(
@@ -588,7 +583,6 @@ struct ShareComputePoolRowView: View {
                                 : RapidTheme.bandInkSecondary
                         )
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -652,9 +646,6 @@ struct ShareComputePoolRowView: View {
                 .tracking(0.4)
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
-                // Scale rather than truncate: a metric label that reads
-                // "CONNECT…" no longer names which counter it labels.
-                .minimumScaleFactor(0.72)
         }
         .frame(width: metricWidth, alignment: alignment == .trailing ? .trailing : .leading)
     }

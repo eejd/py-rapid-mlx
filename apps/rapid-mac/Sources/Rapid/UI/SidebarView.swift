@@ -756,7 +756,7 @@ struct SidebarView: View {
             action()
         } label: {
             Image(systemName: systemImage)
-                .font(.rapid(size: 16, weight: isSelected ? .semibold : .medium))
+                .font(.system(size: 16, weight: isSelected ? .semibold : .medium))
                 .foregroundStyle(
                     isSelected ? RapidTheme.brandPrimaryDeep : RapidTheme.textSecondary
                 )
@@ -845,7 +845,7 @@ struct SidebarView: View {
             ForEach(snapshot.models.prefix(4)) { model in
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: model.pinned ? "lock.fill" : "circle.fill")
-                        .font(.rapid(size: model.pinned ? 9 : 6, weight: .semibold))
+                        .font(.system(size: model.pinned ? 9 : 6, weight: .semibold))
                         .foregroundStyle(model.pinned ? RapidTheme.brandAmber : .secondary)
                         .frame(width: 12)
                     Text(model.displayName(preferredAlias: preferredAlias))
@@ -866,7 +866,7 @@ struct SidebarView: View {
             ) { lane in
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: "waveform")
-                        .font(.rapid(size: 9, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 12)
                     Text(lane.model ?? lane.lane.uppercased())
@@ -941,7 +941,7 @@ struct SidebarView: View {
                         .controlSize(.mini)
                 } else {
                     Image(systemName: "eject.fill")
-                        .font(.rapid(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                 }
             }
             .frame(width: 22, height: 22)
@@ -1546,7 +1546,7 @@ struct SidebarView: View {
                 rowMenuItems(conv)
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.rapid(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .frame(
                         width: RapidTheme.ControlHeight.mini,
                         height: RapidTheme.ControlHeight.mini
@@ -1830,7 +1830,7 @@ struct SidebarView: View {
                     // glyph and its word are one object; letting only the
                     // text thicken made the icon look like it belonged to
                     // the row above.
-                    .font(.rapid(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
                     .frame(width: RapidTheme.Layout.iconSlot, alignment: .center)
                 Text(title)
                     .font(isSelected ? RapidFont.bodyEmphasis : RapidFont.body)
@@ -1849,7 +1849,7 @@ private struct CUASidebarRow: View {
         SidebarRow(isSelected: isSelected, action: action) {
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: "macwindow.on.rectangle")
-                    .font(.rapid(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
                     .frame(width: RapidTheme.Layout.iconSlot, alignment: .center)
                 Text("Computer Use")
                     .font(isSelected ? RapidFont.bodyEmphasis : RapidFont.body)

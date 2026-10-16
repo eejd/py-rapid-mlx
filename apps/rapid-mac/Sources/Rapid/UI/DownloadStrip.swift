@@ -159,6 +159,7 @@ struct DownloadStrip: View {
         } else {
             HStack(spacing: 8) {
                 statusGlyph(for: job)
+                    .font(.system(size: 13))
                     .frame(width: 16)
                 Text(job.alias)
                     .scaledSystemFont(12, relativeTo: .caption, weight: .medium)
@@ -312,7 +313,7 @@ struct DownloadStrip: View {
                 downloads.cancelDownload(alias: job.alias)
             } label: {
                 Image(systemName: "xmark.circle")
-                    .font(.rapid(size: 14, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(RapidTheme.brandPrimaryDeep)
                     .frame(width: 24, height: 24)
                     .background(RapidTheme.brandPrimaryTint, in: Circle())

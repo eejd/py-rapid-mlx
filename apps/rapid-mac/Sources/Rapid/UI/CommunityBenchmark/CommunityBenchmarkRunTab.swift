@@ -212,7 +212,7 @@ struct CommunityBenchmarkReadyView: View {
                     Text("\(index + 1)")
                         .font(RapidFont.metric)
                         .foregroundStyle(RapidTheme.textTertiary)
-                        .frame(width: 14, alignment: .trailing)
+                        .frame(width: UIFontSettings.shared.scaled(14), alignment: .trailing)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(quantity.title)

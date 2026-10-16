@@ -36,7 +36,7 @@ struct SegmentedBenchMeter: View {
                 .font(.rapid(size: labelSize))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .frame(width: labelWidth, alignment: .trailing)
+                .frame(width: UIFontSettings.shared.scaled(labelWidth), alignment: .trailing)
 
             if meter.level == nil {
                 untestedLabel
@@ -46,7 +46,7 @@ struct SegmentedBenchMeter: View {
                     Text(meter.formattedValue)
                         .font(.rapid(size: valueSize, weight: .medium).monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .frame(width: 30, alignment: .trailing)
+                        .frame(width: UIFontSettings.shared.scaled(30), alignment: .trailing)
                 }
             }
         }

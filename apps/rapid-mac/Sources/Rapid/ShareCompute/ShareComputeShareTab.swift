@@ -424,7 +424,6 @@ struct ShareComputeModelSelectorRow: View {
                             .font(.rapid(size: 17, weight: .bold))
                             .foregroundStyle(RapidTheme.bandInk)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.75)
                         HStack(spacing: 10) {
                             if let size = model.onDiskSize {
                                 Text(size)
@@ -444,7 +443,6 @@ struct ShareComputeModelSelectorRow: View {
                                 .font(.rapid(size: 20, weight: .semibold))
                                 .foregroundStyle(RapidTheme.bandInk)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.8)
                             if let size = model.onDiskSize {
                                 Text(size)
                                     .font(.rapid(size: 13))
@@ -457,7 +455,7 @@ struct ShareComputeModelSelectorRow: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.down")
-                    .font(.rapid(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(RapidTheme.brandPrimary)
                     .rotationEffect(.degrees(isOpen ? 180 : 0))
                     .frame(width: 28)

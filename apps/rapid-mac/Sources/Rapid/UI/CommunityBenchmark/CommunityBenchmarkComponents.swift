@@ -211,7 +211,7 @@ struct CommunityFactLane: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
-                .font(.rapid(size: 12))
+                .font(.system(size: 12))
                 .frame(width: 14)
                 .foregroundStyle(tone)
             Text(label)
@@ -362,7 +362,7 @@ struct CommunityLeaderboardLinkRow: View {
                     .truncationMode(.tail)
                 Spacer(minLength: RapidTheme.Space.sm)
                 Image(systemName: "arrow.up.right.square")
-                    .font(.rapid(size: 12))
+                    .font(.system(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
             }

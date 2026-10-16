@@ -26,12 +26,11 @@ struct BrandIcon: View {
                     endPoint: .bottomTrailing
                 )
             )
-            .frame(width: size, height: size)
+            .frame(width: UIFontSettings.shared.scaled(size), height: UIFontSettings.shared.scaled(size))
             .overlay(
                 Text(monogram)
                     .font(.rapid(size: size * 0.37, weight: .heavy, design: .rounded))
                     .foregroundStyle(.white)
-                    .minimumScaleFactor(0.6)
                     .lineLimit(1)
                     .padding(.horizontal, 1)
             )

@@ -116,7 +116,7 @@ struct ConversationSearchView: View {
         } label: {
             HStack(spacing: RapidTheme.Space.md) {
                 Image(systemName: "square.and.pencil")
-                    .font(.rapid(size: 14, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .frame(width: RapidTheme.Layout.iconSlot)
                 Text("New chat")
                     .font(RapidFont.bodyEmphasis)
@@ -148,7 +148,7 @@ struct ConversationSearchView: View {
         } label: {
             HStack(spacing: RapidTheme.Space.md) {
                 Image(systemName: conversation.isArchived ? "archivebox" : "bubble.left")
-                    .font(.rapid(size: 13, weight: .regular))
+                    .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.secondary)
                     .frame(width: RapidTheme.Layout.iconSlot)
                 Text(conversation.title)

@@ -97,7 +97,7 @@ struct ShareComputeTabBar: View {
                     isSelected ? RapidTheme.textPrimary : RapidTheme.textSecondary
                 )
                 .frame(maxWidth: .infinity)
-                .frame(height: Self.height)
+                .frame(height: UIFontSettings.shared.scaled(Self.height))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -217,7 +217,7 @@ struct ShareComputeStatusTag: View {
             .tracking(0.4)
             .foregroundStyle(tone.foreground)
             .padding(.horizontal, 10)
-            .frame(height: 22)
+            .frame(height: UIFontSettings.shared.scaled(22))
             .background {
                 if let background = tone.background {
                     RoundedRectangle(cornerRadius: 5).fill(background)
@@ -286,7 +286,7 @@ struct ShareComputePager: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.rapid(size: 10, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .frame(width: controlSize, height: controlSize)
                 .foregroundStyle(
                     enabled ? RapidTheme.bandInk : RapidTheme.bandInkTertiary
@@ -324,12 +324,12 @@ struct ShareComputePrimaryBandButton: View {
                 Text(title)
                     .font(.rapid(size: 15, weight: .bold))
                 Image(systemName: "arrow.right")
-                    .font(.rapid(size: 13, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .accessibilityHidden(true)
             }
             .foregroundStyle(RapidTheme.onBrandPrimary)
             .frame(maxWidth: .infinity)
-            .frame(height: height)
+            .frame(height: UIFontSettings.shared.scaled(height))
             .background(
                 RapidTheme.brandPrimary,
                 in: RoundedRectangle(cornerRadius: RapidTheme.Radius.button)
@@ -465,7 +465,7 @@ struct ShareComputeValuePath: View {
     var isNarrow = false
 
     /// Paper: 28pt circles on the desktop board, 24pt on the narrow one.
-    private var circleSize: CGFloat { isNarrow ? 24 : 28 }
+    private var circleSize: CGFloat { UIFontSettings.shared.scaled(isNarrow ? 24 : 28) }
     /// Paper: a 56pt connector slot on desktop, 20pt narrow.
     private var connectorWidth: CGFloat { isNarrow ? 20 : 56 }
     /// Paper: 12pt between circle and copy on desktop, 9pt narrow.
@@ -522,7 +522,7 @@ struct ShareComputeValuePath: View {
     /// into, centred vertically with the steps beside it.
     private var connector: some View {
         Image(systemName: "arrow.right")
-            .font(.rapid(size: isNarrow ? 10 : 11, weight: .medium))
+            .font(.system(size: isNarrow ? 10 : 11, weight: .medium))
             .foregroundStyle(RapidTheme.bandInkTertiary)
             .frame(width: connectorWidth, height: circleSize)
             .accessibilityHidden(true)

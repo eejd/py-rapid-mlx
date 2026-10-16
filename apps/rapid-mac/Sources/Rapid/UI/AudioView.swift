@@ -359,9 +359,9 @@ struct AudioView: View {
                     Text(viewModel.speed.formatted(.number.precision(.fractionLength(2))) + "x")
                         .font(.rapid(size: 12, weight: .medium, design: .monospaced))
                         .monospacedDigit()
-                        .frame(width: 48, alignment: .trailing)
+                        .frame(width: UIFontSettings.shared.scaled(48), alignment: .trailing)
                 }
-                .frame(width: controlFieldWidth)
+                .frame(width: UIFontSettings.shared.scaled(controlFieldWidth))
                 .accessibilityElement(children: .contain)
             }
         }
@@ -530,7 +530,7 @@ struct AudioView: View {
     }
 
     private func popupControlLabel(_ value: String) -> some View {
-        PopupControlChrome(title: value, width: controlFieldWidth)
+        PopupControlChrome(title: value, width: UIFontSettings.shared.scaled(controlFieldWidth))
     }
 
     private func handleReadinessAction(_ action: ModelReadiness.Action) {
@@ -749,7 +749,7 @@ private struct VoiceOptionRow: View {
             Button(action: select) {
                 HStack(spacing: RapidTheme.Space.sm) {
                     Image(systemName: "checkmark")
-                        .font(.rapid(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .opacity(isSelected ? 1 : 0)
                         .frame(width: 14)
                     Text(voice)
@@ -789,7 +789,7 @@ private struct VoiceOptionRow: View {
         }
         .padding(.leading, RapidTheme.Space.sm)
         .padding(.trailing, RapidTheme.Space.xs)
-        .frame(height: 30)
+        .frame(height: UIFontSettings.shared.scaled(30))
         .background(
             RoundedRectangle(cornerRadius: RapidTheme.Radius.row, style: .continuous)
                 .fill(isSelected || hovering ? RapidTheme.hoverFill : .clear)

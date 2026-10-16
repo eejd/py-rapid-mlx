@@ -241,7 +241,7 @@ private struct PickerRow: View {
         Button(action: onSelect) {
             HStack(spacing: RapidTheme.Space.md) {
                 Image(systemName: "checkmark")
-                    .font(.rapid(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .frame(width: 14)
                     .opacity(isSelected ? 1 : 0)
                     .accessibilityHidden(true)

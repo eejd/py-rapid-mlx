@@ -51,7 +51,7 @@ struct CommandPaletteView: View {
     private var searchHeader: some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: "command")
-                .font(.rapid(size: 15, weight: .medium))
+                .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
@@ -99,7 +99,7 @@ struct CommandPaletteView: View {
         } label: {
             HStack(spacing: RapidTheme.Space.md) {
                 Image(systemName: command.systemImage)
-                    .font(.rapid(size: 14, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .frame(width: RapidTheme.Layout.iconSlot)
                 Text(command.title)
                     .font(selected ? RapidFont.bodyEmphasis : RapidFont.body)

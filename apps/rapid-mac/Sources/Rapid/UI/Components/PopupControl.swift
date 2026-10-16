@@ -27,12 +27,12 @@ struct PopupControlChrome: View {
                 .truncationMode(.middle)
             Spacer(minLength: RapidTheme.Space.sm)
             Image(systemName: "chevron.up.chevron.down")
-                .font(.rapid(size: 10, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
         }
         .padding(.horizontal, RapidTheme.Space.md)
-        .frame(width: width, height: RapidTheme.ControlHeight.small)
+        .frame(width: width, height: UIFontSettings.shared.scaled(RapidTheme.ControlHeight.small))
         .background(
             RoundedRectangle(cornerRadius: RapidTheme.Radius.row, style: .continuous)
                 .fill(RapidTheme.surfaceCode)

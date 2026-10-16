@@ -292,6 +292,7 @@ struct SettingsModelManagementPanel: View {
             VStack(alignment: .leading, spacing: RapidTheme.Space.md) {
                 HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                     Image(systemName: customFolderPath == nil ? "internaldrive" : "externaldrive")
+                        .font(.system(size: 13))
                         .foregroundStyle(RapidTheme.utilityActionLabel)
                         .frame(width: RapidTheme.Layout.iconSlot)
                         .accessibilityHidden(true)
@@ -832,7 +833,7 @@ struct SettingsModelManagementPanel: View {
     private var columnHeader: some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Spacer().frame(width: 15)
-            Spacer().frame(width: 30)
+            Spacer().frame(width: UIFontSettings.shared.scaled(30))
             Text("Model").frame(maxWidth: .infinity, alignment: .leading)
             Text("Quality · Speed").frame(width: ModelTableLayout.metersColumnWidth, alignment: .leading)
             Text("Size").frame(width: ModelTableLayout.sizeColumnWidth, alignment: .trailing)
@@ -923,7 +924,7 @@ struct SettingsModelManagementPanel: View {
             toggleFavorite(alias)
         } label: {
             Image(systemName: isFav ? "star.fill" : "star")
-                .font(.rapid(size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(isFav ? RapidTheme.brandPrimaryDeep : RapidTheme.textTertiary)
         }
         .buttonStyle(.plain)
@@ -995,7 +996,6 @@ struct SettingsModelManagementPanel: View {
                         .font(RapidFont.caption)
                         .foregroundStyle(RapidTheme.textSecondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(ModelTableLayout.cellMinimumScaleFactor)
                         .help(
                             entry.isExternal
                                 ? String(localized: "Measured size on disk. Downloaded by another app — Rapid can't delete it.")
@@ -1010,7 +1010,6 @@ struct SettingsModelManagementPanel: View {
                         .font(RapidFont.caption)
                         .foregroundStyle(RapidTheme.textSecondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(ModelTableLayout.cellMinimumScaleFactor)
                 }
                 // A model another MLX runtime downloaded gets no delete
                 // button (#1718). Deletion rebuilds
@@ -1048,7 +1047,6 @@ struct SettingsModelManagementPanel: View {
                         .font(RapidFont.caption)
                         .foregroundStyle(RapidTheme.textSecondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(ModelTableLayout.cellMinimumScaleFactor)
                         .help("Measured size on disk. Stop this model before deleting it.")
                         .accessibilityLabel("On disk, \(size)")
                 }
@@ -1056,7 +1054,6 @@ struct SettingsModelManagementPanel: View {
                     .font(RapidFont.caption)
                     .foregroundStyle(RapidTheme.statusReady)
                     .lineLimit(1)
-                    .minimumScaleFactor(ModelTableLayout.cellMinimumScaleFactor)
                 QuietIconButton(
                     symbol: "trash",
                     label: String(localized: "Stop serving and delete \(entry.alias) from disk"),
@@ -1075,7 +1072,6 @@ struct SettingsModelManagementPanel: View {
                         .font(RapidFont.caption)
                         .foregroundStyle(RapidTheme.textSecondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(ModelTableLayout.cellMinimumScaleFactor)
                         .help("Estimated download size.")
                         .accessibilityLabel("Estimated download, about \(gb)")
                 }
@@ -1725,7 +1721,7 @@ enum ModelTableLayout {
 
     /// Leading chrome in a chat row before the model name: the favourite
     /// star, the brand icon, and the three gaps between the four columns.
-    static let rowLeadingChromeWidth: CGFloat = 15 + 30 + RapidTheme.Space.sm * 3
+    static var rowLeadingChromeWidth: CGFloat { 15 + UIFontSettings.shared.scaled(30) + RapidTheme.Space.sm * 3 }
 
     /// Everything a chat row commits to before the flexible model-name
     /// column gets a single point.
@@ -1750,29 +1746,9 @@ enum ModelTableLayout {
     /// Spacing between the glyph, the figure and the button in a cell.
     static let cellSpacing: CGFloat = 6
 
-    /// How far a figure in the Size column may shrink before it starts
-    /// truncating. The cells apply this as `.minimumScaleFactor`.
-    ///
-    /// Settings is NOT inside ``rapidChatDynamicTypeClamp``, so these
-    /// `.caption` runs scale with the system text size, and a fixed-width
-    /// column plus `lineLimit(1)` means growth eventually clips the
-    /// number — which is the defect this column was widened to fix. A
-    /// 20% shrink floor buys roughly 1.25x of text growth before that
-    /// happens, covering the non-accessibility sizes. It is a bound, not
-    /// a Dynamic Type pass: at the AX sizes this table needs to reflow,
-    /// which is a change to every column and not this fix's business.
-    static let cellMinimumScaleFactor: CGFloat = 0.8
-
-    /// Does a cell of intrinsic width ``needed`` survive ``scale`` times
-    /// text growth without truncating, given the shrink floor?
-    ///
-    /// Deliberately conservative: it grows the WHOLE cell, including the
-    /// fixed glyphs and spacing that do not scale. The real cell grows by
-    /// less, so a pass here is a real pass; a fail may be pessimistic.
-    /// That is the right direction for a guard whose failure mode is a
-    /// clipped number.
+    /// Does a cell fit without shrinking its text below the chosen size?
     static func fits(_ needed: CGFloat, atTextScale scale: CGFloat) -> Bool {
-        needed * scale * cellMinimumScaleFactor <= sizeColumnWidth
+        needed * scale <= sizeColumnWidth
     }
 
     /// A caption-sized SF Symbol (state glyph) or the trash button; 15pt

@@ -87,7 +87,7 @@ struct SettingsToolsPanel: View {
                         // where it used to be one of the app's most
                         // repeated steel-blue accents.
                         .symbolRenderingMode(.monochrome)
-                        .font(.rapid(size: 13, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(RapidTheme.utilityActionLabel)
                         .frame(width: RapidTheme.Layout.iconSlot)
                         .accessibilityHidden(true)

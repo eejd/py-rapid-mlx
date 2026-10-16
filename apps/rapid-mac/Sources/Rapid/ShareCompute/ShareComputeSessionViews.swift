@@ -48,7 +48,7 @@ struct ShareComputeRewardSessionStrip: View {
                 stageView(stage)
                 if index < Stage.allCases.count - 1 {
                     Image(systemName: "arrow.right")
-                        .font(.rapid(size: 10, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(RapidTheme.textTertiary)
                         .accessibilityHidden(true)
                 }
@@ -103,7 +103,7 @@ struct ShareComputeRewardSessionStrip: View {
                         )
                 }
             }
-            .frame(width: 22, height: 22)
+            .frame(width: UIFontSettings.shared.scaled(22), height: UIFontSettings.shared.scaled(22))
             .background {
                 if done {
                     Circle().fill(RapidTheme.statusReady)
@@ -255,7 +255,7 @@ struct ShareComputeStepRail: View {
     let rows: [ShareComputePreparationRow]
     var isNarrow = false
 
-    private let circleSize: CGFloat = 26
+    private var circleSize: CGFloat { UIFontSettings.shared.scaled(26) }
 
     var body: some View {
         VStack(spacing: 13) {
@@ -305,13 +305,13 @@ struct ShareComputeStepRail: View {
             // in Dark, where ``statusReady`` resolves light.
             case .complete, .alreadyRegistered:
                 Image(systemName: "checkmark")
-                    .font(.rapid(size: 11, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
                     .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.bandReady, in: Circle())
             case .failed:
                 Image(systemName: "exclamationmark")
-                    .font(.rapid(size: 11, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
                     .frame(width: circleSize, height: circleSize)
                     .background(RapidTheme.bandDestructive, in: Circle())
@@ -702,7 +702,6 @@ struct ShareComputeSessionCompleteView: View {
                     .font(.rapid(size: isNarrow ? 40 : 60, weight: .heavy))
                     .foregroundStyle(RapidTheme.onBrandPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.6)
                 Text("reward activity continues in QuickSilver")
                     .font(.rapid(size: 13))
                     .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
@@ -792,7 +791,7 @@ struct ShareComputeSessionCompleteView: View {
                             .font(.rapid(size: 13, weight: .bold))
                             .foregroundStyle(RapidTheme.surfaceRaised)
                         Image(systemName: "arrow.up.right")
-                            .font(.rapid(size: 11, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(RapidTheme.brandPrimary)
                             .accessibilityHidden(true)
                     }

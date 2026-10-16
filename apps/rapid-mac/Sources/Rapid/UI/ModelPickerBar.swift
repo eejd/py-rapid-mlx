@@ -497,7 +497,7 @@ struct ModelPickerBar: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.rapid(size: 10, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(chevronStyle)
                     .accessibilityHidden(true)
             }

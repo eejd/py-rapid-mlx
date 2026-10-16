@@ -271,7 +271,7 @@ private struct OnboardingRailMark: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 5, style: .continuous)
             .fill(RapidTheme.textPrimary)
-            .frame(width: 22, height: 22)
+            .frame(width: UIFontSettings.shared.scaled(22), height: UIFontSettings.shared.scaled(22))
             .overlay {
                 Text("R")
                     .scaledSystemFont(13, relativeTo: .caption, weight: .bold)
@@ -1214,7 +1214,7 @@ struct OnboardingSelectionGlyph: View {
                     .fill(RapidTheme.brandPrimary)
                     .overlay {
                         Image(systemName: "checkmark")
-                            .font(.rapid(size: 10, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(RapidTheme.brandOnAccent)
                     }
             } else {

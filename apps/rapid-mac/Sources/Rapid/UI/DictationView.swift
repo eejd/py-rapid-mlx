@@ -725,7 +725,7 @@ struct DictationView: View {
             Text(entry.date, style: .time)
                 .font(.rapid(.caption).monospaced())
                 .foregroundStyle(.tertiary)
-                .frame(width: 62, alignment: .leading)
+                .frame(width: UIFontSettings.shared.scaled(62), alignment: .leading)
             VStack(alignment: .leading, spacing: RapidTheme.Space.xxs) {
                 Text(entry.text)
                     .font(.rapid(.callout))
@@ -770,7 +770,7 @@ private struct TranscriptionModelOptionRow: View {
         Button(action: select) {
             HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                 Image(systemName: "checkmark")
-                    .font(.rapid(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .opacity(isSelected ? 1 : 0)
                     .frame(width: 14, height: 18)
 
@@ -870,13 +870,13 @@ private struct DictationFixSheet: View {
                 )
 
             HStack(spacing: RapidTheme.Space.md) {
-                Text("Heard").frame(width: 68, alignment: .leading)
+                Text("Heard").frame(width: UIFontSettings.shared.scaled(68), alignment: .leading)
                 TextField("Header", text: $heard)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("Dictation.Fix.Heard")
             }
             HStack(spacing: RapidTheme.Space.md) {
-                Text("Should be").frame(width: 68, alignment: .leading)
+                Text("Should be").frame(width: UIFontSettings.shared.scaled(68), alignment: .leading)
                 TextField("herdr", text: $correction)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("Dictation.Fix.Correction")

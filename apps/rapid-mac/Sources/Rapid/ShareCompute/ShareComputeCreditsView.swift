@@ -232,10 +232,10 @@ struct ShareComputeCreditsTab: View {
                 HStack(spacing: 0) {
                     headerLabel(String(localized: "Window"), width: 140)
                     headerLabel(String(localized: "Node · Model"), width: 210)
-                    headerLabel(String(localized: "Requests"), width: 70)
+                    headerLabel(String(localized: "Requests"), width: UIFontSettings.shared.scaled(70))
                     headerLabel(String(localized: "Tokens in/out"), width: 100)
-                    headerLabel(String(localized: "Credit"), width: 80)
-                    headerLabel(String(localized: "Status"), width: 70)
+                    headerLabel(String(localized: "Credit"), width: UIFontSettings.shared.scaled(80))
+                    headerLabel(String(localized: "Status"), width: UIFontSettings.shared.scaled(70))
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 4)
@@ -252,7 +252,6 @@ struct ShareComputeCreditsTab: View {
             .tracking(0.5)
             .foregroundStyle(RapidTheme.bandInkTertiary)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
             .frame(width: width, alignment: .leading)
             .accessibilityHidden(true)
     }
@@ -349,13 +348,11 @@ struct ShareComputeCreditsTab: View {
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInk)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
             Text(label.uppercased())
                 .font(.rapid(size: 9, weight: .semibold))
                 .tracking(0.4)
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -445,7 +442,7 @@ struct ShareComputeCreditsTab: View {
                     Text("Open read-only earnings keys")
                         .font(.rapid(size: 13, weight: .semibold))
                     Image(systemName: "arrow.up.right")
-                        .font(.rapid(size: 11, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .accessibilityHidden(true)
                 }
                 .foregroundStyle(RapidTheme.onBrandPrimary)
@@ -582,7 +579,6 @@ struct ShareComputeCreditsTab: View {
                             .monospacedDigit()
                             .foregroundStyle(RapidTheme.onBrandPrimary)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.7)
                     }
                     Spacer(minLength: RapidTheme.Space.sm)
                     VStack(alignment: .trailing, spacing: 3) {
@@ -643,7 +639,7 @@ struct ShareComputeCreditsTab: View {
                     Text("QuickSilver balance")
                         .font(.rapid(size: 13, weight: .semibold))
                     Image(systemName: "arrow.up.right")
-                        .font(.rapid(size: 11, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .accessibilityHidden(true)
                 }
                 .foregroundStyle(RapidTheme.bandInk)
@@ -725,13 +721,11 @@ struct ShareComputeCreditsTab: View {
                 .tracking(0.4)
                 .foregroundStyle(RapidTheme.onBrandPrimarySecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
             Text(value)
                 .font(.rapid(size: 14, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.onBrandPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -770,7 +764,6 @@ struct ShareComputeLedgerRowView: View {
                 .font(.rapid(size: 11))
                 .foregroundStyle(RapidTheme.bandInk)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
                 .frame(width: 140, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -778,7 +771,6 @@ struct ShareComputeLedgerRowView: View {
                     .font(.rapid(size: 12, weight: .medium))
                     .foregroundStyle(modelTint)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
                 Text(window.nodeID)
                     .font(.rapid(size: 9, design: .monospaced))
                     .foregroundStyle(RapidTheme.bandLink)
@@ -791,23 +783,22 @@ struct ShareComputeLedgerRowView: View {
                 .font(.rapid(size: 12))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInk)
-                .frame(width: 70, alignment: .leading)
+                .frame(width: UIFontSettings.shared.scaled(70), alignment: .leading)
 
             Text("\(ShareComputeCreditFormatter.count(window.inputTokens)) / \(ShareComputeCreditFormatter.count(window.outputTokens))")
                 .font(.rapid(size: 11))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInkSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
                 .frame(width: 100, alignment: .leading)
 
             Text(ShareComputeCreditFormatter.credit(window.finalCredit))
                 .font(.rapid(size: 12, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(RapidTheme.bandInk)
-                .frame(width: 80, alignment: .leading)
+                .frame(width: UIFontSettings.shared.scaled(80), alignment: .leading)
 
-            statusTag.frame(width: 70, alignment: .leading)
+            statusTag.frame(width: UIFontSettings.shared.scaled(70), alignment: .leading)
         }
     }
 
@@ -818,7 +809,6 @@ struct ShareComputeLedgerRowView: View {
                     .font(.rapid(size: 12, weight: .medium))
                     .foregroundStyle(modelTint)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
                 Spacer(minLength: RapidTheme.Space.sm)
                 Text(ShareComputeCreditFormatter.credit(window.finalCredit))
                     .font(.rapid(size: 12, weight: .semibold))

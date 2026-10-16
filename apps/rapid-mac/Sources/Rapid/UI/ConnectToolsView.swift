@@ -456,6 +456,7 @@ struct ConnectToolsView: View {
     ) -> some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 12))
                 .frame(width: 12)
             Label(title, systemImage: systemImage)
                 .font(RapidFont.secondary)
@@ -781,7 +782,7 @@ private struct ConnectToolRow: View {
             // title and the description below it.
             HStack(alignment: .firstTextBaseline, spacing: Self.iconGap) {
                 Image(systemName: tool.symbol)
-                    .font(.rapid(size: 14, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     // v1.0.2: amber. These are brand/integration marks
                     // on a page that had drifted entirely neutral;
                     // steel blue is off this surface altogether.
