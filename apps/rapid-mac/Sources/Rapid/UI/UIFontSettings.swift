@@ -4,7 +4,7 @@ import SwiftUI
 
 /// App-wide UI text size (Settings → Appearance → Text size).
 ///
-/// Every chrome font goes through ``Font/rapid(size:weight:design:)``,
+/// Interface text goes through ``Font/rapid(size:weight:design:)``,
 /// which multiplies by ``scale`` and never returns less than
 /// ``minimumPointSize``. Because this is `@Observable` and the font
 /// helpers read ``scale`` during `body`, SwiftUI's observation tracking
@@ -18,7 +18,7 @@ final class UIFontSettings: @unchecked Sendable {
     static let shared = UIFontSettings()
 
     static let storageKey = "rapid.uiFontSettings.scale.v1"
-    /// Floor for every UI font — anything smaller is unreadable for many users.
+    /// Floor for UI text; decorative symbols and logos keep their fixed fonts.
     static let minimumPointSize: CGFloat = 12
     static let defaultScale: Double = 1.0
     static let range: ClosedRange<Double> = 1.0...1.5

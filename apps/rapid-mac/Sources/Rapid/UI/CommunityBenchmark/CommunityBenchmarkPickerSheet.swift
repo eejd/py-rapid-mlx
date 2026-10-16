@@ -83,7 +83,7 @@ struct CommunityBenchmarkPickerSheet: View {
                 .foregroundStyle(RapidTheme.textPrimary)
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: "magnifyingglass")
-                    .font(.rapid(size: 12))
+                    .font(.system(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
                 TextField(String(localized: "Search models"), text: $query)
@@ -97,7 +97,7 @@ struct CommunityBenchmarkPickerSheet: View {
                         query = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.rapid(size: 12))
+                            .font(.system(size: 12))
                             .foregroundStyle(RapidTheme.textTertiary)
                     }
                     .buttonStyle(.plain)
@@ -187,7 +187,7 @@ struct CommunityBenchmarkPickerSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: "arrow.down.circle")
-                    .font(.rapid(size: 12))
+                    .font(.system(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
                 // The client has no byte-level download phase to report, so
@@ -288,7 +288,7 @@ private struct PickerRow: View {
     private var fitColumn: some View {
         HStack(spacing: 5) {
             Image(systemName: doesNotFit ? "exclamationmark.circle" : "checkmark.circle")
-                .font(.rapid(size: 11))
+                .font(.system(size: 11))
                 .accessibilityHidden(true)
             Text(doesNotFit ? String(localized: "May not fit") : String(localized: "Fits"))
                 .font(RapidFont.secondary)

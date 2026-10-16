@@ -200,7 +200,7 @@ struct VideoView: View {
     private var emptyStage: some View {
         VStack(spacing: RapidTheme.Space.md) {
             Image(systemName: "film.stack")
-                .font(.rapid(size: 40, weight: .light))
+                .font(.system(size: 40, weight: .light))
                 .foregroundStyle(RapidTheme.textTertiary)
             Text(emptyStageTitle)
                 .font(RapidFont.sectionTitle)
@@ -287,7 +287,7 @@ struct VideoView: View {
                     .frame(maxWidth: 300)
             } else {
                 Image(systemName: job.status == .failed ? "exclamationmark.triangle" : "film")
-                    .font(.rapid(size: 34, weight: .light))
+                    .font(.system(size: 34, weight: .light))
                     .foregroundStyle(job.status == .failed ? RapidTheme.statusError : RapidTheme.textTertiary)
             }
             Text(jobStatusTitle(job))

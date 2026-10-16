@@ -806,7 +806,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.xs) {
             HStack(spacing: RapidTheme.Space.xs) {
                 Image(systemName: "memorychip")
-                    .font(.rapid(size: 11, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text("Resident")
                     .font(RapidFont.caption)
@@ -1373,7 +1373,7 @@ struct SidebarView: View {
                     systemName: isFolderExpanded(section.folder.id)
                         ? "chevron.down" : "chevron.right"
                 )
-                .font(.rapid(size: 9, weight: .semibold))
+                .font(.system(size: 9, weight: .semibold))
                 SectionHeader("\(section.folder.name) (\(section.conversations.count))")
             }
             .contentShape(Rectangle())
@@ -1424,7 +1424,7 @@ struct SidebarView: View {
             } label: {
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: showArchived ? "chevron.down" : "chevron.right")
-                        .font(.rapid(size: 9, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                     SectionHeader(String(localized: "Archived (\(archived.count))"))
                 }
                 .contentShape(Rectangle())

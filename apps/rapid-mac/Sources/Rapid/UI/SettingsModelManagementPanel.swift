@@ -833,7 +833,7 @@ struct SettingsModelManagementPanel: View {
     private var columnHeader: some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Spacer().frame(width: 15)
-            Spacer().frame(width: UIFontSettings.shared.scaled(30))
+            Spacer().frame(width: 30)
             Text("Model").frame(maxWidth: .infinity, alignment: .leading)
             Text("Quality · Speed").frame(width: ModelTableLayout.metersColumnWidth, alignment: .leading)
             Text("Size").frame(width: ModelTableLayout.sizeColumnWidth, alignment: .trailing)
@@ -988,7 +988,7 @@ struct SettingsModelManagementPanel: View {
             // sort ordered the table by exactly that number.
             HStack(spacing: ModelTableLayout.cellSpacing) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(RapidFont.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(RapidTheme.statusReady)
                     .accessibilityHidden(true)
                 if let size = Self.onDiskSizeLabel(entry) {
@@ -1721,7 +1721,7 @@ enum ModelTableLayout {
 
     /// Leading chrome in a chat row before the model name: the favourite
     /// star, the brand icon, and the three gaps between the four columns.
-    static var rowLeadingChromeWidth: CGFloat { 15 + UIFontSettings.shared.scaled(30) + RapidTheme.Space.sm * 3 }
+    static let rowLeadingChromeWidth: CGFloat = 15 + 30 + RapidTheme.Space.sm * 3
 
     /// Everything a chat row commits to before the flexible model-name
     /// column gets a single point.

@@ -327,7 +327,7 @@ struct DownloadStrip: View {
                 downloads.dismissJob(alias: job.alias)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.rapid(size: 10))
+                    .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)

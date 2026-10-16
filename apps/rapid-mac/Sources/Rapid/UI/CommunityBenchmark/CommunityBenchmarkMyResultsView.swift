@@ -92,7 +92,7 @@ struct CommunityBenchmarkMyResultsView: View {
                 Link(destination: url) {
                     HStack(spacing: 6) {
                         Text("View contributor page")
-                        Image(systemName: "arrow.up.right.square").font(.rapid(size: 11))
+                        Image(systemName: "arrow.up.right.square").font(.system(size: 11))
                     }
                 }
                 .buttonStyle(.rapidSecondaryCompact)
@@ -272,7 +272,7 @@ struct CommunityBenchmarkMyResultsView: View {
                 } label: {
                     HStack(spacing: RapidTheme.Space.sm) {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.rapid(size: 10, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(RapidTheme.textTertiary)
                         Text(aliasForRepo(result.repoID))
                             .font(RapidFont.bodyEmphasis)
@@ -353,7 +353,7 @@ struct CommunityBenchmarkMyResultsView: View {
             symbol = "lock.fill"
         }
         return HStack(spacing: 5) {
-            Image(systemName: symbol).font(.rapid(size: 10)).accessibilityHidden(true)
+            Image(systemName: symbol).font(.system(size: 10)).accessibilityHidden(true)
             Text(status == .all ? Status.local.title.uppercased() : status.title.uppercased())
                 .font(.rapid(size: 10, weight: .semibold))
                 .tracking(0.3)

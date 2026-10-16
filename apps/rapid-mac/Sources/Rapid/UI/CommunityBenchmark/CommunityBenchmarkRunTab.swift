@@ -90,7 +90,7 @@ struct CommunityBenchmarkReadyView: View {
 
                 HStack(spacing: 6) {
                     Image(systemName: "lock")
-                        .font(.rapid(size: 11))
+                        .font(.system(size: 11))
                         .accessibilityHidden(true)
                     Text("Private until you publish")
                         .font(RapidFont.body)
@@ -104,7 +104,7 @@ struct CommunityBenchmarkReadyView: View {
             if let serverImpactNote {
                 HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                     Image(systemName: "info.circle")
-                        .font(.rapid(size: 12))
+                        .font(.system(size: 12))
                         .foregroundStyle(RapidTheme.textTertiary)
                         .accessibilityHidden(true)
                     Text(serverImpactNote)
@@ -324,7 +324,7 @@ struct CommunityBenchmarkRunningView: View {
 
             HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                 Image(systemName: "info.circle")
-                    .font(.rapid(size: 12))
+                    .font(.system(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
                 Text("Chat and Images are paused so the benchmark has the Mac to itself. Your model reloads automatically when it finishes.")
@@ -359,7 +359,7 @@ struct CommunityBenchmarkRunningView: View {
                             ? "checkmark.circle.fill"
                             : (isActive ? "circle.inset.filled" : "circle")
                     )
-                    .font(.rapid(size: 11))
+                    .font(.system(size: 11))
                     .foregroundStyle(
                         isDone || isActive ? RapidTheme.brandPrimary : RapidTheme.textTertiary
                     )

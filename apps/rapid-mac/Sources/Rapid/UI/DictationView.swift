@@ -474,7 +474,7 @@ struct DictationView: View {
         HStack(alignment: .top, spacing: RapidTheme.Space.md) {
             Image(systemName: done ? "checkmark.circle.fill" : "circle.dashed")
                 .foregroundStyle(done ? RapidTheme.green : Color.secondary)
-                .font(.rapid(size: 14))
+                .font(.system(size: 14))
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: RapidTheme.Space.xxs) {
                 Text(label).font(.rapid(.subheadline).weight(.medium))
@@ -495,7 +495,7 @@ struct DictationView: View {
             HStack(alignment: .top, spacing: RapidTheme.Space.sm) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                    .font(.rapid(size: 12))
+                    .font(.system(size: 12))
                 Text(error)
                     .font(.rapid(.caption))
                     .foregroundStyle(.secondary)
@@ -642,7 +642,7 @@ struct DictationView: View {
                 controller.vocabulary.remove(term.text)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.rapid(size: 8, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
@@ -792,7 +792,7 @@ private struct TranscriptionModelOptionRow: View {
                                 .lineLimit(1)
                         }
                         Image(systemName: ModelPickerBar.cacheGlyph(cached: entry.cached))
-                            .font(.rapid(.caption))
+                            .font(.caption)
                             .foregroundStyle(entry.cached ? RapidTheme.green : .secondary)
                             .accessibilityHidden(true)
                     }

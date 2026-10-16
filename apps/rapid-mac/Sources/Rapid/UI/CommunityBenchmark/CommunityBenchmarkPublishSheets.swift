@@ -181,7 +181,7 @@ struct CommunityBenchmarkShareConfirmationSheet: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
             HStack(spacing: 6) {
                 Image(systemName: "eye.slash")
-                    .font(.rapid(size: 11))
+                    .font(.system(size: 11))
                     .accessibilityHidden(true)
                 Text("KEPT ON THIS MAC, NOT PUBLISHED")
                     .font(.rapid(size: 11, weight: .semibold))
@@ -244,7 +244,7 @@ struct CommunityBenchmarkShareConfirmationSheet: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.sm) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.rapid(size: 11))
+                    .font(.system(size: 11))
                     .foregroundStyle(tone)
                     .accessibilityHidden(true)
                 Text(title)
@@ -272,7 +272,7 @@ struct CommunityBenchmarkShareConfirmationSheet: View {
             } label: {
                 HStack(spacing: RapidTheme.Space.sm) {
                     Image(systemName: showsPayload ? "chevron.down" : "chevron.right")
-                        .font(.rapid(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(RapidTheme.textSecondary)
                         .accessibilityHidden(true)
                     Text(showsPayload ? String(localized: "Hide exact data") : String(localized: "Review the exact data"))
@@ -406,7 +406,7 @@ struct CommunityBenchmarkPublishedSheet: View {
                     HStack(spacing: 6) {
                         Text("View your contribution")
                         Image(systemName: "arrow.up.right.square")
-                            .font(.rapid(size: 11))
+                            .font(.system(size: 11))
                     }
                 }
                 .buttonStyle(.rapidPrimary)

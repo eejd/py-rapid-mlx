@@ -140,7 +140,7 @@ struct CommunityBenchmarkResultView: View {
     private var statusChip: some View {
         HStack(spacing: 6) {
             Image(systemName: isPublished ? "checkmark.circle.fill" : "lock")
-                .font(.rapid(size: 11))
+                .font(.system(size: 11))
                 .accessibilityHidden(true)
             // "SAVED HERE" is a complete phrase; "SAVED ON THIS M…" is not.
             // A shorter true label beats a longer truncated one.
@@ -513,7 +513,7 @@ struct CommunityBenchmarkResultView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: showsTechnicalDetails ? "chevron.down" : "chevron.right")
-                    .font(.rapid(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                 Text("Technical details")
             }
         }

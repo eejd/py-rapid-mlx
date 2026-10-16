@@ -137,7 +137,7 @@ struct CommandPaletteView: View {
     private var emptyState: some View {
         VStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.rapid(size: 22, weight: .regular))
+                .font(.system(size: 22, weight: .regular))
                 .foregroundStyle(.secondary)
             Text("No commands match")
                 .font(RapidFont.body)

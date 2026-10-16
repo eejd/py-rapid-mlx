@@ -142,3 +142,51 @@ extension UIFontSettingsTests {
         #expect(scanned > 100, "Source guard must scan the entire Rapid tree")
     }
 }
+
+extension UIFontSettingsTests {
+    /// Match only an Image's own modifier chain, stopping at a container
+    /// boundary or another view. One nested call covers computed symbols,
+    /// colors and frame arguments without scanning a neighboring Text.
+    private static func scaledImageFonts(in source: String) throws -> Int {
+        let code = source.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        let argument = #"(?:[^(){}]|\([^(){}]*\))*"#
+        let pattern = #"\bImage\s*\(\s*systemName\s*:[ARG]\)(?:\s*\.\w+\([ARG]\))*?\s*\.font\s*\(\s*(?:\.rapid\s*\(|RapidFont\.)"#
+            .replacingOccurrences(of: "[ARG]", with: argument)
+        let regex = try NSRegularExpression(pattern: pattern)
+        return regex.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code))
+    }
+
+    @Test("image font guard follows modifiers without matching neighboring text")
+    func imageFontGuardFixtures() throws {
+        for source in [
+            #"Image(systemName: "pin.fill").font(.rapid(size: 9))"#,
+            "Image(\n systemName: symbol(for: state)\n)\n .foregroundStyle(.secondary)\n .font(.rapid(.caption))",
+            #"Image(systemName: "checkmark").accessibilityHidden(true).font(RapidFont.caption)"#,
+        ] {
+            #expect(try Self.scaledImageFonts(in: source) == 1)
+        }
+        for source in [
+            #"Image(systemName: "pin.fill").font(.system(size: 9))"#,
+            "Image(systemName: symbol)\nText(title).font(.rapid(size: 13))",
+            #"HStack { Image(systemName: symbol); Text(title) }.font(.rapid(.body))"#,
+            #"// Image(systemName: "pin.fill").font(.rapid(size: 9))"#,
+        ] {
+            #expect(try Self.scaledImageFonts(in: source) == 0)
+        }
+    }
+
+    @Test("decorative SF Symbols never use UI text scaling directly")
+    func uiImagesKeepFixedFonts() throws {
+        let root = DynamicTypeScaledFontTests.sourceRoot.appendingPathComponent("Sources/Rapid")
+        let files = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+        var scanned = 0
+        for case let file as URL in files where file.pathExtension == "swift" {
+            scanned += 1
+            let source = try String(contentsOf: file, encoding: .utf8)
+            #expect(try Self.scaledImageFonts(in: source) == 0, "Scaled decorative image in \(file.path)")
+        }
+        #expect(scanned > 100, "Source guard must scan the entire Rapid tree")
+    }
+}

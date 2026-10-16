@@ -73,10 +73,10 @@ struct OnboardingModelTile: View {
     var body: some View {
         RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
             .fill(background)
-            .frame(width: UIFontSettings.shared.scaled(size), height: UIFontSettings.shared.scaled(size))
+            .frame(width: size, height: size)
             .overlay {
                 Text(monogram)
-                    .scaledSystemFont(size * 0.42, relativeTo: .body, weight: .semibold)
+                    .font(.system(size: size * 0.42, weight: .semibold))
                     .foregroundStyle(foreground)
                     .lineLimit(1)
             }

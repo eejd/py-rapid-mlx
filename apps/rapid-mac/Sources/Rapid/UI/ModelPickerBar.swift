@@ -629,7 +629,7 @@ struct ModelPickerBar: View {
             showInfo = true
         } label: {
             Image(systemName: "info.circle")
-                .font(.rapid(size: 14))
+                .font(.system(size: 14))
         }
         .accessibilityIdentifier("ModelPickerBar.ModelInfo")
         .buttonStyle(.plain)

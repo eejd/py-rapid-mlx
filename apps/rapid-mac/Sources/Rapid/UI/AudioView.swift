@@ -397,7 +397,7 @@ struct AudioView: View {
     private func speechResult(_ audio: SynthesizedAudio) -> some View {
         HStack(spacing: RapidTheme.Space.md) {
             Image(systemName: "waveform.circle.fill")
-                .font(.rapid(size: 28))
+                .font(.system(size: 28))
                 .foregroundStyle(RapidTheme.brandPrimaryDeep)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: RapidTheme.Space.xs) {

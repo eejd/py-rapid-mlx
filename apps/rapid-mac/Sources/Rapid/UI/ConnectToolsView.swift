@@ -827,7 +827,7 @@ private struct ConnectToolRow: View {
                 } label: {
                     HStack(spacing: RapidTheme.Space.xs) {
                         Image(systemName: showsCommand ? "chevron.down" : "chevron.right")
-                            .font(.rapid(size: 10, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
                         Text(showsCommand ? "Hide command" : "Show command")
                             .font(RapidFont.secondary)
                     }

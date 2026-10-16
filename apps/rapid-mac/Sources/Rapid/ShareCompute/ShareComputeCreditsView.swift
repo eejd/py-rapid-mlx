@@ -129,7 +129,7 @@ struct ShareComputeCreditsTab: View {
                 if isRefreshing {
                     ProgressView().controlSize(.small)
                 } else {
-                    Image(systemName: "arrow.clockwise").font(.rapid(size: 11, weight: .semibold))
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold))
                 }
                 Text("Refresh")
                     .font(.rapid(size: 11, weight: .medium))
@@ -367,7 +367,7 @@ struct ShareComputeCreditsTab: View {
     ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.rapid(size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(RapidTheme.bandInkTertiary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -820,7 +820,7 @@ struct ShareComputeLedgerRowView: View {
                 Text(periodLabel)
                     .font(.rapid(size: 10))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
-                Text("·").foregroundStyle(RapidTheme.bandInkTertiary).font(.rapid(size: 10))
+                Text("·").foregroundStyle(RapidTheme.bandInkTertiary).font(.system(size: 10))
                 Text(String(format: String(localized: "%d req"), window.requestCount))
                     .font(.rapid(size: 10))
                     .monospacedDigit()

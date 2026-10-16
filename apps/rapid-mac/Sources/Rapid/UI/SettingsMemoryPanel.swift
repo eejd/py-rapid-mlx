@@ -105,7 +105,7 @@ struct SettingsMemoryPanel: View {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
-            .font(.rapid(.caption))
+            .font(.caption)
             .accessibilityIdentifier("Settings.Memory.Row.Delete")
         }
         .padding(.vertical, 4)

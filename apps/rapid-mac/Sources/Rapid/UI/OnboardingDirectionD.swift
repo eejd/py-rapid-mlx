@@ -271,10 +271,10 @@ private struct OnboardingRailMark: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 5, style: .continuous)
             .fill(RapidTheme.textPrimary)
-            .frame(width: UIFontSettings.shared.scaled(22), height: UIFontSettings.shared.scaled(22))
+            .frame(width: 22, height: 22)
             .overlay {
                 Text("R")
-                    .scaledSystemFont(13, relativeTo: .caption, weight: .bold)
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(RapidTheme.brandPrimary)
             }
             .accessibilityHidden(true)
@@ -317,7 +317,7 @@ private struct OnboardingRailStepRow: View {
         switch state {
         case .complete:
             Text("✓")
-                .scaledSystemFont(11, relativeTo: .caption, weight: .semibold, design: .monospaced)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(RapidTheme.statusReady)
         case .current:
             Text("\(step.displayNumber)")
@@ -1130,7 +1130,7 @@ struct OnboardingGlyphTile: View {
             .frame(width: 52, height: 52)
             .overlay {
                 Image(systemName: systemName)
-                    .font(.rapid(size: 24, weight: .regular))
+                    .font(.system(size: 24, weight: .regular))
                     .foregroundStyle(tone.ink)
             }
             .accessibilityHidden(true)
@@ -1396,7 +1396,7 @@ struct OnboardingInlineNote: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: glyph)
-                .font(.rapid(size: 14, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(tone)
                 .accessibilityHidden(true)
             Text(text)

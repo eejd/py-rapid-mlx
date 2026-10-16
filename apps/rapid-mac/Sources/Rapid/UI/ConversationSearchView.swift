@@ -56,7 +56,7 @@ struct ConversationSearchView: View {
     private var searchHeader: some View {
         HStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.rapid(size: 15, weight: .medium))
+                .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
@@ -158,7 +158,7 @@ struct ConversationSearchView: View {
                 Spacer(minLength: RapidTheme.Space.sm)
                 if conversation.isPinned {
                     Image(systemName: "pin.fill")
-                        .font(.rapid(size: 9, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityLabel("Pinned")
                 }
@@ -201,7 +201,7 @@ struct ConversationSearchView: View {
     private func emptyState(title: LocalizedStringKey, symbol: String) -> some View {
         VStack(spacing: RapidTheme.Space.sm) {
             Image(systemName: symbol)
-                .font(.rapid(size: 22, weight: .regular))
+                .font(.system(size: 22, weight: .regular))
                 .foregroundStyle(.secondary)
             Text(title)
                 .font(RapidFont.body)

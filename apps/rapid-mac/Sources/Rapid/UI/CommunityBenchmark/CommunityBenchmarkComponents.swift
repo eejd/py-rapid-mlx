@@ -277,7 +277,7 @@ struct CommunityUnavailableBand: View {
                     .accessibilityHidden(true)
             } else {
                 Image(systemName: "chart.bar.doc.horizontal")
-                    .font(.rapid(size: 13))
+                    .font(.system(size: 13))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
             }
@@ -349,7 +349,7 @@ struct CommunityLeaderboardLinkRow: View {
         Link(destination: destination) {
             HStack(spacing: RapidTheme.Space.sm) {
                 Image(systemName: "trophy")
-                    .font(.rapid(size: 12))
+                    .font(.system(size: 12))
                     .foregroundStyle(RapidTheme.textTertiary)
                     .accessibilityHidden(true)
                 Text("View the verified global leaderboard")

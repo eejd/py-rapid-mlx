@@ -288,7 +288,7 @@ struct ShareComputePoolTab: View {
     ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.rapid(size: 13))
+                .font(.system(size: 13))
                 .foregroundStyle(RapidTheme.bandInkTertiary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {

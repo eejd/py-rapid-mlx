@@ -1209,7 +1209,7 @@ struct ChatView: View {
                         .controlSize(.mini)
                 } else {
                     Image(systemName: "eject.fill")
-                        .font(.rapid(size: 10, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                 }
                 Text(Self.composerResidentUnloadTitle(modelCount: modelCount))
                     .font(.rapid(size: 11, weight: .semibold))
@@ -2780,16 +2780,16 @@ private struct ToolCallChip: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "wrench.and.screwdriver.fill")
-                        .font(.rapid(size: 11))
+                        .font(.system(size: 11))
                         .foregroundStyle(RapidTheme.brand)
                     Text(ChatTextSanitizer.sanitizeForDisplay(call.function.name))
                         .font(.rapid(size: 12, weight: .medium, design: .monospaced))
                     Spacer(minLength: 0)
                     Image(systemName: statusIcon)
-                        .font(.rapid(size: 11))
+                        .font(.system(size: 11))
                         .foregroundStyle(statusColor)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.rapid(size: 10))
+                        .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
                 .padding(.vertical, 6)
@@ -3828,7 +3828,7 @@ private struct CodeBlockWithCopy: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: copiedRecently ? "checkmark" : "doc.on.doc")
-                    .font(.rapid(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                 Text(copiedRecently ? String(localized: "Copied") : String(localized: "Copy"))
                     .font(.rapid(.caption2).weight(.medium))
             }

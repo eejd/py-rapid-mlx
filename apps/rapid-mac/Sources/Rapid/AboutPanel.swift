@@ -172,7 +172,7 @@ private struct AboutView: View {
                     .fill(RapidTheme.brandAmberTint)
                     .frame(width: 64, height: 64)
                 Image(systemName: "bolt.fill")
-                    .font(.rapid(size: 30, weight: .semibold))
+                    .font(.system(size: 30, weight: .semibold))
                     .foregroundStyle(RapidTheme.brandAmber)
             }
             .padding(.top, 8)

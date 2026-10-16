@@ -227,7 +227,7 @@ struct ImagesView: View {
     private var aspectPreview: some View {
         VStack(spacing: RapidTheme.Space.sm - 1) {
             Image(systemName: "photo")
-                .font(.rapid(size: 26, weight: .light))
+                .font(.system(size: 26, weight: .light))
                 .foregroundStyle(RapidTheme.textTertiary)
             Text(viewModel.aspect.size(for: viewModel.resolution))
                 .font(RapidFont.code)
@@ -826,7 +826,7 @@ struct ImagesView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "ruler")
-                    .font(.rapid(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .accessibilityHidden(true)
                 Text(viewModel.outputSizeLabel)
                     .font(.rapid(size: 11, weight: .medium))

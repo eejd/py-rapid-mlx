@@ -75,7 +75,7 @@ struct InlineNotice: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: RapidTheme.Space.sm) {
             Image(systemName: tone.symbol)
-                .font(.rapid(size: 11, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(tone.tint)
                 .accessibilityHidden(true)
 

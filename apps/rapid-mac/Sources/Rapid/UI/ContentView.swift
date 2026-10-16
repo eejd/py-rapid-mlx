@@ -1899,7 +1899,7 @@ struct ContentView: View {
                 setLogs(!showLogs)
             } label: {
                 Image(systemName: "terminal")
-                    .font(.rapid(size: 13))
+                    .font(.system(size: 13))
                     .foregroundStyle(showLogs ? RapidTheme.brand : Color.secondary)
             }
             .buttonStyle(.borderless)
@@ -2470,7 +2470,7 @@ struct SettingsGearButton: View {
             openWindow(id: "settings")
         } label: {
             Image(systemName: "gearshape")
-                .font(.rapid(size: 14))
+                .font(.system(size: 14))
         }
         .buttonStyle(.borderless)
         .help("Settings — ⌘,")
@@ -2707,7 +2707,7 @@ private struct LogDrawer: View {
             Spacer(minLength: 8)
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.rapid(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)

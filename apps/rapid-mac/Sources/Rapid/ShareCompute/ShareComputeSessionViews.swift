@@ -93,7 +93,7 @@ struct ShareComputeRewardSessionStrip: View {
             Group {
                 if done {
                     Image(systemName: "checkmark")
-                        .font(.rapid(size: 10, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(RapidTheme.surfaceRaised)
                 } else {
                     Text("\(stage.rawValue + 1)")
@@ -103,7 +103,7 @@ struct ShareComputeRewardSessionStrip: View {
                         )
                 }
             }
-            .frame(width: UIFontSettings.shared.scaled(22), height: UIFontSettings.shared.scaled(22))
+            .frame(width: done ? 22 : UIFontSettings.shared.scaled(22), height: done ? 22 : UIFontSettings.shared.scaled(22))
             .background {
                 if done {
                     Circle().fill(RapidTheme.statusReady)
@@ -186,7 +186,7 @@ struct ShareComputePreparingView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "arrow.uturn.backward")
-                    .font(.rapid(size: 11))
+                    .font(.system(size: 11))
                     .foregroundStyle(RapidTheme.bandReady)
                     .accessibilityHidden(true)
                 Text("Stop takes this Mac offline and unloads the sharing model. Your local model stays unloaded.")
@@ -307,13 +307,13 @@ struct ShareComputeStepRail: View {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
-                    .frame(width: circleSize, height: circleSize)
+                    .frame(width: 26, height: 26)
                     .background(RapidTheme.bandReady, in: Circle())
             case .failed:
                 Image(systemName: "exclamationmark")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(RapidTheme.surfaceBand)
-                    .frame(width: circleSize, height: circleSize)
+                    .frame(width: 26, height: 26)
                     .background(RapidTheme.bandDestructive, in: Circle())
             case .inProgress:
                 Text("\(row.step.number)")
@@ -552,7 +552,7 @@ struct ShareComputeOnlineView: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 9) {
                     Image(systemName: "arrow.right")
-                        .font(.rapid(size: 12, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(RapidTheme.onBrandPrimary)
                         .accessibilityHidden(true)
                     ShareComputeEyebrow(
@@ -592,7 +592,7 @@ struct ShareComputeOnlineView: View {
     private var payoutCallout: some View {
         HStack(alignment: .top, spacing: 11) {
             Image(systemName: payoutAccountConnected ? "dollarsign.circle.fill" : "questionmark.circle")
-                .font(.rapid(size: 20))
+                .font(.system(size: 20))
                 .foregroundStyle(RapidTheme.onBrandPrimary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
@@ -762,7 +762,7 @@ struct ShareComputeSessionCompleteView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 9) {
                     Image(systemName: "arrow.right")
-                        .font(.rapid(size: 12, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(RapidTheme.textPrimary)
                         .accessibilityHidden(true)
                     ShareComputeEyebrow(

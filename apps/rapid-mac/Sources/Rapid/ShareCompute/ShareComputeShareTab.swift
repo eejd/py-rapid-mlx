@@ -349,7 +349,7 @@ struct ShareComputeShareTab: View {
                         Text("QuickSilver API credits")
                             .font(.rapid(size: isNarrow ? 11 : 12, weight: .bold))
                         Image(systemName: "arrow.up.right")
-                            .font(.rapid(size: isNarrow ? 9 : 10, weight: .bold))
+                            .font(.system(size: isNarrow ? 9 : 10, weight: .bold))
                             .accessibilityHidden(true)
                     }
                     .foregroundStyle(RapidTheme.brandPrimary)
@@ -496,7 +496,7 @@ struct ShareComputeModelSelectorRow: View {
                 .font(.rapid(size: 12, weight: .medium))
                 .foregroundStyle(RapidTheme.bandReady)
             Text("·")
-                .font(.rapid(size: 12))
+                .font(.system(size: 12))
                 .foregroundStyle(RapidTheme.bandInkTertiary)
                 .accessibilityHidden(true)
             Text(model.detail)
@@ -522,7 +522,7 @@ struct ShareComputeNoLocalModelsRow: View {
                 ProgressView().controlSize(.small).accessibilityHidden(true)
             } else {
                 Image(systemName: "square.and.arrow.down")
-                    .font(.rapid(size: 15))
+                    .font(.system(size: 15))
                     .foregroundStyle(RapidTheme.bandInkSecondary)
                     .accessibilityHidden(true)
             }

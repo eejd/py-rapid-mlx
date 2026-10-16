@@ -139,7 +139,7 @@ struct SettingsToolsPanel: View {
             } label: {
                 HStack(spacing: RapidTheme.Space.xs) {
                     Image(systemName: "chevron.right")
-                        .font(.rapid(size: 9, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     Text("Details")
                         .font(RapidFont.caption)

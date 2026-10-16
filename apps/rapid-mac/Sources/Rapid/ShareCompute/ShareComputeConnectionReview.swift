@@ -139,7 +139,7 @@ struct ShareComputeConnectionReview: View {
                             HStack(spacing: 4) {
                                 Text("Get a key").font(RapidFont.secondary)
                                 Image(systemName: "arrow.up.right")
-                                    .font(.rapid(size: 9, weight: .semibold))
+                                    .font(.system(size: 9, weight: .semibold))
                                     .accessibilityHidden(true)
                             }
                             .foregroundStyle(RapidTheme.linkLabel)

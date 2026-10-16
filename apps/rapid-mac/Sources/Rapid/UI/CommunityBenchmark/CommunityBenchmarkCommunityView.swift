@@ -236,7 +236,7 @@ struct CommunityBenchmarkCommunityView: View {
 
     private var separator: some View {
         Text("·")
-            .font(RapidFont.body)
+            .font(.system(size: 13))
             .foregroundStyle(RapidTheme.textTertiary)
             .accessibilityHidden(true)
     }
@@ -501,7 +501,7 @@ struct CommunityBenchmarkCommunityView: View {
         VStack(alignment: .leading, spacing: RapidTheme.Space.md) {
             HStack(spacing: 6) {
                 Image(systemName: gap.isFirstResultOpportunity ? "flag" : "chart.bar")
-                    .font(.rapid(size: 11))
+                    .font(.system(size: 11))
                     .accessibilityHidden(true)
                 Text(
                     gap.isFirstResultOpportunity

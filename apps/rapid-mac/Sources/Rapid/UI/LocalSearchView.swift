@@ -533,7 +533,7 @@ struct LocalSearchView: View {
     }
     @ViewBuilder private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "magnifyingglass").scaledSystemFont(32, relativeTo: .title).foregroundStyle(RapidTheme.brand).accessibilityHidden(true)
+            Image(systemName: "magnifyingglass").font(.system(size: 32)).foregroundStyle(RapidTheme.brand).accessibilityHidden(true)
             switch model.state {
             case .engineStopped:
                 Text(String(localized: "Search your own files")).font(.rapid(.headline))
