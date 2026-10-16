@@ -667,3 +667,82 @@ def test_nemotron_flush_releases_only_safe_held_prose(prefix, suffix):
     assert visible == "Visible trailing prose. "
     assert parser._content_upto == len(prefix + "Visible trailing prose. ")
     assert parser.flush_held_content(wire) == ""
+
+
+@pytest.mark.parametrize("closer", ["</tool_call>", "</function>"])
+def test_nemotron_round4_orphan_closer_is_prose(closer):
+    text = f"Write {closer} to close the block."
+    expected = (text, [], "stop")
+    assert _route_reply(text, stream=False) == expected
+    assert _route_reply(text, stream=True, deltas=list(text)) == expected
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [("Calling now: ", ""), ("", " Call finished."), ("Before: ", " After.")],
+)
+def test_nemotron_round4_rejected_wrapper_narration(before, after):
+    text = f'<tool_call>{before}<function=send_email>{{"x":1}}</function>{after}</tool_call>'
+    expected = ((before + after).strip(), [], "stop")
+    assert _route_reply(text, stream=False) == expected
+    assert _route_reply(text, stream=True, deltas=list(text)) == expected
+    for split in range(1, len(text)):
+        assert (
+            _route_reply(text, stream=True, deltas=[text[:split], text[split:]])
+            == expected
+        )
+
+
+def test_nemotron_round4_unclosed_openers_linear_time():
+    from time import perf_counter
+
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    text = "<tool_call><function=bad>" * 4000  # 100,000 bytes
+    # Warm imports/caches; take the best of three to tolerate scheduler pauses.
+    parser.extract_tool_calls("warmup", {"tools": TOOLS})
+    times = []
+    for _ in range(3):
+        start = perf_counter()
+        result = parser.extract_tool_calls(text, {"tools": TOOLS})
+        times.append(perf_counter() - start)
+        assert not result.tools_called
+        assert result.content == text
+    assert min(times) < 0.2, times
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<tool_call>example </function></tool_call>",
+        '<tool_call>example</tool_call> <function=send_email>{"x":1}</function>',
+        '<tool_call><function=send_email>{"x":1}</function>'
+        + "x" * 32768
+        + "</tool_call>",
+    ],
+)
+def test_nemotron_round4_rejection_requires_bounded_wrapped_function(text):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    result = parser.extract_tool_calls(text, {"tools": TOOLS})
+    assert not result.tool_calls
+    assert result.content == text
+    assert parser._undeclared_dropped == 0
+
+
+def test_nemotron_rejection_preserves_declared_non_json_arguments():
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    text = (
+        REJECTED + "<tool_call><function=write_file>{raw text}</function></tool_call>"
+    )
+    result = parser.extract_tool_calls(text, {"tools": TOOLS})
+    assert result.tools_called
+    assert result.content is None
+    assert parser._undeclared_dropped == 1
+    assert [(call["name"], call["arguments"]) for call in result.tool_calls] == [
+        ("write_file", "{raw text}")
+    ]
