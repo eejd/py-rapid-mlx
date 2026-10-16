@@ -992,7 +992,7 @@ class TTSEngine:
         # rather than restarting at every boundary. This yields one complete
         # clip and delays first audio until synthesis finishes.
         post_stretch = self._model_family in _POST_STRETCH_FAMILIES
-        gen_kwargs = {"text": text, "voice": voice}
+        gen_kwargs: dict[str, object] = {"text": text, "voice": voice}
         if not post_stretch:
             gen_kwargs["speed"] = speed
         buffer_for_stretch = post_stretch and speed != 1.0
