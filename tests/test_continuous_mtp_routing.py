@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 
@@ -306,6 +307,54 @@ def test_requested_draft_depth_reaches_the_cohort_policy_and_planned_lanes():
     # Omitting the argument keeps today's default so existing callers are
     # unaffected.
     assert _router().config.max_draft_tokens == 2
+
+
+@pytest.mark.parametrize(
+    ("depths", "expected"),
+    [((1, 1), 1), ((2, 2), 2), ((), None), ((1, 2), None)],
+)
+def test_live_cohort_draft_depth_is_exposed_through_the_driver(
+    depths, expected, monkeypatch
+):
+    from rapid_mlx.spec_decode.mtp.continuous_batch import (
+        ContinuousMTPGenerationBatch,
+    )
+    from rapid_mlx.spec_decode.mtp.continuous_driver import ContinuousMTPDriver
+    from rapid_mlx.spec_decode.mtp.continuous_engine import MTPToken
+
+    # Only the engine's lane state is stubbed: exercise both real properties
+    # that the scheduler reads when choosing the depth of a joining lane.
+    lanes = tuple(
+        SimpleNamespace(uid=uid, num_draft=depth, max_tokens=8)
+        for uid, depth in enumerate(depths)
+    )
+    batch = ContinuousMTPGenerationBatch(
+        batch=SimpleNamespace(lanes=lanes),
+        first_tokens=tuple(MTPToken(10, None, False) for _ in lanes),
+        stop_tokens={lane.uid: frozenset() for lane in lanes},
+    )
+    driver = ContinuousMTPDriver(batch)
+
+    assert batch.draft_depth == expected
+    assert driver.draft_depth == expected
+
+    monkeypatch.setattr(batch, "_closed", True)
+    assert driver.draft_depth is None
+
+
+@pytest.mark.parametrize("depth", [None, True, "2", 0, 1])
+def test_router_refuses_insufficient_or_malformed_recursive_depth(depth):
+    model = _Model()
+    model.batched_mtp_capability = MappingProxyType(
+        {**dict(_descriptor()), "recursive_draft_depth": depth}
+    )
+
+    decision = plan_router_install(model, enabled=True, hard_reserve_bytes=0)
+
+    assert decision.admitted is False
+    assert decision.router is None
+    assert decision.fallback is ContinuousMTPIntegrationRoute.LEGACY_MTP
+    assert "capability descriptor mismatch: recursive_draft_depth" in decision.reasons
 
 
 def test_planner_clamps_requested_depth_to_the_attested_recursive_depth():
@@ -1440,3 +1489,23 @@ def test_queue_only_admission_remains_queue_when_every_lane_is_plain(monkeypatch
         free_bytes=0,
     )
     assert decision.route is ContinuousMTPIntegrationRoute.QUEUE
+
+
+@pytest.mark.parametrize("depth", [None, True, "2", 1])
+def test_runtime_refuses_unattested_recursive_draft_depth(depth):
+    admitted = _router()
+    runtime = replace(
+        admitted.runtime,
+        capability_descriptor={**_descriptor(), "recursive_draft_depth": depth},
+    )
+    router = routing_module.ContinuousMTPIntegrationRouter(
+        config=admitted.config, runtime=runtime
+    )
+
+    decision = router.plan([_request("a", 1), _request("b", 2)], free_bytes=1)
+
+    assert decision.route is ContinuousMTPIntegrationRoute.LEGACY_MTP
+    assert decision.cohort == ()
+    assert decision.reasons == (
+        "capability descriptor mismatch: recursive_draft_depth",
+    )
