@@ -211,7 +211,7 @@ def test_wrapper_restores_mllm_mrope_state_when_forward_fails():
     assert model._rope_deltas == "mllm-delta"
 
 
-@pytest.mark.parametrize("first_rows,next_rows", [(3, 4), (2, 5), (4, 2)])
+@pytest.mark.parametrize("first_rows,next_rows", [(3, 4), (2, 5), (4, 2), (3, 3)])
 def test_wrapper_sizes_text_lane_mrope_deltas_to_each_batch(first_rows, next_rows):
     """A lane that first batched N rows must serve a later batch of M rows."""
     import mlx.core as mx
