@@ -317,7 +317,10 @@ def main():
             hidden_chunks.append(features)
         initial = mx.concatenate(hidden_chunks, axis=1)
         generated, serial_features, target_ms = [], [], []
-        eos = set(getattr(tokenizer, "eos_token_ids", [tokenizer.eos_token_id]))
+        eos_ids = getattr(tokenizer, "eos_token_ids", None)
+        if eos_ids is None:
+            eos_ids = tokenizer.eos_token_id
+        eos = {eos_ids} if isinstance(eos_ids, int) else set(eos_ids or [])
         for _ in range(args.tokens):
             token = mx.argmax(logits[:, -1], axis=-1).item()
             if token in eos:
