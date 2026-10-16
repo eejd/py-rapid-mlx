@@ -235,7 +235,7 @@ class NemotronToolParser(ToolParser):
 
         parts: list[str] = []
         cursor = start
-        removed_before = False
+        removed_before = any(span_end == start for _, span_end in removed)
         for span_start, span_end in removed:
             if span_end <= start or span_start >= end:
                 continue
@@ -300,6 +300,8 @@ class NemotronToolParser(ToolParser):
         if tail.isspace() and text.rfind("<tool_call>") > text.rfind("</tool_call>"):
             return latest_close
         pending = NemotronToolParser._pending_markup_index(tail, include_closers=True)
+        if pending is not None and tail[:pending].isspace():
+            return latest_close
         return len(text) if pending is None else latest_close + pending
 
     def extract_tool_calls(
@@ -551,16 +553,9 @@ class NemotronToolParser(ToolParser):
         # arrive in separate deltas (each bumps the count → one re-parse each,
         # but the second finds nothing new to emit).
         if self._close_tag_count(current_text) > self._close_tag_count(previous_text):
-            # A split wrapper close is still markup, even if the function just
-            # closed in this delta. Wait until it can be consumed as a whole.
-            after_function = current_text.rsplit("</function>", 1)[-1].strip()
-            if (
-                after_function
-                and after_function != "</tool_call>"
-                and "</tool_call>".startswith(after_function)
-            ):
-                return None
-
+            # Account for completed functions immediately. Only the ambiguous
+            # suffix stays held at the safe boundary; deferring the function
+            # too would replay its markup if that suffix resolves into prose.
             # ``request`` matters here, not just to the non-streaming caller:
             # ``extract_tool_calls`` derives its declared-name gate from it, so
             # omitting it let a name the caller never offered through on the
@@ -580,6 +575,9 @@ class NemotronToolParser(ToolParser):
                     new_calls = result.tool_calls[already_emitted:]
                     self.current_tool_id = total - 1
                     out: dict[str, Any] = {
+                        # A function can finish before its held suffix resolves
+                        # into narration. Keep that later prose on the wire.
+                        "preserve_post_tool_content": True,
                         "tool_calls": [
                             {
                                 "index": already_emitted + i,
@@ -591,7 +589,7 @@ class NemotronToolParser(ToolParser):
                                 },
                             }
                             for i, tc in enumerate(new_calls)
-                        ]
+                        ],
                     }
                     if unsent_content:
                         out["content"] = unsent_content

@@ -746,3 +746,91 @@ def test_nemotron_rejection_preserves_declared_non_json_arguments():
     assert [(call["name"], call["arguments"]) for call in result.tool_calls] == [
         ("write_file", "{raw text}")
     ]
+
+
+@pytest.mark.parametrize("name", ["send_email", "write_file"])
+@pytest.mark.parametrize("byte_stream", [False, True])
+def test_nemotron_round5_resolved_wrapper_suffix(name, byte_stream):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    chunks = [
+        f'<tool_call><function={name}>{{"path":"x"}}</function></t',
+        "able>",
+        "</tool_call>",
+    ]
+    text = "".join(chunks)
+    deltas = list(text) if byte_stream else chunks
+    expected_names = ["write_file"] if name == "write_file" else []
+    expected = ("</table>", expected_names, "tool_calls" if expected_names else "stop")
+    assert _route_reply(text, stream=False) == expected
+    assert _route_reply(text, stream=True, deltas=deltas) == expected
+
+    parser = NemotronToolParser()
+    parser.reset()
+    buffered = NemotronToolParser().extract_tool_calls(text, {"tools": TOOLS})
+    previous = ""
+    content = ""
+    calls = []
+    dropped = False
+    for delta in deltas:
+        current = previous + delta
+        result = parser.extract_tool_calls_streaming(
+            previous, current, delta, request={"tools": TOOLS}
+        )
+        dropped |= bool(parser._undeclared_dropped)
+        if result:
+            content += result.get("content", "")
+            calls.extend(result.get("tool_calls", []))
+        previous = current
+    content += parser.flush_held_content(text)
+    assert content == buffered.content == "</table>"
+    assert "tool_call" not in content and "function" not in content
+    assert [call["function"]["name"] for call in calls] == expected_names
+    assert dropped == (name == "send_email")
+
+
+@pytest.mark.parametrize("name", ["send_email", "write_file"])
+@pytest.mark.parametrize("suffix", ["</t", " \n", " \n</t"])
+def test_nemotron_round5_accounts_function_before_pending_suffix(name, suffix):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    parser.reset()
+    function = f'<tool_call><function={name}>{{"path":"x"}}</function>'
+    result = parser.extract_tool_calls_streaming(
+        "", function + suffix, function + suffix, request={"tools": TOOLS}
+    )
+    assert parser._content_upto == len(function)
+    assert result is not None
+    assert not result.get("content")
+    assert len(result.get("tool_calls", [])) == (name == "write_file")
+    assert bool(parser._undeclared_dropped) == (name == "send_email")
+
+
+@pytest.mark.parametrize("name", ["send_email", "write_file"])
+def test_nemotron_round5_consumes_resolved_wrapper_suffix(name):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    parser = NemotronToolParser()
+    parser.reset()
+    chunks = [
+        f'<tool_call><function={name}>{{"path":"x"}}</function> \n</t',
+        "ool_call>",
+    ]
+    previous = ""
+    content = ""
+    calls = []
+    for delta in chunks:
+        current = previous + delta
+        result = parser.extract_tool_calls_streaming(
+            previous, current, delta, request={"tools": TOOLS}
+        )
+        assert result is not None
+        content += result.get("content", "")
+        calls.extend(result.get("tool_calls", []))
+        previous = current
+    content += parser.flush_held_content(previous)
+    assert content == ""
+    assert parser._content_upto == len(previous)
+    assert len(calls) == (name == "write_file")
+    assert bool(parser._undeclared_dropped) == (name == "send_email")
