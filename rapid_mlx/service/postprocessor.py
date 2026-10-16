@@ -469,8 +469,8 @@ class StreamingPostProcessor:
         # ``_build_tool_call_event``. Read by ``_compute_finish_reason``.
         self._tool_calls_emitted_to_wire: int = 0
         self._undeclared_count = 0
-        self._undeclared_indices = set()
-        self._declared_indices = {}
+        self._undeclared_indices: set[int] = set()
+        self._declared_indices: dict[int, int] = {}
         self._last_anchor_dropped = False
         # Issue #1359 — bound tool-call streaming suppression.
         # ``_tool_suppressed_buffer`` accumulates only the deltas the parser

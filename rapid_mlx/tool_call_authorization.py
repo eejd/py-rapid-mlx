@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 def declared_names(request) -> set[str]:
-    original = getattr(request, "_tool_authorization_names", None)
+    original: set[str] | None = getattr(request, "_tool_authorization_names", None)
     if original is not None:
         return original
     if hasattr(request, "model_dump"):

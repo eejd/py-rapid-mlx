@@ -4557,7 +4557,10 @@ async def _create_chat_completion_impl(
 
     # Authorization uses the caller's declarations before prompt-time narrowing.
     request._tool_authorization_names = {
-        tool.function.get("name") for tool in request.tools or []
+        name
+        for tool in request.tools or []
+        if tool.function is not None
+        and isinstance(name := tool.function.get("name"), str)
     }
 
     # Enforce ``tool_choice`` at the prompt level (#445). The OpenAI spec

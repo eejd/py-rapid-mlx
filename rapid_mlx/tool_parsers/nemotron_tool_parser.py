@@ -282,7 +282,7 @@ class NemotronToolParser(ToolParser):
         not sufficient evidence of a tool-call opener. Only suppress a suffix
         that is already a known marker or can still grow into one.
         """
-        markers = ("<function=", "<tool_call>")
+        markers: tuple[str, ...] = ("<function=", "<tool_call>")
         # Only an actual preceding opener makes a closing tag markup. Orphan
         # closers in ordinary prose must pass through, including byte streams.
         if include_closers:

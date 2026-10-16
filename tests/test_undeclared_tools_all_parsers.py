@@ -388,6 +388,38 @@ def test_declared_pydantic_tool_in_dict():
     ) == {"write_file"}
 
 
+@pytest.mark.parametrize("deep", [False, True])
+@pytest.mark.parametrize("authorized", [set(), {"write_file", "send_email"}])
+def test_request_authorization_survives_copy_and_streaming_dump(deep, authorized):
+    from rapid_mlx.api.models import ChatCompletionRequest
+    from rapid_mlx.tool_call_authorization import declared_names
+
+    request = ChatCompletionRequest(
+        messages=[{"role": "user", "content": "Use a tool"}], tools=TOOLS
+    )
+    assert declared_names(request) == {"write_file"}
+    request._tool_authorization_names = authorized
+    copied = request.model_copy(deep=deep)
+    assert copied._tool_authorization_names == authorized
+    assert declared_names(copied) == authorized
+
+    dumped = copied.model_dump(exclude_none=True)
+    assert "_tool_authorization_names" not in dumped
+    assert "_tool_authorization_names" not in copied.model_dump_json()
+    assert (
+        "_tool_authorization_names"
+        not in ChatCompletionRequest.model_json_schema()["properties"]
+    )
+    # The route transfers the snapshot separately from the narrowed prompt tools.
+    pp = StreamingPostProcessor(
+        _make_cfg(),
+        request=dumped,
+        tool_authorization_names=copied._tool_authorization_names,
+    )
+    call = {"function": {"name": "send_email", "arguments": "{}"}}
+    assert pp._filter_declared_calls([call]) == [call]
+
+
 @pytest.mark.parametrize("called", [False, True])
 def test_inferred_parser_reports_drops(monkeypatch, called):
     cfg = helpers.get_config()

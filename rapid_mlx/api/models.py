@@ -19,6 +19,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StrictBool,
     StrictInt,
     StrictStr,
@@ -1555,6 +1556,10 @@ class StreamOptions(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     """Request for chat completion."""
+
+    # Preserve the caller's declarations when tool_choice narrows prompt tools.
+    # Passed separately to streaming processing because model_dump omits it.
+    _tool_authorization_names: set[str] | None = PrivateAttr(default=None)
 
     model: str = "default"
     # D-ANTHRO-VALIDATION F11 (Anthropic sibling fix on OpenAI surface):
