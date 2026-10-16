@@ -2484,3 +2484,114 @@ def test_stream_parsed_call_name_evidence(monkeypatch):
     arguments = "".join(call["function"].get("arguments", "") for call in calls)
     assert json.loads(arguments) == {"content": "example"}
     assert not any(c["delta"].get("content") for c in choices)
+
+
+@pytest.mark.parametrize(
+    "family,budget,tail",
+    [
+        ("qwen35", 1, "<"),
+        ("qwen35", 4, "<parameter=city"),
+        ("qwen35", 16, "<parameter=city>\n"),
+        ("bonsai2", 1, ""),
+        ("bonsai2", 4, "<parameter="),
+        ("bonsai2", 16, "<parameter=city>\n"),
+    ],
+)
+@pytest.mark.parametrize("mode", ["named", "required"])
+@pytest.mark.parametrize("required_city", [True, False])
+def test_dogfood_forced_stream_truncation_parity(
+    monkeypatch, family, budget, tail, mode, required_city
+):
+    """Replay the dogfood zero-call boundary with representative XML tails.
+
+    Qwen budget 1 releases '<' after the synthetic prefix is swallowed;
+    the other tails exercise empty terminal recovery. Bonsai's budget-16
+    already-emitted incomplete JSON call is a separate validation concern.
+    """
+    prefix = "<tool_call>\n<function=get_weather>\n"
+    raw = prefix + tail
+
+    class Engine(_RecordingEngine):
+        async def chat(self, messages, **kwargs):
+            return GenerationOutput(
+                text=raw,
+                raw_text=raw,
+                prompt_tokens=4,
+                completion_tokens=budget,
+                finished=True,
+                finish_reason="length",
+            )
+
+        async def stream_chat(self, messages, **kwargs):
+            assert kwargs["forced_assistant_prefix"] == prefix
+            yield GenerationOutput(text=prefix, new_text=prefix, completion_tokens=0)
+            yield GenerationOutput(
+                text=raw,
+                raw_text=raw,
+                new_text=tail,
+                prompt_tokens=4,
+                completion_tokens=budget,
+                finished=True,
+                finish_reason="length",
+            )
+
+    monkeypatch.setenv("RAPID_MLX_CONSTRAIN_TOOLS", "0")
+    monkeypatch.setattr(
+        "rapid_mlx.routes.chat._compute_forced_tool_prefix", lambda *a: prefix
+    )
+    client = _make_client(Engine(), tool_call_parser="hermes")
+    schema = {"type": "object", "properties": {}}
+    if required_city:
+        schema.update(properties={"city": {"type": "string"}}, required=["city"])
+    payload = {
+        "model": "test-model",
+        "messages": [
+            {"role": "user", "content": "Use get_weather to look up weather in Paris."}
+        ],
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "get_weather", "parameters": schema},
+            }
+        ],
+        "tool_choice": (
+            {"type": "function", "function": {"name": "get_weather"}}
+            if mode == "named"
+            else "required"
+        ),
+        "max_tokens": budget,
+        "temperature": 0,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    buffered = client.post("/v1/chat/completions", json={**payload, "stream": False})
+    streamed = client.post("/v1/chat/completions", json={**payload, "stream": True})
+    assert streamed.status_code == 200, streamed.text
+    chunks = [
+        json.loads(line[6:])
+        for line in streamed.text.splitlines()
+        if line.startswith("data: {")
+    ]
+    choices = [c for chunk in chunks for c in chunk.get("choices", [])]
+    assert "".join(c["delta"].get("content") or "" for c in choices) == ""
+    assert not any(c["delta"].get("reasoning_content") for c in choices)
+    calls = [tc for c in choices for tc in c["delta"].get("tool_calls", [])]
+    errors = [chunk["error"] for chunk in chunks if "error" in chunk]
+    finishes = [c["finish_reason"] for c in choices if c.get("finish_reason")]
+    assert streamed.text.count("data: [DONE]") == 1
+    if required_city:
+        assert buffered.status_code == 422, buffered.text
+        assert "city" in buffered.json()["detail"]
+        assert [error["code"] for error in errors] == ["tool_choice_violation"]
+        assert not calls
+        assert not finishes
+        assert "error" in chunks[-1]
+    else:
+        assert buffered.status_code == 200, buffered.text
+        choice = buffered.json()["choices"][0]
+        assert not choice["message"].get("content")
+        assert choice["finish_reason"] == "tool_calls"
+        expected = choice["message"]["tool_calls"][0]["function"]
+        assert expected == {"name": "get_weather", "arguments": "{}"}
+        assert [call["function"] for call in calls] == [expected]
+        assert finishes == ["tool_calls"]
+        assert not errors

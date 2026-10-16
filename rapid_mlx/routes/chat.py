@@ -3482,9 +3482,9 @@ def _forced_synth_schema_error(name: str, arguments: str | None, tools) -> str |
     ``finish_reason="tool_calls"`` would ``json.loads`` the arguments and
     execute a broken call, trusting a guarantee the server cannot make. Callers
     fail EXPLICITLY on a non-``None`` return — 422 on the non-stream paths;
-    drop-the-synth (the turn finishes with its real terminal reason,
-    ``stop``/``length``, never a fabricated ``tool_calls``) / ``response.failed``
-    on the streaming paths — rather than shipping the bad call.
+    an SSE error on streaming chat (including at the token limit), or
+    ``response.failed`` on streaming responses — rather than shipping a bad
+    call the client might execute.
 
     Returns ``None`` (synth allowed) when the tool has no constraints the
     synthesised arguments violate, the schema can't be resolved, or the
@@ -7872,7 +7872,7 @@ async def stream_chat_completion(
                 # wire so we cannot 422 mid-flight. If the synthesised call's
                 # arguments fail the target tool's schema, DON'T fabricate it —
                 # leave ``fallback_tool_calls`` empty. The terminal gate below
-                # reports a forced-choice error unless generation hit ``length``;
+                # reports a forced-choice error even when generation hit ``length``;
                 # never ship a broken call that the client might execute.
                 _synth_err = _forced_synth_schema_error(
                     _synth_target, _synth_call.function.arguments, request.tools
@@ -7950,11 +7950,10 @@ async def stream_chat_completion(
                 elif (
                     buffered_finish is not None
                     and buffered_finish[0].finish_reason == "length"
-                    and (kwargs.get("forced_assistant_prefix") or "")
-                    in {
-                        f"<tool_call>\n<function={name}>\n"
-                        for name in _produced_tool_names
-                    }
+                    and re.fullmatch(
+                        r"<tool_call>\n<function=[^<>\s]+>\n",
+                        kwargs.get("forced_assistant_prefix") or "",
+                    )
                     and _pending_raw.strip()
                     and (
                         "<parameter=".startswith(_pending_raw.strip())
@@ -7964,6 +7963,9 @@ async def stream_chat_completion(
                     # The XML prefill was swallowed upstream; a one-token
                     # continuation can leave only '<'. Do not replay that
                     # parameter-header prefix as prose at the budget boundary.
+                    # This prefix is server-generated, so it establishes wire
+                    # context even when schema validation refuses synthesis
+                    # and no produced tool name is available as evidence.
                     _final_content = ""
                 elif _contains_structural_tool_wire_leak(
                     _pending_raw, allow_truncated=True
@@ -7985,14 +7987,16 @@ async def stream_chat_completion(
         # Required/named requests must never report a successful stop after
         # dropping every call. Headers are already sent, so signal a stream
         # error rather than fabricating arguments.
+        # #4432 exempted ``length`` to preserve token-limit results. With zero
+        # calls after synthesis, that exemption silently loses a forced turn
+        # while non-stream returns 422. Truncation must also error here; calls
+        # already emitted/recovered bypass this gate, and schema-valid synthesis
+        # above still returns a call just as non-stream does.
         if (
             _stream_tool_choice
             and _stream_tool_choice.get("mode") in {"required", "named"}
             and processor._tool_calls_emitted_to_wire == 0
             and not fallback_tool_calls
-            and (
-                buffered_finish is None or buffered_finish[0].finish_reason != "length"
-            )
         ):
             error = {
                 "error": {
