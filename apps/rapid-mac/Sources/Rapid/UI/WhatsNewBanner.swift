@@ -110,6 +110,7 @@ struct WhatsNewBanner: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                            .font(.rapid(size: 12))
                             .accessibilityIdentifier("WhatsNew.OpenNotes")
                         }
                         Button("Dismiss") {
@@ -117,6 +118,7 @@ struct WhatsNewBanner: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .font(.rapid(size: 12))
                         .accessibilityIdentifier("WhatsNew.Dismiss")
                     }
                     .padding(.top, 2)

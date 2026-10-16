@@ -82,7 +82,7 @@ final class MarkdownCodeBlockView: NSView {
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerLabel)
 
-        copyButton.title = "复制"
+        copyButton.title = String(localized: "Copy")
         copyButton.bezelStyle = .inline
         copyButton.isBordered = false
         copyButton.font = Self.headerFont
@@ -460,9 +460,9 @@ final class MarkdownCodeBlockView: NSView {
         // Momentary confirmation, matching ChatGPT's
         // `MarkdownCodeBlockHeaderCopyButton` which tracks a
         // `recentlyPerformed` state.
-        copyButton.title = "已复制"
+        copyButton.title = String(localized: "Copied")
         didCopyResetWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.copyButton.title = "复制" }
+        let work = DispatchWorkItem { [weak self] in self?.copyButton.title = String(localized: "Copy") }
         didCopyResetWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: work)
     }
