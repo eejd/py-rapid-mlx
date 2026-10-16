@@ -54,6 +54,8 @@ from .store import StoreWorker, bounded_terms
 
 logger = logging.getLogger(__name__)
 
+REFRESH_TICK_SECONDS = 60.0
+
 
 class ModelLoadError(RuntimeError):
     """Model loading failed or no sanctioned worker is available."""
@@ -208,8 +210,9 @@ class LocalSearch:
         self.refresh_task = asyncio.create_task(self._refresh_loop())
 
     async def _refresh_loop(self):
+        """Check for stale folders at most one minute after the interval elapses."""
         while not self.closed:
-            await asyncio.sleep(self.refresh_interval)
+            await asyncio.sleep(min(self.refresh_interval, REFRESH_TICK_SECONDS))
             try:
                 await self._refresh_stale()
             except Exception as exc:

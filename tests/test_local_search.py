@@ -1456,6 +1456,53 @@ def test_refresh_stale_with_real_queue_does_not_deadlock(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_refresh_loop_queues_folder_that_becomes_stale_between_ticks(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        search = engine(tmp_path, refresh_interval=1800)
+        now = 1800.0
+        tick = 60.0
+        sleeps = []
+        search.folders = AsyncMock(
+            return_value=[{"id": "folder", "state": "idle", "last_indexed_at": 61}]
+        )
+
+        async def advance_clock(delay):
+            nonlocal now
+            sleeps.append(delay)
+            assert delay == tick
+            assert len(sleeps) <= 2
+            if len(sleeps) == 2:
+                # The first tick was at age 1799, just before the stale threshold.
+                search.queue.assert_not_awaited()
+                assert search.folders.await_count == 1
+            now += delay
+
+        async def queued(_folder_id):
+            search.closed = True
+
+        search.queue = AsyncMock(side_effect=queued)
+        monkeypatch.setattr("rapid_mlx.local_search.service.REFRESH_TICK_SECONDS", tick)
+        monkeypatch.setattr(
+            "rapid_mlx.local_search.service.time", SimpleNamespace(time=lambda: now)
+        )
+        monkeypatch.setattr(
+            "rapid_mlx.local_search.service.asyncio",
+            SimpleNamespace(sleep=advance_clock, to_thread=asyncio.to_thread),
+        )
+        try:
+            await search._refresh_loop()
+            assert sleeps == [tick, tick]
+            assert now - 61 == 1859 < search.refresh_interval + tick
+            search.queue.assert_awaited_once_with("folder")
+        finally:
+            search.closed = False
+            await search.close()
+
+    asyncio.run(scenario())
+
+
 def test_refresh_loop_recovers_after_store_error(tmp_path, caplog):
     async def scenario():
         search = engine(tmp_path, refresh_interval=0.01)
