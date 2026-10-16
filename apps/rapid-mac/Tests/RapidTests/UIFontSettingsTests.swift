@@ -3,10 +3,10 @@ import SwiftUI
 import Testing
 @testable import Rapid
 
-@Suite("UI font scale")
-struct UIFontScaleTests {
+@Suite("UI font settings")
+struct UIFontSettingsTests {
     private func makeDefaults() -> UserDefaults {
-        let name = "UIFontScaleTests.\(UUID().uuidString)"
+        let name = "UIFontSettingsTests.\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
         return d
@@ -14,7 +14,7 @@ struct UIFontScaleTests {
 
     @Test("never returns less than 12pt and scales larger sizes")
     func floorAndScale() {
-        let s = UIFontScale(defaults: makeDefaults())
+        let s = UIFontSettings(defaults: makeDefaults())
         #expect(s.scale == 1.0)
         #expect(s.pointSize(9) == 12)
         #expect(s.pointSize(11) == 12)
@@ -28,15 +28,15 @@ struct UIFontScaleTests {
     @Test("persists the chosen scale")
     func persists() {
         let d = makeDefaults()
-        UIFontScale(defaults: d).scale = 1.3
-        #expect(UIFontScale(defaults: d).scale == 1.3)
+        UIFontSettings(defaults: d).scale = 1.3
+        #expect(UIFontSettings(defaults: d).scale == 1.3)
     }
 
     @Test("every text style resolves to at least the floor")
     func textStylesFloored() {
-        let s = UIFontScale(defaults: makeDefaults())
+        let s = UIFontSettings(defaults: makeDefaults())
         for style in [Font.TextStyle.caption2, .caption, .footnote, .subheadline, .callout] {
-            #expect(s.pointSize(UIFontScale.basePointSize(style)) >= UIFontScale.minimumPointSize)
+            #expect(s.pointSize(UIFontSettings.basePointSize(style)) >= UIFontSettings.minimumPointSize)
         }
     }
 }

@@ -685,9 +685,9 @@ struct SettingsView: View {
                 .accessibilityIdentifier("Settings.Appearance.ThemePicker")
             }
             SettingsSection(String(localized: "Text size")) {
-                @Bindable var fontScale = UIFontScale.shared
-                Picker("Text size", selection: $fontScale.scale) {
-                    ForEach(UIFontScale.choices, id: \.scale) { choice in
+                @Bindable var fontSettings = UIFontSettings.shared
+                Picker("Text size", selection: $fontSettings.scale) {
+                    ForEach(UIFontSettings.choices, id: \.scale) { choice in
                         Text(choice.label).tag(choice.scale)
                     }
                 }

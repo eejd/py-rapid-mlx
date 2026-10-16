@@ -14,10 +14,10 @@ import SwiftUI
 /// Not `@MainActor`: fonts are also built from nonisolated statics
 /// (``RapidFont``). Writes only happen from the Settings UI on main.
 @Observable
-final class UIFontScale: @unchecked Sendable {
-    static let shared = UIFontScale()
+final class UIFontSettings: @unchecked Sendable {
+    static let shared = UIFontSettings()
 
-    static let storageKey = "rapid.uiFontScale.v1"
+    static let storageKey = "rapid.uiFontSettings.scale.v1"
     /// Floor for every UI font — anything smaller is unreadable for many users.
     static let minimumPointSize: CGFloat = 12
     static let defaultScale: Double = 1.0
@@ -67,7 +67,7 @@ extension Font {
         weight: Font.Weight = .regular,
         design: Font.Design = .default
     ) -> Font {
-        .system(size: UIFontScale.shared.pointSize(size), weight: weight, design: design)
+        .system(size: UIFontSettings.shared.pointSize(size), weight: weight, design: design)
     }
 
     /// Scaled, floored replacement for `Font.system(_:design:weight:)` / `.caption` etc.
@@ -77,7 +77,7 @@ extension Font {
         weight: Font.Weight? = nil
     ) -> Font {
         .rapid(
-            size: UIFontScale.basePointSize(style),
+            size: UIFontSettings.basePointSize(style),
             weight: weight ?? (style == .headline ? .semibold : .regular),
             design: design
         )
