@@ -36,13 +36,17 @@ continues through the dependency's dispatcher and Metal kernel.
 
 from __future__ import annotations
 
+import inspect
+import logging
 import threading
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import mlx.core as mx
 
 _LOCK = threading.Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 def ssm_attn(
@@ -193,7 +197,41 @@ def install_nemotron_h_ssm_fix() -> None:
             from mlx_lm.models import nemotron_h, ssm
         except ImportError:
             return
-        if ssm.ssm_attn is ssm_attn:
+        mixer = getattr(nemotron_h, "NemotronHMamba2Mixer", None)
+        if (
+            getattr(ssm, "ssm_attn", None) is ssm_attn
+            and getattr(mixer, "_ssm", None) is _mixer_ssm
+        ):
             return
+
+        def contract(function):
+            # Annotations vary across Python releases; calling conventions do not.
+            return tuple(
+                (p.name, p.kind, p.default)
+                for p in inspect.signature(function).parameters.values()
+            )
+
+        try:
+            update_contract = contract(ssm_attn)[:-1]
+            update_contract = (
+                ("hidden_states", *update_contract[0][1:]),
+            ) + update_contract[1:]
+            supported = (
+                version("mlx-lm") == "0.31.3"
+                and contract(ssm.ssm_attn) == contract(ssm_attn)
+                and contract(ssm.ssm_update) == update_contract
+                and contract(nemotron_h.NemotronHMamba2Mixer._ssm)
+                == contract(_mixer_ssm)
+            )
+        except (AttributeError, TypeError, ValueError, PackageNotFoundError):
+            supported = False
+        if not supported:
+            _LOGGER.warning(
+                "Skipping Nemotron-H padding shim: unsupported mlx-lm version or "
+                "SSM calling convention; no runtime functions were changed"
+            )
+            return
+        # Install both only after validation. Loader callers share this lock;
+        # the shared recurrence is compatible with the original mixer too.
         ssm.ssm_attn = ssm_attn
         nemotron_h.NemotronHMamba2Mixer._ssm = _mixer_ssm

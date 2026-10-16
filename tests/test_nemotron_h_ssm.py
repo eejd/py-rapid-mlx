@@ -10,7 +10,12 @@ pytest.importorskip("mlx.core")
 pytestmark = pytest.mark.requires_mlx
 
 import mlx.core as mx
-from mlx_lm.models import nemotron_h, ssm
+
+from rapid_mlx import _mlx_compat
+
+_mlx_compat.install()
+
+from mlx_lm.models import nemotron_h, ssm  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -280,3 +285,136 @@ def test_install_without_mlx_lm(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", no_models)
     patch.install_nemotron_h_ssm_fix()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "version",
+        "attention",
+        "update",
+        "mixer",
+        "opaque",
+        "metadata",
+        "removed_attention",
+        "removed_update",
+        "removed_method",
+        "removed_class",
+    ],
+)
+def test_install_skips_unknown_runtime(monkeypatch, caplog, change):
+    # Recover the real upstream definitions without mutating live modules.
+    import types
+    from pathlib import Path
+
+    from rapid_mlx.patches import nemotron_h_ssm as patch
+
+    def upstream(module):
+        clean = types.ModuleType(module.__name__)
+        clean.__package__ = module.__package__
+        exec(
+            compile(Path(module.__file__).read_text(), module.__file__, "exec"),
+            clean.__dict__,
+        )
+        return clean
+
+    clean_ssm, clean_model = upstream(ssm), upstream(nemotron_h)
+    monkeypatch.setattr(ssm, "ssm_attn", clean_ssm.ssm_attn)
+    monkeypatch.setattr(
+        nemotron_h.NemotronHMamba2Mixer, "_ssm", clean_model.NemotronHMamba2Mixer._ssm
+    )
+    if change == "version":
+        monkeypatch.setattr(patch, "version", lambda _: "0.32.0")
+    elif change.startswith("removed_"):
+        target, attr = {
+            "removed_attention": (ssm, "ssm_attn"),
+            "removed_update": (ssm, "ssm_update"),
+            "removed_method": (nemotron_h.NemotronHMamba2Mixer, "_ssm"),
+            "removed_class": (nemotron_h, "NemotronHMamba2Mixer"),
+        }[change]
+        monkeypatch.delattr(target, attr)
+    elif change == "metadata":
+
+        def missing(_):
+            raise patch.PackageNotFoundError("mlx-lm")
+
+        monkeypatch.setattr(patch, "version", missing)
+    else:
+
+        def incompatible(unknown):
+            raise AssertionError("must not execute")
+
+        if change == "opaque":
+            incompatible.__signature__ = "not inspectable"
+        target, attr = {
+            "attention": (ssm, "ssm_attn"),
+            "opaque": (ssm, "ssm_attn"),
+            "update": (ssm, "ssm_update"),
+            "mixer": (nemotron_h.NemotronHMamba2Mixer, "_ssm"),
+        }[change]
+        monkeypatch.setattr(target, attr, incompatible)
+
+    def snapshot():
+        mixer = getattr(nemotron_h, "NemotronHMamba2Mixer", None)
+        return (
+            getattr(ssm, "ssm_attn", None),
+            getattr(ssm, "ssm_update", None),
+            mixer,
+            getattr(mixer, "_ssm", None),
+        )
+
+    before = snapshot()
+    patch.install_nemotron_h_ssm_fix()
+    assert before == snapshot()
+    assert "Skipping Nemotron-H padding shim" in caplog.text
+
+
+@pytest.mark.parametrize("adapter", [False, True])
+def test_checked_loader_padding_path(tmp_path, monkeypatch, adapter):
+    import json
+
+    from mlx_lm.utils import load_model, save_model
+
+    from rapid_mlx.model_load_errors import load_model_checked
+    from rapid_mlx.models import nemotron_h_puzzle as puzzle
+    from rapid_mlx.models import nemotron_h_super as super_h
+    from rapid_mlx.patches import nemotron_h_ssm as patch
+
+    args = dict(vars(tiny_model().args))
+    args.update(layers_block_type=["mamba", "attention"], rapid_mlx_nemotron_h=adapter)
+    model = (
+        super_h.Model(super_h.ModelArgs.from_dict(args)) if adapter else tiny_model()
+    )
+    save_model(tmp_path, model)
+    (tmp_path / "config.json").write_text(json.dumps(args))
+    model, _ = load_model_checked(load_model, tmp_path)
+    mixer = model.layers[0].mixer
+    # The opt-in adapter already owns a corrected recurrence. Never replace it.
+    assert type(mixer)._ssm is (
+        puzzle.NemotronHMamba2Mixer._ssm if adapter else patch._mixer_ssm
+    )
+    calls = []
+    original = puzzle.ssm_attn if adapter else patch.ssm_attn
+
+    def recorded(*args, **kwargs):
+        calls.append(kwargs.get("lengths"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(puzzle if adapter else patch, "ssm_attn", recorded)
+    generate = importlib.import_module("mlx_lm.generate")
+    batch = generate.PromptProcessingBatch(
+        model=model,
+        uids=[0, 1],
+        caches=[model.make_cache(), model.make_cache()],
+        prefill_step_size=256,
+    )
+    prompts = [[1, 2, 3], [4] * 300]
+    batch.prompt(prompts)
+    assert any(lengths is not None for lengths in calls)
+    for row, prompt in enumerate(prompts):
+        cache = model.make_cache()
+        mx.eval(model(mx.array([prompt]), cache=cache))
+        assert_close(
+            model(mx.array([[6]]), cache=batch.extract_cache(row)),
+            model(mx.array([[6]]), cache=cache),
+        )
