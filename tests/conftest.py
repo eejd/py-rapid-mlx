@@ -56,19 +56,26 @@ def _isolate_admission_context():
     Avoid importing the MLX engine in the pure-Python test lane.
     """
     engine_module = sys.modules.get("rapid_mlx.engine.batched")
-    if engine_module is None:
-        yield
-        return
-    contexts = (
-        engine_module._admission_engine_context,
-        engine_module._admission_token_context,
-    )
-    tokens = [context.set(None) for context in contexts]
+    tokens = []
+    if engine_module is not None:
+        tokens = [
+            (context, context.set(None))
+            for context in (
+                engine_module._admission_engine_context,
+                engine_module._admission_token_context,
+            )
+        ]
     try:
         yield
     finally:
-        for context, token in zip(contexts, tokens):
+        for context, token in tokens:
             context.reset(token)
+        # The engine may have been imported for the first time by this test;
+        # then there was no prior value to restore, so clear it explicitly.
+        engine_module = sys.modules.get("rapid_mlx.engine.batched")
+        if engine_module is not None and not tokens:
+            engine_module._admission_engine_context.set(None)
+            engine_module._admission_token_context.set(None)
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +113,19 @@ def _forbid_uninjected_posthog_default_post():
     posthog_sender.default_post = forbidden
     yield
     _assert_no_uninjected_posthog_posts(calls)
+
+
+def _reset_server_telemetry_latches() -> None:
+    """Return the server's one-shot lifecycle telemetry latches to idle."""
+    server_module = sys.modules.get("rapid_mlx.server")
+    if server_module is None:
+        return
+    for name in (
+        "_telemetry_model_served_state",
+        "_telemetry_audio_model_served_state",
+        "_telemetry_embedding_model_served_state",
+    ):
+        setattr(server_module, name, "idle")
 
 
 @pytest.fixture(autouse=True)
@@ -146,16 +166,12 @@ def _isolate_v2_telemetry_process_state(monkeypatch, tmp_path):
     consent_runtime._reset_runtime_state_for_tests()
     # Server lane latches are process singletons too: a pending/emitted model
     # event from one test must not suppress the next test's lifecycle event.
-    server_module = sys.modules.get("rapid_mlx.server")
-    if server_module is not None:
-        for name in (
-            "_telemetry_model_served_state",
-            "_telemetry_audio_model_served_state",
-            "_telemetry_embedding_model_served_state",
-        ):
-            monkeypatch.setattr(server_module, name, "idle")
+    _reset_server_telemetry_latches()
     monkeypatch.setattr(posthog_sender, "install_atexit", lambda: None)
     yield
+    # Reset explicitly (not via monkeypatch restore) so a latch set by this
+    # test — even when it first imported the server — never outlives it.
+    _reset_server_telemetry_latches()
     posthog_sender._reset_for_tests()
     track._reset_for_tests()
     model_events._reset_for_tests()
