@@ -119,9 +119,32 @@ def _stop(process: subprocess.Popen) -> None:
 
 def _local_port(base_url: str) -> int | None:
     url = urlsplit(base_url)
-    if url.scheme != "http" or url.hostname not in {"localhost", "127.0.0.1"}:
+    if (
+        url.scheme != "http"
+        or url.hostname not in {"localhost", "127.0.0.1"}
+        or url.username is not None
+        or url.password is not None
+        or url.path.rstrip("/") not in {"", "/v1"}
+    ):
         return None
     return url.port or 80
+
+
+def _private_directory(path: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError("Goose workspace contains a symlink")
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise RuntimeError("Goose workspace is not a directory")
+
+
+def _write_owned(path: Path, content: str) -> None:
+    if path.is_symlink():
+        raise RuntimeError("Goose workspace contains a symlink")
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        pending = Path(stream.name)
+        stream.write(content)
+    pending.replace(path)
 
 
 def run(args, base_url: str, model: str, *, max_tokens_explicit: bool) -> bool:
@@ -144,10 +167,8 @@ def run(args, base_url: str, model: str, *, max_tokens_explicit: bool) -> bool:
     root = (
         _cache_root() / "workspaces" / hashlib.sha256(os.getcwd().encode()).hexdigest()
     )
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    (root / "config" / "custom_providers").mkdir(
-        mode=0o700, parents=True, exist_ok=True
-    )
+    for directory in (root, root / "config", root / "config" / "custom_providers"):
+        _private_directory(directory)
     # Goose's saved native grants must not silently override approve mode.
     permission = root / "config" / "permission.yaml"
     permission.unlink(missing_ok=True)
@@ -166,8 +187,9 @@ def run(args, base_url: str, model: str, *, max_tokens_explicit: bool) -> bool:
         "requires_auth": True,
         "dynamic_models": False,
     }
-    (root / "config" / "custom_providers" / "custom_rapid_local.json").write_text(
-        json.dumps(provider)
+    _write_owned(
+        root / "config" / "custom_providers" / "custom_rapid_local.json",
+        json.dumps(provider),
     )
     contract = {
         "system_prompt": args.system or "",
@@ -180,8 +202,10 @@ def run(args, base_url: str, model: str, *, max_tokens_explicit: bool) -> bool:
         "repetition_penalty": 1.0,
         "enable_thinking": args.think,
     }
-    (root / "chat-contract.json").write_text(json.dumps(contract))
+    _write_owned(root / "chat-contract.json", json.dumps(contract))
     shell = root / "bash"
+    if shell.is_symlink():
+        raise RuntimeError("Goose workspace contains a symlink")
     if not shell.exists() or _sha256(shell) != _sha256(ASSETS / "helper_watchdog.py"):
         shutil.copyfile(ASSETS / "helper_watchdog.py", shell)
         shell.chmod(0o700)

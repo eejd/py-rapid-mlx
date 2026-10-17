@@ -12580,10 +12580,15 @@ def chat_command(args):
 
     from rapid_mlx.chat_goose import run as run_goose_chat
 
-    if run_goose_chat(
-        args, base_url, getattr(args, "_original_alias", args.model),
-        max_tokens_explicit=user_passed_max_tokens,
-    ):
+    try:
+        goose_handled = run_goose_chat(
+            args, base_url, getattr(args, "_original_alias", args.model),
+            max_tokens_explicit=user_passed_max_tokens,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"  Goose unavailable ({exc}); using built-in chat.", file=sys.stderr)
+        goose_handled = False
+    if goose_handled:
         return
 
     print(
