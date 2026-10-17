@@ -237,10 +237,13 @@ class NemotronToolParser(ToolParser):
         return wrappers > 0
 
     @staticmethod
-    def _is_wrapped(text: str, start: int) -> bool:
-        return text.rfind("<tool_call>", 0, start) > text.rfind(
-            "</tool_call>", 0, start
-        )
+    def _is_wrapped(
+        text: str, start: int, previous_end: int = 0, wrapped: bool = False
+    ) -> bool:
+        """Update wrapper state only from text outside completed payloads."""
+        opener = text.rfind("<tool_call>", previous_end, start)
+        closer = text.rfind("</tool_call>", previous_end, start)
+        return opener > closer if max(opener, closer) >= 0 else wrapped
 
     @classmethod
     def _function_spans(cls, text: str, valid_names=None):
@@ -249,10 +252,13 @@ class NemotronToolParser(ToolParser):
             text, r"<function=([^>]+)>", "</function>", valid_names=valid_names
         )
         bounded = []
+        previous_end = 0
+        wrapped = False
         for name, body, start, end in calls:
+            wrapped = cls._is_wrapped(text, start, previous_end, wrapped)
             body_start = text.index(">", start) + 1
             close = None
-            if cls._is_wrapped(text, start):
+            if wrapped:
                 consumed, _ = cls._wrapped_tail_boundary(text[body_start:])
                 if consumed and re.search(
                     r"</parameter>\s*</function>$", text[body_start + consumed : end]
@@ -285,6 +291,7 @@ class NemotronToolParser(ToolParser):
             if close is not None:
                 body, end = text[body_start:close], close + len("</function>")
             bounded.append((name, body, start, end))
+            previous_end = end
         return bounded
 
     def _undeclared_spans(self, text, request, accepted):
@@ -787,8 +794,14 @@ class NemotronToolParser(ToolParser):
                 spans = self._function_spans(
                     current_text, valid_names=_declared_tool_names(request)
                 )
-                _, _, start, end = spans[-1]
-                self._post_call_wrapped = self._is_wrapped(current_text, start)
+                previous_end = 0
+                wrapped = False
+                for _, _, start, end in spans:
+                    wrapped = self._is_wrapped(
+                        current_text, start, previous_end, wrapped
+                    )
+                    previous_end = end
+                self._post_call_wrapped = wrapped
                 if self._post_call_wrapped:
                     wrapper = re.match(r"\s*</tool_call>", current_text[end:])
                     if wrapper:

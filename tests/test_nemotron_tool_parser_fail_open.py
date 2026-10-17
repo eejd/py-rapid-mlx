@@ -901,3 +901,54 @@ def test_complete_call_emits_before_possible_continuation_resolves(parser):
     assert len(delta["tool_calls"]) == 1
     assert not delta.get("content")
     assert parser.flush_held_content(text) == " held prose </function>"
+
+
+@pytest.mark.parametrize("mode", ["buffered", "whole", "split_calls", "bytewise"])
+@pytest.mark.parametrize("body_format", ["parameters", "json"])
+def test_earlier_payload_wrapper_opener_does_not_wrap_later_bare_call(
+    mode, body_format
+):
+    value = "literal <tool_call> inside"
+    first_body = (
+        f"<parameter=a>{value}</parameter>"
+        if body_format == "parameters"
+        else json.dumps({"a": value})
+    )
+    first = f"<function=f>{first_body}</function>"
+    second = "<function=f><parameter=a>second</parameter></function>"
+    tail = " Explain </function></tool_call> literally."
+    text = first + second + tail
+    expected = [{"a": value}, {"a": "second"}]
+    if mode == "buffered":
+        result = NemotronToolParser().extract_tool_calls(text)
+        assert [json.loads(call["arguments"]) for call in result.tool_calls] == expected
+        assert result.content == tail.strip()
+    else:
+        chunks = (
+            [text]
+            if mode == "whole"
+            else [first, second, tail]
+            if mode == "split_calls"
+            else list(text)
+        )
+        calls, content = _capture_stream(chunks)
+        assert calls == expected
+        assert content == tail
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_bare_malformed_json_body_preserves_raw_arguments(streamed):
+    function = "<function=f>{broken</function>"
+    tail = " Done."
+    parser = NemotronToolParser()
+    if streamed:
+        deltas = _stream(parser, [function, tail])
+        calls = [call for d in deltas if d for call in d.get("tool_calls", [])]
+        assert len(calls) == 1
+        assert calls[0]["function"]["arguments"] == "{broken"
+        assert "".join(d.get("content", "") for d in deltas if d) == tail
+        assert not parser.flush_held_content(function + tail)
+    else:
+        result = parser.extract_tool_calls(function + tail)
+        assert _only_call(result)["arguments"] == "{broken"
+        assert result.content == tail.strip()
