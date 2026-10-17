@@ -179,6 +179,33 @@ def test_markdown_boundary(text, content, calls, size):
     assert got_content == content
 
 
+@pytest.mark.parametrize("size", [None, 1, 2, 3, 5, 7, 13, 0])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "```lang`bad\nordinary\n",
+        f"~~~lang`ok\n{CALL}\n~~~\n",
+    ],
+    ids=["backtick-in-backtick-info", "backtick-in-tilde-info"],
+)
+def test_fence_info_backtick_rules(prefix, size):
+    real_call = CALL.replace("Paris", "Rome")
+    text = prefix + real_call
+    got_calls, got_content = (
+        non_stream(text, REQUEST) if size is None else stream(text, REQUEST, size)
+    )
+    assert got_calls == [("get_weather", '{"city": "Rome"}')]
+    assert got_content == prefix
+
+
+def test_cross_format_fence_mask_uses_backtick_info_rule():
+    mask = Qwen3CoderToolParser.mask_markdown_fenced_regions
+    invalid = "```lang`bad\n[Calling tool: get_weather({})]\n"
+    tilde = "~~~lang`ok\n[Calling tool: get_weather({})]\n~~~\n"
+    assert mask(invalid) == invalid
+    assert "[Calling tool:" not in mask(tilde)
+
+
 def test_service_does_not_reextract_example(monkeypatch):
     class Request:
         tools = REQUEST["tools"]

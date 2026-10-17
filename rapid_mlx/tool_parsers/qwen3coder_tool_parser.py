@@ -102,6 +102,7 @@ class _MarkdownCodeTracker:
         self._fence_line_marker: str | None = None
         self._fence_line_run = 0
         self._fence_line_tail_nonspace = False
+        self._fence_line_tail_backtick = False
 
     def inside(self, text: str, pos: int, *, buffered: bool = False) -> bool:
         if buffered:
@@ -180,6 +181,7 @@ class _MarkdownCodeTracker:
             self._fence_line_marker = None
             self._fence_line_run = 0
             self._fence_line_tail_nonspace = False
+            self._fence_line_tail_backtick = False
             chunk = chunk[last_newline + 1 :]
         if not chunk:
             return
@@ -195,7 +197,9 @@ class _MarkdownCodeTracker:
         elif self._fence_line_phase == "tail" and not chunk.isspace():
             self._fence_line_tail_nonspace = True
 
-    def _fence_state(self) -> tuple[str | None, str, int, str | None, int, bool]:
+    def _fence_state(
+        self,
+    ) -> tuple[str | None, str, int, str | None, int, bool, bool]:
         return (
             self._fence_only,
             self._fence_line_phase,
@@ -203,10 +207,11 @@ class _MarkdownCodeTracker:
             self._fence_line_marker,
             self._fence_line_run,
             self._fence_line_tail_nonspace,
+            self._fence_line_tail_backtick,
         )
 
     def _restore_fence_state(
-        self, state: tuple[str | None, str, int, str | None, int, bool]
+        self, state: tuple[str | None, str, int, str | None, int, bool, bool]
     ) -> None:
         (
             self._fence_only,
@@ -215,6 +220,7 @@ class _MarkdownCodeTracker:
             self._fence_line_marker,
             self._fence_line_run,
             self._fence_line_tail_nonspace,
+            self._fence_line_tail_backtick,
         ) = state
 
     def _feed_fence(self, chunk: str) -> None:
@@ -237,14 +243,17 @@ class _MarkdownCodeTracker:
                 else:
                     self._fence_line_phase = "tail"
                     self._fence_line_tail_nonspace = not char.isspace()
+                    self._fence_line_tail_backtick = char == "`"
             elif self._fence_line_phase == "tail" and not char.isspace():
                 self._fence_line_tail_nonspace = True
+                self._fence_line_tail_backtick |= char == "`"
 
     def _finish_fence_line(self) -> None:
         marker = self._fence_line_marker
         if marker is not None and self._fence_line_run >= 3:
             if self._fence_only is None:
-                self._fence_only = marker * self._fence_line_run
+                if not (marker == "`" and self._fence_line_tail_backtick):
+                    self._fence_only = marker * self._fence_line_run
             elif (
                 marker == self._fence_only[0]
                 and self._fence_line_run >= len(self._fence_only)
@@ -256,6 +265,7 @@ class _MarkdownCodeTracker:
         self._fence_line_marker = None
         self._fence_line_run = 0
         self._fence_line_tail_nonspace = False
+        self._fence_line_tail_backtick = False
 
     def _inside_buffered(self, text: str, pos: int) -> bool:
         """One linear query; retain multiline inline spans without changing streams."""
@@ -354,7 +364,10 @@ class _MarkdownCodeTracker:
 
     def _fence_result(self) -> bool:
         """Fence state at the current cursor without scanning inline spans."""
-        return self._fence_only is not None or self._fence_line_run >= 3
+        pending_opener = self._fence_line_run >= 3 and not (
+            self._fence_line_marker == "`" and self._fence_line_tail_backtick
+        )
+        return self._fence_only is not None or pending_opener
 
 
 def _mask_markdown_fences(text: str) -> str:
@@ -1798,7 +1811,30 @@ class Qwen3CoderToolParser(ToolParser):
     @staticmethod
     def mask_markdown_fenced_regions(text: str) -> str:
         """Mask fenced examples before cross-format recovery."""
-        return _mask_markdown_fences(text)
+        masked: list[str] = []
+        fence: str | None = None
+        for line in text.splitlines(keepends=True):
+            match = _MARKDOWN_FENCE_RE.match(line)
+            in_fence = fence is not None
+            if fence is None and match:
+                marker = match.group(1)
+                info = line[match.end() :]
+                if marker[0] == "~" or "`" not in info:
+                    fence = marker
+                    in_fence = True
+            elif (
+                fence is not None
+                and match
+                and match.group(1)[0] == fence[0]
+                and len(match.group(1)) >= len(fence)
+                and not line[match.end() :].strip()
+            ):
+                fence = None
+            if in_fence:
+                masked.append("".join(char if char in "\r\n" else " " for char in line))
+            else:
+                masked.append(line)
+        return "".join(masked)
 
     def extract_tool_calls_streaming(
         self,
