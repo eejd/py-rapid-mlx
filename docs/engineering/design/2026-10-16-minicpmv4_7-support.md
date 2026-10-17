@@ -7,6 +7,9 @@ Aliases are `minicpm-v4.7-1b-8bit` and `minicpm-v4.7-35b-a3b-mxfp4`.
 Both remain experimental after real-checkpoint verification. Speculative
 decoding remains disabled; bundled MTP weights are not used. MTP, DSpark and
 expert lookahead scheduling are outside this change.
+Media input support in PR #4745 is limited to images. Video input through
+`/v1/chat/completions` is not yet supported or verified end to end for either
+alias and is tracked as a follow-up outside this PR.
 
 The architecture package is copied from upstream commit
 `b8bf04c6dd7f3bd3a2a5033bbfecef6375c3bfb0`, including the vision dtype
@@ -66,8 +69,9 @@ as `mlx_vlm.models.minicpmv4_7` through `sys.modules` and the parent module,
 reusing the existing architecture binding seam. Package import installs the
 composable AutoProcessor hook. The pinned image-message registry receives
 upstream's `LIST_WITH_IMAGE_FIRST` entry. Native serving renders ordered
-media parts directly through the checkpoint template; the existing MLLM
-video-frame processing policy is unchanged.
+image content directly through the checkpoint template. Existing MLLM
+video-frame processing does not establish end-to-end video support for these
+aliases.
 
 BYOM includes the type both with and without an installed vision extra.
 The API name detector recognizes MiniCPM-V, and local metadata classifies
@@ -107,11 +111,14 @@ requested modules skip. The host's MLX import independently fails with
 The new runtime test file is in the CI Apple list. It covers real-config
 parsing, nested reparsing, loader binding, tiny dense/MoE image forwards,
 cached features, both downsampling modes, decode, quantized-text dtype,
-local processor loading, synthetic video preprocessing with placeholder/grid
-consistency in both modes, chat templates, MTP filtering, and strict synthetic
-weight round trips. Metal and real-checkpoint verification are recorded below.
-Video requests, cancellation and relaunch remain outside the completed
-checkpoint checks; Vector owns that follow-up. Both aliases remain
+local processor loading, processor-level synthetic video preprocessing with
+placeholder/grid consistency in both modes, chat templates, MTP filtering,
+and strict synthetic weight round trips. Metal and real-checkpoint verification
+are recorded below.
+The video unit test covers processor preprocessing only, not serving through
+`/v1/chat/completions`. End-to-end video support is outside PR #4745;
+cancellation and relaunch also remain outside the completed checkpoint checks.
+Vector owns these follow-ups. Both aliases remain
 experimental. No performance claims are made here.
 
 Post-review provenance/BYOM rerun: **120 passed, 2 skipped**:
@@ -158,6 +165,19 @@ Both aliases produced the following results:
   `finish_reason=tool_calls`.
 - Default chat was non-thinking, with empty reasoning.
 
+Live video requests through `/v1/chat/completions` did not succeed end to end:
+
+- `{type: video_url}` returned HTTP 400 with
+  `Chat template error: Unexpected item type in content` from the prompt-count path.
+- `{type: video, video: <local mp4>}` failed with
+  `Failed to process video: could not load or decode`.
+
+Video input is not yet supported or verified end to end for these aliases.
+It is outside PR #4745 and tracked as a follow-up owned by Vector; the next
+step is to resolve the serving failures and verify real video requests.
+The processor-level video preprocessing unit test does not establish serving
+support.
+
 Metal runtime tests plus contract tests: **17 passed**:
 
 ```sh
@@ -181,12 +201,13 @@ warning is treated as an error. Rerunning the same files with
 1 failed**. The remaining failure is
 `test_ownership_against_a_real_listener`: the sandbox denies `ps`, preventing
 the parent-process ownership walk. The README totals and mirror contracts pass.
-The synthetic video test also passed for 4x and 16x by loading the installed
-NumPy/Pillow processor source directly, bypassing Metal package initialization
+The processor-level synthetic video test also passed for 4x and 16x by loading
+the installed NumPy/Pillow processor source directly, bypassing Metal package initialization
 and stubbing only registration/template-loader hooks. This supplemental check
-includes placeholder/grid consistency and `to_dict()`/`repr()`; it does not
-replace the Apple runtime suite. Ruff check, Ruff format check, and diff
-whitespace checks pass for the touched Python files.
+includes placeholder/grid consistency and `to_dict()`/`repr()`; it verifies
+processor preprocessing only and does not establish end-to-end video serving
+support or replace the Apple runtime suite. Ruff check, Ruff format check,
+and diff whitespace checks pass for the touched Python files.
 
 Handoff: Vector owns a rerun of the five-file suite in a session with Metal and
 process-inspection access. No commit, push, package installation, or model
