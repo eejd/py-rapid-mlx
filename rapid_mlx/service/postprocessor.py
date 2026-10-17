@@ -2818,7 +2818,21 @@ class StreamingPostProcessor:
         if engine_tool_calls:
             engine_tool_calls = self._filter_declared_calls(engine_tool_calls)
             engine_tool_calls = self._apply_forced_tool_choice_filter(engine_tool_calls)
-        if output.channel == "tool_call" and engine_tool_calls:
+        if (
+            engine_tool_calls
+            and not self._suppress_tool_calls
+            and output.channel != "reasoning"
+        ):
+            # A content channel may carry narration alongside structured
+            # calls. Emit it before any early return, including cap rejection.
+            structured_events = []
+            if output.channel not in ("tool_call", "reasoning") and delta_text:
+                narration = sanitize_output(strip_special_tokens(delta_text))
+                if narration:
+                    self.accumulated_text += narration
+                    structured_events.append(
+                        StreamEvent(type="content", content=narration)
+                    )
             # ``parallel_tool_calls=false`` is a hard external contract:
             # the non-streaming path caps the parsed list at one
             # (routes/chat.py); the streaming path must do the same or
@@ -2868,14 +2882,14 @@ class StreamingPostProcessor:
                 # recovers a call via the cross-format fallback.
                 self.tool_calls_detected = True
                 if output.finished:
-                    return [
+                    return structured_events + [
                         StreamEvent(
                             type="finish",
                             finish_reason=self._compute_finish_reason(output),
                             tool_calls_detected=True,
                         )
                     ]
-                return []
+                return structured_events
             # Monotonic indices across the whole response so clients
             # can disambiguate calls that arrive in separate router
             # chunks. ``OpenAI`` clients merge ``tool_calls`` deltas
@@ -2901,7 +2915,7 @@ class StreamingPostProcessor:
             # ``delta.tool_calls`` SSE chunk on the wire, so the invariant
             # "finish_reason=tool_calls ⇒ ≥1 tool_call delta sent" holds.
             self._tool_calls_emitted_to_wire += len(structured)
-            return [
+            return structured_events + [
                 StreamEvent(
                     type="tool_call",
                     tool_calls=structured,

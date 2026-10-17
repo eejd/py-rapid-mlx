@@ -264,6 +264,80 @@ def test_channel_undeclared_finish():
     assert events[-1].finish_reason == "stop"
 
 
+@pytest.mark.parametrize("finished", [False, True])
+@pytest.mark.parametrize("name", ["write_file", "send_email"])
+@pytest.mark.parametrize("channel", ["content", "tool_call"])
+def test_channel_structured_call_preserves_narration(channel, name, finished):
+    pp = processor()
+    text = "I will write the file." if channel == "content" else '{"path":"x"}'
+    events = pp.process_chunk(
+        _make_output(
+            text,
+            channel=channel,
+            tool_calls=[{"name": name, "arguments": '{"path":"x"}'}],
+            finished=finished,
+            finish_reason="tool_calls" if finished else None,
+        )
+    )
+    assert "".join(e.content or "" for e in events) == (
+        text if channel == "content" else ""
+    )
+    calls = [call for e in events for call in (e.tool_calls or [])]
+    assert [call["function"] for call in calls] == (
+        [{"name": "write_file", "arguments": '{"path":"x"}'}]
+        if name == "write_file"
+        else []
+    )
+    if channel == "content" and calls:
+        assert [e.type for e in events] == ["content", "tool_call"]
+        assert pp.accumulated_text == text
+    if finished:
+        assert events[-1].finish_reason == (
+            "tool_calls" if name == "write_file" else "stop"
+        )
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_channel_structured_none_preserves_narration(finished):
+    pp = StreamingPostProcessor(
+        _make_cfg(enable_auto_tool_choice=True, tool_call_parser="hermes"),
+        request={"tools": TOOLS, "tool_choice": "none"},
+    )
+    events = pp.process_chunk(
+        _make_output(
+            "Narration.",
+            channel="content",
+            tool_calls=[{"name": "write_file", "arguments": "{}"}],
+            finished=finished,
+            finish_reason="tool_calls" if finished else None,
+        )
+    )
+    assert "".join(e.content or "" for e in events) == "Narration."
+    assert not any(e.tool_calls for e in events)
+    if finished:
+        assert events[-1].finish_reason == "stop"
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_channel_structured_cap_preserves_narration(finished):
+    pp = StreamingPostProcessor(
+        _make_cfg(enable_auto_tool_choice=True, tool_call_parser="hermes"),
+        request={"tools": TOOLS, "parallel_tool_calls": False},
+    )
+    call = {"name": "write_file", "arguments": "{}"}
+    pp.process_chunk(_make_output(channel="tool_call", tool_calls=[call]))
+    events = pp.process_chunk(
+        _make_output(
+            "More narration.",
+            channel="content",
+            tool_calls=[call],
+            finished=finished,
+        )
+    )
+    assert "".join(e.content or "" for e in events) == "More narration."
+    assert not any(e.tool_calls for e in events)
+
+
 @pytest.mark.parametrize("mode", ["extract", "fallback", "raw", "reported"])
 def test_finalize_authorizes_every_recovery(mode):
     pp = processor()
