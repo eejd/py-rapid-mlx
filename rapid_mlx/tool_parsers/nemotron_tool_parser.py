@@ -136,14 +136,16 @@ class NemotronToolParser(ToolParser):
         upto = getattr(self, "_opener_scan_upto", 0)
         if upto and len(prefix) == upto:
             return self._opener_scan_result
-        if upto and len(prefix) >= upto and not self._opener_scan_result:
-            # Once all markup is closed, only a new opener can change that.
-            # Include bounded lookbehind for openers split across watermarks;
-            # narration (even literal closers) never rescans the whole prefix.
-            added = prefix[max(0, upto - len("<tool_call>")) :]
-            if "<function=" not in added and "<tool_call>" not in added:
+        if upto and len(prefix) >= upto:
+            # Narration cannot change opener state, even with a wrapper still
+            # open. Include bounded lookbehind for tags split at watermarks.
+            markers = ("<function=", "<tool_call>")
+            if self._opener_scan_result:
+                markers += ("</function>", "</tool_call>")
+            added = prefix[max(0, upto - max(map(len, markers))) :]
+            if not any(marker in added for marker in markers):
                 self._opener_scan_upto = len(prefix)
-                return False
+                return self._opener_scan_result
         result = self._scan_unmatched_opener(prefix)
         self._opener_scan_upto = len(prefix)
         self._opener_scan_result = result
@@ -393,8 +395,7 @@ class NemotronToolParser(ToolParser):
                     candidates.append(len(text) - prefix_len)
         return min(candidates) if candidates else None
 
-    @staticmethod
-    def _safe_accounting_boundary(text: str) -> int:
+    def _safe_accounting_boundary(self, text: str) -> int:
         """Return the raw offset safe to account after a close event.
 
         Plain trailing text is safe through the end. If another markup opener
@@ -413,11 +414,9 @@ class NemotronToolParser(ToolParser):
         # of narration. Hold it until the next byte resolves that ambiguity.
         if tail.isspace() and text.rfind("<tool_call>") > text.rfind("</tool_call>"):
             return latest_close
-        pending = NemotronToolParser._pending_markup_index(
+        pending = self._pending_markup_index(
             tail,
-            include_closers=NemotronToolParser._scan_unmatched_opener(
-                text[:latest_close]
-            ),
+            include_closers=self._has_unmatched_opener(text[:latest_close]),
         )
         if pending is not None and tail[:pending].isspace():
             return latest_close
@@ -567,8 +566,12 @@ class NemotronToolParser(ToolParser):
         return text.count("</function>") + text.count("</tool_call>")
 
     @staticmethod
-    def _clean_trailing_content(current_text: str) -> str | None:
+    def _clean_trailing_content(
+        current_text: str, *, include_closers: bool
+    ) -> str | None:
         """The plain-content tail of ``current_text``, or ``None`` if none.
+
+        The caller supplies cached opener state on the no-new-close path.
 
         "Tail" = everything after the last COMPLETE tool-call close tag
         (``</function>`` / ``</tool_call>``). It is content-safe only if it
@@ -598,9 +601,7 @@ class NemotronToolParser(ToolParser):
             return None
         pending = NemotronToolParser._pending_markup_index(
             tail,
-            include_closers=NemotronToolParser._scan_unmatched_opener(
-                current_text[:end]
-            ),
+            include_closers=include_closers,
         )
         return None if pending is not None else tail
 
@@ -637,11 +638,14 @@ class NemotronToolParser(ToolParser):
             return {"content": content} if content else None
 
         held = current_text[self._content_upto :]
+        unmatched_opener = bool(self._content_upto) and self._has_unmatched_opener(
+            current_text[: self._content_upto]
+        )
         if (
             self._content_upto
             and "<function=" not in held
             and "<tool_call>" not in held
-            and not self._has_unmatched_opener(current_text[: self._content_upto])
+            and not unmatched_opener
         ):
             # A literal closer after an accounted call cannot finish that call
             # again. Do not reparse its payload or strip prose as wrapper tags.
@@ -757,7 +761,10 @@ class NemotronToolParser(ToolParser):
         # Emit only the source range after the watermark, so already-streamed
         # trailing content is not re-sent while previously withheld partial
         # opener bytes can be recovered when they become ordinary prose.
-        if self._clean_trailing_content(current_text) is not None:
+        if (
+            self._clean_trailing_content(current_text, include_closers=unmatched_opener)
+            is not None
+        ):
             # Release the whole unaccounted visible range, not only this delta.
             # A prior suffix such as ``<fun`` may have been withheld while it
             # could still become ``<function=``; once a later byte turns it

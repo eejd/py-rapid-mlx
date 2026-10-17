@@ -1137,7 +1137,7 @@ def test_channel_complete_router_calls_filter_before_assigning_wire_indices(
 def test_nemotron_incomplete_call_has_no_safe_accounting_boundary(text):
     from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
 
-    assert NemotronToolParser._safe_accounting_boundary(text) == 0
+    assert NemotronToolParser()._safe_accounting_boundary(text) == 0
 
 
 def test_rejected_channel_call_preserves_held_reasoning_on_finalize():

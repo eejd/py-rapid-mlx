@@ -616,3 +616,42 @@ def test_wrapped_payload_literal_closers_main_parity(mode, body_format, value):
         assert arguments == value
     else:
         assert json.loads(arguments) == {"city": value}
+
+
+@pytest.mark.parametrize("size", [4096, 8192])
+def test_streaming_large_payload_and_pending_wrapper_tail_scan_work(
+    parser, monkeypatch, size
+):
+    value = "x" * size
+    tail = " ordinary prose " * (size // 16)
+    text = (
+        "<tool_call><function=get_weather><parameter=city>"
+        + value
+        + "</parameter></function>"
+        + tail
+        + "</tool_call>"
+    )
+    scans = 0
+    scanned_bytes = 0
+    scan = NemotronToolParser._scan_unmatched_opener
+
+    def counted_scan(prefix):
+        nonlocal scans, scanned_bytes
+        scans += 1
+        scanned_bytes += len(prefix)
+        return scan(prefix)
+
+    # Patch the class so direct class-level calls cannot bypass the counter.
+    monkeypatch.setattr(
+        NemotronToolParser, "_scan_unmatched_opener", staticmethod(counted_scan)
+    )
+    deltas = _stream(parser, text, request=_DECLARED_WEATHER)
+    content = "".join(d.get("content", "") for d in deltas if d)
+    content += parser.flush_held_content(text)
+    calls = [call for d in deltas if d for call in d.get("tool_calls", [])]
+    assert content == tail
+    assert len(calls) == 1
+    assert json.loads(calls[0]["function"]["arguments"]) == {"city": value}
+    # Bytewise delivery must not rescan the completed payload per prose byte.
+    assert scans <= 32, (scans, scanned_bytes)
+    assert scanned_bytes <= 16 * len(text), (scans, scanned_bytes)
