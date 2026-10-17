@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from scripts.classify_ci_changes import _DESKTOP_PREFIX
+from tests.test_ci_linux_runner_contract import RUNNER_EXPRESSION
 
 ROOT = Path(__file__).resolve().parent.parent
 ENGINE_WORKFLOW = ROOT / ".github/workflows/ci.yml"
@@ -224,8 +225,9 @@ def test_merge_lane_checks_partition_all_classifier_states():
 
     assert no_mac["needs"] == "changes"
     assert mac["needs"] == "changes"
-    assert no_mac["runs-on"] == "ubuntu-latest"
-    assert mac["runs-on"] == "ubuntu-latest"
+    expected_runner = RUNNER_EXPRESSION
+    assert no_mac["runs-on"] == expected_runner
+    assert mac["runs-on"] == expected_runner
 
     no_mac_condition = str(no_mac["if"])
     assert "needs.changes.result == 'success'" in no_mac_condition
