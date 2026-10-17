@@ -17,6 +17,7 @@ data over the network and is not unit-testable here.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -48,14 +49,18 @@ class _FakeFetch(Step):
 class _FakeStep(Step):
     """A configurable step that returns a preset status."""
 
-    def __init__(self, name: str, status: str = "pass"):
+    def __init__(self, name: str, status: str = "pass", findings: Sequence[str] = ()):
         self.name = name
         self.description = f"fake {name}"
         self._status = status
+        self._findings = list(findings)
 
     def run(self, ctx):  # type: ignore[no-untyped-def]
         return StepResult(
-            name=self.name, status=self._status, summary=f"{self._status}"
+            name=self.name,
+            status=self._status,
+            summary=f"{self._status}",
+            findings=self._findings,
         )
 
 
@@ -76,9 +81,11 @@ def repo_root_cwd(monkeypatch, tmp_path):
     return tmp_path
 
 
-def _fake_pipeline(after_fetch: list[tuple[str, str]]) -> list[Step]:
-    """Build a [fake-fetch, ...named steps with a status...] pipeline."""
-    return [_FakeFetch(), *(_FakeStep(name, status) for name, status in after_fetch)]
+def _fake_pipeline(
+    after_fetch: list[tuple[str, str] | tuple[str, str, list[str]]],
+) -> list[Step]:
+    """Build fake steps with a status and optional findings after fetch."""
+    return [_FakeFetch(), *(_FakeStep(*spec) for spec in after_fetch)]
 
 
 @pytest.mark.parametrize(
@@ -152,7 +159,9 @@ class TestFailFast:
         monkeypatch.delenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", raising=False)
         if override is not None:
             monkeypatch.setenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", override)
-        steps = _fake_pipeline([("codex_review", "fail"), ("step_c", "pass")])
+        steps = _fake_pipeline(
+            [("codex_review", "fail", ["[BLOCKING] something"]), ("step_c", "pass")]
+        )
 
         rc = run_pipeline(pr_number=999, fail_fast=False, steps=steps)
 
@@ -170,6 +179,21 @@ class TestFailFast:
             line for line in captured.err.splitlines() if line.startswith("Verdict:")
         )
         assert verdict_line != "Verdict: MERGE-SAFE"
+
+    @pytest.mark.parametrize("findings", [[], ["[NIT] x"]])
+    def test_codex_fail_without_blocking_findings_continues(
+        self, repo_root_cwd, monkeypatch, capsys, findings
+    ):
+        monkeypatch.delenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", raising=False)
+        steps = _fake_pipeline([("codex_review", "fail", findings), ("step_c", "pass")])
+
+        rc = run_pipeline(pr_number=999, fail_fast=False, steps=steps)
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "## [step_c]" in captured.err
+        assert "step_c" in captured.out
+        assert "stopping before tests" not in captured.err
 
     @pytest.mark.parametrize("status", ["pass", "error", "skip"])
     def test_codex_non_fail_continues_by_default(
@@ -190,7 +214,9 @@ class TestFailFast:
         self, repo_root_cwd, monkeypatch, capsys
     ):
         monkeypatch.setenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", "1")
-        steps = _fake_pipeline([("codex_review", "fail"), ("step_c", "pass")])
+        steps = _fake_pipeline(
+            [("codex_review", "fail", ["[BLOCKING] something"]), ("step_c", "pass")]
+        )
 
         rc = run_pipeline(pr_number=999, fail_fast=False, steps=steps)
 
