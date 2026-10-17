@@ -927,6 +927,24 @@ def test_linear_cleanup_prose_then_real_call(client, parser):
 
 
 @pytest.mark.parametrize("parser", PARSERS)
+def test_linear_cleanup_large_json_string(client, parser):
+    from time import perf_counter
+
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    cls = ToolParserManager.get_tool_parser(parser)
+    narration = "Use <tool_call> for a call.\n" * 20000
+    raw = (
+        narration
+        + '<tool_call>{"name": "write_file", "arguments": {"content": "'
+        + "x" * 500000
+    )
+    start = perf_counter()
+    assert cls.strip_trailing_tool_envelope(raw) == narration
+    assert perf_counter() - start < 0.2
+
+
+@pytest.mark.parametrize("parser", PARSERS)
 def test_reasoning_boundary_guard_without_source(client, parser):
     from rapid_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
     from rapid_mlx.service.helpers import _strip_trailing_tool_envelope
@@ -1179,6 +1197,10 @@ def test_forced_json_cleanup_evidence_4663(raw):
         (
             '<tool_call>{"name":"get_weather"}\n<tool_call>{"name":"get_weather","arguments":',
             '<tool_call>{"name":"get_weather"}\n',
+        ),
+        (
+            '<tool_call>{"name":"first",\n<tool_call>{"name":"get_weather","arguments":',
+            '<tool_call>{"name":"first",\n',
         ),
         (
             '<tool_call>{"name":"get_weather"</tool_call>\n<tool_call>',
