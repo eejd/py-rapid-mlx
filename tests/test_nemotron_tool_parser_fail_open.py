@@ -172,13 +172,17 @@ def test_marker_present_but_unparseable_logs_and_fails_open(parser, caplog):
 # ---------------------------------------------------------------------------
 
 
-def _stream(parser, chunks):
+def _stream(parser, chunks, request=None):
     """Feed ``chunks`` incrementally; return the list of per-delta results."""
     previous = ""
     results = []
     for chunk in chunks:
         current = previous + chunk
-        results.append(parser.extract_tool_calls_streaming(previous, current, chunk))
+        results.append(
+            parser.extract_tool_calls_streaming(
+                previous, current, chunk, request=request
+            )
+        )
         previous = current
     return results
 
@@ -343,3 +347,272 @@ def test_streaming_two_sequential_calls_increment_index(parser):
     assert emitted[0]["tool_calls"][0]["function"]["name"] == "f1"
     assert emitted[1]["tool_calls"][0]["index"] == 1
     assert emitted[1]["tool_calls"][0]["function"]["name"] == "f2"
+
+
+_DECLARED_WEATHER = {
+    "tools": [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                },
+            },
+        }
+    ]
+}
+_COMPLETED_FUNCTION = (
+    "<function=get_weather><parameter=city>Paris</parameter></function>"
+)
+_COMPLETED_WRAPPER = "<tool_call>" + _COMPLETED_FUNCTION + "</tool_call>"
+
+
+@pytest.mark.parametrize("closer", ["</function>", "</tool_call>"])
+@pytest.mark.parametrize("prefix", [_COMPLETED_FUNCTION, _COMPLETED_WRAPPER])
+def test_buffered_completed_call_preserves_literal_closer(prefix, closer):
+    # chat's _parse_tool_calls_with_parser -> _run_tool_parser creates a fresh parser,
+    # calls extract_tool_calls on the full response, and returns result.content.
+    # No streaming watermark or EOF flush participates in that buffered path.
+    tail = f"Explain {closer} literally."
+    result = NemotronToolParser().extract_tool_calls(
+        prefix + " " + tail, request=_DECLARED_WEATHER
+    )
+    call = _only_call(result)
+    assert json.loads(call["arguments"]) == {"city": "Paris"}
+    assert result.content == tail
+
+
+@pytest.mark.parametrize("closer", ["</function>", "</tool_call>"])
+@pytest.mark.parametrize("json_body", [False, True])
+def test_buffered_payload_closers_and_post_call_prose_are_distinct(closer, json_body):
+    value = "literal </parameter> </function> </tool_call> inside"
+    body = (
+        json.dumps({"city": value})
+        if json_body
+        else f"<parameter=city>{value}</parameter>"
+    )
+    prefix = f"<tool_call><function=get_weather>{body}</function></tool_call>"
+    tail = f"Explain {closer} literally."
+    result = NemotronToolParser().extract_tool_calls(
+        prefix + " " + tail, request=_DECLARED_WEATHER
+    )
+    assert json.loads(_only_call(result)["arguments"]) == {"city": value}
+    assert result.content == tail
+
+
+def test_trailing_narration_does_not_rescan_accounted_prefix(parser, monkeypatch):
+    parser.extract_tool_calls_streaming(
+        "", _COMPLETED_WRAPPER, _COMPLETED_WRAPPER, request=_DECLARED_WEATHER
+    )
+    scans = 0
+    scan = parser._scan_unmatched_opener
+
+    def counted_scan(prefix):
+        nonlocal scans
+        scans += 1
+        return scan(prefix)
+
+    monkeypatch.setattr(parser, "_scan_unmatched_opener", counted_scan)
+    previous = _COMPLETED_WRAPPER
+    chunks = [" ordinary prose", " literal </function> and </tool_call>"] * 200
+    for chunk in chunks:
+        current = previous + chunk
+        delta = parser.extract_tool_calls_streaming(
+            previous, current, chunk, request=_DECLARED_WEATHER
+        )
+        assert delta == {"content": chunk}
+        previous = current
+    assert scans <= 1
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_opener_scan_cache_does_not_hide_next_turn_wrapper(parser, reset):
+    parser.extract_tool_calls_streaming(
+        "", _COMPLETED_WRAPPER, _COMPLETED_WRAPPER, request=_DECLARED_WEATHER
+    )
+    parser.flush_held_content(_COMPLETED_WRAPPER + " old narration")
+    if reset:
+        parser.reset()
+    prefix = "<tool_call>" + _COMPLETED_FUNCTION
+    first = parser.extract_tool_calls_streaming(
+        "", prefix, prefix, request=_DECLARED_WEATHER
+    )
+    assert not first.get("content")
+    assert parser.flush_held_content(prefix + "</tool") == ""
+
+
+@pytest.mark.parametrize("closer", ["</function>", "</tool_call>"])
+@pytest.mark.parametrize("prefix", [_COMPLETED_FUNCTION, _COMPLETED_WRAPPER])
+def test_completed_call_flush_preserves_literal_closer(parser, prefix, closer):
+    """EOF flush sees only buffered prose after an already-accounted call."""
+    first = parser.extract_tool_calls_streaming(
+        "", prefix, prefix, request=_DECLARED_WEATHER
+    )
+    assert len(first["tool_calls"]) == 1
+    tail = f" Explain {closer} literally."
+    assert parser.flush_held_content(prefix + tail) == tail
+    assert parser.flush_held_content(prefix + tail) == ""
+
+
+@pytest.mark.parametrize("closer", ["</function>", "</tool_call>"])
+@pytest.mark.parametrize("prefix", [_COMPLETED_FUNCTION, _COMPLETED_WRAPPER])
+def test_completed_call_stream_preserves_literal_closer_every_split(prefix, closer):
+    tail = f" Explain {closer} literally."
+    for split in range(len(tail) + 1):
+        parser = NemotronToolParser()
+        previous = ""
+        content = ""
+        calls = []
+        for chunk in [prefix, tail[:split], tail[split:]]:
+            if not chunk:
+                continue
+            current = previous + chunk
+            delta = (
+                parser.extract_tool_calls_streaming(
+                    previous, current, chunk, request=_DECLARED_WEATHER
+                )
+                or {}
+            )
+            content += delta.get("content", "")
+            calls.extend(delta.get("tool_calls", []))
+            previous = current
+        content += parser.flush_held_content(previous)
+        assert content == tail, (split, content)
+        assert len(calls) == 1
+        assert json.loads(calls[0]["function"]["arguments"]) == {"city": "Paris"}
+
+
+@pytest.mark.parametrize("split", range(len("</tool_call>") + 1))
+def test_pending_wrapper_close_stays_off_content(parser, split):
+    prefix = "<tool_call>" + _COMPLETED_FUNCTION
+    first = parser.extract_tool_calls_streaming(
+        "", prefix, prefix, request=_DECLARED_WEATHER
+    )
+    assert len(first["tool_calls"]) == 1
+    previous = prefix
+    for chunk in ["</tool_call>"[:split], "</tool_call>"[split:]]:
+        if not chunk:
+            continue
+        current = previous + chunk
+        delta = parser.extract_tool_calls_streaming(
+            previous, current, chunk, request=_DECLARED_WEATHER
+        )
+        assert not (delta or {}).get("content")
+        assert parser.flush_held_content(current) == ""
+        previous = current
+
+
+@pytest.mark.parametrize("prefix", ["<function=get_weather>", "<tool_call>"])
+@pytest.mark.parametrize("closer", ["</function>", "</tool_call>"])
+def test_unclosed_consumed_opener_keeps_closers_held(parser, prefix, closer):
+    parser._content_upto = len(prefix)
+    assert parser.flush_held_content(prefix + closer[:5]) == ""
+    assert parser.flush_held_content(prefix + closer) == ""
+
+
+@pytest.mark.parametrize("literal", ["</function>", "</tool_call>"])
+def test_payload_literal_close_does_not_close_pending_wrapper(parser, literal):
+    prefix = (
+        "<tool_call><function=get_weather><parameter=city>"
+        + literal
+        + "</parameter></function>"
+    )
+    parser._content_upto = len(prefix)
+    assert parser.flush_held_content(prefix + "</tool") == ""
+
+
+@pytest.mark.parametrize("closer", ["</function>", "</tool_call>"])
+def test_multiple_completed_calls_then_literal_closer_bytewise(parser, closer):
+    prefix = _COMPLETED_WRAPPER + _COMPLETED_FUNCTION + _COMPLETED_WRAPPER
+    tail = f" Explain {closer} literally."
+    previous = ""
+    content = ""
+    calls = []
+    for byte in prefix + tail:
+        current = previous + byte
+        delta = (
+            parser.extract_tool_calls_streaming(
+                previous, current, byte, request=_DECLARED_WEATHER
+            )
+            or {}
+        )
+        content += delta.get("content", "")
+        calls.extend(delta.get("tool_calls", []))
+        previous = current
+    content += parser.flush_held_content(previous)
+    assert content == tail
+    assert len(calls) == 3
+    assert [call["index"] for call in calls] == [0, 1, 2]
+    assert all(
+        json.loads(call["function"]["arguments"]) == {"city": "Paris"} for call in calls
+    )
+
+
+@pytest.mark.parametrize("wrapper_closed", [False, True])
+def test_consumed_payload_markers_do_not_determine_wrapper_state(
+    parser, wrapper_closed
+):
+    prefix = (
+        "<tool_call><function=get_weather><parameter=city>"
+        "literal </function> </tool_call> <tool_call> <function=example>"
+        "</parameter></function>"
+    )
+    if wrapper_closed:
+        prefix += "</tool_call>"
+    parser._content_upto = len(prefix)
+    tail = " Mention </tool_call> literally."
+    assert parser.flush_held_content(prefix + tail) == (
+        tail if wrapper_closed else " Mention "
+    )
+
+
+@pytest.mark.parametrize("opener", ["<function=get_weather>", "<tool_call>"])
+def test_completed_call_does_not_clear_later_unmatched_opener(parser, opener):
+    prefix = _COMPLETED_WRAPPER + opener
+    parser._content_upto = len(prefix)
+    assert parser.flush_held_content(prefix + "</fun") == ""
+
+
+@pytest.mark.parametrize("mode", ["buffered", "streamed", "split_wrapper"])
+@pytest.mark.parametrize("body_format", ["raw", "parameters", "json"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "literal </function> inside",
+        "literal </tool_call> inside",
+        "literal </function> then </tool_call> inside",
+        "literal </tool_call> then </function> inside",
+        "literal </function> then </tool_call> then </function> inside",
+    ],
+)
+def test_wrapped_payload_literal_closers_main_parity(mode, body_format, value):
+    # These complete payloads preserve their literal bytes on origin/main,
+    # both buffered and when the payload/function and wrapper close separately.
+    body = {
+        "raw": value,
+        "parameters": f"<parameter=city>{value}</parameter>",
+        "json": json.dumps({"city": value}),
+    }[body_format]
+    function = f"<tool_call><function=get_weather>{body}</function>"
+    text = function + "</tool_call>"
+    parser = NemotronToolParser()
+    if mode == "buffered":
+        result = parser.extract_tool_calls(text, request=_DECLARED_WEATHER)
+        call = _only_call(result)
+        arguments = call["arguments"]
+        assert not result.content
+    else:
+        chunks = [text] if mode == "streamed" else [function, "</tool_call>"]
+        deltas = _stream(parser, chunks, request=_DECLARED_WEATHER)
+        calls = [tc for delta in deltas if delta for tc in delta.get("tool_calls", [])]
+        assert len(calls) == 1
+        assert calls[0]["function"]["name"] == "get_weather"
+        arguments = calls[0]["function"]["arguments"]
+        assert not "".join(delta.get("content", "") for delta in deltas if delta)
+        assert not parser.flush_held_content(text)
+    if body_format == "raw":
+        assert arguments == value
+    else:
+        assert json.loads(arguments) == {"city": value}
