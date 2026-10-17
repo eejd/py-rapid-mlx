@@ -477,10 +477,10 @@ def test_trailing_narration_does_not_rescan_accounted_prefix(parser, monkeypatch
     scans = 0
     scan = parser._scan_unmatched_opener
 
-    def counted_scan(prefix):
+    def counted_scan(prefix, calls=None):
         nonlocal scans
         scans += 1
-        return scan(prefix)
+        return scan(prefix, calls)
 
     monkeypatch.setattr(parser, "_scan_unmatched_opener", counted_scan)
     previous = _COMPLETED_WRAPPER
@@ -739,11 +739,11 @@ def test_streaming_large_payload_and_pending_wrapper_tail_scan_work(
     scanned_bytes = 0
     scan = NemotronToolParser._scan_unmatched_opener
 
-    def counted_scan(prefix):
+    def counted_scan(prefix, calls=None):
         nonlocal scans, scanned_bytes
         scans += 1
         scanned_bytes += len(prefix)
-        return scan(prefix)
+        return scan(prefix, calls)
 
     # Patch the class so direct class-level calls cannot bypass the counter.
     monkeypatch.setattr(
@@ -956,8 +956,12 @@ def test_bare_malformed_json_body_preserves_raw_arguments(streamed):
 
 @pytest.mark.parametrize("streamed", [False, True])
 def test_many_wrapped_calls_bound_tail_scan_and_slice_work(monkeypatch, streamed):
-    """Each extraction stays linear, including repeated streaming close events."""
-    scanned_bytes = sliced_bytes = input_bytes = 0
+    """Bound each scan; origin/main already reparses each streaming close event.
+
+    Sequential streaming is still quadratic overall. Require exactly one span
+    pass per close event so summed growing prefixes cannot mask an extra pass.
+    """
+    scanned_bytes = sliced_bytes = span_passes = 0
     boundary = NemotronToolParser._wrapped_tail_boundary
     spans = NemotronToolParser._function_spans
 
@@ -978,8 +982,8 @@ def test_many_wrapped_calls_bound_tail_scan_and_slice_work(monkeypatch, streamed
         return boundary(text, start, stop)
 
     def counted_spans(cls, text, valid_names=None):
-        nonlocal input_bytes
-        input_bytes += len(text)
+        nonlocal span_passes
+        span_passes += 1
         return spans(CountedText(text), valid_names)
 
     monkeypatch.setattr(
@@ -990,18 +994,63 @@ def test_many_wrapped_calls_bound_tail_scan_and_slice_work(monkeypatch, streamed
     )
     call = "<tool_call><function=f><parameter=a>v</parameter></function></tool_call>"
     if streamed:
-        calls, content = _capture_stream([call] * 500)
-        assert calls == [{"a": "v"}] * 500
-        assert content == ""
+        parser = NemotronToolParser()
+        previous = ""
+        for index in range(500):
+            current = previous + call
+            before = span_passes
+            before_scanned, before_sliced = scanned_bytes, sliced_bytes
+            delta = parser.extract_tool_calls_streaming(previous, current, call)
+            assert span_passes - before == 1
+            assert scanned_bytes - before_scanned <= 2 * len(current)
+            assert sliced_bytes - before_sliced <= 8 * len(current)
+            assert delta and not delta.get("content")
+            emitted = delta["tool_calls"]
+            assert len(emitted) == 1
+            assert emitted[0]["index"] == index
+            assert json.loads(emitted[0]["function"]["arguments"]) == {"a": "v"}
+            previous = current
+        assert not parser.flush_held_content(previous)
+        assert span_passes == 500
     else:
         result = NemotronToolParser().extract_tool_calls(call * 500)
         assert [json.loads(c["arguments"]) for c in result.tool_calls] == [
             {"a": "v"}
         ] * 500
         assert not result.content
-    assert scanned_bytes <= 2 * input_bytes, (scanned_bytes, input_bytes)
-    assert sliced_bytes <= 8 * input_bytes, (sliced_bytes, input_bytes)
-    print(f"{streamed=}: {scanned_bytes=}, {sliced_bytes=}, {input_bytes=}")
+        assert span_passes == 1
+        input_bytes = len(call) * 500
+        assert scanned_bytes <= 2 * input_bytes, (scanned_bytes, input_bytes)
+        assert sliced_bytes <= 8 * input_bytes, (sliced_bytes, input_bytes)
+    print(f"{streamed=}: {span_passes=}, {scanned_bytes=}, {sliced_bytes=}")
+
+
+@pytest.mark.parametrize("change", ["text", "names", "reset"])
+def test_span_reuse_requires_exact_input_and_declared_names(monkeypatch, change):
+    parser = NemotronToolParser()
+    text = "<function=f><parameter=a>v</parameter></function>"
+    request = {"tools": [{"function": {"name": "f"}}]}
+    assert _only_call(parser.extract_tool_calls(text, request))["name"] == "f"
+    scans = 0
+    spans = parser._function_spans
+
+    def counted_spans(text, valid_names=None):
+        nonlocal scans
+        scans += 1
+        return spans(text, valid_names)
+
+    monkeypatch.setattr(parser, "_function_spans", counted_spans)
+    assert parser._visible_content_between(text, 0, len(text), request) == ""
+    assert scans == 0
+    if change == "text":
+        text = text.replace("function=f", "function=g")
+    elif change == "names":
+        request["tools"][0]["function"]["name"] = "g"
+    else:
+        parser.reset()
+    expected = "" if change == "reset" else text
+    assert parser._visible_content_between(text, 0, len(text), request) == expected
+    assert scans == 1
 
 
 def test_narration_does_not_copy_accounted_prefix_per_chunk():

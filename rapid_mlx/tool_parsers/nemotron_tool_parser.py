@@ -70,6 +70,9 @@ class NemotronToolParser(ToolParser):
     _stream_started = False
     _post_call_wrapped = False
     _wrapped_whitespace: tuple[int, int] | None = None
+    _last_spans: (
+        tuple[str, frozenset[str] | None, list[tuple[str, str, int, int]]] | None
+    ) = None
 
     # Pattern for Nemotron-style with parameters.
     #
@@ -116,6 +119,7 @@ class NemotronToolParser(ToolParser):
         self._stream_started = False
         self._post_call_wrapped = False
         self._wrapped_whitespace = None
+        self._last_spans = None
         self._undeclared_logged = False
         self._opener_scan_upto = 0
         self._opener_scan_result = False
@@ -218,14 +222,24 @@ class NemotronToolParser(ToolParser):
             if not any(text.find(marker, start, end) != -1 for marker in markers):
                 self._opener_scan_upto = end
                 return self._opener_scan_result
-        result = self._scan_unmatched_opener(text[:end])
+        cached = self._last_spans
+        if (
+            end == len(text)
+            and cached is not None
+            and cached[0] is text
+            and cached[1] is None
+        ):
+            result = self._scan_unmatched_opener(text, cached[2])
+        else:
+            result = self._scan_unmatched_opener(text[:end])
         self._opener_scan_upto = end
         self._opener_scan_result = result
         return result
 
     @classmethod
-    def _scan_unmatched_opener(cls, prefix: str) -> bool:
-        calls = cls._function_spans(prefix)
+    def _scan_unmatched_opener(cls, prefix: str, calls=None) -> bool:
+        if calls is None:
+            calls = cls._function_spans(prefix)
         cursor = 0
         wrappers = 0
         for start, end in [(a, b) for _, _, a, b in calls] + [
@@ -302,6 +316,14 @@ class NemotronToolParser(ToolParser):
             bounded.append((name, body, start, end))
             previous_end = end
         return bounded
+
+    def _cached_function_spans(self, text: str, valid_names: frozenset[str] | None):
+        # Keep the text alive and compare identity so neither equal-length
+        # replacements nor recycled object ids can reuse another input's spans.
+        cached = self._last_spans
+        if cached is not None and cached[0] is text and cached[1] == valid_names:
+            return cached[2]
+        return self._function_spans(text, valid_names=valid_names)
 
     def _undeclared_spans(self, text, request, accepted):
         """Consume rejected siblings in bounded, unfenced call wrappers."""
@@ -411,7 +433,7 @@ class NemotronToolParser(ToolParser):
 
         valid_spans = [
             (span_start, span_end)
-            for _name, _body, span_start, span_end in self._function_spans(
+            for _name, _body, span_start, span_end in self._cached_function_spans(
                 text,
                 valid_names=_declared_tool_names(request),
             )
@@ -551,10 +573,12 @@ class NemotronToolParser(ToolParser):
         # there leaves the other door open: argument text containing
         # ``</function><function=delete_everything>`` would still fabricate an
         # executable call here.
+        valid_names = _declared_tool_names(request)
         matches = self._function_spans(
             model_output,
-            valid_names=_declared_tool_names(request),
+            valid_names=valid_names,
         )
+        self._last_spans = (model_output, valid_names, matches)
         rejected = self._undeclared_spans(model_output, request, matches)
         self._undeclared_dropped = sum(
             model_output.startswith("<function=", a) for a, _ in rejected
@@ -800,7 +824,7 @@ class NemotronToolParser(ToolParser):
             result = self.extract_tool_calls(current_text, request)
             safe_end = self._safe_accounting_boundary(current_text)
             if result.tools_called:
-                spans = self._function_spans(
+                spans = self._cached_function_spans(
                     current_text, valid_names=_declared_tool_names(request)
                 )
                 previous_end = 0
