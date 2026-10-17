@@ -459,6 +459,8 @@ def _run_harness(profile_name, isolated_home, model_id=MODEL, *, setup_fails=Fal
     """
     from contextlib import ExitStack
 
+    from rapid_mlx.agents.testing import AgentTestRunner, TestResult, TestStatus
+
     temporary_home = SimpleNamespace(name=str(isolated_home), cleanup=lambda: None)
     profile = get_profile(profile_name)
     assert profile is not None
@@ -494,13 +496,16 @@ def _run_harness(profile_name, isolated_home, model_id=MODEL, *, setup_fails=Fal
                 )
             )
         for name in _PATCHED_RUNNER_TESTS:
-            stack.enter_context(patch("rapid_mlx.agents.testing." + name))
+            stack.enter_context(
+                patch(
+                    "rapid_mlx.agents.testing." + name,
+                    return_value=TestResult(name, TestStatus.PASS),
+                )
+            )
         plain_chat = stack.enter_context(
             patch("rapid_mlx.agents.testing._test_plain_chat")
         )
         e2e_chat = stack.enter_context(patch("rapid_mlx.agents.testing._test_e2e_chat"))
-        from rapid_mlx.agents.testing import AgentTestRunner, TestResult, TestStatus
-
         plain_chat.return_value = TestResult("plain_chat", TestStatus.PASS)
         e2e_chat.return_value = TestResult("e2e_chat", TestStatus.PASS)
         AgentTestRunner(profile, base_url=BASE_URL, model_id=model_id).run()

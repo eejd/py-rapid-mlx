@@ -53,6 +53,9 @@ _ANTHROPIC_REMOTE_ENV = (
 # from the child's own prose.
 _EXIT_ERR_PREFIX = "EXIT:"
 
+# Diagnostics may contain normalized or derived request URLs, not just base_url.
+_DIAGNOSTIC_URL_RE = re.compile(r"https?://[^\s\"']+", re.IGNORECASE)
+
 # One separator character models actually use for thousands: comma, no-break
 # space, narrow no-break space, plain space.
 _DIGIT_GROUP_SEP = "[,\u00a0\u202f ]"
@@ -1485,8 +1488,21 @@ class AgentTestRunner:
                 self.model_id = "default"
 
     def _redact(self, text: str) -> str:
-        """Remove endpoint credentials from diagnostics, preserving request URLs."""
-        return text.replace(self.base_url, self._safe_base_url)
+        """Strip URL credentials from diagnostics without changing requests."""
+
+        def sanitize(match: re.Match[str]) -> str:
+            url = match.group()
+            try:
+                return _redact_endpoint(url)
+            except ValueError:
+                # Malformed authorities (e.g. unmatched IPv6 brackets) must
+                # still lose userinfo, query and fragment without parsing.
+                url = re.split(r"[?#]", url, maxsplit=1)[0]
+                return re.sub(r"(https?://)[^/]*@", r"\1", url, flags=re.IGNORECASE)
+
+        # Also handle an exact configured endpoint containing literal spaces.
+        text = text.replace(self.base_url, self._safe_base_url)
+        return _DIAGNOSTIC_URL_RE.sub(sanitize, text)
 
     def _server_available(self) -> bool:
         """Check if the Rapid-MLX server is running."""

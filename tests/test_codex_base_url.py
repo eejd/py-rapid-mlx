@@ -335,6 +335,75 @@ def test_cli_endpoint_credentials_are_not_printed(
         assert "could not refresh codex" in output
 
 
+@pytest.mark.parametrize(
+    "endpoint,secrets",
+    [
+        ("http://LOCALHOST:8581/v1?api_key=secret", ["secret"]),
+        (
+            "http://credential-user:p%40ss%20w0rd%21@LOCALHOST:8581/v1",
+            ["credential-user", "p@ss w0rd!", "p%40ss%20w0rd%21", "p%40ss%20w0rd!"],
+        ),
+    ],
+)
+def test_cli_derived_request_url_credentials_are_not_printed(
+    monkeypatch, capsys, caplog, endpoint, secrets
+):
+    import httpx
+
+    from rapid_mlx.cli import agents_command
+
+    # HTTPX lowercases the host, so the diagnostic cannot match base_url exactly.
+    requests = []
+
+    def handle_request(_transport, request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "local-qwen"}]})
+        return httpx.Response(401, json={"error": "Unauthorized"})
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+    monkeypatch.setattr(AgentTestRunner, "_agent_binary_available", lambda _: False)
+    with pytest.raises(SystemExit) as raised:
+        agents_command(_cli_args("codex", "--test", "--base-url", endpoint))
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + caplog.text
+    assert "401 Unauthorized" in output
+    assert "http://localhost:8581/v1" in output
+    for secret in secrets:
+        assert secret not in output
+    posts = [request for request in requests if request.method == "POST"]
+    assert posts
+    for request in posts:
+        # Diagnostics alone change; HTTPX still receives the original URL.
+        assert request.url == httpx.URL(f"{endpoint}/chat/completions")
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (
+            "bad 'http://user:secret@[::1/path?api_key=secret#private' next",
+            "bad 'http://[::1/path' next",
+        ),
+        (
+            'bad "HTTPS://[broken/path?secret#private" next',
+            'bad "HTTPS://[broken/path" next',
+        ),
+        (
+            'URLs "https://user:secret@example.com/path?secret#private" '
+            "'http://other:secret@localhost/next?secret' plain text",
+            "URLs \"https://example.com/path\" 'http://localhost/next' plain text",
+        ),
+    ],
+)
+def test_runner_redacts_all_urls_including_malformed_text(text, expected):
+    runner = AgentTestRunner(
+        get_profile("codex"), "http://localhost:8000/v1", model_id="local-qwen"
+    )
+    assert runner._redact(text) == expected
+
+
 def test_cli_unavailable_saved_endpoint_credentials_are_not_printed(
     tmp_path, monkeypatch, capsys
 ):
