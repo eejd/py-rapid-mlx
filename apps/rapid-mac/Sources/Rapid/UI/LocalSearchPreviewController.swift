@@ -105,12 +105,39 @@ extension LocalSearchPreviewPanelDriving {
     }
 }
 
+/// Keeps watching an opening panel even after cancellation first reports it hidden.
+struct LocalSearchPreviewDismissal {
+    private(set) var closing = false
+    private(set) var awaitingLateOpen = false
+
+    mutating func begin(isVisible: Bool) -> Bool {
+        guard !closing else { return false }
+        closing = true
+        awaitingLateOpen = !isVisible
+        return true
+    }
+
+    /// Returns whether a late open with no remaining intent needs another orderOut.
+    mutating func finish(isVisible: Bool, wantsControl: Bool) -> Bool {
+        if awaitingLateOpen, isVisible {
+            awaitingLateOpen = false
+            if !wantsControl {
+                closing = true
+                return true
+            }
+        }
+        if !isVisible { closing = false }
+        return false
+    }
+}
+
 @MainActor final class LocalSearchSystemPreviewPanel: LocalSearchPreviewPanelDriving {
     private var panel: QLPreviewPanel?
     private weak var ownerWindow: NSWindow?
     private weak var owner: LocalSearchPreviewController?
     private var presented = false
-    private var closing = false
+    private var dismissal = LocalSearchPreviewDismissal()
+    private var closing: Bool { dismissal.closing }
     nonisolated(unsafe) private var closeObserver: NSObjectProtocol?
     deinit {
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
@@ -173,11 +200,10 @@ extension LocalSearchPreviewPanelDriving {
         // running. Leave QL's controller and data untouched until it finishes;
         // updating/reloading an already dismissing panel can strand it busy.
         if shouldHide, !closing {
-            if let panel, panel.isVisible {
+            if let panel, dismissal.begin(isVisible: panel.isVisible) {
                 // A new intent can open and close again while the previous
                 // session is still dismissing. Reissuing orderOut cancels QL's
                 // animation and can strand the panel without a data source.
-                closing = true
                 if closeObserver == nil {
                     closeObserver = NotificationCenter.default.addObserver(
                         forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main
@@ -211,10 +237,17 @@ extension LocalSearchPreviewPanelDriving {
     // Reloads and queued completion checks resume a pending open. Acquire/show
     // continue opening themselves; release completes closing without reopening.
     private func finishClosingIfHidden(reopen: Bool = true) {
-        guard closing, panel?.isVisible != true else { return }
-        closing = false
-        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
-        closeObserver = nil
+        let wasClosing = closing
+        if dismissal.finish(isVisible: isVisible, wantsControl: owner?.wantsControl == true) {
+            panel?.orderOut(nil)
+            return
+        }
+        guard !closing else { return }
+        if !dismissal.awaitingLateOpen {
+            if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+            closeObserver = nil
+        }
+        guard wasClosing else { return }
         if reopen, let owner, owner.wantsControl {
             if acquire(owner) { reload(); show() }
         }

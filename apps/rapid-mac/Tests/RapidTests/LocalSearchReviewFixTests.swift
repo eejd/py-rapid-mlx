@@ -102,7 +102,13 @@ import Testing
         var onShow: (() -> Void)?
         var defersVisibility = false
         var opening = false
-        func finishOpening() { if opening { isVisible = true; opening = false } }
+        var dismissal = LocalSearchPreviewDismissal()
+        var orderOutCount = 0
+        func orderOut() { orderOutCount += 1; isVisible = false }
+        func finishOpening() {
+            if opening { isVisible = true; opening = false }
+            if dismissal.finish(isVisible: isVisible, wantsControl: dataSource != nil) { orderOut() }
+        }
         func acquire(_ controller: LocalSearchPreviewController) -> Bool {
             calls.append("acquire"); dataSource = controller; delegate = controller; return true
         }
@@ -114,7 +120,10 @@ import Testing
             onShow?()
         }
         func release(_ controller: LocalSearchPreviewController) {
-            calls.append("release"); opening = false; isVisible = false; dataSource = nil; delegate = nil
+            calls.append("release")
+            if dismissal.begin(isVisible: isVisible) { orderOut() }
+            dataSource = nil; delegate = nil
+            _ = dismissal.finish(isVisible: isVisible, wantsControl: false)
         }
     }
     private func nextTurn() async {
@@ -214,7 +223,10 @@ import Testing
         controller.toggle(url); await nextTurn()
         #expect(!panel.isVisible && panel.opening)
         controller.toggle(url); await nextTurn()
+        #expect(panel.opening) // The original open can complete independently of release.
+        #expect(panel.orderOutCount == 1) // Cancel even while still hidden.
         panel.finishOpening()
+        #expect(panel.orderOutCount == 2) // Dismiss a late completion with no intent.
         #expect(!panel.isVisible)
         #expect(controller.item == nil)
         #expect(panel.dataSource == nil && panel.delegate == nil)
