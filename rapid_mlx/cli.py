@@ -1009,9 +1009,11 @@ def _print_model_load_error(args: argparse.Namespace, exc: BaseException) -> Non
     from rapid_mlx.local_serve_diagnostics import startup_error_lines
     from rapid_mlx.telemetry.model_events import serve_error_class
 
-    if serve_error_class(exc, model_ref=model_ref) == "other" and (
-        detail := startup_error_lines(exc, model_ref)
-    ):
+    if serve_error_class(exc, model_ref=model_ref) in (
+        "other",
+        "corrupt_weights",
+        "incompatible_weights",
+    ) and (detail := startup_error_lines(exc, model_ref)):
         print(f"\n  Error loading model: {exc}", file=sys.stderr)
         print(f"  Cause: {detail[0]}", file=sys.stderr)
         print(f"  Next step: {detail[1]}", file=sys.stderr)

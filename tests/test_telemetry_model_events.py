@@ -1236,7 +1236,7 @@ def test_generic_tokenizer_dispatch_preserves_existing_fallbacks(
     cause = ValueError(
         "Tokenizer class is unavailable"
         if fallback_name == "tokenizer"
-        else "Missing parameters in model"
+        else "Received 1 parameters not in model: \nvision_tower.proj.weight."
     )
     failure.__cause__ = cause
 
@@ -2425,3 +2425,15 @@ def test_typed_lane_backend_fail_soft_tolerates_any_import_error(monkeypatch):
         monkeypatch.setitem(sys.modules, name, _Hostile(name))
 
     assert model_events._typed_lane_backend_classes() == ()
+
+
+def test_incomplete_checkpoint_uses_closed_corrupt_weights_class():
+    from rapid_mlx.model_load_errors import IncompatibleWeights, IncompleteCheckpoint
+    from rapid_mlx.telemetry.model_events import serve_error_class
+
+    failure = IncompleteCheckpoint("private checkpoint shard is missing")
+    assert isinstance(failure, IncompatibleWeights)
+    assert serve_error_class(failure) == "corrupt_weights"
+    wrapper = RuntimeError("startup failed")
+    wrapper.__cause__ = failure
+    assert serve_error_class(wrapper) == "corrupt_weights"

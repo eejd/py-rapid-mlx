@@ -213,3 +213,223 @@ def test_diagnostics_reject_similar_unrelated_failures(tmp_path):
             raise KeyboardInterrupt
 
     assert startup_error_lines(HostileError(), str(model)) is None
+
+
+def _write_tiny_weights(path, header=None, data=b"\0" * 4):
+    import struct
+
+    if header is None:
+        header = {"weight": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}
+    encoded = json.dumps(header).encode()
+    path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + data)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["complete", "symlink", "nested", "missing", "absent", "truncated", "bad_entry"],
+)
+def test_checkpoint_manifest_integrity(tmp_path, case):
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+    root = tmp_path / "snapshot"
+    root.mkdir()
+    shard = root / "model.safetensors"
+    _write_tiny_weights(shard)
+    name = shard.name
+    if case == "symlink":
+        blob = tmp_path / "blob"
+        shard.rename(blob)
+        shard.symlink_to("../blob")
+    if case == "nested":
+        nested = root / "weights"
+        nested.mkdir()
+        shard.rename(nested / shard.name)
+        name = "weights/" + shard.name
+    weights = {"weight": name}
+    if case == "missing":
+        weights["other"] = "missing.safetensors"
+    if case == "absent":
+        weights["other"] = name
+    if case == "truncated":
+        _write_tiny_weights(shard, data=b"")
+    if case == "bad_entry":
+        _write_tiny_weights(shard, header={"weight": None})
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": weights})
+    )
+    reason = incomplete_checkpoint_reason(root)
+    if case in ("complete", "symlink", "nested"):
+        assert reason is None
+    else:
+        assert reason is not None
+        assert {
+            "missing": "which is missing",
+            "absent": "missing 1 of the 2",
+            "truncated": "truncated",
+            "bad_entry": "unreadable",
+        }[case] in reason
+
+
+def test_checkpoint_reports_truncated_unindexed_shard(tmp_path):
+    """The loader reads every model*.safetensors file, even outside weight_map."""
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+    shard = tmp_path / "model-00001-of-00001.safetensors"
+    _write_tiny_weights(shard)
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": shard.name}})
+    )
+    _write_tiny_weights(tmp_path / "model-stale.safetensors", data=b"")
+
+    assert incomplete_checkpoint_reason(tmp_path) == (
+        "model-stale.safetensors is truncated or unreadable"
+    )
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        [],
+        {"weight": None},
+        {"weight": {"data_offsets": [0]}},
+        {"weight": {"data_offsets": [0, "4"]}},
+    ],
+)
+def test_checkpoint_invalid_headers(tmp_path, header):
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+    _write_tiny_weights(tmp_path / "model.safetensors", header)
+    assert "truncated or unreadable" in incomplete_checkpoint_reason(tmp_path)
+
+
+@pytest.mark.parametrize("data", [b"", b"\xff" * 8, b"\x01" + b"\0" * 7 + b"{"])
+def test_checkpoint_unreadable_headers(tmp_path, data):
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+    (tmp_path / "model.safetensors").write_bytes(data)
+    assert "truncated or unreadable" in incomplete_checkpoint_reason(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        [],
+        {"weight_map": []},
+        {
+            "weight_map": {
+                "bad": "../escape",
+                "empty": "",
+                "absolute": "/weights",
+                "invalid": None,
+            }
+        },
+    ],
+)
+def test_checkpoint_invalid_index_is_left_to_loader(tmp_path, index):
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+    (tmp_path / "model.safetensors.index.json").write_text(json.dumps(index))
+    _write_tiny_weights(
+        tmp_path / "model.safetensors",
+        {"__metadata__": {"format": "fixture"}, "weight": {"data_offsets": [0, 4]}},
+    )
+    assert incomplete_checkpoint_reason(tmp_path) is None
+    assert incomplete_checkpoint_reason(tmp_path / "absent") is None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "incomplete",
+        "truncated",
+        "missing_params",
+        "hub",
+        "missing_local",
+        "unparsed",
+        "complete_corrupt",
+    ],
+)
+def test_checkpoint_startup_guidance(tmp_path, capsys, case):
+    from rapid_mlx.cli import _print_model_load_error
+    from rapid_mlx.model_load_errors import IncompatibleWeights
+
+    ref = str(tmp_path)
+    failure = None
+    expected = "corrupt_weights"
+    if case == "truncated":
+        _write_tiny_weights(tmp_path / "model.safetensors", data=b"")
+        failure = RuntimeError("[load_safetensors] Invalid file size")
+    elif case in ("missing_params", "unparsed"):
+        failure = IncompatibleWeights(
+            "Missing 1 parameters: model.layers.0.weight."
+            if case == "missing_params"
+            else "mismatched weights"
+        )
+        expected = "incompatible_weights"
+    elif case == "hub":
+        ref = "owner/checkpoint"
+    elif case == "missing_local":
+        ref = str(tmp_path / "missing")
+    elif case == "complete_corrupt":
+        _write_tiny_weights(tmp_path / "model.safetensors")
+        failure = RuntimeError("[load_safetensors] Invalid file size")
+    if failure is None:
+        from rapid_mlx.model_load_errors import IncompleteCheckpoint
+
+        failure = IncompleteCheckpoint(
+            "The model checkpoint is incomplete: shard is missing."
+        )
+    assert serve_error_class(failure, model_ref=ref) == expected
+    lines = startup_error_lines(failure, ref)
+    if case in ("unparsed", "complete_corrupt"):
+        assert lines is None
+        return
+    assert lines is not None
+    assert ("missing 1 weights" if case == "missing_params" else "incomplete") in lines[
+        0
+    ]
+    if case == "hub":
+        assert "rapid-mlx rm owner/checkpoint" in lines[1]
+        assert "all revisions" in lines[1]
+        assert "rapid-mlx pull owner/checkpoint" in lines[1]
+    elif case != "missing_params":
+        assert "this directory" in lines[1]
+        assert "rapid-mlx rm" not in lines[1]
+    _print_model_load_error(SimpleNamespace(model=ref), failure)
+    rendered = capsys.readouterr().err
+    assert f"Cause: {lines[0]}" in rendered
+    assert f"Next step: {lines[1]}" in rendered
+    assert "Traceback" not in rendered
+
+
+@pytest.mark.parametrize("operation", ["directory", "glob", "header"])
+def test_checkpoint_integrity_io_failures(tmp_path, monkeypatch, operation):
+    from pathlib import Path
+
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+    _write_tiny_weights(tmp_path / "model.safetensors")
+    if operation == "directory":
+
+        def unavailable(_self):
+            raise OSError("directory unavailable")
+
+        monkeypatch.setattr(Path, "is_dir", unavailable)
+        assert incomplete_checkpoint_reason(tmp_path) is None
+    elif operation == "glob":
+
+        def unavailable(_self, _pattern):
+            raise OSError("directory unavailable")
+
+        monkeypatch.setattr(Path, "glob", unavailable)
+        assert incomplete_checkpoint_reason(tmp_path) is None
+    else:
+        original = Path.open
+
+        def unavailable(self, *args, **kwargs):
+            if self.suffix == ".safetensors":
+                raise OSError("file unavailable")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", unavailable)
+        assert "unreadable" in incomplete_checkpoint_reason(tmp_path)
