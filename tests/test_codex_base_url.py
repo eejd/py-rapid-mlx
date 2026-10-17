@@ -363,6 +363,23 @@ def test_cli_unavailable_saved_endpoint_credentials_are_not_printed(
     assert "credential-password" not in output
 
 
+def test_cli_unavailable_explicit_endpoint_credentials_are_not_printed(
+    cli_runner, capsys
+):
+    cli_runner.return_value._server_available.return_value = False
+    endpoint = "http://credential-user:credential-password@127.0.0.1:8581/v1"
+    assert (
+        _run_cli_test(cli_runner, "codex", "--base-url", endpoint, exit_code=1)
+        == endpoint
+    )
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "Server not running at http://127.0.0.1:8581/v1" in output
+    assert "Using saved Codex endpoint" not in output
+    assert "credential-user" not in output
+    assert "credential-password" not in output
+
+
 def test_cli_other_agent_keeps_default_without_readback(cli_runner, monkeypatch):
     def unexpected_read(*_):
         pytest.fail("Other agents must not read Codex config")

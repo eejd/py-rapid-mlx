@@ -13590,11 +13590,10 @@ def agents_command(args):
 
     # --test: run integration tests
     if args.test:
-        display_url = base_url
-        if saved_endpoint is not None:
-            from rapid_mlx.agents.adapter import _redact_endpoint
+        from rapid_mlx.agents.adapter import _redact_endpoint
 
-            display_url = _redact_endpoint(base_url)
+        display_url = _redact_endpoint(base_url)
+        if saved_endpoint is not None:
             print(f"  Using saved Codex endpoint: {display_url}")
         from rapid_mlx.agents.testing import AgentTestRunner  # pragma: no cover
 
