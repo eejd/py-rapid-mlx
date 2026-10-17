@@ -270,6 +270,22 @@ def test_checkpoint_manifest_integrity(tmp_path, case):
         }[case] in reason
 
 
+def test_checkpoint_reports_truncated_unindexed_shard(tmp_path):
+    """The loader reads every model*.safetensors file, even outside weight_map."""
+    from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+    shard = tmp_path / "model-00001-of-00001.safetensors"
+    _write_tiny_weights(shard)
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": shard.name}})
+    )
+    _write_tiny_weights(tmp_path / "model-stale.safetensors", data=b"")
+
+    assert incomplete_checkpoint_reason(tmp_path) == (
+        "model-stale.safetensors is truncated or unreadable"
+    )
+
+
 @pytest.mark.parametrize(
     "header",
     [

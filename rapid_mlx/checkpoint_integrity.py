@@ -115,6 +115,8 @@ def incomplete_checkpoint_reason(model_path: str | Path) -> str | None:
         shards = sorted(root.glob("model*.safetensors"))
     except OSError:
         shards = []
+    # The loader reads every model*.safetensors match, even unindexed files;
+    # a truncated stale or auxiliary file therefore also makes loading fail.
     for shard_path in shards:
         if shard_path in checked:
             continue
