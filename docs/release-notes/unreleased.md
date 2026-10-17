@@ -15,3 +15,4 @@
 - **XML tool-call examples stay visible**: fenced code-block examples remain content even when they name an available tool, including in streamed replies; real calls after a closed fence still execute.
 - **XML tool-call examples with CR line endings stay visible**: fenced examples written with bare CR or CRLF line endings remain content instead of running as tool calls, in streamed and non-streamed replies.
 - **Leaner Desktop app bundle**: the app now ships only the math font it renders equations with, trimming about 6 MB from the installed app.
+- **Local Search works on stock Macs**: the default index location and index folders under `/tmp` or `/var` no longer fail with a 503 because of standard macOS deny ACLs or directory aliases. Unsafe ancestor permissions still fail with a message naming the affected path.
