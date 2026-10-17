@@ -225,6 +225,71 @@ def test_processor_loads_locally_with_checkpoint_template(tmp_path):
     assert "<|video_pad|>\nThen\n<|image_pad|>" in prompt
 
 
+@pytest.mark.parametrize("mode,divisor", [("16x", 16), ("4x", 4)])
+def test_synthetic_video_preprocessing(mode, divisor):
+    from mlx_vlm.models.minicpmv4_6.processing_minicpmv4_6 import (
+        MiniCPMVImageProcessor,
+        MiniCPMVVideoProcessor,
+    )
+    from tokenizers import Tokenizer, models
+    from transformers import Qwen2TokenizerFast
+
+    from rapid_mlx.models.mlx_vlm_vendored.models.minicpmv4_7 import (
+        MiniCPMV4_7Processor,
+    )
+
+    tokens = [
+        "<unk>",
+        "<|image_pad|>",
+        "<|video_pad|>",
+        "<image>",
+        "</image>",
+        "<slice>",
+        "</slice>",
+        "<image_id>",
+        "</image_id>",
+    ]
+    tokenizer = Qwen2TokenizerFast(
+        tokenizer_object=Tokenizer(
+            models.WordLevel(
+                {token: index for index, token in enumerate(tokens)}, unk_token="<unk>"
+            )
+        )
+    )
+    options = dict(
+        patch_size=2, scale_resolution=8, slice_mode=False, downsample_mode="16x"
+    )
+    processor = MiniCPMV4_7Processor(
+        image_processor=MiniCPMVImageProcessor(**options),
+        video_processor=MiniCPMVVideoProcessor(**options),
+        tokenizer=tokenizer,
+    )
+    frames = [np.full((8, 8, 3), value, dtype=np.uint8) for value in (0, 127, 255)]
+    result = processor(text="<|video_pad|>", videos=frames, downsample_mode=mode)
+    grids = result["tgt_sizes"][0]
+    assert grids.tolist() == [[4, 4]] * len(frames)
+    assert result["num_frames_per_video"] == [[len(frames)]]
+    assert result["num_patches_per_frame"] == [[1] * len(frames)]
+    assert result["grids_videos"] == [[(0, 0)] * len(frames)]
+    assert len(result["pixel_values"][0]) == len(grids) == len(frames)
+    expected_counts = np.prod(grids, axis=1) // divisor
+    assert (
+        np.count_nonzero(result["input_ids"] == processor.video_token_id)
+        == expected_counts.sum()
+    )
+    bounds = result["image_bound"][0]
+    assert (bounds[:, 1] - bounds[:, 0]).tolist() == expected_counts.tolist()
+    assert np.count_nonzero(result["mm_token_type_ids"] == 2) == expected_counts.sum()
+    assert not np.any(result["mm_token_type_ids"] == 1)
+    assert (
+        processor.image_processor.downsample_mode
+        == processor.video_processor.downsample_mode
+        == "16x"
+    )
+    assert processor.to_dict()["processor_class"] == "MiniCPMV4_7Processor"
+    assert "MiniCPMV4_7Processor" in repr(processor)
+
+
 @pytest.mark.parametrize("size", ["1B", "35B-A3B"])
 def test_pinned_loader_roundtrip_and_mtp_filter(size, tmp_path):
     from dataclasses import asdict

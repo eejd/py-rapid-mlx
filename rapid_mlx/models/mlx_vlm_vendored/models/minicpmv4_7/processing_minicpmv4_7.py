@@ -3,12 +3,9 @@
 # Vendored from mlx-vlm @ b8bf04c6dd7f3bd3a2a5033bbfecef6375c3bfb0; see LICENSE and provenance.json.
 # VENDOR-DEVIATION(import-redirects): use pinned mlx_vlm modules and the
 # local 0.7.2 compatibility slices.
-# VENDOR-DEVIATION(thread-safety): serialize temporary request modes across
-# processors with a class-level lock, keeping instance state serializable.
 """NumPy/Pillow preprocessing for MiniCPM-V 4.7, without PyTorch."""
 
 import json
-import threading  # VENDOR-DEVIATION(thread-safety)
 from pathlib import Path
 
 import numpy as np
@@ -26,9 +23,6 @@ from mlx_vlm.models.minicpmv4_6.processing_minicpmv4_6 import (
 
 class MiniCPMV4_7Processor(MiniCPMVProcessor):
     model_type = "minicpmv4_7"
-
-    # VENDOR-DEVIATION(thread-safety): keep the lock out of serialized instance state.
-    _downsample_lock = threading.Lock()
 
     def check_argument_for_proper_class(self, argument_name, argument):
         return type(argument)
@@ -60,11 +54,6 @@ class MiniCPMV4_7Processor(MiniCPMVProcessor):
         return ids[len(self._build_image_id_ids(video_idx)) :]
 
     def __call__(self, text=None, images=None, videos=None, **kwargs):
-        # VENDOR-DEVIATION(thread-safety): hold through save/set/call/restore.
-        with self._downsample_lock:
-            return self._call_with_downsample_mode(text, images, videos, **kwargs)
-
-    def _call_with_downsample_mode(self, text=None, images=None, videos=None, **kwargs):
         mode = kwargs.pop("downsample_mode", self.image_processor.downsample_mode)
         if mode not in ("4x", "16x"):
             raise ValueError("downsample_mode must be '4x' or '16x'.")
@@ -80,22 +69,23 @@ class MiniCPMV4_7Processor(MiniCPMVProcessor):
                 raise ValueError(
                     f"Number of {name} placeholders must match {name} inputs."
                 )
-        old_modes = (
-            self.image_processor.downsample_mode,
-            self.video_processor.downsample_mode,
+        # VENDOR-DEVIATION(thread-safety): isolate differing request modes without
+        # mutating shared processors; matching configured modes need no copies.
+        from copy import copy
+
+        request_processor = self
+        if any(
+            component.downsample_mode != mode
+            for component in (self.image_processor, self.video_processor)
+        ):
+            request_processor = copy(self)
+            request_processor.image_processor = copy(self.image_processor)
+            request_processor.video_processor = copy(self.video_processor)
+            request_processor.image_processor.downsample_mode = mode
+            request_processor.video_processor.downsample_mode = mode
+        result = super(MiniCPMV4_7Processor, request_processor).__call__(
+            text=texts, images=images, videos=videos, **kwargs
         )
-        self.image_processor.downsample_mode = self.video_processor.downsample_mode = (
-            mode
-        )
-        try:
-            result = super().__call__(
-                text=texts, images=images, videos=videos, **kwargs
-            )
-        finally:
-            (
-                self.image_processor.downsample_mode,
-                self.video_processor.downsample_mode,
-            ) = old_modes
         ids = result["input_ids"]
         result["mm_token_type_ids"] = np.where(
             ids == self.image_token_id, 1, np.where(ids == self.video_token_id, 2, 0)

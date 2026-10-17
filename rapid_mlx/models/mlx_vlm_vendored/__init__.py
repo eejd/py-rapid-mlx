@@ -19,9 +19,9 @@ is in ``models/minicpmv4_7/LICENSE``; the original Apache-2.0 notice in
 vendored-byte digests are in ``models/minicpmv4_7/provenance.json``.
 The six package files have headers and marked import redirects.
 ``processing_minicpmv4_7.py`` also carries a marked
-``VENDOR-DEVIATION(thread-safety)``: a per-processor lock serializes
-request mode selection, temporary image/video modes, processing and restoration
-(including exceptions), preventing concurrent requests from mixing modes.
+``VENDOR-DEVIATION(thread-safety)``: differing request modes use shallow copies
+of the processor and its image/video components, leaving shared modes untouched.
+Matching configured modes call through without copying or mode assignment.
 ``_config.py`` copies the newer 4.6 config (MoE parsing hook);
 ``_vision_compat.py`` copies only the newer 4.6 model's two embedding
 methods (vision dtype and request downsampling). Both carry marked

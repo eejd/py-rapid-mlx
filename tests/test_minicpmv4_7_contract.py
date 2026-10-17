@@ -40,28 +40,46 @@ def test_vendored_provenance():
             while body.startswith("#"):
                 body = body.split("\n", 1)[1]
         if name == "processing_minicpmv4_7.py":
-            # Reverse only the documented lock hunk; the remaining bytes must
-            # still match upstream, so unrelated changes cannot pass unnoticed.
-            additions = (
-                "import threading  # VENDOR-DEVIATION(thread-safety)\n",
-                "    # VENDOR-DEVIATION(thread-safety): keep the lock out of serialized instance state.\n"
-                "    _downsample_lock = threading.Lock()\n\n",
+            # Reverse only the request-local copy hunk to reconstruct upstream.
+            replacement = (
+                "        # VENDOR-DEVIATION(thread-safety): isolate differing request modes without\n"
+                "        # mutating shared processors; matching configured modes need no copies.\n"
+                "        from copy import copy\n"
+                "\n"
+                "        request_processor = self\n"
+                "        if any(\n"
+                "            component.downsample_mode != mode\n"
+                "            for component in (self.image_processor, self.video_processor)\n"
+                "        ):\n"
+                "            request_processor = copy(self)\n"
+                "            request_processor.image_processor = copy(self.image_processor)\n"
+                "            request_processor.video_processor = copy(self.video_processor)\n"
+                "            request_processor.image_processor.downsample_mode = mode\n"
+                "            request_processor.video_processor.downsample_mode = mode\n"
+                "        result = super(MiniCPMV4_7Processor, request_processor).__call__(\n"
+                "            text=texts, images=images, videos=videos, **kwargs\n"
+                "        )\n"
             )
-            for addition in additions:
-                assert body.count(addition) == 1
-                body = body.replace(addition, "")
-            wrapper = (
-                "    def __call__(self, text=None, images=None, videos=None, **kwargs):\n"
-                "        # VENDOR-DEVIATION(thread-safety): hold through save/set/call/restore.\n"
-                "        with self._downsample_lock:\n"
-                "            return self._call_with_downsample_mode(text, images, videos, **kwargs)\n\n"
-                "    def _call_with_downsample_mode(self, text=None, images=None, videos=None, **kwargs):\n"
+            upstream = (
+                "        old_modes = (\n"
+                "            self.image_processor.downsample_mode,\n"
+                "            self.video_processor.downsample_mode,\n"
+                "        )\n"
+                "        self.image_processor.downsample_mode = self.video_processor.downsample_mode = (\n"
+                "            mode\n"
+                "        )\n"
+                "        try:\n"
+                "            result = super().__call__(\n"
+                "                text=texts, images=images, videos=videos, **kwargs\n"
+                "            )\n"
+                "        finally:\n"
+                "            (\n"
+                "                self.image_processor.downsample_mode,\n"
+                "                self.video_processor.downsample_mode,\n"
+                "            ) = old_modes\n"
             )
-            assert body.count(wrapper) == 1
-            body = body.replace(
-                wrapper,
-                "    def __call__(self, text=None, images=None, videos=None, **kwargs):\n",
-            )
+            assert body.count(replacement) == 1
+            body = body.replace(replacement, upstream)
         for new, old in (
             ("from mlx_vlm.models.base import", "from ..base import"),
             ("from ._config import", "from ..minicpmv4_6.config import"),
@@ -236,78 +254,103 @@ def isolated_processor_class(monkeypatch):
 @pytest.mark.parametrize("second_mode", ["16x", None])
 def test_processor_concurrent_downsample_modes(isolated_processor_class, second_mode):
     from concurrent.futures import ThreadPoolExecutor
-    from threading import Event, Lock
+    from threading import Barrier
 
     import numpy as np
 
     processor_class, parent = isolated_processor_class
     processor = processor_class()
-    first_entered = Event()
-    second_waiting = Event()
-    release_first = Event()
-    lock = Lock()
+    barrier = Barrier(2, timeout=5)
+    shared = (processor.image_processor, processor.video_processor)
 
-    class ObservedLock:
-        """Signal contention before blocking, avoiding scheduling sleeps."""
-
-        def __enter__(self):
-            if first_entered.is_set():
-                second_waiting.set()
-            lock.acquire()
-
-        def __exit__(self, *args):
-            lock.release()
-
-    processor._downsample_lock = ObservedLock()
-
-    def parent_call(self, text, **kwargs):
-        if text == ["first"]:
-            first_entered.set()
-            assert release_first.wait(5)
-        return {
-            "input_ids": np.array([[0, 1, 2]]),
-            "observed_modes": (
-                self.image_processor.downsample_mode,
-                self.video_processor.downsample_mode,
-            ),
-        }
+    def parent_call(self, **kwargs):
+        before = (
+            self.image_processor.downsample_mode,
+            self.video_processor.downsample_mode,
+        )
+        barrier.wait()
+        assert (shared[0].downsample_mode, shared[1].downsample_mode) == ("16x", "4x")
+        assert before == (
+            self.image_processor.downsample_mode,
+            self.video_processor.downsample_mode,
+        )
+        return {"input_ids": np.array([[0, 1, 2]]), "observed_modes": before}
 
     parent.__call__ = parent_call
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(processor, text="first", downsample_mode="4x")
-        try:
-            assert first_entered.wait(5)
-            kwargs = {} if second_mode is None else {"downsample_mode": second_mode}
-            second = pool.submit(processor, text="second", **kwargs)
-            assert second_waiting.wait(5)
-            assert not second.done()
-        finally:
-            release_first.set()
-        first_result, second_result = first.result(timeout=5), second.result(timeout=5)
+        kwargs = {} if second_mode is None else {"downsample_mode": second_mode}
+        second = pool.submit(processor, text="second", **kwargs)
+        first_result, second_result = (
+            first.result(timeout=10),
+            second.result(timeout=10),
+        )
     assert first_result["observed_modes"] == ("4x", "4x")
-    assert first_result["downsample_mode"] == "4x"
     assert second_result["observed_modes"] == ("16x", "16x")
+    assert first_result["downsample_mode"] == "4x"
     assert second_result["downsample_mode"] == "16x"
-    assert processor.image_processor.downsample_mode == "16x"
-    assert processor.video_processor.downsample_mode == "4x"
+    assert processor.image_processor is shared[0]
+    assert processor.video_processor is shared[1]
+    assert (shared[0].downsample_mode, shared[1].downsample_mode) == ("16x", "4x")
     assert first_result["mm_token_type_ids"].tolist() == [[0, 1, 2]]
 
 
-def test_processor_restores_modes_and_unlocks_after_error(isolated_processor_class):
+@pytest.mark.parametrize("fail", [False, True])
+def test_processor_never_mutates_shared_modes(isolated_processor_class, fail):
+    from types import SimpleNamespace
+
     import numpy as np
 
     processor_class, parent = isolated_processor_class
     processor = processor_class()
 
+    class ReadOnlyMode(SimpleNamespace):
+        def __setattr__(self, name, value):
+            raise AssertionError("shared processor mutated")
+
+        def __copy__(self):
+            return SimpleNamespace(**vars(self))
+
+    processor.image_processor = ReadOnlyMode(downsample_mode="16x")
+    processor.video_processor = ReadOnlyMode(downsample_mode="16x")
+    shared = (processor.image_processor, processor.video_processor)
+
     def parent_call(self, **kwargs):
-        raise RuntimeError("preprocessing failed")
+        assert (shared[0].downsample_mode, shared[1].downsample_mode) == ("16x", "16x")
+        assert self.image_processor is not shared[0]
+        assert self.video_processor is not shared[1]
+        assert (
+            self.image_processor.downsample_mode
+            == self.video_processor.downsample_mode
+            == "4x"
+        )
+        if fail:
+            raise RuntimeError("preprocessing failed")
+        return {"input_ids": np.array([[0]])}
 
     parent.__call__ = parent_call
-    with pytest.raises(RuntimeError, match="preprocessing failed"):
-        processor(text="hello", downsample_mode="4x")
-    assert processor.image_processor.downsample_mode == "16x"
-    assert processor.video_processor.downsample_mode == "4x"
-    assert processor._downsample_lock.acquire(blocking=False)
-    processor._downsample_lock.release()
-    parent.__call__ = lambda self, **kwargs: {"input_ids": np.array([[0]])}
-    assert processor(text="hello")["downsample_mode"] == "16x"
+    if fail:
+        with pytest.raises(RuntimeError, match="preprocessing failed"):
+            processor(text="hello", downsample_mode="4x")
+    else:
+        assert processor(text="hello", downsample_mode="4x")["downsample_mode"] == "4x"
+    assert processor.image_processor is shared[0]
+    assert processor.video_processor is shared[1]
+    assert (shared[0].downsample_mode, shared[1].downsample_mode) == ("16x", "16x")
+
+
+@pytest.mark.parametrize("mode", ["4x", "16x"])
+def test_processor_matching_modes_call_through(isolated_processor_class, mode):
+    import numpy as np
+
+    processor_class, parent = isolated_processor_class
+    processor = processor_class()
+    processor.image_processor.downsample_mode = mode
+    processor.video_processor.downsample_mode = mode
+
+    def parent_call(self, **kwargs):
+        assert self is processor
+        return {"input_ids": np.array([[0]])}
+
+    parent.__call__ = parent_call
+    assert processor(text="hello")["downsample_mode"] == mode

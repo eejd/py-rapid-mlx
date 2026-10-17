@@ -46,14 +46,17 @@ The dependency diff from the pinned tag to that commit was inspected for
 
 The only architecture-source deviations are license/provenance headers,
 marked import redirects, marked subset extraction, and the processor
-`VENDOR-DEVIATION(thread-safety)` hunk. A class-level `threading.Lock`
-serializes mode selection and the save/set/call/restore sequence for the
-shared image/video processors across processor instances, including restoration
-after exceptions. Keeping the lock outside instance state preserves
-`ProcessorMixin.to_dict()` and `repr()` compatibility with deep-copy serialization.
-Offline concurrency coverage verifies independent request modes and default
-mode selection without model weights or MLX. There is no global
-replacement of the pinned 4.6 or Qwen modules.
+`VENDOR-DEVIATION(thread-safety)` hunk. The installed 0.7.2 image
+processor ignores call kwargs, and the video processor accepts frame controls
+but no downsampling override; the parent reads both components' configured
+modes to size placeholders. When either mode differs from the requested mode,
+a shallow processor copy with shallow image/video component copies supplies
+request-local modes to the parent call. Matching modes call through directly.
+Shared mode state is never assigned, including on exceptions, and no locks
+are needed. `ProcessorMixin.to_dict()` and `repr()` remain serializable.
+Offline tests verify overlapping different-mode calls, unchanged shared state
+during and after success/failure, and the matching-mode direct path. There is
+no global replacement of the pinned 4.6 or Qwen modules.
 
 ## Registration and routing
 
@@ -104,7 +107,8 @@ requested modules skip. The host's MLX import independently fails with
 The new runtime test file is in the CI Apple list. It covers real-config
 parsing, nested reparsing, loader binding, tiny dense/MoE image forwards,
 cached features, both downsampling modes, decode, quantized-text dtype,
-local processor loading, chat templates, MTP filtering, and strict synthetic
+local processor loading, synthetic video preprocessing with placeholder/grid
+consistency in both modes, chat templates, MTP filtering, and strict synthetic
 weight round trips. Metal and real-checkpoint verification are recorded below.
 Video requests, cancellation and relaunch remain outside the completed
 checkpoint checks; Vector owns that follow-up. Both aliases remain
@@ -162,3 +166,29 @@ Metal runtime tests plus contract tests: **17 passed**:
 
 This evidence does not remove the experimental designation or enable
 speculative decoding for either alias.
+
+## PR #4745 request-local preprocessing follow-up
+
+The lock deviation is replaced by the single marked request-local copy hunk;
+provenance reconstruction and vendored hashes cover the replacement. The README
+catalog is now 213 text + 12 image + 10 video + 44 audio aliases, 279 total,
+and the release sweep's multimodal mirror excludes the new family.
+
+On the Studio sandbox, the requested five-file pytest command stopped during
+MLX module collection: Metal is unavailable and the import-skip deprecation
+warning is treated as an error. Rerunning the same files with
+`-W ignore::pytest.PytestDeprecationWarning` produced **3,907 passed, 1 skipped,
+1 failed**. The remaining failure is
+`test_ownership_against_a_real_listener`: the sandbox denies `ps`, preventing
+the parent-process ownership walk. The README totals and mirror contracts pass.
+The synthetic video test also passed for 4x and 16x by loading the installed
+NumPy/Pillow processor source directly, bypassing Metal package initialization
+and stubbing only registration/template-loader hooks. This supplemental check
+includes placeholder/grid consistency and `to_dict()`/`repr()`; it does not
+replace the Apple runtime suite. Ruff check, Ruff format check, and diff
+whitespace checks pass for the touched Python files.
+
+Handoff: Vector owns a rerun of the five-file suite in a session with Metal and
+process-inspection access. No commit, push, package installation, or model
+weights download was performed for this follow-up. Orca role messaging was
+unavailable in this session.
