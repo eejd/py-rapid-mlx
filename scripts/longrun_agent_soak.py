@@ -139,7 +139,7 @@ def response_details(body, message_count):
             else diagnostic_repr(reasoning, 2000)
         )[:2000],
         "content_repr": (
-            repr(content)[:500]
+            repr(content[:500])[:500]
             if isinstance(content, str)
             else diagnostic_repr(content, 500)
         ),

@@ -301,6 +301,27 @@ def test_response_details_serializes_nonstring_content(content):
     assert details["content_repr"] == diagnostic_repr(content, 500)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [" \t\n" * 1_000_000, "short 'quoted'\ntext"],
+    ids=["large-whitespace", "short-string"],
+)
+def test_response_details_bounds_string_before_repr(monkeypatch, content):
+    repr_input_lengths = []
+
+    def spy_repr(value):
+        repr_input_lengths.append(len(value))
+        return repr(value)
+
+    monkeypatch.setattr("scripts.longrun_agent_soak.repr", spy_repr, raising=False)
+    details = response_details({"choices": [{"message": {"content": content}}]}, 2)
+
+    assert len(details["content_repr"]) <= 500
+    assert repr_input_lengths == [min(len(content), 500)]
+    assert details["content_repr"] == repr(content[:500])[:500]
+    assert details["content_length"] == len(content)
+
+
 def test_response_details_handles_unrepresentable_json_values():
     value = 10**5000
     details = response_details(
