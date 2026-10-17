@@ -628,18 +628,57 @@ def test_hermes_complete_json(client, route):
 
 
 @pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize(
+    "payload,hidden",
+    [
+        ('{"name" means the function identifier', False),
+        ('{ \n "name" means the function identifier', False),
+        ('{"name":', True),
+        ('{ \n "name" \t :', True),
+        ('{"name"', True),
+        ('{ \n "name" \t', True),
+        ("{", True),
+        ("{ \n", True),
+        ('{ "', True),
+        ('{ "n', True),
+        ('{ "na', True),
+        ('{ "nam', True),
+        ('{ "name', True),
+    ],
+)
+def test_json_member_prefix_boundary(client, parser, route, payload, hidden):
+    client[1].tool_call_parser = parser
+    prefix = "Let me check.\n"
+    raw = prefix + "<tool_call>" + payload
+    content, calls, _ = _reply(client, route, raw)
+    assert content == (prefix.strip() if hidden else raw)
+    assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
 def test_linear_cleanup_closed_wrappers(client, parser, record_property):
     from time import perf_counter
 
     from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
 
     cls = ToolParserManager.get_tool_parser(parser)
-    raw = ("long narration " * 6 + "<tool_call>{}</tool_call>") * 8600 + "<tool_call>"
-    start = perf_counter()
-    assert cls.strip_trailing_tool_envelope(raw) == raw[: -len("<tool_call>")]
-    elapsed = perf_counter() - start
-    record_property("closed_wrappers_seconds", elapsed)
-    assert elapsed < 0.05
+    unit = "long narration " * 6 + "<tool_call>{}</tool_call>"
+    timings = []
+    for count in (2150, 8600):
+        raw = unit * count + "<tool_call>"
+        expected = raw[: -len("<tool_call>")]
+        samples = []
+        for _ in range(3):
+            start = perf_counter()
+            cleaned = cls.strip_trailing_tool_envelope(raw)
+            samples.append(perf_counter() - start)
+            assert cleaned == expected
+        timings.append(min(samples))
+    record_property("closed_wrappers_n_seconds", timings[0])
+    record_property("closed_wrappers_4n_seconds", timings[1])
+    assert timings[1] < 10 * timings[0]
+    assert timings[1] < 1.0
 
 
 @pytest.mark.parametrize("parser", PARSERS)

@@ -242,7 +242,9 @@ def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -
         return text[:opener]
     if not payload.startswith("{"):
         return text
-    if not re.match(r'\{\s*(?:"name"|"(?:n(?:a(?:m(?:e)?)?)?)?\Z|\Z)', payload):
+    if not re.match(
+        r'\{\s*(?:"name"\s*(?::|\Z)|"(?:n(?:a(?:m(?:e)?)?)?)?\Z|\Z)', payload
+    ):
         return text
     depth = 0
     in_string = escaped = False
