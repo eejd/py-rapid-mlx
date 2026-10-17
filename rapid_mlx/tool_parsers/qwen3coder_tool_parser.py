@@ -163,19 +163,30 @@ class _MarkdownCodeTracker:
         return opener_length is not None
 
 
-def _trailing_tool_envelopes(text: str, opener: str, closer: str):
-    """Yield unclosed wrappers outside Markdown code, after complete blocks."""
-    code = _MarkdownCodeTracker()
-    cursor = 0
-    while (start := text.find(opener, cursor)) >= 0:
-        body_start = start + len(opener)
-        close = text.find(closer, body_start)
-        if close >= 0:
-            cursor = close + len(closer)
-            continue
-        if not code.inside(text, start):
-            yield start, text[body_start:].lstrip()
-        cursor = body_start
+def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -> str:
+    """Hide only the last unfinished call suffix outside Markdown, in O(n)."""
+    opener = text.rfind("<tool_call>")
+    if opener < 0:
+        return text
+    body_start = opener + len("<tool_call>")
+    if text.find("</tool_call>", body_start) >= 0:
+        return text
+    if _MarkdownCodeTracker().inside(text, opener):
+        return text
+    body = text[body_start:].lstrip()
+    if not (
+        not body
+        or "<function=".startswith(body)
+        or body.startswith("<function=")
+        or re.fullmatch(r'\{\s*"(n(a(m(e("?)?)?)?)?)?$', body)
+        or re.match(r'\{\s*"name"', body)
+    ):
+        return text
+    header = re.match(r"<function=([^>]+)>", body)
+    if header and declared is not None and header.group(1) not in declared:
+        # This parser releases unfinished undeclared XML blocks at stream EOF.
+        return text
+    return text[:opener].rstrip()
 
 
 def _merge_content(
@@ -437,13 +448,12 @@ class Qwen3CoderToolParser(ToolParser):
 
         return _info
 
-    tool_call_start_token = "<tool_call>"
-    tool_call_end_token = "</tool_call>"
-    tool_call_prefix = "<function="
-
     def __init__(self, tokenizer=None):
         super().__init__(tokenizer)
 
+        self.tool_call_start_token = "<tool_call>"
+        self.tool_call_end_token = "</tool_call>"
+        self.tool_call_prefix = "<function="
         self.function_end_token = "</function>"
         self.parameter_prefix = "<parameter="
         self.parameter_end_token = "</parameter>"
@@ -1252,18 +1262,7 @@ class Qwen3CoderToolParser(ToolParser):
         declared = cls._declared_tool_names(request) if request is not None else None
         if declared is not None and not declared:
             return text
-        for start, body in _trailing_tool_envelopes(
-            text, cls.tool_call_start_token, cls.tool_call_end_token
-        ):
-            header = re.match(r"<function=([^>]+)>", body)
-            if header and declared is not None and header.group(1) not in declared:
-                # Streaming releases an unfinished undeclared block at EOF.
-                return text
-            if cls.tool_call_prefix.startswith(body) or body.startswith(
-                cls.tool_call_prefix
-            ):
-                return text[:start].rstrip()
-        return text
+        return _strip_trailing_tool_envelope(text, declared)
 
     def flush_held_content(self, full_text: str) -> str:
         """Text of an undeclared-tool block still held when the stream ends.

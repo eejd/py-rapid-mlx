@@ -376,12 +376,7 @@ class ToolParser(ABC):
     def strip_trailing_tool_envelope(
         cls, text: str, request: dict[str, Any] | None = None
     ) -> str:
-        """Buffered EOF visibility policy; opt in only with streaming parity tests.
-
-        Keep complete calls and examples under the normal extractor's policy.
-        Parsers overriding this must preserve suffixes released by
-        ``flush_held_content`` at EOF.
-        """
+        """Optionally hide an unfinished buffered call suffix; default no-op."""
         return text
 
     def flush_held_content(self, full_text: str) -> str:

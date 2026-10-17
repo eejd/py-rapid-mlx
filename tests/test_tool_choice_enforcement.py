@@ -2336,7 +2336,7 @@ def test_truncated_forced_xml_requires_produced_name(text, names, expected):
 
 
 @pytest.mark.parametrize("forced", [False, True])
-def test_unclosed_xml_documentation_preserved_by_route(forced):
+def test_unclosed_xml_header_hidden_by_buffered_route(forced):
     example_name = "other_tool" if forced else "write_file"
     example = f"Example:\n<tool_call>\n<function={example_name}>"
     client = _make_client(_RecordingEngine(text=example))
@@ -2365,7 +2365,9 @@ def test_unclosed_xml_documentation_preserved_by_route(forced):
     )
     assert response.status_code == 200, response.text
     message = response.json()["choices"][0]["message"]
-    assert message["content"] == example
+    # An unclosed header outside Markdown remains a truncated call even
+    # after narration. Keep the narration and the forced-call contract.
+    assert message["content"] == "Example:"
     if forced:
         assert message["tool_calls"][0]["function"]["name"] == "write_file"
     else:
