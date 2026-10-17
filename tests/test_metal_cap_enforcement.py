@@ -945,12 +945,9 @@ class TestArchitectureAwareKVEstimate:
         assert sched._kv_sliding_slot_bytes == 2 * (n // 2) * kv * hd * 2
         assert sched._kv_sliding_window == window
 
-    def test_nested_config_without_layer_types_stays_byte_identical(self):
-        # BYTE-IDENTICAL guard: a multimodal config whose text_config carries NO
-        # valid layer_types (a non-hybrid nested model) must NOT adopt the nested
-        # dims — the outer config has no num_hidden_layers, so admission
-        # accounting stays exactly as before (0, no phantom estimate). Only a
-        # genuine nested hybrid (valid layer_types) flips to the nested dims.
+    def test_nested_config_without_layer_types_uses_geometry_fallback(self):
+        # When the outer config lacks geometry, the live-dims fallback can
+        # still resolve valid integer text-tower dims without hybrid metadata.
         cfg = SimpleNamespace(
             vision_config=SimpleNamespace(num_hidden_layers=27),
             text_config=SimpleNamespace(
@@ -962,7 +959,7 @@ class TestArchitectureAwareKVEstimate:
             dtype="bfloat16",
         )
         sched = self._sched(cfg)
-        assert sched._resolve_kv_bytes_per_token() == 0
+        assert sched._resolve_kv_bytes_per_token() == 2 * 32 * 8 * 128 * 4
         assert sched._resolve_kv_fixed_baseline_bytes() == 0
 
     def test_operator_override_wins_and_zeroes_baseline(self):
@@ -1644,7 +1641,8 @@ def test_prefill_uncalibrated_cohort_is_narrow_and_high_water_only_rises():
     with patch("rapid_mlx.scheduler.mx.reset_peak_memory") as reset:
         before = sched._begin_prefill_memory_sample()
         reset.assert_called_once()
-    assert before == (400, [(next(iter(sched.running.values())), 10)])
+    assert before is not None
+    assert before[:2] == (400, [(next(iter(sched.running.values())), 10)])
     with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=500):
         sched._finish_prefill_memory_sample(before)
     assert sched._prefill_workspace_high_water == 1
@@ -1789,7 +1787,8 @@ def test_prefill_calibration_uses_dispatched_chunk_and_bounds_shorter_context():
     sched._schedule_waiting()
     with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
         before = sched._begin_prefill_memory_sample()
-    assert before == (400, [(req, 512)])
+    assert before is not None
+    assert before[:2] == (400, [(req, 512)])
     with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
         sched._finish_prefill_memory_sample(before)
     # A shorter context still reserves the activation high-water per chunk.
@@ -2215,7 +2214,8 @@ def test_review2_sample_counts_only_dispatched_rows_and_marks_large_rows(dispatc
     bg._currently_processing = [[[[0], [0] * 399], 0, 400]]
     bg._unprocessed_sequences = [(102, [[0] * 512, [0] * 288])]
     before = sched._begin_prefill_memory_sample()
-    assert before == (400, [(tiny, 1), (large, 512)])
+    assert before is not None
+    assert before[:2] == (400, [(tiny, 1), (large, 512)])
     assert not getattr(large, "_prefill_memory_sampled", False)
     uids = {"tiny": [101], "large": [102], "both": [101, 102], "none": []}[dispatch]
     with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
@@ -2271,3 +2271,94 @@ def test_review2_step_samples_generator_dispatch_with_timing(review2_generator, 
         assert before[1] == [(req, 511)]
         assert raw_next[0][0].uid == req.batch_uid
     assert req._prefill_memory_sampled
+
+
+@pytest.mark.parametrize("config", [SimpleNamespace(), {}])
+def test_incomplete_config_falls_back_to_integer_args_geometry(config):
+    sched = _make_scheduler()
+    sched.model = SimpleNamespace(
+        config=config,
+        args=SimpleNamespace(num_hidden_layers=4, num_key_value_heads=2, head_dim=64),
+    )
+    assert sched._resolve_kv_bytes_per_token() == 2 * 4 * 2 * 64 * 4
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        SimpleNamespace(config=SimpleNamespace()),
+        SimpleNamespace(config=SimpleNamespace(), args=SimpleNamespace()),
+        SimpleNamespace(config=SimpleNamespace(), args=MagicMock()),
+        MagicMock(),
+    ],
+)
+def test_incomplete_geometry_does_not_fabricate_kv_bytes(model):
+    sched = _make_scheduler()
+    sched.model = model
+    assert sched._footprint_from_model_dims() is None
+    assert sched._resolve_kv_bytes_per_token() == 0
+
+
+def test_peak_window_token_is_invalidated_by_each_reset(monkeypatch):
+    from rapid_mlx import memory_peak
+
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: 400)
+    monkeypatch.setattr(memory_peak.mx, "reset_peak_memory", lambda: None)
+    first = memory_peak.reset_peak_for_sample()
+    assert memory_peak.sample_window_intact(first)
+    second = memory_peak.reset_peak_for_sample()
+    assert second > first
+    assert not memory_peak.sample_window_intact(first)
+    assert memory_peak.sample_window_intact(second)
+    third = memory_peak.reset_peak_for_sample()
+    assert third > second
+    assert not memory_peak.sample_window_intact(second)
+    assert memory_peak.sample_window_intact(third)
+
+
+@pytest.mark.parametrize("interruption", [None, "before_read", "during_read"])
+def test_prefill_peak_window_controls_high_water_and_calibration(
+    monkeypatch, interruption
+):
+    from rapid_mlx import memory_peak
+
+    sched = _cohort_scheduler()
+    sched._prefill_workspace_calibrated = False
+    sched._prefill_workspace_per_chunk = 1.0
+    sched.waiting.append(_make_request("window", 10))
+    req = sched._schedule_waiting()[0]
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: 400)
+    monkeypatch.setattr(memory_peak.mx, "reset_peak_memory", lambda: None)
+    before = sched._begin_prefill_memory_sample()
+    assert before is not None
+    if interruption == "before_read":
+        memory_peak.reset_peak_for_sample()
+
+    def read_peak():
+        if interruption == "during_read":
+            # A second scheduler resets while the first reads its final peak.
+            monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: 400)
+            memory_peak.reset_peak_for_sample()
+        return 900
+
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", read_peak)
+    sched._finish_prefill_memory_sample(before)
+    intact = interruption is None
+    assert sched._prefill_workspace_high_water == (5 if intact else 1.5)
+    assert sched._prefill_workspace_per_chunk == (50 if intact else 1.0)
+    assert bool(getattr(req, "_prefill_memory_sampled", False)) == intact
+    assert not sched._prefill_workspace_calibrated
+    sched._process_batch_responses(
+        [
+            SimpleNamespace(
+                uid=req.batch_uid,
+                token=1,
+                finish_reason="stop",
+                logprobs=None,
+                prompt_cache=None,
+                all_tokens=req.prompt_token_ids,
+            )
+        ]
+    )
+    assert sched._prefill_workspace_calibrated == intact
+    assert not getattr(req, "_prefill_memory_sampled", False)

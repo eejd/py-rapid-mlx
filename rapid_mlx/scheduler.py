@@ -62,7 +62,11 @@ from .kv_estimation import (  # noqa: E402
     estimate_kv_footprint,
     rotating_cache_slots,
 )
-from .memory_peak import cumulative_peak_bytes, reset_peak_for_sample  # noqa: E402
+from .memory_peak import (  # noqa: E402
+    cumulative_peak_bytes,
+    reset_peak_for_sample,
+    sample_window_intact,
+)
 
 
 def _read_kv_dims(model):
@@ -82,12 +86,8 @@ def _read_kv_dims(model):
     from the SAME place.
     """
 
-    def _pos_int(value):
-        try:
-            ivalue = int(value)
-        except (TypeError, ValueError):
-            return None
-        return ivalue if ivalue > 0 else None
+    def _pos_int(value: object) -> int | None:
+        return value if isinstance(value, int) and value > 0 else None
 
     def _dims_of(cfg):
         if cfg is None:
@@ -7052,10 +7052,9 @@ class Scheduler:
         recognized hybrids get the smaller, accurate number and the
         D-METAL-CAP OOM cliff is never re-introduced.
 
-        Returns ``0`` only when the model config is missing entirely
-        (e.g. unit-test ``MagicMock`` model) so back-compat unit
-        tests that build a Scheduler against a stub model don't
-        suddenly start rejecting requests that previously admitted.
+        Falls back to live config/args geometry when config-based resolution
+        yields no per-token growth. Returns ``0`` when neither source has
+        usable integer dimensions (e.g. a unit-test ``MagicMock`` model).
         """
         if self._kv_bytes_per_token_resolved:
             return self._kv_bytes_per_token
@@ -7084,13 +7083,6 @@ class Scheduler:
         sliding_window = 0
         try:
             model_config = getattr(self.model, "config", None)
-            if model_config is None:
-                estimate = self._footprint_from_model_dims()
-                if estimate is not None:
-                    per_tok = estimate.per_token_growth_bytes
-                    fixed_baseline = estimate.fixed_baseline_bytes
-                    sliding_slot_bytes = estimate.sliding_slot_bytes
-                    sliding_window = estimate.sliding_window
             if model_config is not None:
                 # Multimodal architectures nest the text-tower dims
                 # (num_hidden_layers, num_key_value_heads, head_dim, layer_types)
@@ -7197,6 +7189,13 @@ class Scheduler:
                         fixed_baseline = 0
                         sliding_slot_bytes = 0
                         sliding_window = 0
+            if per_tok == 0:
+                fallback = self._footprint_from_model_dims()
+                if fallback is not None:
+                    per_tok = fallback.per_token_growth_bytes
+                    fixed_baseline = fallback.fixed_baseline_bytes
+                    sliding_slot_bytes = fallback.sliding_slot_bytes
+                    sliding_window = fallback.sliding_window
         except Exception as e:
             logger.debug(
                 "[D-METAL-CAP] failed to auto-derive kv_bytes_per_token "
@@ -9812,7 +9811,7 @@ class Scheduler:
 
     def _begin_prefill_memory_sample(
         self,
-    ) -> tuple[int, list[tuple[Request, int]]] | None:
+    ) -> tuple[int, list[tuple[Request, int]], int] | None:
         if self._resolve_metal_cap_bytes() <= 0:
             return None
         bg = self.batch_generator
@@ -9837,17 +9836,17 @@ class Scheduler:
         if not rows or max(chunk for _, chunk in rows) < minimum:
             return None
         active = self._current_metal_active_bytes()
-        reset_peak_for_sample()
-        return active, rows
+        token = reset_peak_for_sample()
+        return active, rows, token
 
     def _finish_prefill_memory_sample(
         self,
-        before: tuple[int, list[tuple[Request, int]]] | None,
+        before: tuple[int, list[tuple[Request, int]], int] | None,
         raw_next=None,
     ) -> None:
         if before is None:
             return
-        active, rows = before
+        active, rows, token = before
         if isinstance(raw_next, tuple):
             # Only rows actually dispatched in this step belong in the sample:
             # completion/prefill capacity can leave inserted rows queued.
@@ -9862,6 +9861,10 @@ class Scheduler:
         # than trying to subtract uncertain allocator/copy lifetimes. This is
         # deliberately conservative; the high-water can only rise.
         delta = max(0, int(mx.get_peak_memory()) - active)
+        # Validate after the read so a reset racing with it also discards the
+        # sample. No lock spans the forward pass or serializes schedulers.
+        if not sample_window_intact(token):
+            return
         self._prefill_workspace_high_water = max(
             getattr(self, "_prefill_workspace_high_water", 0.0), delta / max(1, units)
         )
