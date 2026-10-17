@@ -38,7 +38,7 @@ jobs:
 
             const readyLabels = new Set(["merge-ready", "merge-ready-mac"]);
             // Close the stale-success window before any fallible live-state
-            // lookup. Mergify cannot admit this event head unless validation
+            // lookup. The merger cannot admit this event head unless validation
             // completes and publishes the final success status.
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,

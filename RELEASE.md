@@ -523,15 +523,13 @@ gh variable delete RELEASE_FREEZE
 Removing the manual freeze does not bypass an automatic freeze. Inspect the
 merger step summary and release run before resuming. The freeze controls this
 merger; humans must also avoid unrelated main merges during a release.
-Land phase 1 through the existing queue. The operator then opens and labels the
-phase-2 PR deleting queue configuration and queue-only workflows. Set
-`MERGE_ON_GREEN_ENABLED=true` only while that removal PR is the only PR carrying
-a ready label. The merger lands it, leaving the queue without configuration;
-the repository admin then uninstalls the queue app. During the brief overlap,
-both paths can only merge the same exact head using head-SHA-matched squash;
-the loser observes a closed PR and does nothing.
+The retired integration service has been removed. Authorized green PR heads
+merge directly when `MERGE_ON_GREEN_ENABLED=true`; every main push and nightly
+run executes the full engine and Desktop gates. Keep the merger disabled during
+rollback until the previous integration service is restored.
+
 `RELEASE_PAT` is mandatory for automated merges and revert PR writes; an empty
 secret fails closed. Disable the merger at any time with
 `gh variable set MERGE_ON_GREEN_ENABLED --body false`.
 See [the decision record](docs/engineering/decisions/2026-10-17-merge-on-green.md)
-for cutover and rollback.
+for operations and rollback.

@@ -164,10 +164,8 @@ def detect_bound_changes(old_text: str, new_text: str) -> list[str]:
     return changes
 
 
-def _attestation_ok(pr_body: str, pr_labels: str, forced: bool) -> bool:
+def _attestation_ok(pr_body: str, pr_labels: str) -> bool:
     """True if the PR carries a coherence-sweep attestation (label or trailer)."""
-    if forced:
-        return True
     labels = {label.strip().lower() for label in pr_labels.split(",") if label.strip()}
     if ATTEST_LABEL in labels:
         return True
@@ -248,15 +246,9 @@ def main(argv: list[str] | None = None) -> int:
         print("[mlx-bound-guard] no mlx/mlx-lm/mlx-vlm bound change — OK.")
         return 0
 
-    forced = os.environ.get("MLX_BOUND_ATTESTED", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
     attested = _attestation_ok(
         os.environ.get("PR_BODY", ""),
         os.environ.get("PR_LABELS", ""),
-        forced,
     )
 
     print("[mlx-bound-guard] detected mlx* version-bound change(s):")

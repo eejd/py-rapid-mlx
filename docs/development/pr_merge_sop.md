@@ -233,43 +233,17 @@ Before merge, the PR description must accurately reflect actual current state:
 ## Step 12 — Merge
 
 - Re-run the Step 10 `statusCheckRollup` query after the final push and directly
-  before queueing. Stop on `QUEUED`, `IN_PROGRESS`, `PENDING`,
-  `FAILURE`, `CANCELLED`, or `TIMED_OUT` for any relevant check.
-
-- For an ordinary pull request, apply exactly one integration authorization
-  label. Before cutover the matching managed queue combines and revalidates it.
-  Once the operator enables `MERGE_ON_GREEN_ENABLED` for the sole ready-labeled
-  phase-2 removal PR (see the [cutover procedure](../engineering/operations/path-aware-merge-queue.md#phase-1-cutover)),
-  the merger squash-merges exact authorized green heads directly, one at a
-  time, subject to release freezes. The queue instructions below remain for
-  the pre-enable path and rollback until phase 2. Use
-  `merge-ready` only when both `merge-lane-no-mac` is green and
-  `merge-lane-mac` is skipped. Use `merge-ready-mac` when
-  `merge-lane-mac` is green; this includes engine-only, Desktop-only, and
-  cross-cutting changes. Do not manually rebase after queue entry and do not
-  click GitHub's merge button:
-
-  ```bash
-  # No macOS lane:
-  gh pr edit <PR#> --repo raullenchai/Rapid-MLX --add-label merge-ready
-
-  # Any macOS lane required:
-  gh pr edit <PR#> --repo raullenchai/Rapid-MLX --add-label merge-ready-mac
-  ```
-
-- The no-Mac queue waits up to five minutes; the Mac-required queue waits up to
-  15 minutes. Each collects as many as four same-class pull requests, runs the
-  affected full lanes once on the combined tree, and then squash-merges each
-  original. A failed batch is split to identify the blocking member; do not add
-  an independent rerun.
-- After labeling, leave the candidate head untouched. Follow the temporary
-  queue pull request for integration evidence; do not rebase, force-push, or
-  manually merge an original while it is queued. To withdraw authorization,
-  remove whichever ready label is present and confirm that the queue removes
-  the candidate before changing its branch.
-- Version bumps and human-authorized hotfixes do not enter the general batch.
-  Follow their explicit release/hotfix contract and use a direct squash merge
-  only when that contract authorizes it.
+  before authorization. Every required check must be terminal and satisfy its
+  expected success or skip contract.
+- Apply exactly one label: `merge-ready` when `merge-lane-no-mac` succeeds and
+  `merge-lane-mac` is skipped, or `merge-ready-mac` when `merge-lane-mac` succeeds.
+  The merger validates the exact authorized head and squash-merges green heads
+  serially when enabled, subject to release freezes.
+- After a push, remove and reapply the appropriate ready label to bind
+  authorization to the new head. Remove the label to withdraw authorization.
+  Inspect merger step summaries for waiting or rejected decisions.
+- Version bumps and human-authorized hotfixes follow their explicit release or
+  hotfix contract. See [merge operations](../engineering/operations/merge-on-green.md).
 - If version was bumped: verify `Auto-release on version bump` workflow triggers post-merge.
 - If the squash subject contains `(#NN)` GitHub auto-suffix on a `chore: bump version to X.Y.Z` commit, override with `--subject` — the regex in `auto-release.yml` is strict.
 - After merge, verify `git log raullenchai/main --oneline -1` shows your squash commit.

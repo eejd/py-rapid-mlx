@@ -40,8 +40,6 @@ class ValidationPolicy:
     lanes: Lanes
     linux_matrix_mode: LinuxMatrixMode
     linux_matrix_reason: str
-    source_canary_tests: tuple[str, ...] = ()
-    source_preflight: bool = False
 
     def as_outputs(self) -> dict[str, str]:
         outputs = self.lanes.as_outputs()
@@ -52,9 +50,6 @@ class ValidationPolicy:
                 "test_matrix": json.dumps(
                     linux_test_matrix(self.linux_matrix_mode), separators=(",", ":")
                 ),
-                "source_preflight": str(self.source_preflight).lower(),
-                "source_canary": str(bool(self.source_canary_tests)).lower(),
-                "source_canary_tests": " ".join(self.source_canary_tests),
             }
         )
         return outputs
@@ -132,63 +127,6 @@ _PY311_TEST_PATHS = {
     "tests/test_telemetry_registry_drift.py",
 }
 
-# Exact presentation/metadata contracts only. Shared CLI parsing, engine,
-# authentication, model downloads and test support never enter this route.
-_SOURCE_CANARY_AREAS = (
-    (
-        {"rapid_mlx/cli_help.py", "tests/test_cli_help_groups.py"},
-        (
-            "tests/test_cli_help_groups.py",
-            "tests/test_cli_parser_snapshot.py",
-            "tests/test_cli_parser_types.py",
-        ),
-    ),
-    (
-        {"rapid_mlx/_banner.py", "tests/test_cli_cheetah_banner.py"},
-        (
-            "tests/test_cli_cheetah_banner.py",
-            "tests/test_cli_help_groups.py",
-            "tests/test_cli_parser_snapshot.py",
-        ),
-    ),
-    (
-        {"rapid_mlx/telemetry/chip.py", "tests/test_telemetry_chip.py"},
-        (
-            "tests/test_telemetry_chip.py",
-            "tests/test_chip_tier.py",
-            "tests/test_telemetry_registry_drift.py",
-        ),
-    ),
-    (
-        _PY311_ENGINE_PATHS | _PY311_TEST_PATHS,
-        ("tests/test_telemetry_registry.py", "tests/test_telemetry_registry_drift.py"),
-    ),
-    (
-        # Test-only maintenance of these CPU/loopback contracts does not
-        # change consent, transport, lifecycle or inference behavior. Run both
-        # complete files; their production dependencies remain outside the map.
-        {"tests/test_telemetry_track.py", "tests/test_telemetry_v1_retired.py"},
-        ("tests/test_telemetry_track.py", "tests/test_telemetry_v1_retired.py"),
-    ),
-)
-
-
-def source_canary_tests(paths: set[str]) -> tuple[str, ...]:
-    allowed = set().union(*(area for area, _tests in _SOURCE_CANARY_AREAS))
-    if not paths or not paths <= allowed:
-        return ()
-    return tuple(
-        sorted(
-            {
-                test
-                for area, tests in _SOURCE_CANARY_AREAS
-                if paths & area
-                for test in tests
-            }
-        )
-    )
-
-
 _FULL_MATRIX_REASONS = {
     ".github": "ci-control",
     "config": "dependency-or-policy",
@@ -196,7 +134,6 @@ _FULL_MATRIX_REASONS = {
     "videox_fun_mlx": "shared-runtime",
 }
 _FULL_MATRIX_FILES = _ENGINE_FILES | {
-    ".mergify.yml",
     ".coveragerc",
 }
 
@@ -304,118 +241,18 @@ def classify(paths: Iterable[str]) -> Lanes:
     return Lanes(engine=engine, desktop=desktop, docs_only=docs_only)
 
 
-# Existing controller/collection regressions do not all use a test_ci_ name.
-# Keep their families and the audited standalone guards on full source checks.
-_SOURCE_PREFLIGHT_CONTROL_TEST_PREFIXES = (
-    "test_ci_",
-    "test_classify_ci_",
-    "test_queue_",
-    "test_check_",
-    "test_mergify_",
-    "test_release_",
-    "test_pr_validate_",
-    "test_probe_release_",
-    "test_validate_release_",
-    "test_github_action_",
-)
-_SOURCE_PREFLIGHT_CONTROL_TESTS = {
-    "test_integration_collection_policy.py",
-    "test_dev_test_script.py",
-    "test_train_gates_matches_ci.py",
-    "test_no_mlx_marker_contract.py",
-    "test_mlx_bound_guard.py",
-    "test_desktop_promotion.py",
-    "test_community_benchmark_release_provenance.py",
-}
-
-# This generated golden has one ordinary CPU consumer which rebuilds and pins
-# the complete argparse surface. Keep the exception exact: other fixtures can
-# configure collection, runtime, integration, or platform-specific behavior.
-_SOURCE_PREFLIGHT_FIXTURES = {"tests/fixtures/cli_parser_snapshot.json"}
-
-# Offline metadata/preparation operators have ordinary CPU contracts in every
-# unit shard. Their full Python compatibility and Apple qualification belong
-# to the integration candidate, not a duplicate source run. Keep publishing,
-# signing, authority, workflow and collection controllers outside this list.
-_SOURCE_PREFLIGHT_RELEASE_PATHS = {
-    "scripts/release_control.py",
-    "scripts/release_prepare.py",
-    "scripts/release_version.py",
-    "tests/test_release_control.py",
-    "tests/test_release_prepare.py",
-    "tests/test_release_version.py",
-}
-
-
-def _source_preflight_paths(paths: set[str], lanes: Lanes) -> bool:
-    """CPU source prefilter only; combined candidates still enforce every gate.
-
-    Restrict the opt-in to engine code, ordinary CPU tests and the type debt file.
-    Controllers, collection support, cross-product and unknown paths self-check
-    in full. This is deliberately broader than a mapped regression contract.
-    """
-    if not paths or not lanes.engine or lanes.desktop:
-        return False
-    for path in paths:
-        pure = PurePosixPath(path)
-        if not pure.parts or pure.is_absolute() or ".." in pure.parts:
-            return False
-        # The existing type-check job still enforces the shrink-only budget.
-        # Interpreter/toolchain pins and collection configuration stay full.
-        if path == "config/mypy-error-baseline.txt":
-            continue
-        if path in _DOC_FILES or pure.parts[0] in _DOC_ROOTS:
-            continue
-        if path in _SOURCE_PREFLIGHT_FIXTURES:
-            continue
-        if path in _SOURCE_PREFLIGHT_RELEASE_PATHS:
-            continue
-        if len(pure.parts) < 2:
-            return False
-        if pure.parts[0] == "rapid_mlx":
-            continue
-        if pure.parts[0] == "tests" and (
-            len(pure.parts) == 2
-            or (len(pure.parts) == 3 and pure.parts[1] == "headless_mlx")
-        ):
-            name = pure.name
-            if (
-                name.startswith("test_")
-                and name.endswith(".py")
-                and not name.startswith(_SOURCE_PREFLIGHT_CONTROL_TEST_PREFIXES)
-                and not name.endswith(("_workflow.py", "_workflows.py"))
-                and name not in _SOURCE_PREFLIGHT_CONTROL_TESTS
-            ):
-                continue
-        return False
-    return True
-
-
 def classify_policy(
     paths: Iterable[str],
     *,
     force_full: bool = False,
     force_reason: str = "promoted-head",
-    source_canary: bool = False,
-    source_preflight: bool = False,
 ) -> ValidationPolicy:
     normalized = _normalized_paths(paths)
     lanes = classify(normalized)
     mode, reason = _linux_matrix_decision(normalized, lanes)
     if force_full:
         mode, reason = "full", force_reason
-    tests = source_canary_tests(normalized) if source_canary and not force_full else ()
-    if source_canary and not force_full and not tests:
-        mode, reason = "full", "source-canary-unmapped"
-    preflight = (
-        source_preflight
-        and not force_full
-        and not tests
-        and _source_preflight_paths(normalized, lanes)
-    )
-    if preflight:
-        mode, reason = "py311", "source-preflight"
-    return ValidationPolicy(lanes, mode, reason, tests, preflight)
+    return ValidationPolicy(lanes, mode, reason)
 
 
 def main() -> int:
@@ -425,8 +262,6 @@ def main() -> int:
     parser.add_argument("--github-output", type=argparse.FileType("a"))
     parser.add_argument("--force-full", action="store_true")
     parser.add_argument("--force-reason", default="promoted-head")
-    parser.add_argument("--source-canary", action="store_true")
-    parser.add_argument("--source-preflight", action="store_true")
     args = parser.parse_args()
 
     paths = list(args.paths)
@@ -436,8 +271,6 @@ def main() -> int:
         paths,
         force_full=args.force_full,
         force_reason=args.force_reason,
-        source_canary=args.source_canary,
-        source_preflight=args.source_preflight,
     ).as_outputs()
 
     if args.github_output:

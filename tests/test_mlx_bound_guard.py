@@ -272,27 +272,24 @@ class TestDetectBoundChanges:
 
 class TestAttestation:
     def test_label_grants_attestation(self):
-        assert guard._attestation_ok("", "some-label, mlx-coherence-swept", False)
+        assert guard._attestation_ok("", "some-label, mlx-coherence-swept")
 
     def test_trailer_with_note_grants_attestation(self):
         body = "Fixes stuff.\n\nCoherence-Sweep: https://ci/run/123 all families green"
-        assert guard._attestation_ok(body, "", False)
+        assert guard._attestation_ok(body, "")
 
     def test_empty_trailer_does_not_grant(self):
-        assert not guard._attestation_ok("Coherence-Sweep:   ", "", False)
+        assert not guard._attestation_ok("Coherence-Sweep:   ", "")
 
     def test_no_attestation_is_false(self):
-        assert not guard._attestation_ok("just a normal body", "bug,p0", False)
-
-    def test_forced_env_grants(self):
-        assert guard._attestation_ok("", "", True)
+        assert not guard._attestation_ok("just a normal body", "bug,p0")
 
     def test_label_match_is_case_insensitive_and_trimmed(self):
-        assert guard._attestation_ok("", "  MLX-Coherence-Swept  ", False)
+        assert guard._attestation_ok("", "  MLX-Coherence-Swept  ")
 
 
-class TestMergifyAttestationWorkflow:
-    """The queue may reuse only exact-head guard results from trusted batches."""
+class TestBoundGuardWorkflow:
+    """The guard binds to the immutable event base."""
 
     @staticmethod
     def _job() -> dict:
@@ -302,67 +299,22 @@ class TestMergifyAttestationWorkflow:
         )
         return workflow["jobs"]["mlx-bound-guard"]
 
-    def test_candidate_resolver_is_limited_to_trusted_same_repo_mergify_prs(self):
-        job = self._job()
-        checkout = next(
-            step
-            for step in job["steps"]
-            if step.get("uses", "").startswith("actions/checkout@")
-        )
-        setup = next(
-            step
-            for step in job["steps"]
-            if step.get("name") == "Install Mergify CLI for trusted queue metadata"
-        )
-        queue_info = next(
-            step for step in job["steps"] if step.get("id") == "queue-info"
-        )
-        resolver = next(
-            step for step in job["steps"] if step.get("id") == "mergify-attestation"
-        )
-
-        condition = setup["if"]
-        assert "github.event.pull_request.user.login == 'mergify[bot]'" in condition
-        assert (
-            "github.event.pull_request.head.repo.full_name == github.repository"
-            in condition
-        )
-        assert "startsWith(github.head_ref, 'mergify/merge-queue/')" in condition
-        assert checkout["with"]["fetch-depth"] == "0"
-        assert checkout["with"]["ref"] == ("${{ github.event.pull_request.head.sha }}")
-        assert setup["uses"].startswith("Mergifyio/setup-cli@")
-        assert len(setup["uses"].split("@", 1)[1]) == 40
-        assert setup["with"]["mergify_cli_version"] == "2026.8.28.1"
-        assert queue_info["if"] == condition
-        assert queue_info["run"] == "mergify ci queue-info"
-        assert resolver["if"] == "steps.queue-info.outcome == 'success'"
-        assert (
-            resolver["env"]["QUEUE_METADATA"]
-            == "${{ steps.queue-info.outputs.queue_metadata }}"
-        )
-        assert resolver["env"]["REAL_BASE_SHA"] == (
-            "${{ github.event.pull_request.base.sha }}"
-        )
-        assert resolver["env"]["CANDIDATE_SHA"] == (
-            "${{ github.event.pull_request.head.sha }}"
-        )
-        assert resolver["run"] == "python scripts/check_mergify_mlx_attestation.py"
-        assert job["permissions"] == {
-            "contents": "read",
-            "pull-requests": "read",
-        }
-
-    def test_guard_uses_the_immutable_event_base_and_resolver_output(self):
+    def test_guard_uses_the_immutable_event_base(self):
         job = self._job()
         guard_step = next(
             step
             for step in job["steps"]
             if step.get("name") == "Guard mlx/mlx-lm/mlx-vlm version bounds"
         )
-        assert (
-            guard_step["env"]["MLX_BOUND_ATTESTED"]
-            == "${{ steps.mergify-attestation.outputs.attested }}"
+        checkout = next(
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith("actions/checkout@")
         )
+        assert checkout["with"]["fetch-depth"] == "0"
+        assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha }}"
+        assert job["permissions"] == {"contents": "read", "pull-requests": "read"}
+        assert "MLX_BOUND_ATTESTED" not in guard_step["env"]
         assert guard_step["env"]["MLX_BOUND_BASE_REF"] == (
             "${{ github.event.pull_request.base.sha }}"
         )

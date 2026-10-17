@@ -322,7 +322,7 @@ def test_workflows_pin_only_exact_frozen_route():
     assert "--cov=scripts.check_release_environment" in ci
     assert "branches: [main, release/0.16.0]" in ci
     assert "branches: [main, release/0.16.0]" in desktop
-    assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in ci
-    assert "needs.changes.outputs.reuse_ci != 'true'" in ci
+    assert "queue-tree-evidence" not in ci
+    assert "needs.changes.outputs.reuse_ci" not in ci
     assert "  tests:" in ci
     assert "  desktop-tests:" in desktop

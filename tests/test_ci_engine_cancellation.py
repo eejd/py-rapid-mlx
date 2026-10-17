@@ -24,8 +24,6 @@ def test_workloads_reuse_existing_desktop_cancellation_pattern():
         "engine-contracts",
         "type-check",
         "mlx-bound-guard",
-        "source-canary-unit",
-        "candidate-canary-unit",
         "test-matrix",
         "linux-coverage",
         "test-apple-silicon",
@@ -39,7 +37,7 @@ def test_workloads_reuse_existing_desktop_cancellation_pattern():
     assert str(jobs["tests"]["if"]) == "always()"
 
 
-@pytest.mark.parametrize("scope", ["full", "reuse", "docs", "mapped"])
+@pytest.mark.parametrize("scope", ["full", "pr", "docs"])
 @pytest.mark.parametrize("cancelled", [False, True, "after-verdict"])
 def test_real_aggregate_cannot_green_a_cancelled_scope(scope, cancelled):
     jobs = workflow()
@@ -48,14 +46,7 @@ def test_real_aggregate_cannot_green_a_cancelled_scope(scope, cancelled):
         "github.event_name": "pull_request",
         "needs.changes.result": "success",
         "needs.changes.outputs.engine": "false" if scope == "docs" else "true",
-        "needs.changes.outputs.full_gate": "false" if scope == "mapped" else "true",
-        "needs.changes.outputs.reuse_ci": "true" if scope == "reuse" else "false",
-        "needs.changes.outputs.source_canary": "true" if scope == "mapped" else "false",
-        "needs.changes.outputs.candidate_shadow": "false",
-        "needs.candidate-canary-unit.result": "skipped",
-        "needs.source-canary-unit.result": "success"
-        if scope == "mapped"
-        else "skipped",
+        "needs.changes.outputs.full_gate": "false" if scope == "pr" else "true",
     }
     for name in ("lint", "engine-contracts", "type-check", "mlx-bound-guard"):
         values[f"needs.{name}.result"] = "success"
@@ -66,7 +57,9 @@ def test_real_aggregate_cannot_green_a_cancelled_scope(scope, cancelled):
         "changed-lines-coverage",
         "l1-smoke",
     ):
-        values[f"needs.{name}.result"] = "skipped" if scope == "mapped" else "success"
+        values[f"needs.{name}.result"] = (
+            "skipped" if scope == "pr" and name == "l1-smoke" else "success"
+        )
     outputs = []
     failed = False
     # Run actual checked-in step commands, including the final rejection.
