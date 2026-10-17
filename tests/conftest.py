@@ -3,6 +3,7 @@
 
 import argparse
 import contextlib
+import copy
 import importlib.machinery
 import importlib.util
 import ipaddress
@@ -110,13 +111,19 @@ def _isolate_server_serve_config():
     If a test first imports the server, observe its normal source loader and
     snapshot immediately after module execution, before the importer can call
     serve/main. This also works in pytest-only CI: no server import is forced.
-    Save references rather than deep-copying parser objects or runtime locks.
+    Shallow-copy mutable builtin containers; keep other values by reference.
     The shared rate limiter also needs its in-place configuration restored.
     """
     missing = object()
     snapshots = []
 
     def snapshot(module):
+        values = {}
+        for name in _SERVER_SERVE_CONFIG_GLOBALS:
+            value = getattr(module, name, missing)
+            values[name] = (
+                copy.copy(value) if isinstance(value, (dict, list, set)) else value
+            )
         limiter = getattr(module, "_rate_limiter", None)
         limiter_config = {
             name: getattr(limiter, name)
@@ -126,10 +133,7 @@ def _isolate_server_serve_config():
         snapshots.append(
             (
                 module,
-                {
-                    name: getattr(module, name, missing)
-                    for name in _SERVER_SERVE_CONFIG_GLOBALS
-                },
+                values,
                 limiter,
                 limiter_config,
             )

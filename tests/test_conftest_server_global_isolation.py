@@ -16,6 +16,32 @@ from tests.conftest import _SERVER_SERVE_CONFIG_GLOBALS, _isolate_server_serve_c
 _ROOT = Path(__file__).resolve().parents[1]
 
 
+def _collect_server_writes(source, aliases):
+    mutated = set()
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Store)
+            and ast.unparse(node.value) in aliases
+        ):
+            mutated.add(node.attr)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "setattr"
+            and len(node.args) >= 3
+            and ast.unparse(node.args[0]) in aliases
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            mutated.add(node.args[1].value)
+    return mutated
+
+
+def test_collect_server_writes_recognizes_setattr():
+    assert _collect_server_writes('setattr(server, "_x", 1)', {"server"}) == {"_x"}
+
+
 def test_serve_config_tuple_covers_launch_writers():
     cli = ast.parse((_ROOT / "rapid_mlx/cli.py").read_text())
     server = ast.parse((_ROOT / "rapid_mlx/server.py").read_text())
@@ -37,13 +63,7 @@ def test_serve_config_tuple_covers_launch_writers():
                 for alias in node.names
                 if alias.name == "rapid_mlx.server"
             )
-    mutated = {
-        node.attr
-        for node in ast.walk(cli)
-        if isinstance(node, ast.Attribute)
-        and isinstance(node.ctx, ast.Store)
-        and ast.unparse(node.value) in aliases
-    }
+    mutated = _collect_server_writes(ast.unparse(cli), aliases)
     assert "_default_timeout" in mutated
     # Lifecycle fixtures own engines, managers, locks, and telemetry latches.
     runtime_globals = {
@@ -77,6 +97,7 @@ def test_serve_config_tuple_covers_launch_writers():
                 if isinstance(node, ast.Global)
                 for name in node.names
             }
+            names.update(_collect_server_writes(ast.unparse(function), aliases))
             # No exclusions for main: every declared global must be covered.
             mutated.update(
                 names if function.name == "main" else names - runtime_globals
@@ -98,6 +119,17 @@ def test_preloaded_settings_restored_even_on_failure(monkeypatch):
     assert module._default_timeout == 1800.0
     assert not hasattr(module, "_api_key")
     assert sys.meta_path == original_finders
+
+
+def test_preloaded_container_restored_after_in_place_mutation(monkeypatch):
+    module = ModuleType("rapid_mlx.server")
+    module._alias_recommended_sampling = {"temperature": 0.7}
+    monkeypatch.setitem(sys.modules, "rapid_mlx.server", module)
+    isolate = contextmanager(_isolate_server_serve_config.__wrapped__)
+    with isolate():
+        module._alias_recommended_sampling["temperature"] = 0.1
+        module._alias_recommended_sampling["top_p"] = 0.9
+    assert module._alias_recommended_sampling == {"temperature": 0.7}
 
 
 # Run this pair in one fresh worker so xdist/random ordering cannot separate it.
