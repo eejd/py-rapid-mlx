@@ -4,10 +4,11 @@ import Testing
 @Suite("SwiftMath default font staging")
 struct SwiftMathFontStagingTests {
     @Test("The app stages only the default font pair and all three licences")
-    func stagesDefaultFontOnly() throws {
-        let result = try Self.runStaging()
+    func stagesDefaultFontOnly() async throws {
+        let result = try await Self.runStaging()
         #expect(result.status == 0, "Staging failed: \(result.stderr)")
         #expect(Set(result.files.keys) == Set(Self.requiredFiles))
+        #expect(result.files["Info.plist"] == nil)
         for file in Self.requiredFiles {
             #expect(result.files[file] == "fixture: \(file)")
         }
@@ -15,8 +16,8 @@ struct SwiftMathFontStagingTests {
 
     @Test("Staging fails when a required font resource or licence is missing",
           arguments: Self.requiredFiles)
-    func rejectsMissingRequiredFile(file: String) throws {
-        let result = try Self.runStaging(missingFile: file)
+    func rejectsMissingRequiredFile(file: String) async throws {
+        let result = try await Self.runStaging(missingFile: file)
         #expect(result.status != 0, "Staging succeeded without \(file)")
         #expect(result.stderr.contains("required vendored SwiftMath resource missing:"))
         #expect(result.stderr.contains(file))
@@ -47,7 +48,7 @@ struct SwiftMathFontStagingTests {
         "LICENSE", "OFL.txt", "GUST-FONT-LICENSE.txt",
     ]
 
-    private static func runStaging(missingFile: String? = nil) throws -> (
+    private static func runStaging(missingFile: String? = nil) async throws -> (
         status: Int32, files: [String: String], stderr: String
     ) {
         let script = try String(
@@ -78,7 +79,7 @@ struct SwiftMathFontStagingTests {
             "NotoSansMath-Regular", "latinmodern-math", "texgyretermes-math", "xits-math",
         ]
         let sourceFiles = fonts.flatMap { ["\($0).otf", "\($0).plist"] }
-            + ["LICENSE", "OFL.txt", "GUST-FONT-LICENSE.txt"]
+            + ["LICENSE", "OFL.txt", "GUST-FONT-LICENSE.txt", "Info.plist"]
         for file in sourceFiles where file != missingFile {
             try "fixture: \(file)".write(
                 to: source.appendingPathComponent(file), atomically: true, encoding: .utf8
@@ -89,18 +90,14 @@ struct SwiftMathFontStagingTests {
             atomically: true, encoding: .utf8
         )
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", "set -euo pipefail\n" + block]
         var environment = ProcessInfo.processInfo.environment
         environment["ROOT"] = root.path
         environment["CONTENTS"] = contents.path
-        process.environment = environment
-        let stderr = Pipe()
-        process.standardError = stderr
-        try process.run()
-        let errors = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let process = try await TestSubprocess.run(
+            executableURL: URL(fileURLWithPath: "/bin/bash"),
+            arguments: ["-c", "set -euo pipefail\n" + block],
+            environment: environment
+        )
 
         var files: [String: String] = [:]
         for file in try fm.contentsOfDirectory(atPath: destination.path) {
@@ -108,7 +105,10 @@ struct SwiftMathFontStagingTests {
                 contentsOf: destination.appendingPathComponent(file), encoding: .utf8
             )
         }
-        return (process.terminationStatus, files, String(decoding: errors, as: UTF8.self))
+        return (
+            process.terminationStatus, files,
+            String(decoding: process.standardError, as: UTF8.self)
+        )
     }
 
     private static var appRoot: URL {

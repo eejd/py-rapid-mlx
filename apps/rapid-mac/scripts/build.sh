@@ -473,9 +473,6 @@ for file in "${SWIFTMATH_REQUIRED_FILES[@]}"; do
     fi
     cp "$SWIFTMATH_FONTS/$file" "$CONTENTS/Resources/mathFonts.bundle/"
 done
-if [[ -f "$SWIFTMATH_FONTS/Info.plist" ]]; then
-    cp "$SWIFTMATH_FONTS/Info.plist" "$CONTENTS/Resources/mathFonts.bundle/"
-fi
 # <<< swiftmath-font-staging
 
 # Third-party license texts (#1596). BSD-2-Clause (swift-cmark) and the MIT
