@@ -13,7 +13,7 @@ import queue
 import secrets
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
@@ -178,14 +178,18 @@ class TensorFoldRequestProvider:
     def last_outputs(self, value: list[RequestOutput]) -> None:
         self._results.outputs = value
 
-    def _outputs(self, prompt: str, **kwargs: Any) -> Iterator[RequestOutput]:
+    def _outputs(
+        self, prompt: str, **kwargs: Any
+    ) -> Generator[RequestOutput, None, None]:
         return self._track_iterator(self._job_outputs(prompt, **kwargs))
 
-    def _track_iterator(self, iterator: Iterator[Any]) -> Iterator[Any]:
+    def _track_iterator(
+        self, iterator: Generator[Any, None, None]
+    ) -> Generator[Any, None, None]:
         if not self._close_cancellable:
             return iterator
 
-        def tracked() -> Iterator[Any]:
+        def tracked() -> Generator[Any, None, None]:
             try:
                 yield  # Prime cleanup without pulling the inner iterator.
                 # Own close explicitly; yield-from would also close the inner.
@@ -206,7 +210,9 @@ class TensorFoldRequestProvider:
             self.backend._provider_iterators.add(wrapper)
         return wrapper
 
-    def _job_outputs(self, prompt: str, **kwargs: Any) -> Iterator[RequestOutput]:
+    def _job_outputs(
+        self, prompt: str, **kwargs: Any
+    ) -> Generator[RequestOutput, None, None]:
         from tensorfold.engine.lane_engine import SuffixLookupProposer
         from tensorfold.server.cancellation import Cancellation
         from tensorfold.server.scheduler import ChatJob
@@ -389,10 +395,12 @@ class TensorFoldRequestProvider:
 
     def stream_generate(
         self, _model: Any, _processor: Any, prompt: str, **kwargs: Any
-    ) -> Iterator[ProviderChunk]:
+    ) -> Generator[ProviderChunk, None, None]:
         return self._track_iterator(self._stream_chunks(prompt, **kwargs))
 
-    def _stream_chunks(self, prompt: str, **kwargs: Any) -> Iterator[ProviderChunk]:
+    def _stream_chunks(
+        self, prompt: str, **kwargs: Any
+    ) -> Generator[ProviderChunk, None, None]:
         iterator = self._outputs(prompt, **kwargs)
         try:
             for output in iterator:

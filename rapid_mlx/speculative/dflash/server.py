@@ -679,7 +679,7 @@ class _DFlashStreamLease:
         if self._released:
             return
         self._released = True
-        if self._lock_acquired:
+        if self._lock_acquired and self._lock is not None:
             self._lock.release()
             self._lock_acquired = False
         if self._reservation is not None:
@@ -2389,7 +2389,7 @@ async def _non_stream_completion(
             _defer_worker_cleanup()
         raise
     finally:
-        if lock_acquired:
+        if lock_acquired and serial_lock is not None:
             serial_lock.release()
 
     if isinstance(result, Exception):
