@@ -11,7 +11,9 @@ def test_torch_pruning_removes_only_build_payload() -> None:
     torch_removals = [block for block in removals if "/torch/" in block]
 
     assert len(torch_removals) == 1
-    assert re.findall(r'"\$STAGE/site-packages/torch/([^"\n]+)"(\*)?', torch_removals[0]) == [
+    assert re.findall(
+        r'"\$STAGE/site-packages/torch/([^"\n]+)"(\*)?', torch_removals[0]
+    ) == [
         ("include", ""),
         ("share", ""),
         ("bin/protoc", ""),
@@ -27,11 +29,17 @@ def test_test_suite_sweep_is_guarded_and_scoped_to_five_packages() -> None:
     sweep = re.search(r"^for package in (.+); do\n(.*?)^done$", script, re.M | re.S)
 
     assert sweep is not None
-    assert sweep[1].split() == ["sympy", "networkx", "matplotlib", "mpmath", "mpl_toolkits"]
+    assert sweep[1].split() == [
+        "sympy",
+        "networkx",
+        "matplotlib",
+        "mpmath",
+        "mpl_toolkits",
+    ]
     assert 'if [ -d "$STAGE/site-packages/$package" ]; then' in sweep[2]
     assert (
         'find "$STAGE/site-packages/$package" -type d '
-        r'\( -name tests -o -name test \) -prune -exec rm -rf {} +'
+        r"\( -name tests -o -name test \) -prune -exec rm -rf {} +"
     ) in sweep[2]
     assert "-name testing" not in sweep[2]
 
@@ -41,7 +49,10 @@ def test_build_payload_pruning_precedes_compileall() -> None:
     compileall = script.index('"$STAGE/python/bin/python3.12" -m compileall')
 
     assert script.index('"$STAGE/site-packages/torch/bin/protoc-"*') < compileall
-    assert script.index("for package in sympy networkx matplotlib mpmath mpl_toolkits;") < compileall
+    assert (
+        script.index("for package in sympy networkx matplotlib mpmath mpl_toolkits;")
+        < compileall
+    )
 
 
 def test_arm64_thinning_runs_after_inventory_before_counting_and_signing() -> None:
@@ -66,9 +77,11 @@ def test_arm64_thinning_fails_closed_and_preserves_modes() -> None:
     assert 'if ! arches="$(lipo -archs "$f")"; then' in thinning
     assert 'if [ "${#MACHO_ARCHS[@]}" -gt 1 ]; then' in thinning
     assert '*" arm64 "*)' in thinning
-    assert 'ERR: multi-arch Mach-O lacks arm64:' in thinning
-    assert 'ERR: lipo could not inspect' in thinning
-    assert 'ERR: could not thin Mach-O to arm64:' in thinning
-    assert 'exit 1' in thinning
-    assert 'stat -f \'%Lp\' "$f"' in thinning
-    assert thinning.index('chmod "$mode" "$f.thin.$$"') < thinning.index('mv "$f.thin.$$" "$f"')
+    assert "ERR: multi-arch Mach-O lacks arm64:" in thinning
+    assert "ERR: lipo could not inspect" in thinning
+    assert "ERR: could not thin Mach-O to arm64:" in thinning
+    assert "exit 1" in thinning
+    assert "stat -f '%Lp' \"$f\"" in thinning
+    assert thinning.index('chmod "$mode" "$f.thin.$$"') < thinning.index(
+        'mv "$f.thin.$$" "$f"'
+    )
