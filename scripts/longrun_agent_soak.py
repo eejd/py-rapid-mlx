@@ -9,6 +9,7 @@ import asyncio
 import csv
 import json
 import random
+import reprlib
 import subprocess
 import time
 from collections import Counter
@@ -73,12 +74,21 @@ def percentile(values, fraction):
     return round(ordered[min(len(ordered) - 1, int((len(ordered) - 1) * fraction))], 1)
 
 
-def diagnostic_repr(value):
+def diagnostic_repr(value, limit):
+    formatter = reprlib.Repr()
+    formatter.maxlevel = 4
+    formatter.maxdict = 4
+    formatter.maxlist = 4
+    formatter.maxtuple = 4
+    formatter.maxset = 4
+    formatter.maxstring = 200
+    formatter.maxlong = 200
+    formatter.maxother = 200
     try:
-        return repr(value)
+        return formatter.repr(value)[:limit]
     except (ValueError, RecursionError):
         # Huge integers and deeply nested JSON values may not be representable.
-        return f"<{type(value).__name__}>"
+        return f"<{type(value).__name__}>"[:limit]
 
 
 def response_details(body, message_count):
@@ -97,7 +107,7 @@ def response_details(body, message_count):
         finish_reason = (
             finish_reason
             if isinstance(finish_reason, str)
-            else diagnostic_repr(finish_reason)
+            else diagnostic_repr(finish_reason, 200)
         )[:200]
     usage = body.get("usage")
     if isinstance(usage, dict):
@@ -116,17 +126,23 @@ def response_details(body, message_count):
             if type(usage.get(key)) is int and usage[key].bit_length() <= 64
         }
     elif usage is not None:
-        usage = diagnostic_repr(usage)[:500]
+        usage = diagnostic_repr(usage, 500)
     return {
         "finish_reason": finish_reason,
         "usage": usage,
         "content_length": len(
-            content if isinstance(content, str) else diagnostic_repr(content)
+            content if isinstance(content, str) else diagnostic_repr(content, 500)
         ),
         "reasoning_content": (
-            reasoning if isinstance(reasoning, str) else diagnostic_repr(reasoning)
+            reasoning
+            if isinstance(reasoning, str)
+            else diagnostic_repr(reasoning, 2000)
         )[:2000],
-        "content_repr": diagnostic_repr(content)[:500],
+        "content_repr": (
+            repr(content)[:500]
+            if isinstance(content, str)
+            else diagnostic_repr(content, 500)
+        ),
         "request_message_count": message_count,
     }
 
