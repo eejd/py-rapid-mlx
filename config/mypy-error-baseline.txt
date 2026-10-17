@@ -113,7 +113,7 @@ rapid_mlx/runtime/disk_kv_checkpoint.py 1
 rapid_mlx/runtime/radix_index.py 2
 rapid_mlx/runtime/ubc_evict.py 1
 rapid_mlx/runtime/video_lane.py 2
-rapid_mlx/scheduler.py 35
+rapid_mlx/scheduler.py 34
 rapid_mlx/server.py 21
 rapid_mlx/service/helpers.py 4
 rapid_mlx/service/postprocessor.py 6

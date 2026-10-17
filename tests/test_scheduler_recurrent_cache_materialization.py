@@ -213,6 +213,7 @@ def _make_step_scheduler(monkeypatch, running, events):
     monkeypatch.setattr(scheduler, "_schedule_waiting", lambda: [])
     monkeypatch.setattr(scheduler, "_realign_guard_armed", lambda: False)
     monkeypatch.setattr(scheduler, "_apply_adaptive_prefill_size", lambda: None)
+    monkeypatch.setattr(scheduler, "_begin_prefill_memory_sample", lambda: None)
     monkeypatch.setattr(
         scheduler,
         "_materialize_active_recurrent_cache",

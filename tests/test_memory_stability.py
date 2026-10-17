@@ -273,12 +273,15 @@ class TestIncrementalCacheEval:
 class TestMemoryStats:
     """Tests for Metal memory stats in get_stats()."""
 
+    @patch("rapid_mlx.memory_peak.mx")
     @patch("rapid_mlx.scheduler.mx")
-    def test_metal_stats_included(self, mock_mx):
+    def test_metal_stats_included(self, mock_mx, mock_peak_mx):
         """Verify Metal memory stats appear in get_stats()."""
         mock_mx.metal.is_available.return_value = True
         mock_mx.get_active_memory.return_value = 10_000_000_000  # 10GB
         mock_mx.get_peak_memory.return_value = 15_000_000_000  # 15GB
+        # The cumulative peak is read through the shared peak helper.
+        mock_peak_mx.get_peak_memory.return_value = 15_000_000_000
         mock_mx.get_cache_memory.return_value = 2_000_000_000  # 2GB
 
         scheduler = _make_scheduler()
