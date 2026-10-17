@@ -384,6 +384,74 @@ def test_buffered_completed_call_preserves_literal_closer(prefix, closer):
     assert result.content == tail
 
 
+_PARAMETER_CLOSER_PROSE = " Use </parameter> and </function> literally."
+_PENDING_WRAPPER_PROSE = "</tool_call> Explain </function> literally."
+
+
+def _assert_weather_stream(chunks, expected_content):
+    parser = NemotronToolParser()
+    text = ""
+    content = ""
+    calls = []
+    for chunk in chunks:
+        if not chunk:
+            continue
+        current = text + chunk
+        delta = (
+            parser.extract_tool_calls_streaming(
+                text, current, chunk, request=_DECLARED_WEATHER
+            )
+            or {}
+        )
+        content += delta.get("content", "")
+        calls.extend(delta.get("tool_calls", []))
+        text = current
+    content += parser.flush_held_content(text)
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "get_weather"
+    assert json.loads(calls[0]["function"]["arguments"]) == {"city": "Paris"}
+    assert content == expected_content
+
+
+@pytest.mark.parametrize("prefix", [_COMPLETED_FUNCTION, _COMPLETED_WRAPPER])
+def test_post_call_parameter_closer_buffered(prefix):
+    result = NemotronToolParser().extract_tool_calls(
+        prefix + _PARAMETER_CLOSER_PROSE, request=_DECLARED_WEATHER
+    )
+    assert json.loads(_only_call(result)["arguments"]) == {"city": "Paris"}
+    assert result.content == _PARAMETER_CLOSER_PROSE.strip()
+
+
+@pytest.mark.parametrize("prefix", [_COMPLETED_FUNCTION, _COMPLETED_WRAPPER])
+@pytest.mark.parametrize(
+    "split", range(len(_COMPLETED_WRAPPER + _PARAMETER_CLOSER_PROSE) + 1)
+)
+def test_post_call_parameter_closer_streamed(prefix, split):
+    text = prefix + _PARAMETER_CLOSER_PROSE
+    _assert_weather_stream([text[:split], text[split:]], _PARAMETER_CLOSER_PROSE)
+
+
+def test_pending_wrapper_and_literal_closer_buffered():
+    result = NemotronToolParser().extract_tool_calls(
+        "<tool_call>" + _COMPLETED_FUNCTION + _PENDING_WRAPPER_PROSE,
+        request=_DECLARED_WEATHER,
+    )
+    assert json.loads(_only_call(result)["arguments"]) == {"city": "Paris"}
+    assert result.content == "Explain </function> literally."
+
+
+@pytest.mark.parametrize("split", range(len(_PENDING_WRAPPER_PROSE) + 1))
+def test_pending_wrapper_and_literal_closer_streamed(split):
+    _assert_weather_stream(
+        [
+            "<tool_call>" + _COMPLETED_FUNCTION,
+            _PENDING_WRAPPER_PROSE[:split],
+            _PENDING_WRAPPER_PROSE[split:],
+        ],
+        " Explain </function> literally.",
+    )
+
+
 @pytest.mark.parametrize("closer", ["</function>", "</tool_call>"])
 @pytest.mark.parametrize("json_body", [False, True])
 def test_buffered_payload_closers_and_post_call_prose_are_distinct(closer, json_body):
@@ -655,3 +723,145 @@ def test_streaming_large_payload_and_pending_wrapper_tail_scan_work(
     # Bytewise delivery must not rescan the completed payload per prose byte.
     assert scans <= 32, (scans, scanned_bytes)
     assert scanned_bytes <= 16 * len(text), (scans, scanned_bytes)
+
+
+def _capture_stream(chunks):
+    parser = NemotronToolParser()
+    previous = ""
+    calls = []
+    content = ""
+    for chunk in chunks:
+        if not chunk:
+            continue
+        current = previous + chunk
+        delta = parser.extract_tool_calls_streaming(previous, current, chunk) or {}
+        calls.extend(
+            json.loads(call["function"]["arguments"])
+            for call in delta.get("tool_calls", [])
+        )
+        content += delta.get("content", "")
+        previous = current
+    return calls, content + parser.flush_held_content(previous)
+
+
+_AMBIGUOUS_VALUE = "literal </parameter> </function> </tool_call> inside"
+_AMBIGUOUS_WRAPPED = (
+    f"<tool_call><function=f><parameter=a>{_AMBIGUOUS_VALUE}"
+    "</parameter></function></tool_call>"
+)
+
+
+@pytest.mark.parametrize("split", range(len(_AMBIGUOUS_WRAPPED) + 1))
+def test_wrapped_continuation_never_leaks_more_than_main(split):
+    buffered = NemotronToolParser().extract_tool_calls(_AMBIGUOUS_WRAPPED)
+    expected = {"a": _AMBIGUOUS_VALUE}
+    assert json.loads(_only_call(buffered)["arguments"]) == expected
+    assert not buffered.content
+    calls, content = _capture_stream(
+        [_AMBIGUOUS_WRAPPED[:split], _AMBIGUOUS_WRAPPED[split:]]
+    )
+    # Documented origin/main result: only splits 68..99 disagree (32/124).
+    # Those splits emit the first call too soon; its arguments cannot retract.
+    # Visible content may improve on main, but must never extend its leakage.
+    if 68 <= split <= 99:
+        assert calls in ([expected], [{"a": "literal "}])
+        baseline_content = ""
+        if 82 <= split <= 88 or 91 <= split <= 99:
+            baseline_content = _AMBIGUOUS_WRAPPED[81:split]
+        elif split in (89, 90):
+            baseline_content = " inside"
+        assert baseline_content.startswith(content)
+    else:
+        assert calls == [expected]
+        assert content == ""
+
+
+@pytest.mark.parametrize("whitespace", ["", "  ", "\n\t"])
+@pytest.mark.parametrize("delivery", ["whole", "every_split", "bytewise"])
+def test_wrapped_post_call_pair_in_prose_is_payload(whitespace, delivery):
+    tail = f" Use </function>{whitespace}</tool_call> literally"
+    text = _COMPLETED_WRAPPER + tail
+    buffered = NemotronToolParser().extract_tool_calls(text)
+    assert json.loads(_only_call(buffered)["arguments"]) == {"city": "Paris"}
+    assert buffered.content == "literally"
+    # Accepted ambiguity: the LAST pair consumes even prose before that pair.
+    # Streaming cannot recover prose already sent, but withholds all held bytes
+    # through the pair. Splitting inside the pair must never leak its markup.
+    deliveries = (
+        [[text]]
+        if delivery == "whole"
+        else [list(text)]
+        if delivery == "bytewise"
+        else [[text[:split], text[split:]] for split in range(len(text) + 1)]
+    )
+    for chunks in deliveries:
+        calls, content = _capture_stream(chunks)
+        assert calls == [{"city": "Paris"}]
+        assert content in (" literally", " Use  literally") or (
+            content.endswith(" literally")
+            and " Use ".startswith(content[: -len(" literally")])
+        )
+        assert "<" not in content and ">" not in content
+
+
+@pytest.mark.parametrize(
+    "partial", ["</function>", "</function>  ", "</function></tool_"]
+)
+def test_wrapped_post_call_partial_pair_holds_entire_tail(partial):
+    parser = NemotronToolParser()
+    parser.extract_tool_calls_streaming("", _COMPLETED_WRAPPER, _COMPLETED_WRAPPER)
+    text = _COMPLETED_WRAPPER + " held prose " + partial
+    assert not (
+        parser.extract_tool_calls_streaming(
+            _COMPLETED_WRAPPER, text, text[len(_COMPLETED_WRAPPER) :]
+        )
+        or {}
+    ).get("content")
+    # EOF would release this partial pair; continue streaming before EOF here.
+    # Non-whitespace text disambiguates a lone function close as literal prose.
+    suffix = " literal" if partial != "</function></tool_" else "x"
+    resolved = text + suffix
+    delta = parser.extract_tool_calls_streaming(text, resolved, suffix) or {}
+    assert delta.get("content") == " held prose " + partial + suffix
+
+
+@pytest.mark.parametrize(
+    "pair", ["</function></tool_call>", "</function> \n</tool_call>"]
+)
+@pytest.mark.parametrize("next_call", [False, True])
+def test_wrapped_held_tail_consumed_through_last_pair_before_next_opener(
+    pair, next_call
+):
+    tail = " payload " + pair + " more payload " + pair + " visible"
+    suffix = _COMPLETED_WRAPPER + " Explain </function> literally." if next_call else ""
+    calls, content = _capture_stream([_COMPLETED_WRAPPER, tail + suffix])
+    assert calls == [{"city": "Paris"}] * (2 if next_call else 1)
+    assert content == " visible" + (
+        " Explain </function> literally." if next_call else ""
+    )
+
+
+@pytest.mark.parametrize(
+    "ending", ["</function>", "</function>  ", "</function></tool_", "</tool_call>"]
+)
+def test_post_call_literal_closer_at_eof_every_split(ending):
+    tail = " Close it with " + ending
+    text = _COMPLETED_WRAPPER + tail
+    buffered = NemotronToolParser().extract_tool_calls(text)
+    assert buffered.content == tail.strip()
+    for chunks in [list(text)] + [
+        [text[:split], text[split:]] for split in range(len(text) + 1)
+    ]:
+        calls, content = _capture_stream(chunks)
+        assert calls == [{"city": "Paris"}]
+        # Streaming preserves narration whitespace; buffered extraction strips it.
+        assert content == tail
+        assert content.strip() == buffered.content
+
+
+def test_complete_call_emits_before_possible_continuation_resolves(parser):
+    text = _COMPLETED_WRAPPER + " held prose </function>"
+    delta = parser.extract_tool_calls_streaming("", text, text)
+    assert len(delta["tool_calls"]) == 1
+    assert not delta.get("content")
+    assert parser.flush_held_content(text) == " held prose </function>"

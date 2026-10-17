@@ -68,6 +68,7 @@ class NemotronToolParser(ToolParser):
     # still has the attribute.
     _content_upto = 0
     _stream_started = False
+    _post_call_wrapped = False
 
     # Pattern for Nemotron-style with parameters.
     #
@@ -108,23 +109,62 @@ class NemotronToolParser(ToolParser):
         super().reset()
         self._content_upto = 0
         self._stream_started = False
+        self._post_call_wrapped = False
         self._undeclared_logged = False
         self._opener_scan_upto = 0
         self._opener_scan_result = False
 
     def flush_held_content(self, full_text: str) -> str:
+        return self._release_held_content(full_text, final=True)
+
+    def _release_held_content(self, full_text: str, *, final: bool = False) -> str:
         # Completed calls are already accounted for by the streaming watermark.
         # Inspect only the held range: old markers elsewhere in the response
         # must not hide trailing prose. A full opener or ambiguous suffix still
         # belongs to markup and must never be flushed onto the content channel.
         held = full_text[self._content_upto :]
+        if self._post_call_wrapped:
+            consumed, pending_pair = self._wrapped_tail_boundary(held)
+            self._content_upto += consumed
+            held = held[consumed:]
+        else:
+            pending_pair = None
         pending = self._pending_markup_index(
             held,
             include_closers=self._has_unmatched_opener(full_text[: self._content_upto]),
         )
+        # At EOF a partial continuation cannot become a pair: release it as
+        # prose. Complete openers and ambiguous opener prefixes stay held.
+        if pending_pair is not None and not final:
+            pending = 0
         safe_end = len(held) if pending is None else pending
         self._content_upto += safe_end
         return held[:safe_end]
+
+    @staticmethod
+    def _wrapped_tail_boundary(held: str) -> tuple[int, int | None]:
+        """Consume continuation pairs and hold a possible final pair prefix."""
+        opener = re.search(r"<tool_call>|<function=", held)
+        stop = opener.start() if opener else len(held)
+        tail = held[:stop]
+        consumed = 0
+        # Buffered wrapped calls end at the LAST pair. Even prose containing
+        # such a pair is payload by that rule; an emitted call cannot retract,
+        # but its still-held continuation must never leak as visible content.
+        for pair in re.finditer(r"</function>\s*</tool_call>", tail):
+            consumed = pair.end()
+        if opener:
+            return consumed, None
+        tail = tail[consumed:]
+        partial = re.search(r"</function>\s*(<[^>]*|)?$", tail)
+        if partial:
+            suffix = partial.group(1) or ""
+            if "</tool_call>".startswith(suffix):
+                return consumed, partial.start()
+        for size in range(1, len("</function>")):
+            if tail.endswith("</function>"[:size]):
+                return consumed, len(tail) - size
+        return consumed, None
 
     def _has_unmatched_opener(self, prefix: str) -> bool:
         """Whether accounted markup still needs a function or wrapper close.
@@ -171,7 +211,13 @@ class NemotronToolParser(ToolParser):
         return wrappers > 0
 
     @staticmethod
-    def _function_spans(text: str, valid_names=None):
+    def _is_wrapped(text: str, start: int) -> bool:
+        return text.rfind("<tool_call>", 0, start) > text.rfind(
+            "</tool_call>", 0, start
+        )
+
+    @classmethod
+    def _function_spans(cls, text: str, valid_names=None):
         """Bound shared literal-safe spans before post-call narration."""
         calls = split_marked_calls(
             text, r"<function=([^>]+)>", "</function>", valid_names=valid_names
@@ -179,24 +225,38 @@ class NemotronToolParser(ToolParser):
         bounded = []
         for name, body, start, end in calls:
             body_start = text.index(">", start) + 1
-            # The shared scanner already keeps literal closers in the body.
-            # A complete parameter/JSON payload lets us bound the function
-            # before narration; otherwise retain its literal-safe span rather
-            # than treating a payload-internal wrapper close as structural.
-            payload_end = body.rfind("</parameter>")
-            payload_end = payload_end + len("</parameter>") if payload_end >= 0 else 0
-            if body.lstrip().startswith("{"):
-                try:
-                    _, json_end = json.JSONDecoder().raw_decode(body.lstrip())
-                    payload_end = len(body) - len(body.lstrip()) + json_end
-                except json.JSONDecodeError:
-                    pass
-            close = (
-                text.find("</function>", body_start + payload_end, end)
-                if payload_end
-                else -1
-            )
-            if close != -1:
+            close = None
+            if cls._is_wrapped(text, start):
+                consumed, _ = cls._wrapped_tail_boundary(text[body_start:])
+                if consumed and re.search(
+                    r"</parameter>\s*</function>$", text[body_start + consumed : end]
+                ):
+                    # A later complete parameter payload already closed the
+                    # function, even if its wrapper close is still arriving.
+                    close = end - len("</function>")
+                elif consumed:
+                    close = body_start + text[body_start : body_start + consumed].rfind(
+                        "</function>"
+                    )
+            if close is None:
+                # Bare calls end at the first complete payload, matching the
+                # streaming path. Missing wrapper closes retain that fallback.
+                if body.lstrip().startswith("{"):
+                    try:
+                        _, offset = json.JSONDecoder().raw_decode(body.lstrip())
+                        offset += body_start + len(body) - len(body.lstrip())
+                        suffix = re.match(r"\s*(</function>)", text[offset:end])
+                        if suffix:
+                            close = offset + suffix.start(1)
+                    except json.JSONDecodeError:
+                        pass
+                else:
+                    payload = re.search(
+                        r"</parameter>\s*(</function>)", text[body_start:end]
+                    )
+                    if payload:
+                        close = body_start + payload.start(1)
+            if close is not None:
                 body, end = text[body_start:close], close + len("</function>")
             bounded.append((name, body, start, end))
         return bounded
@@ -627,6 +687,7 @@ class NemotronToolParser(ToolParser):
             # reuse an instance without honoring reset().
             self._content_upto = len(previous_text)
             self._opener_scan_upto = 0
+            self._post_call_wrapped = False
             self._stream_started = True
         if "<tool_call>" not in current_text and "<function=" not in current_text:
             # Ordinary prose, forwarded verbatim — already on the wire, so a
@@ -647,9 +708,9 @@ class NemotronToolParser(ToolParser):
             and "<tool_call>" not in held
             and not unmatched_opener
         ):
-            # A literal closer after an accounted call cannot finish that call
-            # again. Do not reparse its payload or strip prose as wrapper tags.
-            content = self.flush_held_content(current_text)
+            # Inspect only the held tail: wrapped continuation pairs stay off
+            # the wire, while disambiguated lone closers remain literal prose.
+            content = self._release_held_content(current_text)
             return {"content": content} if content else None
 
         # The XML parameter format has no escaping rule. A literal
@@ -687,9 +748,7 @@ class NemotronToolParser(ToolParser):
         # arrive in separate deltas (each bumps the count → one re-parse each,
         # but the second finds nothing new to emit).
         if self._close_tag_count(current_text) > self._close_tag_count(previous_text):
-            # Account for completed functions immediately. Only the ambiguous
-            # suffix stays held at the safe boundary; deferring the function
-            # too would replay its markup if that suffix resolves into prose.
+            # Account for completed calls immediately; only their tail may be held.
             # ``request`` matters here, not just to the non-streaming caller:
             # ``extract_tool_calls`` derives its declared-name gate from it, so
             # omitting it let a name the caller never offered through on the
@@ -697,6 +756,21 @@ class NemotronToolParser(ToolParser):
             # buffered. Agents stream, so the gate was off where it counts.
             result = self.extract_tool_calls(current_text, request)
             safe_end = self._safe_accounting_boundary(current_text)
+            if result.tools_called:
+                spans = self._function_spans(
+                    current_text, valid_names=_declared_tool_names(request)
+                )
+                _, _, start, end = spans[-1]
+                self._post_call_wrapped = self._is_wrapped(current_text, start)
+                if self._post_call_wrapped:
+                    wrapper = re.match(r"\s*</tool_call>", current_text[end:])
+                    if wrapper:
+                        end += wrapper.end()
+                    consumed, pending_pair = self._wrapped_tail_boundary(
+                        current_text[end:]
+                    )
+                    if pending_pair is not None:
+                        safe_end = min(safe_end, end + consumed)
             unsent_content = self._visible_content_between(
                 current_text, self._content_upto, safe_end, request
             )
