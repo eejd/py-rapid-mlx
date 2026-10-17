@@ -12578,6 +12578,14 @@ def chat_command(args):
             f"pass --max-tokens to override){RESET}"
         )
 
+    from rapid_mlx.chat_goose import run as run_goose_chat
+
+    if run_goose_chat(
+        args, base_url, getattr(args, "_original_alias", args.model),
+        max_tokens_explicit=user_passed_max_tokens,
+    ):
+        return
+
     print(
         f"  🐆 {BOLD}Chat{RESET} — "
         f"{DIM}type {RESET}{BOLD}/help{RESET}{DIM} for commands, "

@@ -617,6 +617,10 @@ vllm-mlx-bench = "rapid_mlx.benchmark:main"
 [tool.setuptools.package-data]
 rapid_mlx = [
     "aliases.json",
+    "goose_runtime/*.py",
+    "goose_runtime/*.json",
+    "goose_runtime/*.txt",
+    "goose_runtime/*.md",
     "model_recommendations.json",
     "audio/aliases.json",
     "catalog/schemas/*.json",
