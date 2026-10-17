@@ -3170,6 +3170,40 @@ def _require_tensorfold_family_lane_or_exit(args) -> None:
         raise SystemExit(2)
 
 
+def _reject_tensorfold_lanes_off_lane_or_exit(args) -> None:
+    """Refuse lane opt-ins that would otherwise be ignored by ordinary serving."""
+    from .speculative.tensorfold_concurrency import (
+        LANES_ENV,
+        QUALIFIED_PROFILES,
+        request_lanes,
+    )
+
+    config = getattr(args, "_speculative_config", None)
+    if config is not None and config.backend == "tensorfold":
+        return
+    model = getattr(args, "_original_alias", None) or args.model
+    value = os.environ.get(LANES_ENV, "1")
+    profiles = ", ".join(sorted(QUALIFIED_PROFILES))
+    try:
+        # Validate only the value; this serving path has no TensorFold lane.
+        if request_lanes(next(iter(QUALIFIED_PROFILES)), value) == 1:
+            return
+    except ValueError:
+        message = (
+            f"{LANES_ENV} must be 1, 2, 4 or 8 (got {value!r}). "
+            f"It enables concurrent decoding only on qualified TensorFold profiles "
+            f"({profiles}); unset it or set it to 1 for {model!r}."
+        )
+    else:
+        message = (
+            f"{LANES_ENV}={value} enables concurrent decoding only on qualified "
+            f"TensorFold profiles ({profiles}); {model!r} is not served through one. "
+            f"Unset {LANES_ENV} or set it to 1."
+        )
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
 def _normalize_speculative_config_or_exit(args):
     """Parse ``--speculative-config`` and map methods to runtime fields."""
     import json
@@ -5746,6 +5780,7 @@ def serve_command(args):
     # checks or model downloads can obscure the actionable error.
     _normalize_speculative_config_or_exit(args)
     _require_tensorfold_family_lane_or_exit(args)
+    _reject_tensorfold_lanes_off_lane_or_exit(args)
     _reject_unsupported_listen_fd_lane(
         args, owns_v41_product_download=_owns_v41_product_download
     )
