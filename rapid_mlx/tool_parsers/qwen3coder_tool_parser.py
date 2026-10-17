@@ -220,14 +220,66 @@ class _MarkdownCodeTracker:
         return opener_length is not None
 
 
-def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -> str:
+def _strip_trailing_tool_envelope(
+    text: str,
+    declared: set[str] | None = None,
+    *,
+    _leading_whitespace_re=re.compile(r"\s*"),
+    _json_payload_event_re=re.compile(r'["{}]|</tool_call>|<tool_call>'),
+    _json_string_event_re=re.compile(r'["\\]'),
+) -> str:
     """Hide only an unfinished last envelope outside Markdown, in O(n)."""
-    opener = text.rfind("<tool_call>")
+    opener = -1
+    json_unfinished = False
+    cursor = 0
+    # Only JSON payloads establish string context. Quotes in ordinary prose
+    # must not hide a later real opener; literal openers in arguments must.
+    while (candidate := text.find("<tool_call>", cursor)) != -1:
+        opener = candidate
+        json_unfinished = False
+        payload_start = _leading_whitespace_re.match(
+            text, candidate + len("<tool_call>")
+        ).end()
+        if payload_start == len(text):
+            break
+        if text[payload_start] != "{":
+            cursor = payload_start
+            continue
+
+        depth = 1
+        cursor = payload_start + 1
+        while event := _json_payload_event_re.search(text, cursor):
+            token = event.group()
+            cursor = event.end()
+            if token == '"':
+                while string_event := _json_string_event_re.search(text, cursor):
+                    cursor = string_event.end()
+                    if string_event.group() == "\\":
+                        cursor += 1
+                    else:
+                        break
+                else:
+                    json_unfinished = True
+                    break
+            elif token == "{":
+                depth += 1
+            elif token == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif token == "</tool_call>":
+                break
+            else:
+                # This opener is outside a JSON string, so it supersedes the
+                # earlier unfinished payload as the trailing candidate.
+                cursor = event.start()
+                break
+        else:
+            json_unfinished = True
+        if json_unfinished:
+            break
     if opener == -1 or _MarkdownCodeTracker().inside(text, opener, buffered=True):
         return text
-    # Accepted limitation: an opener inside a truncated JSON string selects
-    # that inner opener, leaving the outer payload visible. No earlier JSON
-    # state is tracked; changing this rule requires a deliberate compatibility fix.
     payload = text[opener + len("<tool_call>") :].lstrip()
     if not payload or "<function=".startswith(payload):
         return text[:opener]
@@ -246,27 +298,7 @@ def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -
         r'\{\s*(?:"name"\s*(?::|\Z)|"(?:n(?:a(?:m(?:e)?)?)?)?\Z|\Z)', payload
     ):
         return text
-    depth = 0
-    in_string = escaped = False
-    for index, char in enumerate(payload):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text
-        elif char == "<" and payload.startswith("</tool_call>", index):
-            return text
-    return text[:opener]
+    return text[:opener] if json_unfinished else text
 
 
 def _merge_content(
