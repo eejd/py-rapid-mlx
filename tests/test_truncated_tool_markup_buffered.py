@@ -114,7 +114,7 @@ def _reply(
             {"name": t["function"]["name"], "input_schema": t["function"]["parameters"]}
             for t in tools
         ]
-        body["tool_choice"] = {"type": "auto"}
+        body["tool_choice"] = {"type": choice}
     elif route == "responses":
         body["input"] = "Weather?"
         body["max_output_tokens"] = body.pop("max_tokens")
@@ -871,3 +871,46 @@ def test_escaped_backtick_before_truncated_call(
     content, calls, _ = _reply(client, route, raw, tools=tools)
     assert content == (raw if kept else prefix.rstrip())
     assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("reasoning", [False, True])
+def test_tool_choice_none_preserves_trailing_literal(client, parser, route, reasoning):
+    from rapid_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    cfg = client[1]
+    cfg.tool_call_parser = parser
+    visible = "Literal example: <tool_call>"
+    cls = ToolParserManager.get_tool_parser(parser)
+    assert (
+        cls.strip_trailing_tool_envelope(
+            visible, {"tools": TOOLS, "tool_choice": "none"}
+        )
+        == visible
+    )
+    raw = visible
+    if reasoning:
+        cfg.reasoning_parser_name = "qwen3"
+        cfg.reasoning_parser = Qwen3ReasoningParser(None)
+        raw = "<think>Let me think.</think>" + visible
+    content, calls, _ = _reply(client, route, raw, choice="none")
+    assert content == visible
+    assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize(
+    "prefix,kept",
+    [
+        ("`x <tool_call>`</tool_call>\n", False),
+        ("x <tool_call>`</tool_call>\n", True),
+    ],
+)
+def test_markdown_tracks_closed_wrapper_contents(client, parser, prefix, kept):
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    raw = prefix + "<tool_call>"
+    cls = ToolParserManager.get_tool_parser(parser)
+    assert cls.strip_trailing_tool_envelope(raw) == (raw if kept else prefix)

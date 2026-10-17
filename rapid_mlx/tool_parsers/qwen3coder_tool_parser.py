@@ -126,21 +126,9 @@ class _MarkdownCodeTracker:
 
     def _inside_buffered(self, text: str, pos: int) -> bool:
         """One linear query; retain multiline inline spans without changing streams."""
-        # Join once: repeatedly appending narration between closed wrappers is
-        # quadratic on a long line. Match the streaming tracker's wrapper skips.
-        pieces = []
-        cursor = 0
-        while cursor < pos:
-            start = text.find(self._OPEN, cursor, pos)
-            if start == -1:
-                break
-            close = text.find(self._CLOSE, start + len(self._OPEN), pos)
-            if close == -1:
-                break
-            pieces.append(text[cursor:start])
-            cursor = close + len(self._CLOSE)
-        pieces.append(text[cursor:pos])
-        prefix = "".join(pieces)
+        # Scan the whole prefix once, including wrapper contents: a backtick
+        # inside a literal wrapper can open or close a Markdown code span.
+        prefix = text[:pos]
         fence = None
         inline = None
         # Buffered cleanup errs toward preserving examples, including fences
@@ -1349,6 +1337,8 @@ class Qwen3CoderToolParser(ToolParser):
 
     @classmethod
     def strip_trailing_tool_envelope(cls, text: str, request=None) -> str:
+        if request is not None and request.get("tool_choice") == "none":
+            return text
         declared = cls._declared_tool_names(request) if request is not None else None
         if declared is not None and not declared:
             return text
