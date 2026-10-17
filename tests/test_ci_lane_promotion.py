@@ -137,8 +137,7 @@ def test_product_promotion_keeps_diff_scope_and_accepts_integration_heads():
         run = _step_run(workflow, job_name, step_name)
         assert 'git diff --no-renames --name-only "$PR_BASE_SHA" "$GITHUB_SHA"' in run
         assert '[ "$HEAD_REPO" = "$REPO" ] &&' in run
-        assert '[[ "$HEAD_REF" == train/* ]] ||' in run
-        assert '[[ "$HEAD_REF" =~ ^mergify/merge-queue/[0-9a-f]{10}$ ]]' in run
+        assert '[[ "$HEAD_REF" == train/* ]]' in run
         assert 'echo "full_gate=$full_gate"' in run
 
 
@@ -196,40 +195,6 @@ def test_fork_cannot_claim_train_branch_promotion(tmp_path):
                 **common,
             )
             == "full_gate=true"
-        )
-
-
-@pytest.mark.parametrize(
-    ("head_ref", "head_repo", "expected"),
-    (
-        ("mergify/merge-queue/a76b1f3d25", "owner/repo", "full_gate=true"),
-        ("mergify/merge-queue/A76B1F3D25", "owner/repo", "full_gate=false"),
-        ("mergify/merge-queue/a76b1f3d2", "owner/repo", "full_gate=false"),
-        ("mergify/merge-queue/a76b1f3d25-extra", "owner/repo", "full_gate=false"),
-        ("tmp-mergify/merge-queue/a76b1f3d25", "owner/repo", "full_gate=false"),
-        ("mergify/merge-queue/a76b1f3d25", "attacker/fork", "full_gate=false"),
-    ),
-)
-def test_only_exact_internal_mergify_batch_heads_promote_full_ci(
-    tmp_path, head_ref, head_repo, expected
-):
-    for index, (workflow, job_name, step_name) in enumerate(
-        (
-            (ENGINE_WORKFLOW, "changes", "Classify validation lanes"),
-            (DESKTOP_WORKFLOW, "changes", "Classify desktop lane"),
-        )
-    ):
-        assert (
-            _execute_promotion(
-                workflow,
-                job_name,
-                step_name,
-                GITHUB_OUTPUT=str(tmp_path / f"mergify-{index}"),
-                HEAD_REF=head_ref,
-                HEAD_REPO=head_repo,
-                REPO="owner/repo",
-            )
-            == expected
         )
 
 
@@ -394,21 +359,6 @@ def test_main_and_frozen_release_pushes_keep_full_engine_and_desktop_validation(
     assert "refs/heads/release/0.16.0" not in desktop
 
 
-def test_all_strict_required_workflows_emit_on_merge_group():
-    for workflow in (ENGINE_WORKFLOW, DESKTOP_WORKFLOW, VERSION_WORKFLOW):
-        triggers = _workflow_strings(workflow)["on"]
-        assert triggers["merge_group"]["types"] == ["checks_requested"]
-
-    version = _workflow_strings(VERSION_WORKFLOW)
-    guard = version["jobs"]["version-bump-guard"]
-    queue_step = next(
-        step
-        for step in guard["steps"]
-        if step.get("name") == "Pass — PR contract already validated before merge queue"
-    )
-    assert queue_step["if"] == "github.event_name == 'merge_group'"
-
-
 def test_gui_golden_job_requires_both_desktop_lane_and_full_promotion():
     condition = str(_job(DESKTOP_WORKFLOW, "gui-golden-flows")["if"])
     assert "needs.changes.outputs.desktop == 'true'" in condition
@@ -450,8 +400,7 @@ def test_engine_jobs_follow_fail_closed_engine_classification():
         assert job["needs"] == "changes"
         assert _condition(ENGINE_WORKFLOW, job_name) == (
             "!cancelled() && needs.changes.result == 'success' && "
-            "needs.changes.outputs.engine == 'true' && "
-            "needs.changes.outputs.reuse_ci != 'true'"
+            "needs.changes.outputs.engine == 'true'"
         )
 
     bound_guard = _job(ENGINE_WORKFLOW, "mlx-bound-guard")
@@ -459,8 +408,7 @@ def test_engine_jobs_follow_fail_closed_engine_classification():
     assert _condition(ENGINE_WORKFLOW, "mlx-bound-guard") == (
         "!cancelled() && needs.changes.result == 'success' && "
         "github.event_name == 'pull_request' && "
-        "needs.changes.outputs.engine == 'true' && "
-        "needs.changes.outputs.reuse_ci != 'true'"
+        "needs.changes.outputs.engine == 'true'"
     )
 
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fail-closed contracts for the managed singleton merge queue."""
+"""Exact-head merge authorization and advisory notice contracts."""
 
 import json
 import subprocess
@@ -8,107 +8,6 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG = ROOT / ".mergify.yml"
-REQUIRED_CHECKS = {
-    "check-success = @github-actions/tests",
-    "check-success = @github-actions/desktop-tests",
-    "check-success = @github-actions/version-bump-guard",
-}
-CANDIDATE_ADMISSION = "check-success = @github-actions/candidate-admission/ci"
-HEAD_AUTHORIZATION = "check-success = merge-ready-head"
-LANE_CHECKS = {
-    "no-mac-batch": "check-success = @github-actions/merge-lane-no-mac",
-    "mac-batch": "check-success = @github-actions/merge-lane-mac",
-}
-
-
-def _config() -> dict[str, object]:
-    return yaml.safe_load(CONFIG.read_text())
-
-
-def _rules_by_name(kind: str) -> dict[str, dict[str, object]]:
-    return {rule["name"]: rule for rule in _config()[kind]}
-
-
-def test_queue_runs_single_ready_prs_without_speculation_or_fill_waits():
-    config = _config()
-    queue = config["merge_queue"]
-    rules = _rules_by_name("queue_rules")
-
-    assert queue["mode"] == "serial"
-    assert queue["max_parallel_checks"] == 1
-    assert queue["skip_intermediate_results"] is False
-    assert set(rules) == {"no-mac-batch", "mac-batch"}
-    for rule in rules.values():
-        assert rule["batch_size"] == 1
-        assert "batch_max_wait_time" not in rule
-        assert "batch_max_failure_resolution_attempts" not in rule
-    assert {rule["checks_timeout"] for rule in rules.values()} == {"auto"}
-
-
-def test_queue_avoids_subscription_gated_batch_and_scope_features():
-    config = _config()
-
-    assert "scopes" not in config
-    assert config["merge_queue"]["mode"] == "serial"
-
-
-def test_queue_revalidates_every_required_check_on_the_candidate():
-    rules = _rules_by_name("queue_rules")
-
-    for name, rule in rules.items():
-        assert set(rule["queue_conditions"]) >= REQUIRED_CHECKS
-        assert HEAD_AUTHORIZATION in rule["queue_conditions"]
-        assert LANE_CHECKS[name] in rule["queue_conditions"]
-        assert not ({*LANE_CHECKS.values()} - {LANE_CHECKS[name]}) & set(
-            rule["queue_conditions"]
-        )
-        assert CANDIDATE_ADMISSION not in rule["queue_conditions"]
-        assert set(rule["merge_conditions"]) == REQUIRED_CHECKS | {CANDIDATE_ADMISSION}
-        assert HEAD_AUTHORIZATION not in rule["merge_conditions"]
-        assert not set(LANE_CHECKS.values()) & set(rule["merge_conditions"])
-        assert rule["branch_protection_injection_mode"] == "queue"
-        assert rule["queue_branch_prefix"] == "mergify/merge-queue/"
-
-
-def test_ready_labels_autoqueue_without_unsupported_recovery_rules():
-    config = _config()
-    queues = _rules_by_name("queue_rules")
-    auto_merge = config["merge_protections_settings"]["auto_merge_conditions"]
-
-    assert auto_merge == [{"or": ["label = merge-ready", "label = merge-ready-mac"]}]
-    assert "pull_request_rules" not in config
-
-    expected_labels = {
-        "no-mac-batch": {"label = merge-ready", "-label = merge-ready-mac"},
-        "mac-batch": {"label = merge-ready-mac", "-label = merge-ready"},
-    }
-    for name, queue_rule in queues.items():
-        assert expected_labels[name] <= set(queue_rule["queue_conditions"])
-        assert "-from-fork" in queue_rule["queue_conditions"]
-        assert queue_rule["max_checks_retries"] == 0
-
-
-def test_ready_labels_are_mutually_exclusive_in_every_rule():
-    for rule in _config()["queue_rules"]:
-        conditions = set(rule["queue_conditions"])
-        assert {"label = merge-ready", "-label = merge-ready-mac"} <= conditions or {
-            "label = merge-ready-mac",
-            "-label = merge-ready",
-        } <= conditions
-
-
-def test_release_bumps_cannot_enter_the_general_merge_queue():
-    config = _config()
-    exclusions = {
-        "-label = version-bump",
-        "-label = skip-version-bump",
-        "-title ~= ^chore: bump version to ",
-    }
-
-    for queue_rule in config["queue_rules"]:
-        assert exclusions <= set(queue_rule["queue_conditions"])
-        assert queue_rule["merge_method"] == "squash"
 
 
 def test_head_updates_rely_on_sha_bound_authorization_without_label_mutation():
@@ -748,13 +647,3 @@ def test_stale_head_or_double_ready_labels_fail_authorization():
             ["status", "failure"],
             ["failed", "Apply exactly one merge-ready label"],
         ]
-
-
-def test_operations_guide_uses_provider_supported_terminal_requeue():
-    docs = (ROOT / "docs/engineering/operations/path-aware-merge-queue.md").read_text()
-
-    assert "@mergifyio queue no-mac-batch" in docs
-    assert "@mergifyio queue mac-batch" in docs
-    assert "does not bypass `queue_conditions`" in docs
-    assert "merge-requeue-trigger" not in docs
-    assert "merge-requeue-required" not in docs

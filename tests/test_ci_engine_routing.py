@@ -1,4 +1,4 @@
-"""Source CPU routing preserves integration authority and type/collection guards."""
+"""Ordinary engine routing preserves type and collection guards."""
 
 import json
 import os
@@ -46,8 +46,7 @@ def test_headless_and_type_baseline_do_not_neutralize_control_changes(control):
         "config/mypy-error-baseline.txt",
         control,
     ]
-    policy = classify_policy(paths, source_preflight=True)
-    assert not policy.source_preflight
+    policy = classify_policy(paths)
     assert policy.linux_matrix_mode == "full"
 
 
@@ -58,11 +57,6 @@ def test_headless_source_tests_remain_enrolled_once_and_in_separate_process():
         item.path for item in files
     )
     assert len({item.path for shard in shards for item in shard}) == len(files)
-    for item in files:
-        policy = classify_policy([item.path], source_preflight=True)
-        if item.path.split("/")[-1].startswith(("test_ci_", "test_release_")):
-            continue
-        assert policy.source_preflight, item.path
     command = next(
         s["run"]
         for s in jobs()["test-matrix"]["steps"]
@@ -95,21 +89,18 @@ def test_type_baseline_source_fast_route_preserves_existing_type_ratchet():
     ],
 )
 @pytest.mark.parametrize(
-    "event,head_repo,head_ref,enabled,expected",
+    "event,head_repo,head_ref",
     [
-        ("pull_request", "owner/repo", "feature/engine", "true", False),
-        ("pull_request", "fork/repo", "feature/engine", "true", False),
-        ("pull_request", "owner/repo", "train/feature", "true", False),
-        ("pull_request", "owner/repo", "mergify/merge-queue/0123456789", "true", False),
-        ("pull_request", "owner/repo", "feature/engine", "false", False),
-        ("push", "owner/repo", "", "true", False),
-        ("merge_group", "owner/repo", "", "true", False),
-        ("schedule", "owner/repo", "", "true", False),
-        ("workflow_dispatch", "owner/repo", "", "true", False),
+        ("pull_request", "owner/repo", "feature/engine"),
+        ("pull_request", "fork/repo", "feature/engine"),
+        ("pull_request", "owner/repo", "train/feature"),
+        ("push", "owner/repo", ""),
+        ("schedule", "owner/repo", ""),
+        ("workflow_dispatch", "owner/repo", ""),
     ],
 )
 def test_actual_engine_workflow_source_context(
-    tmp_path, paths, event, head_repo, head_ref, enabled, expected
+    tmp_path, paths, event, head_repo, head_ref
 ):
     script = next(
         s["run"] for s in jobs()["changes"]["steps"] if s.get("id") == "policy"
@@ -132,18 +123,13 @@ def test_actual_engine_workflow_source_context(
         HEAD_REF=head_ref,
         PR_BASE_SHA="a" * 40,
         GITHUB_SHA="b" * 40,
-        CANARY_ENABLED="true",
-        SOURCE_PREFLIGHT_ENABLED=enabled,
-        CANDIDATE_SHADOW_ENABLED="false",
-        CANDIDATE_CANARY_ENABLED="false",
     )
     result = subprocess.run(
         ["bash", "-c", script], cwd=ROOT, env=env, capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
     values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert values["source_preflight"] == str(expected).lower()
-    assert len(json.loads(values["test_matrix"])["include"]) == (3 if expected else 9)
-    if event != "pull_request" or head_ref.startswith(("train/", "mergify/")):
+    assert len(json.loads(values["test_matrix"])["include"]) == 9
+    if event != "pull_request" or head_ref.startswith("train/"):
         assert values["full_gate"] == "true"
         assert len(json.loads(values["l1_matrix"])["include"]) == 5

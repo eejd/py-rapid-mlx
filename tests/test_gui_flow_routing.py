@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.queue_tree_evidence import MAX_GUI_MATRIX_JOBS
 from scripts.select_gui_flows import (
     GUI_GROUP_WEIGHTS,
     GUI_LANE_COUNT,
@@ -170,7 +169,7 @@ def test_shards_partition_every_selected_flow_once_by_manifest_group():
         sum(GUI_GROUP_WEIGHTS[group] for group in str(shard["group"]).split("+"))
         for shard in shards
     ]
-    assert GUI_LANE_COUNT == MAX_GUI_MATRIX_JOBS
+    assert GUI_LANE_COUNT == 4
     assert sorted(lane_weights) == [240, 295, 300, 480]
 
 

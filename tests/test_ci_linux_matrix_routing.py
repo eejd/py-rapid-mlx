@@ -6,7 +6,6 @@ from pathlib import Path
 import yaml
 
 from scripts.classify_ci_changes import linux_test_matrix
-from scripts.queue_tree_evidence import REQUIRED_CI_MATRIX_JOBS
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
@@ -98,7 +97,3 @@ def test_reduced_route_keeps_all_three_coverage_shards() -> None:
     linux_coverage = workflow["jobs"]["linux-coverage"]
     assert set(linux_coverage["needs"]) == {"changes", "test-matrix"}
     assert "needs.test-matrix.result == 'success'" in linux_coverage["if"]
-
-
-def test_candidate_tree_evidence_still_requires_nine_matrix_jobs() -> None:
-    assert len(REQUIRED_CI_MATRIX_JOBS["test-matrix ("]) == 9

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Execute the real Desktop classifier step against complete main-push diffs."""
+"""Every main push runs the full Desktop gate regardless of its diff."""
 
 import json
 import os
@@ -91,9 +91,9 @@ def _execute(repo, before, **overrides):
 @pytest.mark.parametrize(
     ("paths", "desktop"),
     [
-        (["rapid_mlx/server.py"], "false"),
-        (["rapid_mlx/server.py", "docs/example.md"], "false"),
-        (["docs/example.md"], "false"),
+        (["rapid_mlx/server.py"], "true"),
+        (["rapid_mlx/server.py", "docs/example.md"], "true"),
+        (["docs/example.md"], "true"),
         (["apps/rapid-mac/Sources/Rapid/Chat/Test.swift"], "true"),
         ([".github/workflows/ci.yml"], "true"),
         (["new-product/unknown.py"], "true"),
@@ -103,7 +103,7 @@ def _execute(repo, before, **overrides):
         ),
     ],
 )
-def test_normal_main_push_classifies_complete_diff(repository, paths, desktop):
+def test_main_push_always_runs_full_desktop_gate(repository, paths, desktop):
     before = _git(repository, "rev-parse", "HEAD")
     _commit(repository, paths)
     result = _execute(repository, before)
@@ -123,13 +123,12 @@ def test_normal_main_push_classifies_complete_diff(repository, paths, desktop):
         {"GITHUB_SHA": "f" * 40},
         {"GITHUB_SHA": "HEAD"},
         {"GITHUB_REF": "refs/heads/other"},
-        {"EVENT_NAME": "merge_group"},
         {"EVENT_NAME": "workflow_dispatch"},
         {"EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/feature"},
         {"EVENT_NAME": "schedule"},
     ],
 )
-def test_unqualified_push_or_merge_group_stays_full(repository, overrides):
+def test_non_pr_events_stay_full(repository, overrides):
     before = _git(repository, "rev-parse", "HEAD")
     _commit(repository, ["rapid_mlx/server.py"])
     result = _execute(repository, before, **overrides)

@@ -544,7 +544,7 @@ def test_workflow_security_and_triggers():
         data = yaml.safe_load((root / f".github/workflows/{name}.yml").read_text())
         triggers = data.get("on", data.get(True))
         assert triggers["schedule"] == [dict(cron="17 9 * * *")]
-        assert "workflow_dispatch" in triggers and "merge_group" in triggers
+        assert "workflow_dispatch" in triggers and "merge_group" not in triggers
         assert (
             "github.event_name == 'schedule' && '-nightly' || ''"
             in data["concurrency"]["group"]
@@ -558,9 +558,7 @@ def test_workflow_security_and_triggers():
                 "needs.changes.outputs.full_gate == 'true'"
                 in data["jobs"]["l1-smoke"]["if"]
             )
-        assert (
-            "github.event_name == 'push'" in data["jobs"]["queue-tree-evidence"]["if"]
-        )
+        assert "queue-tree-evidence" not in data["jobs"]
 
 
 def test_multiple_merges_are_ordered_with_freeze_between(monkeypatch):
