@@ -181,6 +181,8 @@ class Request:
 
     # Prefix cache fields
     prompt_cache: list[Any] | None = None  # Cached KV state from prefix cache
+    # KV state extracted at completion, retained until cache publication/cleanup.
+    _extracted_cache: list[Any] | None = field(default=None, init=False, repr=False)
     cached_tokens: int = 0  # Number of tokens retrieved from cache
     remaining_tokens: list[int] | None = None  # Tokens still needing processing
     prefix_boundary: int = 0  # Token count for shared prefix (messages[:-1])
