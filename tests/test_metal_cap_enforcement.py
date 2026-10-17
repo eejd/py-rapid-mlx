@@ -1588,7 +1588,13 @@ def test_prefill_existing_processed_and_hidden_insert_rows_counted():
     bg._currently_processing = [[[[1, 2]], 8, 10]]
     assert sched._prefill_memory_rows() == [(rows[0], 8), (rows[1], 0)]
     sched.waiting.extend(rows[2:])
+    reclaims = []
+    original_reclaim = sched._reclaim_prefix_cache_for_prefill
+    sched._reclaim_prefix_cache_for_prefill = lambda *a, **k: (
+        reclaims.append(a) or original_reclaim(*a, **k)
+    )
     assert sched._schedule_waiting() == []  # stepped cohorts stay sealed
+    assert reclaims == []  # a sealed cohort never evicts prefixes to defer
     bg._currently_processing[0][1] = 0
     assert sched._schedule_waiting() == rows[2:3]
     assert list(sched.waiting) == rows[3:]

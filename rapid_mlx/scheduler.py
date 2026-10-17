@@ -9767,22 +9767,32 @@ class Scheduler:
             for r in self.running.values()
             if r.request_id not in prefilling
         )
-        # Reclaim reusable prefixes first, using the same bounded path as the
-        # singleton guard. Use the resolved cap, without the eviction pressure
-        # discount: workspace already reserves headroom and an extra discount
-        # unnecessarily serializes otherwise fitting fresh cohorts.
-        self._reclaim_prefix_cache_for_prefill(request, cohort_need=need)
-        fits = self._current_metal_active_bytes() + need <= cap
         # A measured cold forward does not bound merging new caches into a
         # partially processed prompt batch. Seal a cohort once it has stepped;
         # later work can join the next cold cohort while these rows decode.
-        if rows and (
+        # Decide this before reclaiming so a sealed cohort never evicts
+        # reusable prefixes for a request it is going to defer anyway.
+        sealed = bool(rows) and (
             not getattr(self, "_prefill_workspace_calibrated", False)
             or any(processed > 0 for _, processed in rows)
-        ):
-            fits = False
+        )
+        fits = False
+        if not sealed:
+            # Reclaim reusable prefixes first, using the same bounded path as
+            # the singleton guard. Use the resolved cap, without the eviction
+            # pressure discount: workspace already reserves headroom and an
+            # extra discount unnecessarily serializes fitting fresh cohorts.
+            self._reclaim_prefix_cache_for_prefill(request, cohort_need=need)
+            fits = self._current_metal_active_bytes() + need <= cap
+        # Guaranteed progress: with nothing running, a lone request is admitted
+        # even when the conservative estimate exceeds the cap. Nothing else
+        # will ever free memory for it, so deferring would starve it forever,
+        # and the workspace estimate is a deliberate over-count that would
+        # otherwise refuse long single prompts that do complete. Such a
+        # request is bounded by the add_request KV gate and context limits,
+        # exactly as before this cohort budget existed.
         if fits or not self.running:
-            return True  # Preserve singleton progress, even with an uncertain prior.
+            return True
         self._prefill_cohort_deferrals = (
             getattr(self, "_prefill_cohort_deferrals", 0) + 1
         )
