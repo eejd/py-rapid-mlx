@@ -35,8 +35,9 @@ def _port_is_in_use(host: str, port: int) -> bool:
 class _DiagnosedStartupTracebackFilter(logging.Filter):
     """Drop Uvicorn's lifespan traceback once a startup failure was explained."""
 
-    def __init__(self) -> None:
+    def __init__(self, exc: BaseException) -> None:
         super().__init__()
+        self.failure_text = str(exc) or type(exc).__name__
         self.armed = False
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -46,13 +47,16 @@ class _DiagnosedStartupTracebackFilter(logging.Filter):
             message = record.getMessage()
         except Exception:
             return True
-        if not message.startswith("Traceback (most recent call last):"):
+        if (
+            not message.startswith("Traceback (most recent call last):")
+            or self.failure_text not in message
+        ):
             return True
         self.armed = False
         return False
 
 
-def suppress_next_lifespan_traceback() -> None:
+def suppress_next_lifespan_traceback(exc: BaseException) -> None:
     """Hide the diagnosed lifespan traceback until the next event-loop turn.
 
     Uvicorn logs the startup failure synchronously as the lifespan unwinds.
@@ -66,7 +70,7 @@ def suppress_next_lifespan_traceback() -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    traceback_filter = _DiagnosedStartupTracebackFilter()
+    traceback_filter = _DiagnosedStartupTracebackFilter(exc)
     traceback_filter.armed = True
     uvicorn_logger.addFilter(traceback_filter)
     loop.call_soon(uvicorn_logger.removeFilter, traceback_filter)

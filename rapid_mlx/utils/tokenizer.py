@@ -1959,7 +1959,7 @@ def _refuse_unsafe_strict_false_retry(
     # Only pure extra-parameter failures can retry without checking names.
     # Every other failure requires a complete, optional-only missing-name list.
     missing_count = _parse_missing_count(text)
-    if "parameters not in model" not in text or missing_count is not None:
+    if "parameters not in model" not in text or "Missing" in text:
         names = _parse_missing_param_names(text)
         if (
             not names

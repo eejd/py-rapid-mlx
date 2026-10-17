@@ -3579,6 +3579,7 @@ def test_checkpoint_strict_retry_safety(tmp_path, monkeypatch, case):
     "message",
     [
         "Missing parameters in model",
+        "Received 1 parameters not in model: extra.weight.\nMissing parameters",
         "Missing 1 parameters: \n",
         "Missing 2 parameters: \nvision_tower.weight.",
         "Missing 1 parameters: \nvision_tower.weight,\nmodel.mtp.layers.0.weight.",

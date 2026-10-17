@@ -249,7 +249,8 @@ def test_custom_runner_retains_uvicorn_keyword_contract():
     assert calls == [("unused:app", "127.0.0.1", 12345)]
 
 
-def test_diagnosed_traceback_filter_is_one_shot():
+@pytest.mark.parametrize("exc", [ValueError("fixture"), ValueError()])
+def test_diagnosed_traceback_filter_is_one_shot(exc):
     import logging
 
     from rapid_mlx._uvicorn import _DiagnosedStartupTracebackFilter
@@ -257,10 +258,12 @@ def test_diagnosed_traceback_filter_is_one_shot():
     def record(message, level=logging.ERROR):
         return logging.LogRecord("uvicorn.error", level, __file__, 0, message, (), None)
 
-    traceback = record("Traceback (most recent call last):\nfixture")
-    guard = _DiagnosedStartupTracebackFilter()
+    failure_text = str(exc) or type(exc).__name__
+    traceback = record(f"Traceback (most recent call last):\n{failure_text}")
+    guard = _DiagnosedStartupTracebackFilter(exc)
     assert guard.filter(traceback)
     guard.armed = True
+    assert guard.filter(record("Traceback (most recent call last):\nunrelated"))
     assert guard.filter(record("Application startup failed. Exiting."))
     assert guard.filter(record("Traceback (most recent call last):", logging.WARNING))
 
@@ -285,17 +288,17 @@ async def test_diagnosed_traceback_filter_expires_and_respects_debug(monkeypatch
     previous_level = log.level
     try:
         log.setLevel(logging.DEBUG)
-        suppress_next_lifespan_traceback()
+        suppress_next_lifespan_traceback(ValueError("fixture"))
         assert log.filters == []
         log.setLevel(logging.INFO)
-        suppress_next_lifespan_traceback()
+        suppress_next_lifespan_traceback(ValueError("fixture"))
         assert len(log.filters) == 1
         trace = logging.LogRecord(
             "uvicorn.error",
             logging.ERROR,
             __file__,
             0,
-            "Traceback (most recent call last):",
+            "Traceback (most recent call last):\nfixture",
             (),
             None,
         )
@@ -303,7 +306,7 @@ async def test_diagnosed_traceback_filter_expires_and_respects_debug(monkeypatch
         assert log.filter(trace)
         await asyncio.sleep(0)
         assert log.filters == []
-        suppress_next_lifespan_traceback()
+        suppress_next_lifespan_traceback(ValueError("fixture"))
         assert len(log.filters) == 1
         await asyncio.sleep(0)
         assert log.filters == []
@@ -322,7 +325,7 @@ def test_diagnosed_traceback_filter_without_event_loop(monkeypatch):
     previous_level = log.level
     try:
         log.setLevel(logging.INFO)
-        suppress_next_lifespan_traceback()
+        suppress_next_lifespan_traceback(ValueError("fixture"))
         assert log.filters == []
     finally:
         log.setLevel(previous_level)
@@ -342,8 +345,9 @@ async def test_diagnosed_failure_through_real_lifespan(monkeypatch, caplog, debu
 
     @asynccontextmanager
     async def lifespan(_app):
-        suppress_next_lifespan_traceback()
-        raise ValueError("diagnosed startup failure")
+        exc = ValueError("diagnosed startup failure")
+        suppress_next_lifespan_traceback(exc)
+        raise exc
         yield
 
     config = uvicorn.Config(FastAPI(lifespan=lifespan), lifespan="on", log_config=None)
