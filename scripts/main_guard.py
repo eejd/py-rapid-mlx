@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from scripts.merge_on_green import APIError, GitHub
@@ -91,6 +92,7 @@ def nightly(api: GitHub, run: dict) -> str:
         )
         return "Nightly failure recorded"
     if run["conclusion"] == "success":
+        latest = []
         for workflow in NIGHTLIES:
             history = runs(api, workflow, "schedule")
             if (
@@ -98,6 +100,14 @@ def nightly(api: GitHub, run: dict) -> str:
                 or history[0]["status"] != "completed"
                 or history[0]["conclusion"] != "success"
             ):
+                return "Nightly recovery pending"
+            latest.append(history[0])
+        if len({r["head_sha"] for r in latest}) != 1:
+            created = [
+                datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+                for r in latest
+            ]
+            if max(created) - min(created) > timedelta(hours=6):
                 return "Nightly recovery pending"
         for item in api.items("issues?state=open&labels=nightly-failure"):
             if "pull_request" not in item:
@@ -267,7 +277,8 @@ def guard(api: GitHub, run: dict) -> str:
         issue(api, "main-red", "Main CI is failing", detail)
         return "Ambiguous or protected commit recorded"
     branch = f"revert/{sha}"
-    existing = api.items(f"pulls?state=all&head={api.repo.split('/')[0]}:{branch}")
+    pr_listing = f"pulls?state=all&head={api.repo.split('/')[0]}:{branch}"
+    existing = api.items(pr_listing)
     if existing:
         notify_author(api, originals[0], existing[0], run)
         return "Revert PR already exists"
@@ -281,6 +292,18 @@ def guard(api: GitHub, run: dict) -> str:
         try:
             revert_commit(api, sha, branch)
         except (APIError, OSError, subprocess.TimeoutExpired) as exc:
+            try:
+                api.request(f"git/ref/heads/{branch}")
+            except APIError as ref_error:
+                if ref_error.status != 404:
+                    raise
+            else:
+                # The winning guard owns PR creation; a later run resumes an orphan.
+                existing = api.items(pr_listing)
+                if existing:
+                    notify_author(api, originals[0], existing[0], run)
+                    return "Revert PR already exists"
+                return "Revert branch created concurrently"
             issue(api, "main-red", "Main CI is failing", f"{detail}\n{exc}")
             return "Revert conflict or preparation failure recorded"
     try:
@@ -297,6 +320,11 @@ def guard(api: GitHub, run: dict) -> str:
             pat=True,
         )
     except APIError as exc:
+        if exc.status == 422:
+            existing = api.items(pr_listing)
+            if existing:
+                notify_author(api, originals[0], existing[0], run)
+                return "Revert PR already exists"
         issue(api, "main-red", "Main CI is failing", f"{detail}\n{exc}")
         return "Revert PR creation failure recorded"
     ensure_label(api, "post-merge-revert")

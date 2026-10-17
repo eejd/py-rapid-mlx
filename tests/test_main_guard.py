@@ -494,3 +494,130 @@ def test_nightly_ignored_conclusions(conclusion):
     api = setup_api()
     assert "ignored" in g.guard(api, run(event="schedule", conclusion=conclusion))
     assert not api.calls
+
+
+@pytest.mark.parametrize("has_pr", [False, True])
+@pytest.mark.parametrize("notified", [False, True])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        APIError("push rejected"),
+        OSError("git failed"),
+        subprocess.TimeoutExpired("git", 180),
+    ],
+)
+def test_concurrent_revert_branch_creation(monkeypatch, has_pr, notified, failure):
+    api = setup_api()
+    listing = f"pulls?state=all&head=owner:{BRANCH}"
+    revert = dict(number=4, html_url="https://example.test/pull/4")
+
+    def prepare(*args):
+        api.data[f"git/ref/heads/{BRANCH}"] = {}
+        api.data[listing] = [revert] if has_pr else []
+        raise failure
+
+    monkeypatch.setattr(g, "revert_commit", prepare)
+    if notified:
+        api.data["issues/3/comments"] = [dict(body=f"<!-- main-guard:{SHA} -->")]
+    assert g.guard(api, run()) == (
+        "Revert PR already exists" if has_pr else "Revert branch created concurrently"
+    )
+    assert sum(c[0] == f"git/ref/heads/{BRANCH}" for c in api.calls) == 2
+    assert sum(c[0] == listing for c in api.calls) == 2
+    writes = [c for c in api.calls if c[1] != "GET"]
+    assert [c[0] for c in writes] == (
+        ["issues/3/comments"] if has_pr and not notified else []
+    )
+
+
+@pytest.mark.parametrize("notified", [False, True])
+def test_concurrent_revert_pr_creation(monkeypatch, notified):
+    api = setup_api()
+    monkeypatch.setattr(g, "revert_commit", Mock())
+    listing = f"pulls?state=all&head=owner:{BRANCH}"
+
+    def handler(path, method, data, pat):
+        if (path, method) == ("pulls", "POST"):
+            api.data[listing] = [dict(number=4, html_url="https://example.test/pull/4")]
+            raise APIError("PR already exists for head", 422)
+        return NotImplemented
+
+    api.handler = handler
+    if notified:
+        api.data["issues/3/comments"] = [dict(body=f"<!-- main-guard:{SHA} -->")]
+    assert g.guard(api, run()) == "Revert PR already exists"
+    assert sum(c[0] == listing for c in api.calls) == 2
+    assert [c[0] for c in api.calls if c[1] != "GET"] == (
+        ["pulls"] if notified else ["pulls", "issues/3/comments"]
+    )
+
+
+@pytest.mark.parametrize("status", [403, 500])
+def test_revert_branch_recheck_errors_fail_closed(monkeypatch, status):
+    api = setup_api()
+
+    def prepare(*args):
+        api.data[f"git/ref/heads/{BRANCH}"] = APIError("lookup failed", status)
+        raise APIError("push failed")
+
+    monkeypatch.setattr(g, "revert_commit", prepare)
+    with pytest.raises(APIError, match="lookup failed"):
+        g.guard(api, run())
+    assert not any(c[1] != "GET" for c in api.calls)
+
+
+@pytest.mark.parametrize(
+    "sha,created_at,expected",
+    [
+        (SHA, "2026-10-15T09:17:00Z", "recorded"),
+        (PARENT, "2026-10-17T09:17:00Z", "recorded"),
+        (PARENT, "2026-10-17T15:17:00Z", "recorded"),
+        (PARENT, "2026-10-17T03:17:00Z", "recorded"),
+        (PARENT, "2026-10-17T15:17:01Z", "pending"),
+        (PARENT, "2026-10-17T03:16:59Z", "pending"),
+        (PARENT, "2026-10-16T09:17:00Z", "pending"),
+    ],
+)
+def test_nightly_recovery_requires_same_cycle(sha, created_at, expected):
+    api = setup_api()
+    green = run(
+        event="schedule", conclusion="success", created_at="2026-10-17T09:17:00Z"
+    )
+    for workflow, latest in zip(
+        g.NIGHTLIES, [green, green | dict(head_sha=sha, created_at=created_at)]
+    ):
+        api.data[f"actions/workflows/{workflow}/runs?branch=main&event=schedule"] = [
+            latest,
+            green | dict(id=9),
+        ]
+    api.data["issues?state=open&labels=nightly-failure"] = [
+        dict(number=8),
+        dict(number=9, pull_request={}),
+    ]
+    api.data[("POST", "issues/8/comments")] = {}
+    api.data[("PATCH", "issues/8")] = {}
+    assert g.guard(api, green) == f"Nightly recovery {expected}"
+    writes = [c for c in api.calls if c[1] != "GET"]
+    assert [c[0] for c in writes] == (
+        ["issues/8/comments", "issues/8"] if expected == "recorded" else []
+    )
+
+
+@pytest.mark.parametrize(
+    "status,conclusion", [("in_progress", "success"), ("completed", "failure")]
+)
+def test_nightly_recovery_requires_latest_success_for_every_workflow(
+    status, conclusion
+):
+    api = setup_api()
+    green = run(event="schedule", conclusion="success")
+    for workflow in g.NIGHTLIES:
+        api.data[f"actions/workflows/{workflow}/runs?branch=main&event=schedule"] = [
+            green
+        ]
+    api.data[f"actions/workflows/{g.NIGHTLIES[1]}/runs?branch=main&event=schedule"] = [
+        green | dict(id=11, status=status, conclusion=conclusion),
+        green,
+    ]
+    assert g.guard(api, green) == "Nightly recovery pending"
+    assert not any(c[1] != "GET" for c in api.calls)
