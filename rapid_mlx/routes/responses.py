@@ -1936,6 +1936,7 @@ async def _non_stream(
             output.text,
             openai_request,
             structured_tool_calls=_engine_calls,
+            finish_reason=output.finish_reason,
         )
         _strict_tool_turn = bool(_detected_calls)
 
@@ -2277,7 +2278,10 @@ async def _non_stream(
 
     engine_tool_calls = getattr(output, "tool_calls", None)
     cleaned_text, tool_calls = _parse_tool_calls_with_parser(
-        output.text, openai_request, structured_tool_calls=engine_tool_calls
+        output.text,
+        openai_request,
+        structured_tool_calls=engine_tool_calls,
+        finish_reason=output.finish_reason,
     )
 
     # Yuki F6 (0.8.5 dogfood): mirror the chat-route ``tool_choice``
@@ -2417,6 +2421,7 @@ async def _non_stream(
             final_content or "",
             openai_request,
             reasoning_source=output.raw_text or output.text,
+            finish_reason=output.finish_reason,
         ).strip()
 
     if (

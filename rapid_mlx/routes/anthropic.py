@@ -1078,7 +1078,10 @@ async def create_anthropic_message(
         # harmony sentinels).
         engine_tool_calls = getattr(output, "tool_calls", None)
         cleaned_text, tool_calls = _parse_tool_calls_with_parser(
-            output.text, openai_request, structured_tool_calls=engine_tool_calls
+            output.text,
+            openai_request,
+            structured_tool_calls=engine_tool_calls,
+            finish_reason=output.finish_reason,
         )
 
         # H-05: tool_choice={"type":"tool","name":X} pins WHICH tool the
@@ -1285,6 +1288,7 @@ async def create_anthropic_message(
                 final_content or "",
                 openai_request,
                 reasoning_source=output.raw_text or output.text,
+                finish_reason=output.finish_reason,
             ).strip()
 
         openai_response = ChatCompletionResponse(

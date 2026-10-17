@@ -3533,9 +3533,15 @@ def _request_declared_tool_names(request_dict: dict | None) -> set[str]:
 
 
 def _strip_trailing_tool_envelope(
-    text: str, request=None, *, reasoning_source: str = ""
+    text: str,
+    request=None,
+    *,
+    reasoning_source: str = "",
+    finish_reason: str | None = None,
 ) -> str:
-    """Apply the configured parser's EOF visibility rule to buffered content."""
+    """Hide truncated tool envelopes only after engine token-limit exhaustion."""
+    if finish_reason != "length":
+        return text
     cfg = get_config()
     if not cfg.enable_auto_tool_choice or not cfg.tool_call_parser:
         return text
@@ -3566,6 +3572,7 @@ def _parse_tool_calls_with_parser(
     request=None,
     *,
     structured_tool_calls: list[dict] | None = None,
+    finish_reason: str | None = None,
 ) -> tuple[str, list | None]:
     """Parse tool calls, then honor ``tool_choice="none"`` by dropping them.
 
@@ -3586,7 +3593,9 @@ def _parse_tool_calls_with_parser(
     if not structured_tool_calls and get_config().reasoning_parser is None:
         request_dict = request.model_dump() if request else None
         if request_dict and request_dict.get("tools"):
-            content = _strip_trailing_tool_envelope(content, request)
+            content = _strip_trailing_tool_envelope(
+                content, request, finish_reason=finish_reason
+            )
     if tool_choice_is_none(request):
         return content, None
     declared = declared_names(request)

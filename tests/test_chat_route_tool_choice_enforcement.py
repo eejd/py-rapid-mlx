@@ -1196,7 +1196,9 @@ def test_named_function_outside_tools_returns_422(monkeypatch):
     # parser-output path that triggers synthesis.
     real_parse = chat_module._parse_tool_calls_with_parser
 
-    def _bypass_then_parse(text, request, structured_tool_calls=None):
+    def _bypass_then_parse(
+        text, request, structured_tool_calls=None, *, finish_reason=None
+    ):
         # Rewrite ``tool_choice`` to a ghost target while leaving
         # ``request.tools`` intact (it still contains ``real_function``)
         # so the synthesis branch's outer guard (line ~1212:
@@ -1207,7 +1209,12 @@ def test_named_function_outside_tools_returns_422(monkeypatch):
             "type": "function",
             "function": {"name": "ghost_function"},
         }
-        return real_parse(text, request, structured_tool_calls=structured_tool_calls)
+        return real_parse(
+            text,
+            request,
+            structured_tool_calls=structured_tool_calls,
+            finish_reason=finish_reason,
+        )
 
     monkeypatch.setattr(
         chat_module, "_parse_tool_calls_with_parser", _bypass_then_parse

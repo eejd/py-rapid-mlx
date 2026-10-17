@@ -6100,6 +6100,7 @@ async def _create_chat_completion_impl(
             output.text,
             request,
             structured_tool_calls=_engine_calls,
+            finish_reason=output.finish_reason,
         )
         _strict_tool_turn = bool(_detected_calls)
 
@@ -6414,6 +6415,7 @@ async def _create_chat_completion_impl(
             _line1_split_reasoning_for_tool_parse(cfg.reasoning_parser, output.text),
             request,
             structured_tool_calls=engine_tool_calls,
+            finish_reason=output.finish_reason,
         )
         if not tool_calls:
             # No forced call recovered from the post-``</think>`` remainder. Blank
@@ -6426,6 +6428,7 @@ async def _create_chat_completion_impl(
             output.text,
             request,
             structured_tool_calls=engine_tool_calls,
+            finish_reason=output.finish_reason,
         )
     undeclared_tool_dropped = _was_undeclared_tool_dropped()
 
@@ -6962,6 +6965,7 @@ async def _create_chat_completion_impl(
             final_content or "",
             request,
             reasoning_source=output.raw_text or output.text,
+            finish_reason=output.finish_reason,
         ).strip()
 
     # Build logprobs for response if requested.

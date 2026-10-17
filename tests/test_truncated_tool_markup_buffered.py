@@ -220,7 +220,7 @@ def _clean_content(text, choice=None):
         def model_dump(self):
             return {"tools": self.tools, "tool_choice": choice}
 
-    return _parse_tool_calls_with_parser(text, Request())[0]
+    return _parse_tool_calls_with_parser(text, Request(), finish_reason="length")[0]
 
 
 PARSERS = ["hermes", "qwen3_coder_xml"]
@@ -251,19 +251,64 @@ def test_buffered_truncated(client, parser, route, text, narration, finish_reaso
     content, calls, finish = _reply(
         client, route, narration + text, budget=4, finish_reason=finish_reason
     )
-    assert content == narration.strip()
+    assert content == (
+        narration.strip() if finish_reason == "length" else (narration + text).strip()
+    )
     assert not calls
-    expected = {
-        "length": {
-            "chat": "length",
-            "messages": "max_tokens",
-            "responses": "incomplete",
-        },
-        "stop": {"chat": "stop", "messages": "end_turn", "responses": "completed"},
-    }[finish_reason][route]
-    if route == "responses" and finish_reason == "stop" and not narration:
-        expected = "failed"  # Existing guard for a completely empty response.
-    assert finish == expected
+    assert (
+        finish
+        == {
+            "length": {
+                "chat": "length",
+                "messages": "max_tokens",
+                "responses": "incomplete",
+            },
+            "stop": {"chat": "stop", "messages": "end_turn", "responses": "completed"},
+        }[finish_reason][route]
+    )
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("reasoning", [False, True])
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_buffered_finish_reason_gate(client, parser, route, reasoning, finish_reason):
+    from rapid_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+
+    cfg = client[1]
+    cfg.tool_call_parser = parser
+    if reasoning:
+        cfg.reasoning_parser_name = "qwen3"
+        cfg.reasoning_parser = Qwen3ReasoningParser(tokenizer=None)
+    narration = "Here is an unclosed example.\n"
+    raw = narration + '<tool_call>\n{"name": "get_wea'
+    content, calls, finish = _reply(client, route, raw, finish_reason=finish_reason)
+    assert content == (narration.strip() if finish_reason == "length" else raw)
+    assert not calls
+    assert (
+        finish
+        == {
+            "stop": {"chat": "stop", "messages": "end_turn", "responses": "completed"},
+            "length": {
+                "chat": "length",
+                "messages": "max_tokens",
+                "responses": "incomplete",
+            },
+        }[finish_reason][route]
+    )
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+def test_helper_finish_reason_gate(client, parser):
+    from rapid_mlx.service.helpers import _strip_trailing_tool_envelope
+
+    client[1].tool_call_parser = parser
+    narration = "Here is an unclosed example.\n"
+    raw = narration + '<tool_call>\n{"name": "get_wea'
+    assert _strip_trailing_tool_envelope(raw) == raw
+    assert _strip_trailing_tool_envelope(raw, finish_reason=None) == raw
+    assert _strip_trailing_tool_envelope(raw, finish_reason="stop") == raw
+    assert _strip_trailing_tool_envelope(raw, finish_reason="length") == narration
 
 
 @pytest.mark.parametrize("parser", PARSERS)
@@ -389,12 +434,20 @@ def test_linear_cleanup(client, parser, record_property):
     from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
 
     cls = ToolParserManager.get_tool_parser(parser)
-    raw = "Use <tool_call> for a call.\n" * 800
-    start = perf_counter()
-    assert cls.strip_trailing_tool_envelope(raw) == raw
-    elapsed = perf_counter() - start
-    record_property("cleanup_seconds", elapsed)
-    assert elapsed < 0.1
+    timings = []
+    for count in (800, 6400):
+        raw = "Use <tool_call> for a call.\n" * count
+        samples = []
+        for _ in range(3):
+            start = perf_counter()
+            cleaned = cls.strip_trailing_tool_envelope(raw)
+            samples.append(perf_counter() - start)
+            assert cleaned == raw
+        timings.append(min(samples))
+    record_property("cleanup_n_seconds", timings[0])
+    record_property("cleanup_8n_seconds", timings[1])
+    # Allow scheduling noise while rejecting quadratic (64x) growth.
+    assert timings[1] < 40 * timings[0]
 
 
 @pytest.mark.parametrize("parser", PARSERS)
@@ -535,9 +588,20 @@ def test_streaming_unchanged_against_base():
     root = Path(rapid_mlx.__file__).resolve().parents[1]
     for name in ("hermes_tool_parser", "qwen3coder_tool_parser"):
         relative = f"rapid_mlx/tool_parsers/{name}.py"
-        base = subprocess.check_output(
-            ["git", "show", f"origin/main:{relative}"], cwd=root, text=True
-        )
+        try:
+            base = subprocess.check_output(
+                ["git", "show", f"origin/main:{relative}"],
+                cwd=root,
+                text=True,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as exc:
+            pytest.skip(f"Git unavailable for streaming base comparison: {exc}")
+        except subprocess.CalledProcessError as exc:
+            pytest.skip(
+                f"Cannot resolve origin/main:{relative} for streaming base comparison "
+                f"(requires a Git checkout with the base ref/path): {exc.stderr.strip()}"
+            )
 
         def existing_definitions(source):
             tree = ast.parse(source)
@@ -788,8 +852,13 @@ def test_reasoning_boundary_guard_without_source(client, parser):
     client[1].tool_call_parser = parser
     client[1].reasoning_parser = Qwen3ReasoningParser(None)
     raw = "<tool_call>\n<function=get_weather</think>Final answer."
-    assert _strip_trailing_tool_envelope(raw) == raw
-    assert _strip_trailing_tool_envelope("<tool_call>\n<function=get_weather") == ""
+    assert _strip_trailing_tool_envelope(raw, finish_reason="length") == raw
+    assert (
+        _strip_trailing_tool_envelope(
+            "<tool_call>\n<function=get_weather", finish_reason="length"
+        )
+        == ""
+    )
 
 
 @pytest.mark.parametrize("parser", PARSERS)

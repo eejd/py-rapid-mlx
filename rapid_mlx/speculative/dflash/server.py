@@ -2403,7 +2403,9 @@ async def _non_stream_completion(
 
     tool_calls = None
     if request.tools:
-        content, tool_calls = _parse_tool_calls_with_parser(content or "", request)
+        content, tool_calls = _parse_tool_calls_with_parser(
+            content or "", request, finish_reason=finish_reason
+        )
         if tool_calls:
             _validate_tool_call_params(tool_calls, request.tools)
             finish_reason = "tool_calls"
