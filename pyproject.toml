@@ -654,12 +654,11 @@ rapid_mlx = [
     # Lane matmul adapts separately MIT-licensed kernels; the complete
     # copyright, permission text, and provenance must accompany every wheel.
     "kernels/lane_matmul/LICENSE-LANE-MATMUL",
-    # Integration tests bundled inside the package so `rapid-mlx agents
+    # Profile-referenced integration tests bundled so `rapid-mlx agents
     # <name> --test` works on pip/brew installs (the source layout keeps
     # them at tests/integrations/, mirrored here via symlinks). Without
     # this, the test runner shows a confusing path-error skip.
     "_integration_tests/*.py",
-    "_integration_tests/*.sh",
     # Vendored Stability AI MLX Stable Audio 3 attribution — the MIT license
     # text + provenance NOTICE/README must travel with the redistributed code.
     "audio/sa3/LICENSE",
