@@ -448,6 +448,7 @@ fi
 # nested bundle through Bundle.main instead. Ship only the default font pair
 # and all upstream licence notices. Adopting another MathFont case requires
 # adding its font pair here.
+# >>> swiftmath-font-staging
 SWIFTMATH_FONTS="$ROOT/Vendor/SwiftMath/Sources/SwiftMath/mathFonts.bundle"
 # Must match SwiftMath's default MathFont.latinModernFont, the only font the app renders with.
 SWIFTMATH_DEFAULT_FONT="latinmodern-math"
@@ -462,6 +463,8 @@ SWIFTMATH_REQUIRED_FILES=(
     "OFL.txt"
     "GUST-FONT-LICENSE.txt"
 )
+# Recreate the font bundle so stale resources cannot survive staging.
+rm -rf "$CONTENTS/Resources/mathFonts.bundle"
 mkdir -p "$CONTENTS/Resources/mathFonts.bundle"
 for file in "${SWIFTMATH_REQUIRED_FILES[@]}"; do
     if [[ ! -f "$SWIFTMATH_FONTS/$file" ]]; then
@@ -473,6 +476,7 @@ done
 if [[ -f "$SWIFTMATH_FONTS/Info.plist" ]]; then
     cp "$SWIFTMATH_FONTS/Info.plist" "$CONTENTS/Resources/mathFonts.bundle/"
 fi
+# <<< swiftmath-font-staging
 
 # Third-party license texts (#1596). BSD-2-Clause (swift-cmark) and the MIT
 # licenses of the other linked Swift packages ask their notice to travel "with
