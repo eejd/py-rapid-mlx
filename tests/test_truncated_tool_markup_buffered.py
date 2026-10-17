@@ -780,6 +780,46 @@ def test_exact_whitespace_streaming_parity(client, parser):
     assert buffered == _reply(client, "chat", narration)[0]
 
 
+@pytest.mark.parametrize("content", [None, "", "  \n"])
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_reasoning_cleanup_preserves_empty_content(client, content, finish_reason):
+    from rapid_mlx.service.helpers import _clean_final_content_tool_envelope
+
+    assert (
+        _clean_final_content_tool_envelope(content, finish_reason=finish_reason)
+        == content
+    )
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+@pytest.mark.parametrize("truncated", [False, True])
+def test_reasoning_cleanup_preserves_whitespace(
+    client, parser, route, finish_reason, truncated, monkeypatch
+):
+    from rapid_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+
+    cfg = client[1]
+    cfg.tool_call_parser = parser
+    cfg.reasoning_parser_name = "qwen3"
+    cfg.reasoning_parser = Qwen3ReasoningParser(None)
+    visible = "  answer  \n"
+    if truncated:
+        visible += "<tool_call>\n<function=get_weather"
+    # Isolate the finalized visible lane from the earlier, pre-existing
+    # sanitizer normalization. Cleanup must preserve whatever reaches it.
+    module = {"chat": "chat", "messages": "anthropic", "responses": "responses"}[route]
+    monkeypatch.setattr(
+        f"rapid_mlx.routes.{module}._apply_reasoning_cutoff_notice",
+        lambda *args, **kwargs: visible,
+    )
+    content, calls, _ = _reply(client, route, visible, finish_reason=finish_reason)
+    expected = "  answer" if truncated and finish_reason == "length" else visible
+    assert content == expected
+    assert not calls
+
+
 @pytest.mark.parametrize("parser", PARSERS)
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize("inside_reasoning", [False, True, "combined"])

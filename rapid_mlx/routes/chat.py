@@ -97,6 +97,7 @@ from ..service.helpers import (
     _build_response_metrics,
     _build_usage,
     _check_admission_or_503,
+    _clean_final_content_tool_envelope,
     _consume_guided_lifecycle_cancel,
     _disconnect_guard,
     _effective_enable_thinking,
@@ -117,7 +118,6 @@ from ..service.helpers import (
     _resolve_top_p,
     _scan_messages_for_lone_surrogates,
     _should_start_in_thinking,
-    _strip_trailing_tool_envelope,
     _tool_use_required_named_suffix,
     _uses_deepseek_v4_reasoning,
     _validate_model_name,
@@ -6961,12 +6961,12 @@ async def _create_chat_completion_impl(
 
     # Clean only the finalized visible lane; keep raw reasoning boundaries.
     if cfg.reasoning_parser is not None and request.tools and not engine_tool_calls:
-        final_content = _strip_trailing_tool_envelope(
-            final_content or "",
+        final_content = _clean_final_content_tool_envelope(
+            final_content,
             request,
             reasoning_source=output.raw_text or output.text,
             finish_reason=output.finish_reason,
-        ).strip()
+        )
 
     # Build logprobs for response if requested.
     #

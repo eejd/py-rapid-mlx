@@ -92,6 +92,7 @@ from ..service.helpers import (
     _build_response_metrics,
     _build_usage,
     _check_admission_or_503,
+    _clean_final_content_tool_envelope,
     _client_signalled_reasoning_intent,
     _consume_guided_lifecycle_cancel,
     _disconnect_guard,
@@ -107,7 +108,6 @@ from ..service.helpers import (
     _resolve_max_tokens,
     _resolve_temperature,
     _resolve_top_p,
-    _strip_trailing_tool_envelope,
     _uses_deepseek_v4_reasoning,
     _validate_model_name,
     _validate_tool_call_params,
@@ -2417,12 +2417,12 @@ async def _non_stream(
         and openai_request.tools
         and not engine_tool_calls
     ):
-        final_content = _strip_trailing_tool_envelope(
-            final_content or "",
+        final_content = _clean_final_content_tool_envelope(
+            final_content,
             openai_request,
             reasoning_source=output.raw_text or output.text,
             finish_reason=output.finish_reason,
-        ).strip()
+        )
 
     if (
         output.finish_reason == "stop"

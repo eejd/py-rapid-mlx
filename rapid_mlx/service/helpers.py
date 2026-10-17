@@ -3567,6 +3567,22 @@ def _strip_trailing_tool_envelope(
     )
 
 
+def _clean_final_content_tool_envelope(
+    content: str | None,
+    request=None,
+    *,
+    reasoning_source: str = "",
+    finish_reason: str | None = None,
+) -> str | None:
+    """Preserve finalized content unless cleanup removes a trailing envelope."""
+    if content is None:
+        return None
+    cleaned = _strip_trailing_tool_envelope(
+        content, request, reasoning_source=reasoning_source, finish_reason=finish_reason
+    )
+    return cleaned.rstrip() if cleaned != content else content
+
+
 def _parse_tool_calls_with_parser(
     output_text: str,
     request=None,

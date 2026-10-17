@@ -58,6 +58,7 @@ from ..service.helpers import (
     _build_response_metrics,
     _build_usage,
     _check_admission_or_503,
+    _clean_final_content_tool_envelope,
     _disconnect_guard,
     _effective_enable_thinking,
     _finalize_content_and_reasoning,
@@ -71,7 +72,6 @@ from ..service.helpers import (
     _resolve_reasoning_enabled,
     _resolve_temperature,
     _resolve_top_p,
-    _strip_trailing_tool_envelope,
     _tool_use_required_named_suffix,
     _uses_deepseek_v4_reasoning,
     _validate_model_name,
@@ -1284,12 +1284,12 @@ async def create_anthropic_message(
             and openai_request.tools
             and not engine_tool_calls
         ):
-            final_content = _strip_trailing_tool_envelope(
-                final_content or "",
+            final_content = _clean_final_content_tool_envelope(
+                final_content,
                 openai_request,
                 reasoning_source=output.raw_text or output.text,
                 finish_reason=output.finish_reason,
-            ).strip()
+            )
 
         openai_response = ChatCompletionResponse(
             model=cfg.model_name or openai_request.model,
