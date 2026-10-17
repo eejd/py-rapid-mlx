@@ -53,8 +53,6 @@ Out of scope:
   fix belongs in the upstream project at
   [github.com/raullenchai/Rapid-MLX](https://github.com/raullenchai/Rapid-MLX).
 - Local privilege escalations that require root or full disk access
-- Vulnerabilities in third-party search providers (Keenable, Parallel,
-  Tavily, Brave, or the DuckDuckGo backstop) used by `web_search`
 
 ## Recognition
 

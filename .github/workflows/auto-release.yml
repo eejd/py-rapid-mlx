@@ -600,7 +600,6 @@ jobs:
           app_tag: rapid-mac-v${{ needs.detect.outputs.version }}
           signed: ${{ secrets.MACOS_DEVID_CERT_P12_BASE64 != '' && secrets.MACOS_DEVID_CERT_PASSWORD != '' && secrets.AC_API_KEY_P8_BASE64 != '' && secrets.AC_API_KEY_ID != '' && secrets.AC_API_ISSUER_ID != '' }}
           require_signed: 'true'
-          parallel_sidecar_build: 'true'
           # The candidate gate also runs for a dry run, which validates the
           # build and then discards it. Only a real release promotes these
           # bytes, so only a real release may stamp them as one.

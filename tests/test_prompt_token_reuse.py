@@ -73,6 +73,15 @@ class _SectionTokenizer:
             )
         return tokens
 
+    def decode(self, token_ids, skip_special_tokens=False):
+        inverse = {token_id: piece for piece, token_id in self._vocab.items()}
+        return "".join(
+            inverse[token_id]
+            if inverse[token_id] in self.markers
+            else inverse[token_id][-1]
+            for token_id in token_ids
+        )
+
 
 def _render(messages, tools=None, *, add_generation_prompt=True, **_kwargs):
     body = "".join(
@@ -283,6 +292,231 @@ def test_warm_turn_tokenizes_the_full_prompt_once():
         _render(messages, add_generation_prompt=False)
     )
     assert boundary == len(stable_tokens) - batched._PREFIX_BOUNDARY_REPLAY_TOKENS
+
+
+def test_system_tools_only_completion_saves_exact_cross_session_boundary():
+    tokenizer = _SectionTokenizer()
+    engine = _engine(tokenizer)
+    messages = [{"role": "system", "content": "unchanged guidance " * 400}]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "lookup", "parameters": {"type": "object"}},
+        }
+    ]
+
+    def requires_user(items, template_tools=None, **kwargs):
+        if not any(item["role"] == "user" for item in items):
+            raise ValueError("No user query found in messages")
+        return _render(items, template_tools, **kwargs)
+
+    engine._apply_chat_template = requires_user
+    prompt, boundary = engine._shared_system_tools_prompt(messages, tools, False, None)
+    real = tokenizer.encode(
+        requires_user([*messages, {"role": "user", "content": "hi"}], tools)
+    )
+    assert boundary > 0
+    assert prompt[:boundary] == real[:boundary]
+    assert prompt[boundary] != real[boundary]
+    assert len(prompt) == boundary + 1
+
+
+def test_system_tools_only_keeps_a_template_that_accepts_it():
+    engine = _engine(_SectionTokenizer())
+    engine._loaded = True
+    engine._prepare_harmony_no_thinking_prompt = lambda prompt, **_kwargs: (
+        prompt,
+        None,
+    )
+    messages = [{"role": "system", "content": "guidance"}]
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    assert engine.build_prompt(messages, tools) == _render(messages)
+
+
+def test_build_prompt_system_only_fallback_and_unrelated_template_error():
+    engine = _engine(_SectionTokenizer())
+    engine._loaded = True
+    messages = [{"role": "system", "content": "guidance"}]
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+
+    def requires_user(items, template_tools=None, **kwargs):
+        if not any(item["role"] == "user" for item in items):
+            raise ValueError("No user query found in messages")
+        return _render(items, template_tools, **kwargs)
+
+    engine._apply_chat_template = requires_user
+    assert engine.build_prompt(messages, tools).startswith("<|im_start|>system")
+
+    engine._apply_chat_template = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        ValueError("other template failure")
+    )
+    with pytest.raises(ValueError, match="other template failure"):
+        engine.build_prompt(messages, tools)
+
+
+def test_system_tools_prompt_rejects_templates_without_common_tokens():
+    engine = _engine(_SectionTokenizer())
+    engine._apply_chat_template = lambda items, *_args, **_kwargs: items[-1]["content"]
+    with pytest.raises(ValueError, match="no distinct shared"):
+        engine._shared_system_tools_prompt(
+            [{"role": "system", "content": "guidance"}], [], False, None
+        )
+
+
+def test_system_only_boundary_handles_native_template_and_render_failures():
+    engine = _engine(_SectionTokenizer())
+    messages = [{"role": "system", "content": "guidance"}]
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    assert engine._compute_prefix_boundary(messages) == 0
+    assert engine._compute_prefix_boundary(messages, tools) > 0
+
+    engine._apply_chat_template = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        ValueError("cannot render")
+    )
+    assert engine._compute_prefix_boundary(messages, tools) == 0
+
+
+@pytest.mark.asyncio
+async def test_system_tools_warm_prompt_contains_forced_assistant_prefix():
+    tokenizer = _SectionTokenizer()
+    engine = _engine(tokenizer)
+    engine._loaded = True
+    engine._needs_prefix_boundary_snapshot = lambda: True
+    messages = [{"role": "system", "content": "guidance"}]
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+
+    def requires_user(items, template_tools=None, **kwargs):
+        if not any(item["role"] == "user" for item in items):
+            raise ValueError("No user query found in messages")
+        return _render(items, template_tools, **kwargs)
+
+    engine._apply_chat_template = requires_user
+    seen = {}
+
+    async def generate(**kwargs):
+        seen.update(kwargs)
+        return None
+
+    engine.generate = generate
+    await engine.chat(messages, tools=tools, forced_assistant_prefix="<tool_call>")
+    boundary = seen["prefix_boundary"]
+    assert seen["exact_prefix_boundary"] is True
+    assert seen["prompt"][boundary + 1 :] == tokenizer.encode(
+        "<tool_call>", add_special_tokens=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_system_only_chat_boundary_and_forced_prefix():
+    engine = _engine(_SectionTokenizer())
+    engine._loaded = True
+    engine._needs_prefix_boundary_snapshot = lambda: True
+    engine._prepare_harmony_no_thinking_prompt = lambda prompt, **_kwargs: (
+        prompt,
+        None,
+    )
+    engine._compute_prefix_boundary = lambda *_args, **_kwargs: 5
+    seen = {}
+
+    async def generate(**kwargs):
+        seen.update(kwargs)
+        return None
+
+    engine.generate = generate
+    messages = [{"role": "system", "content": "guidance"}]
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    await engine.chat(messages, tools=tools, forced_assistant_prefix="<tool_call>")
+    assert seen["prompt"].endswith("<tool_call>")
+    assert seen["prefix_boundary"] == 5
+    assert seen["exact_prefix_boundary"] is True
+
+    engine._apply_chat_template = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        ValueError("other template failure")
+    )
+    with pytest.raises(ValueError, match="other template failure"):
+        await engine.chat(messages, tools=tools)
+
+
+@pytest.mark.asyncio
+async def test_stream_system_tools_warm_boundary_and_template_errors():
+    tokenizer = _SectionTokenizer()
+    engine = _engine(tokenizer)
+    engine._loaded = True
+    engine._needs_prefix_boundary_snapshot = lambda: True
+    engine._create_output_router = lambda: None
+    messages = [{"role": "system", "content": "guidance"}]
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+
+    def requires_user(items, template_tools=None, **kwargs):
+        if not any(item["role"] == "user" for item in items):
+            raise ValueError("No user query found in messages")
+        return _render(items, template_tools, **kwargs)
+
+    engine._apply_chat_template = requires_user
+    seen = {}
+
+    class CapturedError(Exception):
+        pass
+
+    async def stream_generate(**kwargs):
+        seen.update(kwargs)
+        raise CapturedError
+        yield  # pragma: no cover
+
+    engine.stream_generate = stream_generate
+    with pytest.raises(CapturedError):
+        async for _ in engine.stream_chat(
+            messages, tools=tools, forced_assistant_prefix="<tool_call>"
+        ):
+            pass
+    assert seen["exact_prefix_boundary"] is True
+    assert seen["prompt"][seen["prefix_boundary"] + 1 :] == tokenizer.encode(
+        "<tool_call>", add_special_tokens=False
+    )
+
+    engine._apply_chat_template = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        ValueError("other template failure")
+    )
+    with pytest.raises(ValueError, match="other template failure"):
+        await anext(engine.stream_chat(messages, tools=tools))
+
+    engine._apply_chat_template = _render
+    engine._prepare_harmony_no_thinking_prompt = lambda prompt, **_kwargs: (
+        prompt,
+        None,
+    )
+    engine._compute_prefix_boundary = lambda *_args, **_kwargs: 5
+    with pytest.raises(CapturedError):
+        await anext(engine.stream_chat(messages, tools=tools))
+    assert seen["prefix_boundary"] == 5
+    assert seen["exact_prefix_boundary"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exact", [False, True])
+async def test_text_stream_passes_exact_prefix_flag_without_breaking_admission(exact):
+    engine = _engine(_SectionTokenizer())
+    engine._loaded = True
+    engine._select_mllm_request_path = lambda *_args: False
+    engine._ensure_generation_admission = lambda: ("admission", False)
+    seen = {}
+
+    class AdmittedError(Exception):
+        pass
+
+    async def add_request(**kwargs):
+        seen.update(kwargs)
+        raise AdmittedError
+
+    engine._engine = SimpleNamespace(add_request=add_request)
+    with pytest.raises(AdmittedError):
+        await anext(
+            engine.stream_generate(
+                "prompt", prefix_boundary=100, exact_prefix_boundary=exact
+            )
+        )
+    assert seen["prefix_boundary"] == 100
+    assert seen["exact_prefix_boundary"] is exact
 
 
 def _reference_boundary(messages, real, **kwargs):

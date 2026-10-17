@@ -32,12 +32,12 @@ struct TelemetryLifecycleWiringTests {
     @Test("Chat signals only a nonempty completed final turn")
     func chatSignalsFinalDelivery() throws {
         let chat = try Self.source("Sources/Rapid/Chat/ChatViewModel.swift")
-        let loop = try #require(chat.range(of: "private func runToolLoop("))
+        let loop = try #require(chat.range(of: "private func runPlainChatTurn("))
         let body = String(chat[loop.lowerBound...])
 
-        #expect(body.contains("if !Task.isCancelled,"))
+        #expect(body.contains("isTextOnlyTurn, !Task.isCancelled,"))
         #expect(body.contains("delivered.status == .complete"))
-        #expect(body.contains("!delivered.content.trimmingCharacters"))
+        #expect(body.contains("delivered.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false"))
         #expect(body.contains("onProductValueDelivered(.chatReply)"))
     }
 
@@ -104,11 +104,10 @@ struct TelemetryLifecycleWiringTests {
     func disclosureContract() throws {
         let settings = try Self.source("Sources/Rapid/UI/SettingsView.swift")
         for phrase in [
-            "telemetry is on by default", "metadata-only",
-            "the app's to rapidmlx.com's telemetry service", "the bundled engine's to PostHog Cloud (US)",
-            "never your IP or a per-person profile; the app's collector keeps only a coarse country code",
+            "Your model runs locally", "Chat tools can access files",
+            "YOLO mode runs tools without asking each time",
+            "Anonymous usage data is on by default",
             "Never prompts, responses, attachments, keys, account details, or unredacted user paths",
-            "https://rapidmlx.com/docs/telemetry",
         ] {
             #expect(settings.contains(phrase), "Settings missing disclosure phrase: \(phrase)")
         }
@@ -120,7 +119,7 @@ struct TelemetryLifecycleWiringTests {
         let normalized = privacy.replacingOccurrences(of: "**", with: "")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let command = "rapid-mlx telemetry off"
-        let processors = ["rapidmlx.com's telemetry service", "PostHog Cloud (US)"]
+        let processors = ["https://telemetry.rapidmlx.com/v1/events", "https://us.i.posthog.com/batch/"]
         for phrase in [
             "Starting in 0.15.0, it is on by default.",
             "A refusal recorded in 0.15.0 or later is never reversed.",

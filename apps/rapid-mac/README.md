@@ -44,11 +44,9 @@ open it, and drag **Rapid-MLX Desktop** to Applications.
   box as chat — pick an image model, prompt, and generate locally.
 - **Audio & voice tab.** Transcription, voice listing, and speech synthesis,
   driven by the sidecar's local OpenAI-compatible audio routes.
-- **Built-in tools with approval.** Web search, page browsing, and weather are
-  available to the model as tools; browsing is gated behind an approval prompt
-  before any network fetch.
-- **MCP connectors.** Attach external Model Context Protocol servers to expose
-  their tools to your local model.
+- **Chat with optional tools.** Chat uses your local model. When you allow a tool,
+  it can access files, run commands, or use the internet. YOLO mode runs tools
+  without asking for each action.
 - **Folders & export.** Organize conversations into folders in the sidebar and
   export a conversation to a file via a save panel.
 - **Custom instructions.** A persistent system-prompt preface applied across
@@ -65,12 +63,11 @@ open it, and drag **Rapid-MLX Desktop** to Applications.
 - **Default-on telemetry.** Starting in 0.15.0, anonymous telemetry is on by
   default and is toggleable in Settings → Privacy or with
   `rapid-mlx telemetry off`. The app sends its
-  events to `telemetry.rapidmlx.com` (a
-  Cloudflare Worker → R2), while the engine sends its v2 events to PostHog
-  Cloud (US). Both use the same local preference and anonymous install ID so
+  events to its own collector, while the engine sends its v2 events to a
+  separate processor. Both use the same local preference and anonymous install ID so
   they never double-count an install. Paths are PII-redacted
   (`/Users/<name>/` scrubbed); chat content and attachments are never sent.
-- **Self-update.** Signed releases use Sparkle to check an EdDSA-signed appcast,
+- **Self-update.** Signed releases use the built-in updater to check an EdDSA-signed appcast,
   download updates in the background, and install them when Rapid-MLX quits.
   During the migration the existing six-hour version-status request remains;
   it sends only the app version and records aggregate counts without storing

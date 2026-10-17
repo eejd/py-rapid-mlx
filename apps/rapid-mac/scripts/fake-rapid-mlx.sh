@@ -320,21 +320,6 @@ def _delta(content=None, reasoning=None, finish=None):
     return {"choices": [choice]}
 
 
-def _tool_call_delta(call_id):
-    return {"choices": [{
-        "delta": {"tool_calls": [{
-            "index": 0,
-            "id": call_id,
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "arguments": json.dumps({"query": "golden tool loop evidence"}),
-            },
-        }]},
-        "finish_reason": "tool_calls",
-    }]}
-
-
 # --------------------------------------------------------------------------
 # Image generation.
 #
@@ -1076,59 +1061,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
-
-        # Deterministic runaway-model fixture. The app must execute only its
-        # bounded budget and then issue one final request with no tools; that
-        # request gets a useful synthesis rather than another tool call.
-        last_user = next((
-            m.get("content", "") for m in reversed(messages)
-            if isinstance(m, dict) and m.get("role") == "user"
-        ), "")
-        if "shape:tool-loop" in last_user:
-            tool_results = sum(
-                1 for m in messages
-                if isinstance(m, dict) and m.get("role") == "tool"
-            )
-            if definitions:
-                call_id = f"golden_loop_{tool_results + 1}"
-                self.wfile.write(_sse(_tool_call_delta(call_id)))
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-                _event("tool_loop_call", call_id=call_id)
-                return
-            synthesis = "Golden tool-loop synthesis from existing evidence."
-            self.wfile.write(_sse(_delta(content=synthesis, finish="stop")))
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
-            _event("tool_loop_synthesis", tool_results=tool_results)
-            return
-
-        # Native web-tool fixture. The fake stands in for the model here: on
-        # each new user turn it chooses the advertised web_search tool, then
-        # synthesizes normally once the app has appended that call's result.
-        # This deliberately does not inspect prompt keywords; product routing
-        # belongs to the model's tool choice, never to app-side regexes.
-        if _setting("RAPID_GUI_WEB_SEARCH_FIXTURE") == "1" and any(
-            isinstance(definition, dict)
-            and isinstance(definition.get("function"), dict)
-            and definition["function"].get("name") == "web_search"
-            for definition in definitions
-        ):
-            last_user_index = max((
-                index for index, message in enumerate(messages)
-                if isinstance(message, dict) and message.get("role") == "user"
-            ), default=-1)
-            has_result_for_turn = any(
-                isinstance(message, dict) and message.get("role") == "tool"
-                for message in messages[last_user_index + 1:]
-            )
-            if not has_result_for_turn:
-                call_id = f"golden_search_{last_user_index}"
-                self.wfile.write(_sse(_tool_call_delta(call_id)))
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-                _event("native_web_search_call", call_id=call_id)
-                return
 
         # #896 crash-recovery harness: when FAKE_DIE_AFTER_CHUNKS
         # is set to a positive integer N, we abruptly os._exit(1)

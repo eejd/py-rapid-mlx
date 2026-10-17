@@ -92,7 +92,7 @@ final class MarkdownCodeBlockView: NSView {
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
 
-        previewButton.title = "Preview"
+        previewButton.title = String(localized: "Preview")
         previewButton.bezelStyle = .inline
         previewButton.isBordered = false
         previewButton.font = Self.headerFont

@@ -118,12 +118,9 @@ jobs:
       # step. The bundled sidecar (Contents/Resources/rapid-mlx) dominates.
       # The sidecar now ships the base vision/image/video runtimes (torch,
       # mflux, mlx-video; OpenCV excluded pending a licensing decision):
-      # measured 2026-10-07 on an Apple Silicon builder, the .app went
-      # 578 -> 1293 MiB (sidecar 502 -> 1211 MiB). Keep ~20 MiB headroom.
-      # Re-measured 2026-10-16 for 0.16.2: 1298 -> 1316 MiB (sidecar 1215 ->
-      # 1230 MiB) from the bundled TensorFold runtime and Local Search's PDF
-      # extraction plus new app code; the top site-packages are unchanged.
-      BUNDLE_SIZE_CAP_MB: "1340"
+      # measured 2026-10-15 on the M3, the standard Chat build is 1570 MiB
+      # including the pinned helper. Keep measured headroom for signing.
+      BUNDLE_SIZE_CAP_MB: "1650"
       # Per-release DMG growth ceiling — enforced by the "Bundle size delta
       # gate" step against the previous rapid-mac release. The full-runtime
       # release grows the compressed DMG 133 -> 239 MiB (+106 MiB); restore
@@ -283,7 +280,6 @@ jobs:
           # lane closed rather than degrading to ad-hoc and publishing. Only a
           # branch workflow_dispatch dry-run (is_tag=false) stays ad-hoc-capable.
           require_signed: ${{ steps.appmeta.outputs.is_tag == 'true' }}
-          parallel_sidecar_build: ${{ steps.appmeta.outputs.is_tag == 'true' }}
           # Only a real tag push ships. A branch workflow_dispatch dry run
           # builds the same way but publishes nothing, so it must stamp itself
           # a source build rather than claim to be a release.

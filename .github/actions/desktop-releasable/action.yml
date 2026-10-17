@@ -61,12 +61,6 @@ inputs:
       a tag must come from the real signed lane, never an ad-hoc build.
     required: false
     default: 'false'
-  parallel_sidecar_build:
-    description: >-
-      'true' only for the controlled release candidate/tag lane. Signing alone
-      does not opt a caller into a clean sidecar rebuild or parallel execution.
-    required: false
-    default: 'false'
   publish_sparkle:
     description: >-
       'true' for a releasable candidate or tagged standalone build that must
@@ -106,7 +100,7 @@ inputs:
   bundle_size_cap_mb:
     description: Absolute .app size ceiling, enforced before notarisation.
     required: false
-    default: '1340'
+    default: '1650'
   bundle_size_delta_cap_mb:
     description: Per-release DMG growth ceiling in MiB vs the previous rapid-mac release.
     required: false
@@ -237,9 +231,9 @@ runs:
         SPARKLE_PUBLIC_ED_KEY: ${{ inputs.signed == 'true' && inputs.SPARKLE_PUBLIC_ED_KEY || '' }}
         RAPID_CANDIDATE_IDENTITY: ${{ inputs.candidate_identity }}
         SIGNED: ${{ inputs.signed }}
-        # Release builds have a fresh sidecar stage and a trusted signing
-        # identity, so overlap that independent work with Swift compilation.
-        PARALLEL_SIDECAR_BUILD: ${{ inputs.parallel_sidecar_build == 'true' && inputs.signed == 'true' && '1' || '0' }}
+        # Goose is staged before the sidecar signing sweep. Keep these stages
+        # serial so the release artifact has one clear nested-signing order.
+        PARALLEL_SIDECAR_BUILD: '0'
         OFFICIAL_RELEASE: ${{ inputs.official_release }}
         RAPID_MLX_TELEMETRY: "0"
         DO_NOT_TRACK: "1"
@@ -263,6 +257,23 @@ runs:
         esac
         echo "::notice::sidecar provenance: RAPID_MLX_OFFICIAL_RELEASE=${RAPID_MLX_OFFICIAL_RELEASE}"
         bash scripts/build.sh
+
+    - name: Verify bundled Chat helper and notices
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${{ inputs.checkout_path }}/apps/rapid-mac"
+        APP="build/Rapid-MLX Desktop.app"
+        HELPER="$APP/Contents/Resources/Helpers/goose"
+        test -x "$HELPER"
+        codesign --verify --strict "$HELPER"
+        test -s "$APP/Contents/Resources/Licenses/goose-APACHE-2.0.txt"
+        test -s "$APP/Contents/Resources/Licenses/goose-third-party-licenses.txt"
+        test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")" = com.rapidmlx.rapid
+        if [[ "${{ inputs.signed }}" == "true" ]]; then
+          codesign -dv --verbose=4 "$HELPER" 2>&1 | grep -q 'flags=.*runtime'
+          codesign -dv --verbose=4 "$HELPER" 2>&1 | grep -q 'Authority=Developer ID Application'
+        fi
 
     # The stamp decides what every benchmark this app publishes claims about
     # its own origin, and it is written deep inside the sidecar build. Verify
@@ -305,7 +316,7 @@ runs:
         cd "${{ inputs.checkout_path }}/apps/rapid-mac"
         APP="build/Rapid-MLX Desktop.app"
         SIDECAR="$APP/Contents/Resources/rapid-mlx"
-        CAP_MB="${BUNDLE_SIZE_CAP_MB:-1340}"
+        CAP_MB="${BUNDLE_SIZE_CAP_MB:-1650}"
         if [[ ! -d "$APP" ]]; then
           echo "::error::Expected $APP to exist after build step but it does not."
           exit 1

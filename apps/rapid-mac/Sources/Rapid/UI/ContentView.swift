@@ -115,10 +115,6 @@ struct ContentView: View {
     @Environment(SamplingConfig.self) private var sampling
     @Environment(UpdateChecker.self) private var updater
     @Environment(QuickstartCoordinator.self) private var quickstart
-    @Environment(BrowseApprovalStore.self) private var browseApproval
-    @Environment(LocalToolApprovalStore.self) private var localToolApproval
-    @Environment(MCPCatalog.self) private var mcpCatalog
-    @Environment(MCPToolApprovalStore.self) private var mcpApproval
     @Environment(TelemetryLifecycleCoordinator.self) private var telemetryLifecycle
     @Environment(GitHubStarPromptCoordinator.self) private var githubStarPrompt
     @Environment(SparkleUpdateController.self) private var sparkleUpdater
@@ -136,7 +132,10 @@ struct ContentView: View {
     /// Starts on Chat unless a GUI harness asked for another surface — see
     /// ``SidebarSection/harnessRequested(environment:)``, which is inert
     /// outside golden mode.
-    @State private var section: SidebarSection = SidebarSection.harnessRequested() ?? .chat
+    @State private var section: SidebarSection = SidebarSection.initial(
+        bundleIdentifier: Bundle.main.bundleIdentifier,
+        environment: ProcessInfo.processInfo.environment
+    )
     /// Measured width of the whole shell, used for the one responsive
     /// decision the chrome makes: whether the rail is collapsed. Zero until
     /// the first layout pass, which is why ``usesCompactRail`` treats zero as
@@ -378,16 +377,6 @@ struct ContentView: View {
                 if server.downloadProgress.hasObservedGrowth {
                     downloads.markCacheChanged()
                 }
-                // Issue #1716: the child has just published which MCP servers
-                // it connected to. Read it once here rather than polling —
-                // the state only changes on a spawn or an explicit reload,
-                // and both funnel through a point that refreshes.
-                Task { await mcpCatalog.refresh() }
-            } else {
-                // Any non-ready state means no child is answering. Drop the
-                // tool list: keeping it would let the chat loop advertise —
-                // and try to execute — tools with no process behind them.
-                mcpCatalog.clear()
             }
         }
         .onChange(of: experimentalDestinationState, initial: true) { _, state in
@@ -527,15 +516,6 @@ struct ContentView: View {
         .onChange(of: settingsRouter.quickstartReturnGeneration) { _, _ in
             quickstartDismissedThisSession = false
         }
-        // Per-fetch approval for the ``browse`` tool. Skipped entirely when
-        // the user has turned on auto-approve in Settings (resolved before a
-        // request is ever published), so it only appears on a real prompt.
-        .modifier(BrowseApprovalDialog(store: browseApproval))
-        .modifier(LocalToolApprovalDialog(store: localToolApproval))
-        // Issue #1716: per-tool consent for MCP connector tools. Same shape as
-        // the browse sheet above — an MCP server is an arbitrary local process,
-        // so "may the model run this" is a decision that belongs on screen.
-        .modifier(MCPToolApprovalDialog(store: mcpApproval))
         .onAppear {
             githubStarPrompt.startMonitoringUserActivity()
             githubStarPrompt.updatePresentationContext(starPromptPresentationContext)
@@ -702,8 +682,7 @@ struct ContentView: View {
                     cuaViewModel: cuaServer.viewModel,
                     chat: chat,
                 onNewChat: {
-                    chat.newConversation()
-                    section = .chat
+                    newChat()
                 },
                 onSearchChats: {
                     openConversationSearch()
@@ -869,8 +848,6 @@ struct ContentView: View {
                 || showConversationSearch
                 || server.pendingMemoryWarning != nil
                 || server.pendingModelSwitch != nil
-                || browseApproval.pendingRequest != nil
-                || mcpApproval.pendingRequest != nil
                 || showCommandPalette
         )
     }
@@ -902,8 +879,7 @@ struct ContentView: View {
         showCommandPalette = false
         switch command {
         case .newChat:
-            chat.newConversation()
-            section = .chat
+            newChat()
         case .searchChats:
             openConversationSearch()
         case .images:
@@ -916,10 +892,6 @@ struct ContentView: View {
             openWindow(id: "settings")
         case .modelManagement:
             settingsRouter.route(to: .modelManagement) {
-                openWindow(id: "settings")
-            }
-        case .connectors:
-            settingsRouter.route(to: .experimentalFeatures) {
                 openWindow(id: "settings")
             }
         case .serverLogs:
@@ -942,6 +914,11 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private func newChat() {
+        chat.newConversation()
+        section = .chat
     }
 
     private func openConversationSearch() {
@@ -969,8 +946,7 @@ struct ContentView: View {
                     now: Date(),
                     onNewChat: {
                         showConversationSearch = false
-                        chat.newConversation()
-                        section = .chat
+                        newChat()
                     },
                     onSelectConversation: { id in
                         showConversationSearch = false
@@ -1999,6 +1975,10 @@ struct ContentView: View {
     }
 
     private static func ensureStartupModelLinks(generation: UInt) async {
+        // Goose Chat uses the selected models folder directly. This legacy
+        // link maintenance follows the default HF cache, which may be a
+        // symlink into /Volumes and request removable-volume access at launch.
+        guard !WorkAgent.gooseChat else { return }
         await startupModelLinkMaintenance.run(generation: generation) {
             _ = BundledModel.installBundledSnapshotSymlink()
             _ = QuickstartModel.installAllSnapshotSymlinks()
@@ -2210,243 +2190,6 @@ struct SelectedModelProfileKey: Equatable {
     let isResident: Bool
     let port: Int
     let bearer: String?
-}
-
-/// Approval dialog for the ``browse`` tool: present while a request is
-/// pending, deny on external dismiss (Esc / click-outside) so a suspended
-/// tool can never hang waiting on a sheet the user has closed. "Always allow"
-/// enables the persisted public-web auto-approval mode that can be turned off
-/// again in Settings → Tools.
-private struct BrowseApprovalDialog: ViewModifier {
-    let store: BrowseApprovalStore
-
-    func body(content: Content) -> some View {
-        content.sheet(isPresented: Binding(
-            get: { store.pendingRequest != nil },
-            set: { if !$0 && store.pendingRequest != nil { store.answer(.deny) } }
-        )) {
-            if let req = store.pendingRequest {
-                BrowseApprovalSheet(request: req, store: store)
-            }
-        }
-    }
-}
-
-/// URL approval sheet for ``browse``. The complete URL is shown display-safe
-/// (so a model can't hide the real destination behind bidi / zero-width
-/// scalars past the one-line preview) and the host is called out so the user
-/// judges *where* the request goes. It is only a read-only GET whose body
-/// returns to the model — but the model picks the URL, so approving the exact
-/// destination is what stops silent exfiltration to an attacker-controlled
-/// host.
-private struct BrowseApprovalSheet: View {
-    let request: BrowseApprovalStore.PendingApproval
-    let store: BrowseApprovalStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Fetch this web page?")
-                .font(.rapid(.headline))
-            Text("The model wants to fetch content from:")
-                .font(.rapid(.callout))
-                .foregroundStyle(.secondary)
-
-            Text(BrowseApprovalStore.displaySafe(request.host))
-                .font(.rapid(.body, design: .monospaced).weight(.semibold))
-                .textSelection(.enabled)
-
-            ScrollView {
-                Text(BrowseApprovalStore.displaySafe(request.fullURL))
-                    .font(.rapid(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-            }
-            .frame(minHeight: 44, maxHeight: 140)
-            .background(Color(nsColor: .textBackgroundColor))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            Text("The page's text is sent back to the model. Only http/https "
-                + "public addresses are allowed — private and local addresses are blocked.")
-                .font(.rapid(.caption))
-                .foregroundStyle(.secondary)
-
-            Text("Always allow applies to all future public web pages. You can turn it off in Settings → Tools.")
-                .font(.rapid(.caption))
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Spacer()
-                Button("Don't allow") { store.answer(.deny) }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier("ToolApproval.Browse.Deny")
-                Button("Always allow") { store.alwaysAllow() }
-                    .accessibilityIdentifier("ToolApproval.Browse.AlwaysAllow")
-                Button("Allow once") { store.answer(.allowOnce) }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("ToolApproval.Browse.Allow")
-            }
-        }
-        .padding(20)
-        .frame(width: 460)
-        // Deliberately NOT `.accessibilityIdentifier("…Sheet")` on this stack.
-        // An accessibility modifier on a container that is not its own
-        // accessibility element is applied to the elements it contains, so a
-        // wrapper identifier can be stamped onto the descendants and make the
-        // name ambiguous — including over the three buttons a flow actually
-        // needs to press. "The approval is up" is better asserted by waiting
-        // for `ToolApproval.Browse.Allow`, which is the control the user acts
-        // on rather than a wrapper around it.
-    }
-}
-
-/// Approval for Rapid's built-in local workspace. Mutations intentionally omit
-/// an "Always allow" button, so a model can never turn one approval into future
-/// writes, command executions, or removals.
-private struct LocalToolApprovalDialog: ViewModifier {
-    let store: LocalToolApprovalStore
-
-    func body(content: Content) -> some View {
-        content.sheet(isPresented: Binding(
-            get: { store.pendingRequest != nil },
-            set: { if !$0 && store.pendingRequest != nil { store.answer(.deny) } }
-        )) {
-            if let request = store.pendingRequest {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text(request.title).font(.rapid(.headline))
-                    Text("Personal Intelligence wants to use Rapid's local workspace on this Mac.")
-                        .font(.rapid(.callout)).foregroundStyle(.secondary)
-                    ScrollView {
-                        Text(request.argumentsPreview)
-                            .font(.rapid(.callout, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                    }
-                    .frame(minHeight: 44, maxHeight: 180)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    Text(request.toolName == "local_trash"
-                         ? "Files are moved to Trash and remain recoverable. Folders are never removed."
-                         : "Review the exact path, content, command, and arguments before allowing it.")
-                        .font(.rapid(.caption)).foregroundStyle(.secondary)
-                    HStack {
-                        Spacer()
-                        Button("Don't allow") { store.answer(.deny) }
-                            .keyboardShortcut(.cancelAction)
-                            .accessibilityIdentifier("ToolApproval.Local.Deny")
-                        if request.allowsPersistentGrant {
-                            Button("Allow for this session") { store.answer(.alwaysAllowTool) }
-                                .accessibilityIdentifier("ToolApproval.Local.AlwaysAllow")
-                        }
-                        Button("Allow once") { store.answer(.allowOnce) }
-                            .keyboardShortcut(.defaultAction)
-                            .accessibilityIdentifier("ToolApproval.Local.Allow")
-                    }
-                }
-                .padding(20)
-                .frame(width: 500)
-            }
-        }
-    }
-}
-
-/// Approval dialog for an MCP connector tool (issue #1716). Mirrors
-/// ``BrowseApprovalDialog``: present while a request is pending, deny on
-/// external dismiss so a suspended tool call can never hang on a sheet the
-/// user has closed.
-private struct MCPToolApprovalDialog: ViewModifier {
-    let store: MCPToolApprovalStore
-
-    func body(content: Content) -> some View {
-        content.sheet(isPresented: Binding(
-            get: { store.pendingRequest != nil },
-            set: { if !$0 && store.pendingRequest != nil { store.answer(.deny) } }
-        )) {
-            if let req = store.pendingRequest {
-                MCPToolApprovalSheet(request: req, store: store)
-            }
-        }
-    }
-}
-
-/// Consent sheet for one connector tool call.
-///
-/// Shows the server, the tool, and the arguments the MODEL chose — all three
-/// matter. A tool name alone ("run `read_file`?") is not a question anyone can
-/// answer: which server's `read_file`, and reading what? The arguments are
-/// rendered display-safe for the same reason the browse sheet renders its URL
-/// that way — a model can hide the real target behind bidi or zero-width
-/// scalars, and the user has to see what the engine will actually receive.
-///
-/// "Always allow" is scoped to THIS tool. That is the difference from the
-/// browse sheet, whose equivalent flips one global mode: a blanket grant
-/// across an open-ended, user-installed tool set is not something to hand out
-/// as a side effect of approving one call.
-private struct MCPToolApprovalSheet: View {
-    let request: MCPToolApprovalStore.PendingApproval
-    let store: MCPToolApprovalStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Run \(request.shortName)?")
-                .font(.rapid(.headline))
-            Text("The model wants to run a tool from the “\(request.serverName)” connector.")
-                .font(.rapid(.callout))
-                .foregroundStyle(.secondary)
-
-            // `toolName` is the raw server-supplied name (kept raw on the
-            // request for dispatch and grant keys); scrub it for display so a
-            // bidi/zero-width scalar can't spoof which tool this dialog approves.
-            Text(BrowseApprovalStore.displaySafe(request.toolName))
-                .font(.rapid(.body, design: .monospaced).weight(.semibold))
-                .textSelection(.enabled)
-
-            if !request.argumentsPreview.isEmpty {
-                Text("With:")
-                    .font(.rapid(.caption))
-                    .foregroundStyle(.secondary)
-                ScrollView {
-                    Text(request.argumentsPreview)
-                        .font(.rapid(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                }
-                .frame(minHeight: 44, maxHeight: 140)
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-
-            Text("Connectors are programs running on this Mac. Only allow tools "
-                + "from servers you set up yourself.")
-                .font(.rapid(.caption))
-                .foregroundStyle(.secondary)
-
-            Text("Always allow applies to this tool only. You can review and "
-                + "revoke it in Settings → Experimental.")
-                .font(.rapid(.caption))
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Spacer()
-                Button("Don't allow") { store.answer(.deny) }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier("ToolApproval.MCP.Deny")
-                Button("Always allow") { store.answer(.alwaysAllowTool) }
-                    .accessibilityIdentifier("ToolApproval.MCP.AlwaysAllow")
-                Button("Allow once") { store.answer(.allowOnce) }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("ToolApproval.MCP.Allow")
-            }
-        }
-        .padding(20)
-        .frame(width: 460)
-        // No wrapper identifier — see the note on ``BrowseApprovalSheet``.
-    }
 }
 
 /// v0.4.37: ChatGPT-Desktop-style gear-icon Settings button. Lives

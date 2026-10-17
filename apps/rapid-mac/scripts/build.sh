@@ -222,11 +222,12 @@ SWIFT_BUILD_SECONDS=$((SECONDS - SWIFT_BUILD_STARTED))
 echo "==> Swift compilation completed in ${SWIFT_BUILD_SECONDS}s"
 join_parallel_sidecar
 
-echo "==> assembling Rapid-MLX Desktop.app"
+echo "==> assembling $(basename "$APP")"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$CONTENTS/Frameworks"
 cp "$ROOT/.build/$CONFIG/Rapid" "$CONTENTS/MacOS/Rapid"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
+bash "$ROOT/scripts/build-work-helper.sh" "$CONTENTS" stage
 
 # Browser domain enforcement reads only the selected browser's trusted active
 # tab API. Without the privacy purpose string macOS refuses the Apple Event
@@ -615,7 +616,6 @@ else
             SIDECAR_CACHE_HIT=0
         fi
     fi
-
     SIDECAR_ARGS=(--out "$SIDECAR_STAGE")
     if [[ "${CODESIGN_IDENTITY:--}" != "-" ]]; then
         # CI release path — use the Developer ID identity already
@@ -821,6 +821,9 @@ except Exception as e:
 fi
 
 # Signing: ad-hoc by default (local dev), real Developer ID when
+bash "$ROOT/scripts/build-work-helper.sh" "$CONTENTS" dependencies
+
+# Signing: ad-hoc by default (local dev), real Developer ID when
 # CODESIGN_IDENTITY is set (CI release). CODESIGN_IDENTITY can be the
 # identity's common name ("Developer ID Application: … (TEAMID)") or its
 # SHA-1 hash from `security find-identity -v -p codesigning`.
@@ -833,6 +836,10 @@ if [[ "$SIGN_IDENTITY" == "-" ]]; then
             --identifier com.rapidmlx.rapid.computer-use \
             --sign - "$CUA_HELPER"
     fi
+    codesign --force --options runtime \
+        --entitlements "$ROOT/Resources/Rapid.entitlements" \
+        --identifier com.rapidmlx.rapid.goose --sign - "$CONTENTS/Resources/Helpers/goose"
+    codesign --verify --strict "$CONTENTS/Resources/Helpers/goose"
     codesign --force --deep \
         --entitlements "$ROOT/Resources/Rapid.entitlements" \
         --sign - "$APP"
@@ -863,6 +870,11 @@ else
             --sign "$SIGN_IDENTITY" "$CUA_HELPER"
         codesign --verify --strict "$CUA_HELPER"
     fi
+    codesign --force --options runtime --timestamp \
+        --entitlements "$ROOT/Resources/Rapid.entitlements" \
+        --identifier com.rapidmlx.rapid.goose \
+        --sign "$SIGN_IDENTITY" "$CONTENTS/Resources/Helpers/goose"
+    codesign --verify --strict "$CONTENTS/Resources/Helpers/goose"
     # No --deep: the sidecar's Mach-Os under Contents/Resources/rapid-mlx/
     # are already individually signed by build-sidecar.sh; this outer
     # (non-deep) codesign hashes their bytes into the .app's resource
@@ -895,6 +907,18 @@ else
     fi
     codesign -dv --verbose=4 "$APP" 2>&1 | grep -E 'Authority|TeamIdentifier|flags=' || true
 fi
+
+# Validate each nested code object independently. An outer bundle seal alone
+# does not establish that the Goose executable is signed for release.
+for nested in "$CONTENTS/Resources/Helpers/goose" "$CONTENTS/MacOS/Rapid"; do
+    codesign --verify --strict "$nested"
+done
+for notice in goose-APACHE-2.0.txt goose-third-party-licenses.txt; do
+    test -s "$CONTENTS/Resources/Licenses/$notice" || {
+        echo "ERROR: required Goose notice is missing: $notice" >&2
+        exit 1
+    }
+done
 
 # TCC belongs to the process that calls AX/CG. Assert the packaged executable
 # is the stable helper identity and still carries the runtime entitlements
@@ -937,5 +961,5 @@ if [[ "$SKIP_SIDECAR" != "1" ]]; then
 fi
 
 echo
-echo "Rapid-MLX Desktop.app ready at: $APP"
+echo "$(basename "$APP") ready at: $APP"
 echo "Launch with: open '$APP'"

@@ -321,14 +321,6 @@ struct ServerManagerEmbeddedBearerTests {
         ))
     }
 
-    @Test("Settings explains failed embedded bearer cleanup without claiming success")
-    func cleanupFailureCopy() {
-        let copy = SettingsToolsPanel.embeddedBearerIssueCopy(.deleteFailed)
-
-        #expect(copy.contains("couldn’t be removed"))
-        #expect(copy.contains("Retry cleanup"))
-    }
-
     @Test("Manual rotation persists only for persisted lifetimes")
     func manualRotation() {
         let dailyCredentialStore = RecordingCredentialStore()

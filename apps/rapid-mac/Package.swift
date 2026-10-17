@@ -1,5 +1,6 @@
 // swift-tools-version:6.0
 import PackageDescription
+let localizedResources: [Resource] = [.process("Resources/Localizable.xcstrings")]
 
 // Minimal menu-bar app ("Rapid-MLX" v1.0). Source-level target is
 // macOS 14 (the MLX floor). Two SPM dependencies remain — block-level
@@ -75,7 +76,6 @@ let package = Package(
             resources: [
                 .process("Resources/cheetah.png"),
                 .process("Resources/cheetah-sm.png"),
-                .process("Resources/Localizable.xcstrings"),
                 .process("Resources/benchmark-scores.json"),
                 // Community Benchmark identity artwork, vendored unmodified
                 // from rapidmlx.com (`landing/public/leaderboard/`). The 18
@@ -107,7 +107,7 @@ let package = Package(
                 // benchmark in progress.
                 .copy("Resources/cheetah-invite-wave.png"),
                 .copy("Resources/cheetah-run.png")
-            ]
+            ] + localizedResources
         ),
         .testTarget(
             name: "RapidTests",

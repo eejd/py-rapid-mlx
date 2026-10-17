@@ -52,8 +52,7 @@ struct SettingsPerformancePanel: View {
 
     /// Whether the running child was launched before the current settings, so
     /// its argv predates them. Derived, never stored — the same reasoning as
-    /// ``SettingsConnectorsPanel``: `@State` dies with the view while the
-    /// condition it described is still true.
+    /// `@State` dies with the view while the condition it described is still true.
     private var needsReload: Bool {
         guard let alias = targetAlias, server.isModelResident(alias) else { return false }
         let wantsSpeculative = wantsSpeculativeDecoding(
@@ -343,7 +342,9 @@ struct SettingsPerformancePanel: View {
                                 ? String(localized: "Enabled by default for this qualified model. It accelerates text generation; turn it off and restart to use photo input.")
                                 : String(localized: "MTP accelerates text generation on this model; turn it off and restart to use photo input.")
                             : preset?.method == .dflash
-                                ? String(localized: "Off by default. This qualified text-only mode uses a paired draft model and one request at a time. To use tools, turn acceleration off and restart the model.")
+                                ? WorkAgent.gooseChat
+                                    ? String(localized: "DFlash does not support Chat tools. Chat turns it off automatically while tools are available.")
+                                    : String(localized: "Off by default. This qualified text-only mode uses a paired draft model and one request at a time.")
                                 : String(localized: "Off by default. It can improve generation speed on some Macs, but may be slower on others; accepted output remains token-exact."),
                     warns: false
                 )

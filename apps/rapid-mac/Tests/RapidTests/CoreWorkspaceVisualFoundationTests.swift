@@ -784,7 +784,7 @@ struct CoreWorkspaceVisualFoundationTests {
         )
         #expect(
             content.contains("privatefuncopenConversationSearch(){showCommandPalette=falseshowConversationSearch=true}"),
-            "Chat search must clear palette state so the two overlays cannot queue."
+            "Chat search must clear palette state."
         )
         #expect(
             app.contains("NSApp.activate(ignoringOtherApps:true)"),

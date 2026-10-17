@@ -202,7 +202,6 @@ final class MenuBarController: NSObject {
         case .open:
             bringMainWindowForward()
         case .newChat:
-            // Start a fresh conversation and surface the window.
             AppDelegate.shared.chat?.newConversation()
             bringMainWindowForward()
         case .update:

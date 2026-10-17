@@ -1,22 +1,20 @@
 # Rapid-MLX Desktop — Privacy Policy
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-14.
 
 Rapid-MLX Desktop ("the App") is a local-first SwiftUI Mac client for the
 `rapid-mlx` inference server. We designed it so that your prompts,
-attachments, and model responses **never leave your Mac** unless you
-explicitly send them somewhere (e.g. via the web-search tool, which
-sends the search query to a third-party search provider — Keenable's
-keyless endpoint by default; you can switch the backend or add your
-own key in Settings → Tools).
+attachments, and model responses are processed by the local model. Chat tools
+can access files, run commands, and use the internet when you allow them.
+YOLO mode runs tools without asking for each action. Tool outputs and files
+may be sent to services that an allowed tool contacts.
 
 ## What stays on your Mac
 
 * Chat history (conversations, messages, attachments, folders) — stored
   under `~/Library/Application Support/Rapid/conversations.json` and
-  never transmitted off-device.
-* API keys for tools (Keenable / Parallel / Tavily / Brave) — stored
-  in macOS Keychain.
+  stored locally by the App; allowed tools can still read or transmit their
+  contents.
 * Server settings, picker state, window layout — stored in
   UserDefaults under `com.rapidmlx.rapid`.
 * The engine's **prompt prefix cache** — the embedded `rapid-mlx` server
@@ -160,15 +158,14 @@ Anonymous telemetry does **not** collect:
 * Prompt or response contents from traffic to your `rapid-mlx` server.
 * Tool API keys.
 
-The engine sends only `POST https://us.i.posthog.com/batch/` telemetry
-requests to PostHog Cloud (US). Every event disables GeoIP
-enrichment and person-profile creation; PostHog receives no IP or location
-property from Rapid-MLX.
+The engine sends telemetry only to `https://us.i.posthog.com/batch/`.
+Every event disables location enrichment and person-profile creation;
+no IP or location property is included in the event.
 
 The desktop app sends its own events to
-`https://telemetry.rapidmlx.com/v1/events`. The receiving Cloudflare Worker
-derives a coarse two-letter country code from connection metadata for aggregate
-reporting (`XX` when unavailable), strips client IPs, and writes events to R2;
+`https://telemetry.rapidmlx.com/v1/events`. The receiving collector derives a coarse two-letter country code from
+connection metadata for aggregate reporting (`XX` when unavailable), strips
+client IPs, and stores events;
 the IP address is never stored. Source is open at
 `github.com/raullenchai/rapidmlx.com` under `telemetry-worker/`.
 
@@ -310,10 +307,10 @@ distributions are out of scope but we will help triage.
 
 ## Third-party services
 
-* **Telemetry collector** — Cloudflare Workers + R2 storage. Subject
-  to Cloudflare's data processing terms.
-* **Auto-update channel** — signed production builds use Sparkle to poll
-  `https://dl.rapidmlx.com/appcast.xml` every six hours. Sparkle sends a
+* **Usage data processors** — the app collector and the engine processor
+  receive only the metadata described above.
+* **Auto-update channel** — signed production builds use the signed updater to poll
+  `https://dl.rapidmlx.com/appcast.xml` every six hours. The updater sends a
   standard app/version user agent but no system profile
   (`SUSendsSystemProfile=false`), unique identifier, chat content, or usage
   data. It verifies every update archive with the Ed25519 public key embedded
@@ -322,15 +319,15 @@ distributions are out of scope but we will help triage.
 
   During the migration, ``UpdateChecker`` also polls
   `https://rapidmlx.com/api/desktop-update?v=<app-version>` on launch
-  and every 6 hours while running. This is a thin Cloudflare Worker
+  and every 6 hours while running. This is a small update endpoint
   that returns the **byte-identical** release manifest the public R2
   object (`https://dl.rapidmlx.com/latest.json`) serves, while also
   counting the poll as an aggregate active-install signal. **The only
   data the request sends is the app's own version** (the `?v=` query,
   the same value already in the `User-Agent: Rapid-Desktop/<version>`
   header) — no device fingerprint, no unique ID, nothing about your
-  usage. The Worker records only aggregate counts (version and
-  Cloudflare-derived country) and **never stores your IP address**.
+  usage. The endpoint records only aggregate counts (version and
+  coarse country) and **never stores your IP address**.
   You can turn the check off entirely: set the environment variable
   `RAPIDMLX_NO_UPDATE_CHECK=1` (or the cross-tool `DO_NOT_TRACK=1`),
   which skips the request completely — no poll, no signal. No GitHub
@@ -359,16 +356,9 @@ distributions are out of scope but we will help triage.
   download the DMG from the
   [GitHub Releases page](https://github.com/raullenchai/Rapid-MLX/releases/latest)
   and verify its origin yourself before installing.
-* **Search and tool providers** — when the model calls the
-  web-search tool, the search query (never your whole conversation)
-  is sent to the configured provider per their own privacy policy.
-  The default backend is Keenable's keyless endpoint
-  (`api.keenable.ai`) — no account, no API key; the request carries
-  the query plus standard connection metadata (such as your IP
-  address), nothing more. You can switch to Parallel, Tavily,
-  Brave, or the DuckDuckGo scrape — or add your own key — in
-  Settings → Tools. When Keenable is unreachable the tool retries the
-  query against DuckDuckGo. Rapid-MLX Desktop is a passthrough.
+* **Chat tools** — approved actions can read files, run commands, and contact
+  network services. YOLO mode runs those actions without individual prompts.
+  The model itself runs locally.
 
 ## Contact
 

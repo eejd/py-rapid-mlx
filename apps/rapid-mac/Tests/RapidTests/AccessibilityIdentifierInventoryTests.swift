@@ -9,8 +9,8 @@ import Testing
 /// `AXIdentifier` and nothing else — an unnamed control is a control the suite
 /// cannot reach, and `docs/gui-golden-flows.md` says so out loud ("Prefer a
 /// stable `.accessibilityIdentifier(...)` in product code"). Several surfaces
-/// shipped with either no identifier at all (Settings → Tools, the
-/// conversation-row overflow menu) or with an SF Symbol name leaking through
+/// shipped with either no identifier at all (the conversation-row overflow
+/// menu) or with an SF Symbol name leaking through
 /// as one (`pin`, `doc.on.doc`, `pencil`, `arrow.clockwise`) — the latter is
 /// worse than nothing, because it looks deliberate and silently changes the
 /// moment somebody swaps the glyph.
@@ -136,8 +136,6 @@ struct AccessibilityIdentifierInventoryTests {
     }
     #endif
 
-    // MARK: - Settings → Tools
-
     @Test("Settings → Performance names its panel and every control")
     func settingsPerformancePanelIdentifiers() throws {
         try assertDeclared(
@@ -165,125 +163,6 @@ struct AccessibilityIdentifierInventoryTests {
                 "Settings → Performance: segmented option \(id) is no longer addressable."
             )
         }
-    }
-
-    /// The whole panel shipped with ZERO identifiers: the three tool switches,
-    /// the web-search backend radio group, and the browsing auto-approve
-    /// switch all had correct AX roles and no name.
-    @Test("Settings → Tools names every control it offers")
-    func settingsToolsPanelIdentifiers() throws {
-        try assertDeclared(
-            [
-                // Keyed on the tool's WIRE name (web_search / browse /
-                // weather), which is also what the request body carries.
-                #""Settings.Tools.Toggle.\(def.function.name)""#,
-                // Radio group, then one radio per backend keyed on the
-                // provider's raw value.
-                #""Settings.Tools.WebSearch.Backend""#,
-                #""Settings.Tools.WebSearch.Backend.\(provider.id)""#,
-                #""Settings.Tools.WebSearch.KeyField.\(provider.id)""#,
-                #""Settings.Tools.WebSearch.SaveKey.\(provider.id)""#,
-                #""Settings.Tools.WebSearch.KeyStatus.\(provider.id)""#,
-                // The "Get a <provider> key" Link is interactive too — it
-                // opens the provider's dashboard. It was missed on the first
-                // pass precisely because it only renders for a provider that
-                // has a `keyDashboardURL`, so it is absent from an AX dump
-                // taken with any other backend selected. "Every control" has
-                // to mean every control, including the conditional ones.
-                #""Settings.Tools.WebSearch.KeyDashboardLink.\(provider.id)""#,
-                #""Settings.Tools.Browse.AutoApproveToggle""#,
-            ],
-            in: "Sources/Rapid/UI/SettingsToolsPanel.swift",
-            surface: "Settings → Tools"
-        )
-    }
-
-    // MARK: - Settings → Experimental → MCP Connectors (issue #1716)
-
-    /// The connector surface is where a user authorises a program on their Mac
-    /// to be driven by a model, so every control on it has to be reachable by
-    /// the golden-flow harness — not just the happy-path ones.
-    @Test("Settings → Experimental → MCP Connectors names every control it offers")
-    func settingsConnectorsPanelIdentifiers() throws {
-        try assertDeclared(
-            [
-                #""Settings.Connectors.AddButton""#,
-                #""Settings.Connectors.SubsystemError""#,
-                #""Settings.Connectors.RestartButton""#,
-                #""Settings.Connectors.ConfirmRemove""#,
-                #""Settings.Connectors.CancelRemove""#,
-                // Per-server rows, keyed on the server's name — which is also
-                // the namespace half of every tool it exposes, not display text.
-                #""Settings.Connectors.Row.Status.\(entry.name)""#,
-                #""Settings.Connectors.Row.Toggle.\(entry.name)""#,
-                #""Settings.Connectors.Row.Menu.\(entry.name)""#,
-                #""Settings.Connectors.Row.Edit.\(entry.name)""#,
-                #""Settings.Connectors.Row.Remove.\(entry.name)""#,
-                // Per-tool switch, keyed on the namespaced wire name.
-                #""Settings.Connectors.Tool.Toggle.\(name)""#,
-                #""Settings.Connectors.AutoApproveToggle""#,
-                #""Settings.Connectors.ResetApprovals""#,
-            ],
-            in: "Sources/Rapid/UI/SettingsConnectorsPanel.swift",
-            surface: "Settings → Experimental → MCP Connectors"
-        )
-        try assertDeclared(
-            [#""Settings.Connectors.MasterToggle""#],
-            in: "Sources/Rapid/UI/SettingsView.swift",
-            surface: "Settings → Experimental → Enable MCP Connectors"
-        )
-    }
-
-    @Test("The connector editor sheet names every field")
-    func mcpServerEditorSheetIdentifiers() throws {
-        try assertDeclared(
-            [
-                #""Settings.Connectors.Editor.Name""#,
-                #""Settings.Connectors.Editor.Transport""#,
-                #""Settings.Connectors.Editor.Command""#,
-                #""Settings.Connectors.Editor.URL""#,
-                #""Settings.Connectors.Editor.Enabled""#,
-                #""Settings.Connectors.Editor.Allow""#,
-                #""Settings.Connectors.Editor.Cancel""#,
-            ],
-            in: "Sources/Rapid/UI/MCPServerEditorSheet.swift",
-            surface: "Settings → Experimental → MCP Connectors → editor"
-        )
-        // The two code editors route their identifier through the shared
-        // `codeEditor(text:height:axIdentifier:)` builder so the modifier
-        // lands on the `TextEditor` itself (the AX-identifier gate checks
-        // the control, and a wrapper-level duplicate would give the AX
-        // driver two hits). Pin the literal at the call sites instead —
-        // the identifier STRINGS are unchanged, so golden flows are
-        // unaffected.
-        let sheet = try strippedSource("Sources/Rapid/UI/MCPServerEditorSheet.swift")
-        for id in ["Settings.Connectors.Editor.AddArgument",
-                   "Settings.Connectors.Editor.AddEnv"] {
-            #expect(
-                sheet.contains(#"axIdentifier:"\#(id)""#),
-                """
-                Settings → Experimental → MCP Connectors → editor: MCPServerEditorSheet.swift no \
-                longer passes \(id) into codeEditor(text:height:axIdentifier:). \
-                Golden flows address this field by AXIdentifier — update \
-                scripts/gui-golden-flows.sh and this inventory together.
-                """
-            )
-        }
-    }
-
-    /// The consent prompt is the last thing standing between a model and a
-    /// program on the user's Mac. Its three buttons must be addressable.
-    @Test("The MCP tool approval sheet names its three decisions")
-    func mcpApprovalSheetIdentifiers() throws {
-        try assertDeclared(
-            [
-                #""ToolApproval.MCP.Deny""#,
-                #""ToolApproval.MCP.AlwaysAllow""#,
-                #""ToolApproval.MCP.Allow""#,
-            ],
-            in: "Sources/Rapid/UI/ContentView.swift",
-            surface: "MCP tool approval sheet"
-        )
     }
 
     /// Behaviour guard for the constraint the identifiers ride on: a settings
@@ -478,25 +357,6 @@ struct AccessibilityIdentifierInventoryTests {
     /// is a real SwiftUI `.sheet`, so — unlike a `confirmationDialog` — its
     /// buttons are ordinary SwiftUI buttons and carry identifiers directly.
     ///
-    /// The three *answers* are named; the enclosing stack deliberately is not.
-    /// An accessibility modifier on a container that is not its own
-    /// accessibility element applies to the elements it contains, so naming
-    /// the wrapper risks stamping that name across its descendants — including
-    /// over the buttons a flow has to press. A flow asserts the prompt is up
-    /// by waiting for `ToolApproval.Browse.Allow`.
-    @Test("The browse tool-approval answers are addressable")
-    func browseApprovalIdentifiers() throws {
-        try assertDeclared(
-            [
-                #""ToolApproval.Browse.Allow""#,
-                #""ToolApproval.Browse.AlwaysAllow""#,
-                #""ToolApproval.Browse.Deny""#,
-            ],
-            in: "Sources/Rapid/UI/ContentView.swift",
-            surface: "Browse tool approval"
-        )
-    }
-
     // MARK: - Onboarding
 
     /// Onboarding's addressable controls, including the Ready surface added
@@ -604,20 +464,5 @@ struct AccessibilityIdentifierInventoryTests {
 
     /// The positive test above would still pass if someone re-added the
     /// container identifier, bringing the propagation bug back with it. Naming
-    /// the wrapper is the mistake, so the absence has to be asserted directly.
-    @Test("The tool-approval sheet's container stays unnamed")
-    func browseApprovalSheetContainerIsNotNamed() throws {
-        let stripped = try strippedSource("Sources/Rapid/UI/ContentView.swift")
-        #expect(
-            !stripped.contains(#".accessibilityIdentifier("ToolApproval.Browse.Sheet")"#),
-            """
-            The approval sheet's root stack must NOT carry an identifier. An \
-            accessibility modifier on a container that is not its own \
-            accessibility element is applied to the elements it contains, so \
-            naming the wrapper can stamp that name across its descendants — \
-            including over the Allow/Deny buttons a flow has to press. Assert \
-            the prompt is up by waiting for ToolApproval.Browse.Allow instead.
-            """
-        )
-    }
+
 }

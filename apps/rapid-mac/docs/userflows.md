@@ -90,8 +90,8 @@ A failed policy write stays fail-closed and is retried on a later launch.
    embedded rapid-mlx sidecar via `ChatStreamClient` over the loopback port
    (`ChatStreamClient.loopbackURL(port:)`, bearer-authed).
 3. Reasoning-capable models expose their thinking under a per-message
-   disclosure (`ChatView.Message.ReasoningDisclosure.<UUID>`), and tool calls
-   render as chips (`ToolCallChip.*`).
+   disclosure (`ChatView.Message.ReasoningDisclosure.<UUID>`). Chat sends no
+   tool definitions or tool results.
 4. Attachments: the composer accepts document attachments; the button stays
    visible on a text-only alias but rejects image paste/drop for models without
    vision (see `docs/gui-golden-flows.md` → `chat-document-attachment`).
@@ -208,10 +208,10 @@ control, an empty state, and a **New chat** shortcut; matching is done by
 **Trigger.** `Cmd+,` or the in-window settings button (`ContentView.Settings`).
 
 **Expected.** The Settings window renders a category rail
-(`Settings.Category.<rawValue>`) with exactly **eight** release categories, in
+(`Settings.Category.<rawValue>`) with **eight** release categories, in
 declaration order (`SettingsView.swift:59` `enum Category`): **Model
-Management, Instructions, Tools, Connectors, Performance, Appearance, Privacy,
-App**. A ninth **Developer** category exists only under `#if DEBUG`
+Management, Instructions, Memory, Performance, Experimental, Appearance,
+Privacy, App**. A ninth **Developer** category exists only under `#if DEBUG`
 (`SettingsView.swift:90`) and is compiled out of release builds. Deep-linking a
 category is done through `SettingsRouter` (`RapidApp.swift:324`).
 
@@ -278,86 +278,6 @@ custom-models-folder control (`…ChooseFolder`, `…UseDefaultFolder`,
 **Touches.** `UI/SettingsModelManagementPanel.swift`,
 `Server/ModelCatalog.swift`, `Services/ModelCacheActions.swift`,
 `Server/ModelsFolderPreference.swift`, `Server/DownloadManager.swift`.
-
----
-
-## Flow 13 — Built-in tools & browse approval
-
-**Trigger.** Settings → Tools, then let a tool-capable model call a tool.
-
-**Expected.**
-
-1. Exactly **three** built-in tools are dispatched by
-   `BuiltinToolRegistry` (`BuiltinToolRegistry.swift:46`): `web_search`,
-   `browse`, and `weather` (an unknown name is refused with the list). Each is
-   individually toggleable (`Settings.Tools.Toggle.<tool>`) with a details
-   disclosure (`Settings.Tools.Details.<name>`,
-   `Settings.Tools.DetailsBody.<name>`).
-2. `weather` (Open-Meteo) needs no approval; `web_search` runs against the
-   configured backend (Flow 14).
-3. `browse` is SSRF-guarded (`BrowseSSRFGuard`) and gated by a per-fetch
-   approval sheet with **three** buttons — **Deny / Always allow / Allow once**
-   (`ToolApproval.Browse.{Deny,AlwaysAllow,Allow}`, `ContentView.swift:1273`).
-   A blanket auto-approve lives at
-   `Settings.Tools.Browse.AutoApproveToggle`.
-4. The app ships no filesystem or shell tools.
-
-**Touches.** `UI/SettingsToolsPanel.swift`, `Tools/BuiltinToolRegistry.swift`,
-`Tools/WebSearchTool.swift`, `Tools/BrowseTool.swift`,
-`Tools/BrowseApprovalStore.swift`, `Tools/BrowseSSRFGuard.swift`,
-`Tools/WeatherTool.swift`, `UI/ContentView.swift` (browse approval sheet).
-
----
-
-## Flow 14 — Web-search provider configuration
-
-**Trigger.** Settings → Tools → web-search backend
-(`Settings.Tools.WebSearch.Backend`).
-
-**Expected.** There are **five** providers, in the order the radio renders
-them (`WebSearchProvider.swift:63` `enum WebSearchProvider`): **Keenable**
-(the zero-setup, keyless default — `WebSearchConfig` defaults to `.keenable`,
-`WebSearchProvider.swift:211`), **Parallel**, **Tavily**, **Brave Search**, and
-**DuckDuckGo** (keyless backstop). Keys, when a provider takes one, are stored
-in the macOS Keychain (per-provider `keychainAccount`), never UserDefaults;
-pasting a key for a key-requiring provider while on a keyless backend
-auto-promotes the selection (`setAPIKey`, `WebSearchProvider.swift:272`).
-
-**Touches.** `Tools/WebSearchProvider.swift`, `UI/SettingsToolsPanel.swift`,
-`Tools/KeychainStore.swift`, `Tools/WebSearchClients.swift`.
-
----
-
-## Flow 15 — Connectors (MCP)
-
-**Trigger.** Settings → Experimental → **Enable MCP Connectors**.
-
-**Expected.**
-
-1. A master **Enable MCP Connectors** toggle (`Settings.Connectors.MasterToggle`,
-   opt-in) explains that connectors add tools and data access rather than making
-   the model itself smarter or faster, and that calls can add latency. The flag
-   is read once at spawn, so toggling it raises a **Restart to apply** banner
-   (`…RestartButton`).
-2. **Add / edit** a server through `MCPServerEditorSheet` (name, transport,
-   command/URL, env, enable — `Settings.Connectors.Editor.*`). Rows expose
-   status, toggle, and an edit/remove menu (`…Row.{Status,Toggle,Menu,Edit,
-   Remove}.<name>`).
-3. Connected tools have per-tool switches
-   (`Settings.Connectors.Tool.Toggle.<name>`); a blanket auto-approve
-   (`…AutoApproveToggle`) and **Reset approvals** (`…ResetApprovals`) live in
-   the approvals card.
-4. At inference the first call to a connector tool raises an approval sheet
-   with **three** buttons (`ToolApproval.MCP.{Deny,AlwaysAllow,Allow}`,
-   `ContentView.swift:1376`). Editing or removing a server revokes its
-   remembered grant (`MCPToolApprovalStore.revokeGrants`, wired at
-   `RapidApp.swift:187`).
-
-**Touches.** `UI/SettingsConnectorsPanel.swift`, `UI/MCPServerEditorSheet.swift`,
-`UI/ContentView.swift` (MCP approval sheet), `MCP/MCPConfigStore.swift`,
-`MCP/MCPCatalog.swift`, `MCP/MCPToolApprovalStore.swift`,
-`MCP/MCPToolRegistry.swift`, `MCP/CompositeToolRegistry.swift`,
-`Server/ServerManager.swift` (`mcpConfigPathProvider`).
 
 ---
 
@@ -566,12 +486,9 @@ them:
   (`Chat/ConversationHistory.swift`).
 - **`Updater/Installer.swift` / `UpdateInstallView.swift` / in-app installer.**
   Absent; updates are Sparkle-only (Flow 20).
-- **Three-provider web search (DDG/Brave/Tavily only).** There are five, with a
-  keyless Keenable default (Flow 14).
 - **Six Settings categories.** There are eight in release (Flow 9).
 - **Dead AX ids** `Settings.QuickAsk.LaunchAtLogin`, `DeleteSessionConfirm.*`,
-  and the two-button `ToolApproval.Browse.{Allow,Deny}` — the browse and MCP
-  approval sheets each carry **three** buttons now.
+  and the removed chat tool approval controls.
 
 ---
 
@@ -588,23 +505,18 @@ interactive control under `Sources/` without an identifier.
 **Chat — `UI/ChatView.swift`:** `ChatView.SendOrStopButton`,
 `ChatView.AddAttachments`, `ChatView.ConversationInstructions`,
 `ChatView.Residency.{Unload,UnloadNotice.OK}`,
-`ChatView.PersonalIntelligence.Toggle`,
-`ToolCallChip.<action>`, `ToolCallChip.Toggle.<call.id>`,
 `ChatView.Message.<action>.<UUID>` (action ∈ {`EditField`, `CancelEdit`,
 `SaveEdit`, `Edit`, `Copy`, `SelectText`, `Retry`, `ReasoningDisclosure`}).
 `UI/SelectTextSheet.swift`: `SelectText.Done`. `UI/JumpToBottomButton.swift`:
 `Transcript.JumpToBottom`. `UI/InstructionTextEditor.swift`:
 `ChatView.ConversationInstructions.{Save,Clear,Cancel}`,
 `Settings.Instructions.Clear`, `<id>.Count`.
-`UI/PersonalIntelligenceControl.swift`:
-`ChatView.PersonalIntelligence.{Popover,NotNow,TurnOn}`.
 
 **ContentView — `UI/ContentView.swift`:** `ContentView.Settings`,
 `ContentView.LogDrawer`, `ContentView.ToggleLogs`, `Footer.DesktopVersionPill`,
 `MemoryWarning.{Confirm,Cancel}`,
 `MissingRuntime.{Recheck,RecheckStatus,DownloadUpdate,Quit}`,
-`ToolApproval.Browse.{Allow,AlwaysAllow,Deny}`,
-`ToolApproval.MCP.{Allow,AlwaysAllow,Deny}`.
+
 
 **Sidebar — `UI/SidebarView.swift`:** `Sidebar.NewChat`, `Sidebar.Images`,
 `Sidebar.Audio`, `Sidebar.Launch`, `Sidebar.Residency`,
@@ -667,18 +579,6 @@ UseDefaultFolder,FolderPath,FolderUnavailable}`,
 `Settings.Performance.{Panel,ModelPicker,NoModel,KVMode,PrefixCache,CacheBudget,
 CacheBudgetAutomatic,SpeculativeDecoding.Enabled,Reset,RestartNotice,
 AppliesNextLoad}`.
-
-**Tools — `UI/SettingsToolsPanel.swift`:**
-`Settings.Tools.Toggle.<function.name>`, `Settings.Tools.Details.<name>`,
-`Settings.Tools.DetailsBody.<name>`, `Settings.Tools.WebSearch.Backend`,
-`Settings.Tools.Browse.AutoApproveToggle`.
-
-**Connectors — `UI/SettingsConnectorsPanel.swift`:**
-`Settings.Connectors.{MasterToggle,AddButton,AutoApproveToggle,ResetApprovals,
-RestartButton,SubsystemError,ConfirmRemove,CancelRemove,
-Row.Status.<name>,Row.Toggle.<name>,Row.Menu.<name>,Row.Edit.<name>,
-Row.Remove.<name>,Tool.Toggle.<name>}`. `UI/MCPServerEditorSheet.swift`:
-`Settings.Connectors.Editor.{Name,Transport,Command,URL,Enabled,Allow,Cancel}`.
 
 **Developer (DEBUG) — `UI/SettingsDeveloperPanel.swift`:**
 `Settings.Developer.{Panel,Reonboard,ConfirmReonboard,CancelReonboard,

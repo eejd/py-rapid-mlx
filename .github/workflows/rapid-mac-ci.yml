@@ -303,6 +303,9 @@ jobs:
           RAPID_DESKTOP_WATCHDOG_QUIET_SECONDS: ${{ vars.MACOS_RUNNER == 'macos-26' && '180' || '90' }}
         run: ./scripts/desktop-test-timeout.sh
 
+      - name: Verify Goose Chat shell helper
+        run: python3 Work/test_work_helper_watchdog.py -v
+
       # #2488: upload the hang-sample artifact (stack + system state) so the
       # cause of a hung/failed desktop-test run is inspectable from the CI log
       # without re-running. `if-no-files-found: ignore` keeps healthy runs from

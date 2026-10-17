@@ -151,8 +151,6 @@ AREA_JOURNEYS: dict[str, AreaMapping] = {
             "chat-multimodal-attachments",
             "math-rendering",
             "slow-stream-stop",
-            "restored-tools",
-            "tool-loop-budget",
             "message-actions",
         ),
     ),

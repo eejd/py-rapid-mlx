@@ -1,5 +1,8 @@
 # AX-first GUI golden flows
 
+Historical results below include the retired chat Tools panel. The current
+flow manifest omits its controls and approval journeys; Work owns agent tasks.
+
 The AX suite remains the broad semantic regression net. A native XCUITest
 target now complements it under `Tests/RapidUITests`: its first migrated
 journey is `image-generation`, where XCTest captures each thumbnail itself,

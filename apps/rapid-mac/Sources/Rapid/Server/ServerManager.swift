@@ -831,9 +831,7 @@ final class ServerManager {
     /// inherits that choice; the chat surface derives its default from
     /// ``PortSweep.defaultPort`` via ``ChatStreamClient.loopbackURL(port:)``
     /// and re-targets onto ``activePort`` at first request.
-    /// Loopback only. ``internal`` (was private) so ``MCPCatalog`` can build
-    /// its own requests against the same address the chat stream uses rather
-    /// than hardcoding a second copy of the literal.
+    /// Loopback only. Shared with local clients that connect to the engine.
     let host: String = "127.0.0.1"
 
     /// The port the most recent ``start()`` actually bound rapid-mlx
@@ -879,22 +877,10 @@ final class ServerManager {
     /// the Keychain—not in UserDefaults or this struct.
     private(set) var embeddedBearerStatus = EmbeddedBearerStatus.notMaterialized
 
-    /// Supplies the `--mcp-config` path for the next spawn, or `nil` to launch
-    /// with the MCP subsystem entirely absent.
-    ///
-    /// Issue #1716. A closure rather than a stored path because the answer
-    /// changes while the app is running (the user adds a connector, or turns
-    /// the master switch off) and is owned by ``MCPConfigStore``, which lives
-    /// in the SwiftUI environment. ``RapidApp`` installs it at construction;
-    /// tests and the dev-snapshot harness leave it nil and get the pre-#1716
-    /// argv verbatim.
-    var mcpConfigPathProvider: (() -> String?)?
-
     /// Supplies the user's per-model performance flags for the alias about to
     /// be spawned, or an empty array when they have no opinion about it.
     ///
-    /// Issue #1717. Same closure shape and rationale as
-    /// ``mcpConfigPathProvider``: the answer is owned by
+    /// Issue #1717. The answer is owned by
     /// ``ModelPerfConfigStore`` in the SwiftUI environment and changes while
     /// the app runs, and every start path (cold start, crash recovery,
     /// auto-respawn) funnels through ``start(alias:)`` without threading
@@ -1841,7 +1827,8 @@ final class ServerManager {
         )
         let speculativeRequested = Self.speculativeDecodingRequested(
             defaultPreset: provenCatalogEntry?.speculativeDecodingPreset,
-            userOverrides: requestedPerformanceFlags
+            userOverrides: requestedPerformanceFlags,
+            toolsEnabled: WorkAgent.gooseChat
         )
         let speculativeApplied = hasAppliedSpeculativeDecoding(forAlias: trimmed)
         let speculativeSettingChanged = speculativeRequested != speculativeApplied
@@ -3006,7 +2993,8 @@ final class ServerManager {
         )
         let compatibleUserOverrides = Self.speculativeSafePerformanceOverrides(
             defaultPreset: catalogEntry?.speculativeDecodingPreset,
-            userOverrides: safeUserOverrides
+            userOverrides: safeUserOverrides,
+            toolsEnabled: WorkAgent.gooseChat
         )
         let mergedPerformanceFlags = Self.mergedPerformanceFlags(
             recommended: desktopDefaults,
@@ -3015,7 +3003,8 @@ final class ServerManager {
         let performanceFlags = Self.speculativeTextLaneFlags(
             requested: Self.speculativeDecodingRequested(
                 defaultPreset: catalogEntry?.speculativeDecodingPreset,
-                userOverrides: compatibleUserOverrides
+                userOverrides: compatibleUserOverrides,
+                toolsEnabled: WorkAgent.gooseChat
             ),
             supportsImageInput: catalogSupportsImageInput,
             userOverrides: safeUserOverrides,
@@ -3035,7 +3024,6 @@ final class ServerManager {
             // can add their first connector long after the app launched, and
             // a path captured in ``init`` would still be nil on the next
             // start. Nil whenever connectors are off or empty.
-            mcpConfigPath: mcpConfigPathProvider?(),
             videoOutputDirectory: videoOutputDirectory,
             capabilities: runtimeCapabilities,
             localSearchEnabled: LocalSearchFeatureConfig.isEnabled()
@@ -3145,6 +3133,7 @@ final class ServerManager {
                 environmentAdditions: Self.serveEnvironmentAdditions(
                     bearer: bearerMaterial.secret,
                     ambient: ProcessInfo.processInfo.environment,
+                    gooseChat: Bundle.main.bundleIdentifier == "com.rapidmlx.rapid",
                     // Issue #1412: the engine's server-oriented default may
                     // retain up to 20% of RAM in prefix-cache entries. The
                     // desktop shares unified memory with foreground apps, so
@@ -4671,8 +4660,12 @@ final class ServerManager {
     /// then an explicit preset, then the exact-artifact registry default.
     nonisolated internal static func speculativeDecodingRequested(
         defaultPreset: SpeculativeDecodingPreset?,
-        userOverrides: [String]
+        userOverrides: [String],
+        toolsEnabled: Bool = false
     ) -> Bool {
+        if toolsEnabled && dflashRequested(defaultPreset: defaultPreset, userOverrides: userOverrides) {
+            return false
+        }
         if userOverrides.contains("--no-spec-decode") { return false }
         if continuousMTPRequested(
             defaultPreset: defaultPreset,
@@ -4691,8 +4684,26 @@ final class ServerManager {
     /// Engine default/BF16 automatically restores the qualified MTP default.
     nonisolated internal static func speculativeSafePerformanceOverrides(
         defaultPreset: SpeculativeDecodingPreset?,
-        userOverrides: [String]
+        userOverrides: [String],
+        toolsEnabled: Bool = false
     ) -> [String] {
+        if toolsEnabled && dflashRequested(defaultPreset: defaultPreset, userOverrides: userOverrides) {
+            var resolved: [String] = []
+            var index = userOverrides.startIndex
+            while index < userOverrides.endIndex {
+                if userOverrides[index] == "--speculative-config" {
+                    index += 1
+                    if index < userOverrides.endIndex, !userOverrides[index].hasPrefix("--") {
+                        index += 1
+                    }
+                    continue
+                }
+                resolved.append(userOverrides[index])
+                index += 1
+            }
+            if !resolved.contains("--no-spec-decode") { resolved.append("--no-spec-decode") }
+            return resolved
+        }
         guard !userOverrides.contains("--no-spec-decode"),
               continuousMTPRequested(
                   defaultPreset: defaultPreset,
@@ -4719,6 +4730,19 @@ final class ServerManager {
         }
         resolved.append("--no-spec-decode")
         return resolved
+    }
+
+    nonisolated private static func dflashRequested(
+        defaultPreset: SpeculativeDecodingPreset?, userOverrides: [String]
+    ) -> Bool {
+        if let index = userOverrides.firstIndex(of: "--speculative-config"),
+           userOverrides.indices.contains(index + 1),
+           let data = userOverrides[index + 1].data(using: .utf8),
+           let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let method = payload["method"] as? String {
+            return method == "dflash"
+        }
+        return defaultPreset?.method == .dflash && defaultPreset?.isDefaultEnabled == true
     }
 
     nonisolated private static func continuousMTPRequested(
@@ -4899,7 +4923,6 @@ final class ServerManager {
         host: String,
         port: Int,
         extraFlags: [String] = [],
-        mcpConfigPath: String? = nil,
         videoOutputDirectory: String? = nil,
         capabilities: ServerRuntimeCapabilities = .conservative,
         localSearchEnabled: Bool = LocalSearchFeatureConfig.defaultEnabled,
@@ -4948,17 +4971,6 @@ final class ServerManager {
         }
         if let videoOutputDirectory, !videoOutputDirectory.isEmpty {
             args.append(contentsOf: ["--video-output-dir", videoOutputDirectory])
-        }
-        // Issue #1716: point the child at the connector config the app owns
-        // (``MCPConfigStore``). Only non-nil when the user has turned
-        // connectors on AND has at least one enabled server — MCP spawns
-        // arbitrary local processes, so the subsystem stays entirely absent
-        // until it is asked for.
-        //
-        // Safe after ``--cors-origins`` for the same reason ``extraFlags`` is:
-        // the leading ``--`` terminates that flag's ``nargs="+"`` collection.
-        if let mcpConfigPath, !mcpConfigPath.isEmpty {
-            args.append(contentsOf: ["--mcp-config", mcpConfigPath])
         }
         return args
     }
@@ -5203,6 +5215,7 @@ final class ServerManager {
     nonisolated internal static func serveEnvironmentAdditions(
         bearer: String,
         ambient: [String: String],
+        gooseChat: Bool = false,
         physicalRAMBytes: UInt64 = 0,
         availableRAMBytes: UInt64 = 0,
         supervisorPID: Int32 = -1,
@@ -5250,14 +5263,10 @@ final class ServerManager {
         if !bearer.isEmpty {
             env["RAPID_MLX_API_KEY"] = bearer
         }
-        // Prefix-cache restore is a best-effort server warm-start optimization,
-        // but the engine performs it on the same single MLX step thread used by
-        // generation. A large or slow on-disk cache can therefore leave the
-        // sidecar reporting Ready while the first Desktop chat waits minutes
-        // behind the restore. Desktop prioritizes truthful first-message
-        // readiness; keep the in-memory cache and explicit import/export, but
-        // do not auto-restore persisted entries for an app-owned sidecar.
-        env["RAPID_MLX_PREFIX_CACHE_AUTOLOAD"] = "0"
+        // Goose Chat's shared system+tools checkpoint is persisted by the
+        // engine on shutdown. Restore it before background prewarm so a second
+        // launch can reuse the same boundary without another full prefill.
+        env["RAPID_MLX_PREFIX_CACHE_AUTOLOAD"] = gooseChat ? "1" : "0"
         // Issue #1412: rapid-mlx defaults the prefix cache to 20% of
         // available RAM, which is appropriate for a dedicated server but
         // can push a 16/32 GB desktop Mac into swap while the user is also

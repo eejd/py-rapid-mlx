@@ -17,7 +17,12 @@ can actually understand.
 
 ## [Unreleased]
 
-## [0.16.3] — 2026-10-17
+### Changed
+
+- Removed Personal Intelligence and the built-in chat tool controls. Chat now
+  sends plain model requests; Work handles agent tasks in its own session.
+
+### Fixed
 
 Rapid-MLX 0.16.3 is a reliability update with cleaner tool-call replies, better resilience under memory pressure during concurrent serving, safer model loading, Desktop crash fixes, and more helpful Local Search.
 

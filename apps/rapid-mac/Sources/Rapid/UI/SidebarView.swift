@@ -14,6 +14,11 @@ enum SidebarSection: Hashable {
     case benchmark
     case shareCompute
 
+    static func initial(bundleIdentifier: String?, environment: [String: String]) -> SidebarSection {
+        if let requested = harnessRequested(environment: environment) { return requested }
+        return .chat
+    }
+
     /// The surface a GUI harness asked the app to open on.
     ///
     /// Screenshot and golden-flow runs need the window to come up on the
@@ -303,15 +308,16 @@ struct SidebarView: View {
                 action: { selection = .audio }
             )
             .accessibilityIdentifier("Sidebar.Audio")
-            row(
+            if !WorkAgent.gooseChat { row(
                 title: String(localized: "Agent"),
                 systemImage: "network",
                 isSelected: selection == .launch,
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
+            }
 
-            if computerUseEnabled {
+            if computerUseEnabled && !WorkAgent.gooseChat {
                 if let cuaViewModel {
                     CUASidebarRow(
                         isSelected: selection == .computerUse,
@@ -383,7 +389,8 @@ struct SidebarView: View {
 
             // Folders can exist before any conversation does (create one, then
             // file into it), so an empty history no longer means an empty rail.
-            if !chat.conversations.isEmpty || !chat.folders.isEmpty {
+            if (!WorkAgent.fullAccess || WorkAgent.gooseChat)
+                && (!chat.conversations.isEmpty || !chat.folders.isEmpty) {
                 // Date-grouped history (#1470), titled with the shared
                 // SectionHeader so the groups match the refreshed visual
                 // system (#1460) instead of the PR's original inline caption.
@@ -431,14 +438,16 @@ struct SidebarView: View {
         // Column-scoped toolbar content renders beside the native sidebar
         // toggle instead of in the detail column's title group.
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: onSearchChats) {
-                    Image(systemName: "magnifyingglass")
+            if !WorkAgent.fullAccess {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: onSearchChats) {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .keyboardShortcut("k", modifiers: .command)
+                    .help("Search chats - Command-K")
+                    .accessibilityLabel("Search chats")
+                    .accessibilityIdentifier("Toolbar.SearchChats")
                 }
-                .keyboardShortcut("k", modifiers: .command)
-                .help("Search chats - Command-K")
-                .accessibilityLabel("Search chats")
-                .accessibilityIdentifier("Toolbar.SearchChats")
             }
         }
         .task { await dayBoundaryTicker() }
@@ -637,6 +646,7 @@ struct SidebarView: View {
                 .frame(width: 40, height: 1)
                 .accessibilityHidden(true)
 
+
             compactItem(
                 title: String(localized: "New Chat"),
                 systemImage: "square.and.pencil",
@@ -658,13 +668,14 @@ struct SidebarView: View {
                 action: { selection = .audio }
             )
             .accessibilityIdentifier("Sidebar.Audio")
-            compactItem(
+            if !WorkAgent.gooseChat { compactItem(
                 title: String(localized: "Launch"),
                 systemImage: "paperplane",
                 isSelected: selection == .launch,
                 action: { selection = .launch }
             )
             .accessibilityIdentifier("Sidebar.Launch")
+            }
 
             if videoGenerationEnabled {
                 compactItem(
@@ -685,7 +696,7 @@ struct SidebarView: View {
                 .accessibilityIdentifier("Sidebar.Search")
                 .keyboardShortcut("f", modifiers: [.command, .shift])
             }
-            if computerUseEnabled {
+            if computerUseEnabled && !WorkAgent.gooseChat {
                 compactItem(
                     title: String(localized: "Computer Use"),
                     systemImage: "macwindow.on.rectangle",
@@ -1482,14 +1493,21 @@ struct SidebarView: View {
                     // History rows carry no icon but keep the same leading
                     // inset as the nav rows above, so titles and nav labels
                     // align down one column instead of stepping in and out.
-                    Text(conv.title)
-                        .font(isActive ? RapidFont.bodyEmphasis : RapidFont.body)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .padding(.leading, RapidTheme.Layout.iconSlot + RapidTheme.Space.sm)
-                        // Reserve the controls' width so revealing them
-                        // re-truncates the title instead of overlapping it.
-                        .padding(.trailing, showsControls ? Self.rowControlsWidth : 0)
+                    HStack(spacing: RapidTheme.Space.xs) {
+                        Text(conv.title)
+                            .font(isActive ? RapidFont.bodyEmphasis : RapidFont.body)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if conv.id == chat.activeConversationID && chat.isStreaming {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .accessibilityLabel(String(localized: "Generating response"))
+                        }
+                    }
+                    .padding(.leading, RapidTheme.Layout.iconSlot + RapidTheme.Space.sm)
+                    // Reserve the controls' width so revealing them
+                    // re-truncates the title instead of overlapping it.
+                    .padding(.trailing, showsControls ? Self.rowControlsWidth : 0)
                 }
                 .accessibilityIdentifier("Sidebar.Conversation.\(conv.id.uuidString)")
                 if showsControls {

@@ -37,7 +37,10 @@ from ..api.utils import (
 )
 from ..output_router import Channel, OutputRouter
 from ..prompt_host_cache import PromptHostCache
-from ..prompt_token_reuse import added_token_markers, encode_sharing_head
+from ..prompt_token_reuse import (
+    added_token_markers,
+    encode_sharing_head,
+)
 from ..utils.chat_template import apply_chat_template as shared_apply_chat_template
 from .base import BaseEngine, GenerationOutput
 
@@ -2834,13 +2837,27 @@ class BatchedEngine(BaseEngine):
         if self._is_mllm:
             raise RuntimeError("build_prompt is not supported for MLLM models")
         template_tools = convert_tools_for_template(tools) if tools else None
-        prompt = self._apply_chat_template(
-            messages,
-            tools=template_tools,
-            enable_thinking=enable_thinking,
-            add_generation_prompt=add_generation_prompt,
-            chat_template_kwargs=chat_template_kwargs,
-        )
+        try:
+            prompt = self._apply_chat_template(
+                messages,
+                tools=template_tools,
+                enable_thinking=enable_thinking,
+                add_generation_prompt=add_generation_prompt,
+                chat_template_kwargs=chat_template_kwargs,
+            )
+        except Exception as exc:
+            if not (
+                len(messages) == 1
+                and messages[0].get("role") == "system"
+                and tools
+                and "No user query found in messages" in str(exc)
+            ):
+                raise
+            token_ids, _ = self._shared_system_tools_prompt(
+                messages, template_tools, enable_thinking, chat_template_kwargs
+            )
+            tokenizer = getattr(self.tokenizer, "tokenizer", self.tokenizer)
+            return str(tokenizer.decode(token_ids, skip_special_tokens=False))
         prepared, _ = self._prepare_harmony_no_thinking_prompt(
             prompt,
             enable_thinking=enable_thinking,
@@ -3175,6 +3192,7 @@ class BatchedEngine(BaseEngine):
         # snapshot at the message boundary (#427). Set by ``chat()`` after
         # message-aware boundary computation; absent for raw-prompt callers.
         prefix_boundary = kwargs.pop("prefix_boundary", 0)
+        exact_prefix_boundary = bool(kwargs.pop("exact_prefix_boundary", False))
         # PFlash routing hints (#287). chat()/stream_chat() set these
         # from tools / response_format; raw-prompt callers default to
         # the safe (un-protected) values.
@@ -3216,6 +3234,7 @@ class BatchedEngine(BaseEngine):
                 prompt=prompt,
                 sampling_params=sampling_params,
                 prefix_boundary=prefix_boundary,
+                exact_prefix_boundary=exact_prefix_boundary,
                 has_tools=has_tools,
                 requires_prompt_integrity=requires_prompt_integrity,
                 grammar_logits_processor=grammar_logits_processor,
@@ -3451,6 +3470,7 @@ class BatchedEngine(BaseEngine):
             )
 
             prefix_boundary = kwargs.pop("prefix_boundary", 0)
+            exact_prefix_boundary = bool(kwargs.pop("exact_prefix_boundary", False))
             # PFlash routing hints (#287) — parity with generate().
             has_tools = bool(kwargs.pop("has_tools", False))
             requires_prompt_integrity = bool(
@@ -3468,6 +3488,7 @@ class BatchedEngine(BaseEngine):
                 prompt=prompt,
                 sampling_params=sampling_params,
                 prefix_boundary=prefix_boundary,
+                exact_prefix_boundary=exact_prefix_boundary,
                 has_tools=has_tools,
                 requires_prompt_integrity=requires_prompt_integrity,
                 grammar_logits_processor=grammar_logits_processor,
@@ -3639,20 +3660,40 @@ class BatchedEngine(BaseEngine):
         # Convert tools for template
         template_tools = convert_tools_for_template(tools) if tools else None
 
-        # Apply chat template
-        prompt = self._apply_chat_template(
-            messages,
-            template_tools,
-            num_images=len(all_images),
-            enable_thinking=enable_thinking,
-            chat_template_kwargs=chat_template_kwargs,
-        )
-        prompt, output_router_seed = self._prepare_harmony_no_thinking_prompt(
-            prompt,
-            enable_thinking=enable_thinking,
-            has_tools=bool(template_tools),
-            as_token_ids=True,
-        )
+        # Agent warm-up may contain only the shared system and tools. Some
+        # templates require a user turn; render two probes internally and
+        # prefill only their common token prefix plus one disposable token.
+        # The latter lets the scheduler snapshot the complete shared prefix.
+        shared_warm_boundary = 0
+        prompt: str | list[int]
+        try:
+            prompt = self._apply_chat_template(
+                messages,
+                template_tools,
+                num_images=len(all_images),
+                enable_thinking=enable_thinking,
+                chat_template_kwargs=chat_template_kwargs,
+            )
+        except Exception as exc:
+            if not (
+                len(messages) == 1
+                and messages[0].get("role") == "system"
+                and tools
+                and "No user query found in messages" in str(exc)
+            ):
+                raise
+            prompt, shared_warm_boundary = self._shared_system_tools_prompt(
+                messages, template_tools, enable_thinking, chat_template_kwargs
+            )
+        output_router_seed = None
+        if not shared_warm_boundary:
+            assert isinstance(prompt, str)
+            prompt, output_router_seed = self._prepare_harmony_no_thinking_prompt(
+                prompt,
+                enable_thinking=enable_thinking,
+                has_tools=bool(template_tools),
+                as_token_ids=True,
+            )
         if output_router_seed is not None:
             kwargs["_output_router_seed_token_ids"] = output_router_seed
 
@@ -3670,7 +3711,16 @@ class BatchedEngine(BaseEngine):
         # by the route can opt in by extending the allowlist (codex r7 NIT).
         forced_assistant_prefix = kwargs.pop("forced_assistant_prefix", None)
         if forced_assistant_prefix:
-            prompt = prompt + forced_assistant_prefix
+            if isinstance(prompt, list):
+                tokenizer = getattr(self.tokenizer, "tokenizer", self.tokenizer)
+                prompt = [
+                    *prompt,
+                    *tokenizer.encode(
+                        forced_assistant_prefix, add_special_tokens=False
+                    ),
+                ]
+            else:
+                prompt = prompt + forced_assistant_prefix
             # When we prefix the assistant turn ourselves, the response
             # surface lacks the prefix bytes (the model only emits the
             # continuation). The tool parser needs to see the full
@@ -3693,7 +3743,10 @@ class BatchedEngine(BaseEngine):
         # (Mamba/DeltaNet+Transformer) have the "can't trim" constraint that
         # PR #435 was built to fix. Gating on ``is_hybrid`` keeps the fix
         # active where it's needed and inert where it broke things.
-        if self._needs_prefix_boundary_snapshot():
+        if shared_warm_boundary and self._needs_prefix_boundary_snapshot():
+            kwargs["prefix_boundary"] = shared_warm_boundary
+            kwargs["exact_prefix_boundary"] = True
+        elif self._needs_prefix_boundary_snapshot():
             if transient_message_start is None:
                 prefix_boundary = self._compute_prefix_boundary(
                     messages,
@@ -3713,6 +3766,8 @@ class BatchedEngine(BaseEngine):
                 )
             if prefix_boundary > 0:
                 kwargs["prefix_boundary"] = prefix_boundary
+                if not any(message.get("role") == "user" for message in messages):
+                    kwargs["exact_prefix_boundary"] = True
 
         if tools:
             kwargs["has_tools"] = True
@@ -3777,6 +3832,37 @@ class BatchedEngine(BaseEngine):
         except (TypeError, ValueError):
             return False
 
+    def _shared_system_tools_prompt(
+        self,
+        messages: list[dict[str, Any]],
+        template_tools: list[dict] | None,
+        enable_thinking: bool | None,
+        chat_template_kwargs: dict | None,
+    ) -> tuple[list[int], int]:
+        """Render a system+tools-only warm request without a visible user turn."""
+        tokenizer = getattr(self.tokenizer, "tokenizer", self.tokenizer)
+        probes = []
+        for content in ("A", "界"):
+            rendered = self._apply_chat_template(
+                [*messages, {"role": "user", "content": content}],
+                template_tools,
+                enable_thinking=enable_thinking,
+                chat_template_kwargs=chat_template_kwargs,
+            )
+            probes.append(
+                tokenizer.encode(rendered)
+                if isinstance(rendered, str)
+                else list(rendered)
+            )
+        boundary = 0
+        for left, right in zip(*probes):
+            if left != right:
+                break
+            boundary += 1
+        if boundary <= 0 or boundary >= len(probes[0]):
+            raise ValueError("Chat template has no distinct shared system/tools prefix")
+        return probes[0][: boundary + 1], boundary
+
     def _compute_prefix_boundary(
         self,
         messages: list[dict[str, Any]],
@@ -3806,7 +3892,47 @@ class BatchedEngine(BaseEngine):
                 last_user_idx = i
                 break
         if last_user_idx is None:
-            return 0
+            # A system+tools-only completion can prime an agent's shared
+            # prefix before its first user turn. The assistant marker in that
+            # completion is not shared with a subsequent user message, so
+            # snapshot their token LCP exactly (including recurrent state).
+            if len(messages) != 1 or messages[0].get("role") != "system" or not tools:
+                return 0
+            try:
+                template_tools = convert_tools_for_template(tools)
+                warm = generation_prompt or self._apply_chat_template(
+                    messages,
+                    template_tools,
+                    add_generation_prompt=True,
+                    enable_thinking=enable_thinking,
+                    chat_template_kwargs=chat_template_kwargs,
+                )
+                next_turn = self._apply_chat_template(
+                    [*messages, {"role": "user", "content": "__prefix_probe__"}],
+                    template_tools,
+                    add_generation_prompt=True,
+                    enable_thinking=enable_thinking,
+                    chat_template_kwargs=chat_template_kwargs,
+                )
+                tokenizer = getattr(self.tokenizer, "tokenizer", self.tokenizer)
+                warm_tokens = (
+                    self.encode_prompt_text(warm) or tokenizer.encode(warm)
+                    if isinstance(warm, str)
+                    else list(warm)
+                )
+                next_tokens = (
+                    tokenizer.encode(next_turn)
+                    if isinstance(next_turn, str)
+                    else list(next_turn)
+                )
+                shared = 0
+                for left, right in zip(warm_tokens, next_tokens):
+                    if left != right:
+                        break
+                    shared += 1
+                return min(shared, len(warm_tokens) - 1)
+            except Exception:
+                return 0
         try:
             template_tools = convert_tools_for_template(tools) if tools else None
 
@@ -4453,20 +4579,36 @@ class BatchedEngine(BaseEngine):
         # Convert tools for template
         template_tools = convert_tools_for_template(tools) if tools else None
 
-        # Apply chat template
-        prompt = self._apply_chat_template(
-            messages,
-            template_tools,
-            num_images=len(all_images),
-            enable_thinking=enable_thinking,
-            chat_template_kwargs=chat_template_kwargs,
-        )
-        prompt, output_router_seed = self._prepare_harmony_no_thinking_prompt(
-            prompt,
-            enable_thinking=enable_thinking,
-            has_tools=bool(template_tools),
-            as_token_ids=True,
-        )
+        shared_warm_boundary = 0
+        prompt: str | list[int]
+        try:
+            prompt = self._apply_chat_template(
+                messages,
+                template_tools,
+                num_images=len(all_images),
+                enable_thinking=enable_thinking,
+                chat_template_kwargs=chat_template_kwargs,
+            )
+        except Exception as exc:
+            if not (
+                len(messages) == 1
+                and messages[0].get("role") == "system"
+                and tools
+                and "No user query found in messages" in str(exc)
+            ):
+                raise
+            prompt, shared_warm_boundary = self._shared_system_tools_prompt(
+                messages, template_tools, enable_thinking, chat_template_kwargs
+            )
+        output_router_seed = None
+        if not shared_warm_boundary:
+            assert isinstance(prompt, str)
+            prompt, output_router_seed = self._prepare_harmony_no_thinking_prompt(
+                prompt,
+                enable_thinking=enable_thinking,
+                has_tools=bool(template_tools),
+                as_token_ids=True,
+            )
 
         # ``forced_assistant_prefix`` — see ``chat()`` for the rationale.
         # On the streaming path the prefix is also injected into the
@@ -4477,13 +4619,25 @@ class BatchedEngine(BaseEngine):
         # complete envelope from the very first delta.
         forced_assistant_prefix = kwargs.pop("forced_assistant_prefix", None)
         if forced_assistant_prefix:
-            prompt = prompt + forced_assistant_prefix
+            if isinstance(prompt, list):
+                tokenizer = getattr(self.tokenizer, "tokenizer", self.tokenizer)
+                prompt = [
+                    *prompt,
+                    *tokenizer.encode(
+                        forced_assistant_prefix, add_special_tokens=False
+                    ),
+                ]
+            else:
+                prompt = prompt + forced_assistant_prefix
 
         # Compute prefix boundary for cache — non-trimmable-cache gate, see
         # ``chat()`` for the rationale. Path parity: stream and non-stream
         # must apply the same gating condition so a future change can't
         # silently regress one path while keeping the other green.
-        if self._needs_prefix_boundary_snapshot():
+        if shared_warm_boundary and self._needs_prefix_boundary_snapshot():
+            kwargs["prefix_boundary"] = shared_warm_boundary
+            kwargs["exact_prefix_boundary"] = True
+        elif self._needs_prefix_boundary_snapshot():
             if transient_message_start is None:
                 prefix_boundary = self._compute_prefix_boundary(
                     messages,
@@ -4503,6 +4657,8 @@ class BatchedEngine(BaseEngine):
                 )
             if prefix_boundary > 0:
                 kwargs["prefix_boundary"] = prefix_boundary
+                if not any(message.get("role") == "user" for message in messages):
+                    kwargs["exact_prefix_boundary"] = True
 
         if tools:
             kwargs["has_tools"] = True
