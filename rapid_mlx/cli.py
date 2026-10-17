@@ -1682,6 +1682,52 @@ def _check_disk_space(
         pass
 
 
+def _resolve_cached_hf_config(
+    repo_id: str, pinned_revision: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve a local config without guessing among unpinned snapshots."""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+        from huggingface_hub.constants import HF_HUB_CACHE
+        from huggingface_hub.file_download import repo_folder_name
+
+        cached = try_to_load_from_cache(repo_id=repo_id, filename="config.json")
+        if isinstance(cached, str) and os.path.isfile(cached):
+            return cached, None
+        repo_root = os.path.join(
+            HF_HUB_CACHE, repo_folder_name(repo_id=repo_id, repo_type="model")
+        )
+        if not os.path.isdir(repo_root):
+            return None, f"{repo_id} is not in the local cache"
+        if os.path.lexists(os.path.join(repo_root, "refs", "main")):
+            return None, f"local cache for {repo_id} has no config.json at refs/main"
+        revision = pinned_revision
+        if not revision:
+            snapshots_root = os.path.join(repo_root, "snapshots")
+            snapshots = (
+                [entry.name for entry in os.scandir(snapshots_root) if entry.is_dir()]
+                if os.path.isdir(snapshots_root)
+                else []
+            )
+            if len(snapshots) != 1:
+                return None, (
+                    f"local cache for {repo_id} has {len(snapshots)} snapshots "
+                    "and no refs/main; cannot choose one"
+                )
+            revision = snapshots[0]
+        cached = try_to_load_from_cache(
+            repo_id=repo_id, filename="config.json", revision=revision
+        )
+        if isinstance(cached, str) and os.path.isfile(cached):
+            return cached, None
+        return (
+            None,
+            f"local cache for {repo_id} has no config.json at revision {revision}",
+        )
+    except Exception:
+        return None, f"local cache for {repo_id} could not be inspected"
+
+
 def _gather_kv_cache_dtype_inputs(model_name: str) -> tuple[dict | None, dict | None]:
     """Best-effort collect the inputs ``resolve_kv_cache_dtype`` consumes.
 
@@ -1702,6 +1748,7 @@ def _gather_kv_cache_dtype_inputs(model_name: str) -> tuple[dict | None, dict | 
     """
     hf_cfg: dict | None = None
     alias_meta: dict | None = None
+    pinned_revision: str | None = None
 
     # Alias metadata — pull straight from the loaded profile so a
     # contributor-curated override (``"sliding_window": true``) wins
@@ -1711,6 +1758,9 @@ def _gather_kv_cache_dtype_inputs(model_name: str) -> tuple[dict | None, dict | 
 
         profile = resolve_profile(model_name)
         if profile is not None:
+            pinned_revision = getattr(
+                profile, "tensorfold_target_revision", None
+            ) or getattr(profile, "dflash_target_revision", None)
             alias_meta = {
                 "hf_path": getattr(profile, "hf_path", None),
                 # AliasProfile doesn't have ``sliding_window`` / ``is_mla``
@@ -1734,8 +1784,6 @@ def _gather_kv_cache_dtype_inputs(model_name: str) -> tuple[dict | None, dict | 
         import json as _json
         import os as _os
 
-        from huggingface_hub import try_to_load_from_cache as _cache_lookup
-
         hf_path = (alias_meta or {}).get("hf_path") or model_name
         # Local model directory (e.g. a freshly ``mlx_lm convert``-ed
         # ``-rapid`` build served by path): read its ``config.json``
@@ -1747,7 +1795,7 @@ def _gather_kv_cache_dtype_inputs(model_name: str) -> tuple[dict | None, dict | 
             with open(_local_cfg) as fh:
                 hf_cfg = _json.load(fh)
         elif hf_path:
-            cached = _cache_lookup(repo_id=hf_path, filename="config.json")
+            cached, _ = _resolve_cached_hf_config(hf_path, pinned_revision)
             if cached and _os.path.exists(cached):
                 with open(cached) as fh:
                     hf_cfg = _json.load(fh)
@@ -3501,7 +3549,9 @@ def _normalize_speculative_config_or_exit(args):
             # single-stream on M2 Pro / M3 Ultra).  The alias registry remains
             # the single source of truth, and --no-spec-decode stays the
             # explicit user escape hatch on every surface.
+            from .model_aliases import resolve_profile
             from .spec_decode.mtp import MTPEligibility, detect_mtp_eligibility
+            from .spec_decode.mtp.detect import _detect_mtp_eligibility_verbose
 
             # The catalog qualifies a preset, but the local target config is
             # authoritative for this particular checkpoint. A missing config
@@ -3512,9 +3562,19 @@ def _normalize_speculative_config_or_exit(args):
                 detect_mtp_eligibility(hf_cfg, has_external_sidecar=True)
                 is MTPEligibility.NONE
             ):
+                if hf_cfg is None:
+                    profile = resolve_profile(args.model)
+                    pin = getattr(
+                        profile, "tensorfold_target_revision", None
+                    ) or getattr(profile, "dflash_target_revision", None)
+                    _, reason = _resolve_cached_hf_config(profile.hf_path, pin)
+                    reason = reason or "cached target config could not be read"
+                else:
+                    reason = _detect_mtp_eligibility_verbose(
+                        hf_cfg, has_external_sidecar=True
+                    ).reason
                 print(
-                    "Automatic MTP sidecar skipped: target config is unavailable "
-                    "or does not qualify; using plain decode.",
+                    f"Automatic MTP skipped: {reason}; using plain decode.",
                     file=sys.stderr,
                 )
             else:
