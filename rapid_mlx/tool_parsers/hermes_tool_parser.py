@@ -676,6 +676,14 @@ class HermesToolParser(ToolParser):
             return None
         return {"content": safe_current[len(safe_previous) :]}
 
+    @classmethod
+    def strip_trailing_tool_envelope(cls, text: str, request=None) -> str:
+        from .qwen3coder_tool_parser import _strip_trailing_tool_envelope
+
+        if request is not None and request.get("tool_choice") == "none":
+            return text
+        return _strip_trailing_tool_envelope(text)
+
     def flush_held_content(self, full_text: str) -> str:
         """Release the prefix-held suffix at stream end.
 

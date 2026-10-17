@@ -96,7 +96,9 @@ class _MarkdownCodeTracker:
         self._fence: str | None = None
         self._line = ""
 
-    def inside(self, text: str, pos: int) -> bool:
+    def inside(self, text: str, pos: int, *, buffered: bool = False) -> bool:
+        if buffered:
+            return self._inside_buffered(text, pos)
         if pos < self._committed:
             # Out-of-order query: answer it from scratch.
             return _MarkdownCodeTracker().inside(text, pos)
@@ -121,6 +123,61 @@ class _MarkdownCodeTracker:
             cursor = close + len(self._CLOSE)
         self._committed = max(self._committed, cursor)
         return self._result()
+
+    def _inside_buffered(self, text: str, pos: int) -> bool:
+        """One linear query; retain multiline inline spans without changing streams."""
+        # Scan the whole prefix once, including wrapper contents: a backtick
+        # inside a literal wrapper can open or close a Markdown code span.
+        prefix = text[:pos]
+        fence = None
+        inline = None
+        # Buffered cleanup errs toward preserving examples, including fences
+        # nested in lists. Leave the streaming fence rules unchanged.
+        buffered_fence_re = re.compile(r"[ \t]*(`{3,}|~{3,})")
+        indented = False
+        previous_blank = True
+        for line in prefix.splitlines(keepends=True):
+            indented = bool(re.match(r"(?: {4}| *\t)", line)) and (
+                previous_blank or indented
+            )
+            previous_blank = not line.strip()
+            match = buffered_fence_re.match(line)
+            if fence is not None:
+                if (
+                    line.endswith("\n")
+                    and match
+                    and match.group(1)[0] == fence[0]
+                    and len(match.group(1)) >= len(fence)
+                    and not line[match.end() :].strip()
+                ):
+                    fence = None
+                continue
+            if inline is None and match:
+                fence = match.group(1)
+                continue
+            if indented:
+                continue
+            for run in re.finditer(r"`+", line):
+                length = len(run.group())
+                if inline is None:
+                    # Only openers honor escapes; backslashes inside code are
+                    # literal. These backward scans are disjoint, hence O(n).
+                    start = run.start()
+                    back = start
+                    while back > 0 and line[back - 1] == "\\":
+                        back -= 1
+                    if (start - back) % 2:
+                        continue
+                    inline = length
+                elif inline == length:
+                    inline = None
+        # At column zero the queried line has no indentation, even when the
+        # preceding complete line belonged to an indented block.
+        return (
+            fence is not None
+            or inline is not None
+            or (indented and not prefix.endswith(("\n", "\r")))
+        )
 
     def _feed(self, chunk: str) -> None:
         *done, self._line = (self._line + chunk).split("\n")
@@ -161,6 +218,55 @@ class _MarkdownCodeTracker:
                 opener_length = None
             cursor = end
         return opener_length is not None
+
+
+def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -> str:
+    """Hide only an unfinished last envelope outside Markdown, in O(n)."""
+    opener = text.rfind("<tool_call>")
+    if opener == -1 or _MarkdownCodeTracker().inside(text, opener, buffered=True):
+        return text
+    # Accepted limitation: an opener inside a truncated JSON string selects
+    # that inner opener, leaving the outer payload visible. No earlier JSON
+    # state is tracked; changing this rule requires a deliberate compatibility fix.
+    payload = text[opener + len("<tool_call>") :].lstrip()
+    if not payload or "<function=".startswith(payload):
+        return text[:opener]
+    if payload.startswith("<function="):
+        if "</tool_call>" in payload:
+            return text
+        header = re.match(r"<function=([^>]+)>", payload)
+        if header and declared is not None and header.group(1) not in declared:
+            return text
+        # A closed function without its envelope close is also hidden at EOF
+        # by base streaming. Keep the same visibility rule here.
+        return text[:opener]
+    if not payload.startswith("{"):
+        return text
+    if not re.match(
+        r'\{\s*(?:"name"\s*(?::|\Z)|"(?:n(?:a(?:m(?:e)?)?)?)?\Z|\Z)', payload
+    ):
+        return text
+    depth = 0
+    in_string = escaped = False
+    for index, char in enumerate(payload):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text
+        elif char == "<" and payload.startswith("</tool_call>", index):
+            return text
+    return text[:opener]
 
 
 def _merge_content(
@@ -1230,6 +1336,15 @@ class Qwen3CoderToolParser(ToolParser):
         if not rest:
             return {"content": released}
         return _Continue(released, rest)
+
+    @classmethod
+    def strip_trailing_tool_envelope(cls, text: str, request=None) -> str:
+        if request is not None and request.get("tool_choice") == "none":
+            return text
+        declared = cls._declared_tool_names(request) if request is not None else None
+        if declared is not None and not declared:
+            return text
+        return _strip_trailing_tool_envelope(text, declared)
 
     def flush_held_content(self, full_text: str) -> str:
         """Text of an undeclared-tool block still held when the stream ends.

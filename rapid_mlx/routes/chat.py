@@ -97,6 +97,7 @@ from ..service.helpers import (
     _build_response_metrics,
     _build_usage,
     _check_admission_or_503,
+    _clean_final_content_tool_envelope,
     _consume_guided_lifecycle_cancel,
     _disconnect_guard,
     _effective_enable_thinking,
@@ -6099,6 +6100,7 @@ async def _create_chat_completion_impl(
             output.text,
             request,
             structured_tool_calls=_engine_calls,
+            finish_reason=output.finish_reason,
         )
         _strict_tool_turn = bool(_detected_calls)
 
@@ -6413,6 +6415,7 @@ async def _create_chat_completion_impl(
             _line1_split_reasoning_for_tool_parse(cfg.reasoning_parser, output.text),
             request,
             structured_tool_calls=engine_tool_calls,
+            finish_reason=output.finish_reason,
         )
         if not tool_calls:
             # No forced call recovered from the post-``</think>`` remainder. Blank
@@ -6425,6 +6428,7 @@ async def _create_chat_completion_impl(
             output.text,
             request,
             structured_tool_calls=engine_tool_calls,
+            finish_reason=output.finish_reason,
         )
     undeclared_tool_dropped = _was_undeclared_tool_dropped()
 
@@ -6954,6 +6958,15 @@ async def _create_chat_completion_impl(
         from ..tool_parsers.qwen3coder_tool_parser import UNAVAILABLE_TOOL_NOTICE
 
         final_content = UNAVAILABLE_TOOL_NOTICE
+
+    # Clean only the finalized visible lane; keep raw reasoning boundaries.
+    if cfg.reasoning_parser is not None and request.tools and not engine_tool_calls:
+        final_content = _clean_final_content_tool_envelope(
+            final_content,
+            request,
+            reasoning_source=output.raw_text or output.text,
+            finish_reason=output.finish_reason,
+        )
 
     # Build logprobs for response if requested.
     #

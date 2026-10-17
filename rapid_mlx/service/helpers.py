@@ -475,6 +475,8 @@ def _finalize_content_and_reasoning(
     if tool_calls:
         reasoning_text, _ = extract(raw_text)
     else:
+        # Preserve raw reasoning boundaries; suffix cleanup runs on the visible
+        # content after this extraction in each buffered route.
         text_to_parse = cleaned_text or raw_text
         new_reasoning, new_cleaned = extract(text_to_parse)
         # Capture the FIRST-parse Case-4 signal BEFORE the harmony
@@ -3530,11 +3532,63 @@ def _request_declared_tool_names(request_dict: dict | None) -> set[str]:
     return names
 
 
+def _strip_trailing_tool_envelope(
+    text: str,
+    request=None,
+    *,
+    reasoning_source: str = "",
+    finish_reason: str | None = None,
+) -> str:
+    """Hide truncated tool envelopes only after engine token-limit exhaustion."""
+    if finish_reason != "length":
+        return text
+    cfg = get_config()
+    if not cfg.enable_auto_tool_choice or not cfg.tool_call_parser:
+        return text
+    try:
+        parser_cls = ToolParserManager.get_tool_parser(cfg.tool_call_parser)
+    except (KeyError, ValueError):
+        return text
+    # Tool-shaped reasoning can be promoted into this visible lane. Preserve
+    # its closing boundary and clean only the content following the last one.
+    end_token = getattr(cfg.reasoning_parser, "end_token", None)
+    boundary = 0
+    if end_token:
+        if end_token in text:
+            boundary = text.rfind(end_token) + len(end_token)
+        elif end_token in reasoning_source:
+            # Promotion removes the end token before prepending reasoning wire.
+            # Locate the original visible suffix instead of vetoing all cleanup.
+            visible = reasoning_source.rsplit(end_token, 1)[1].strip()
+            if text.endswith(visible):
+                boundary = len(text) - len(visible)
+    return text[:boundary] + parser_cls.strip_trailing_tool_envelope(
+        text[boundary:], request.model_dump() if request is not None else None
+    )
+
+
+def _clean_final_content_tool_envelope(
+    content: str | None,
+    request=None,
+    *,
+    reasoning_source: str = "",
+    finish_reason: str | None = None,
+) -> str | None:
+    """Preserve finalized content unless cleanup removes a trailing envelope."""
+    if content is None:
+        return None
+    cleaned = _strip_trailing_tool_envelope(
+        content, request, reasoning_source=reasoning_source, finish_reason=finish_reason
+    )
+    return cleaned.rstrip() if cleaned != content else content
+
+
 def _parse_tool_calls_with_parser(
     output_text: str,
     request=None,
     *,
     structured_tool_calls: list[dict] | None = None,
+    finish_reason: str | None = None,
 ) -> tuple[str, list | None]:
     """Parse tool calls, then honor ``tool_choice="none"`` by dropping them.
 
@@ -3552,6 +3606,12 @@ def _parse_tool_calls_with_parser(
     content, tool_calls = _run_tool_parser(
         output_text, request, structured_tool_calls=structured_tool_calls
     )
+    if not structured_tool_calls and get_config().reasoning_parser is None:
+        request_dict = request.model_dump() if request else None
+        if request_dict and request_dict.get("tools"):
+            content = _strip_trailing_tool_envelope(
+                content, request, finish_reason=finish_reason
+            )
     if tool_choice_is_none(request):
         return content, None
     declared = declared_names(request)
