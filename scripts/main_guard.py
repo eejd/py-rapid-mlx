@@ -297,15 +297,9 @@ def guard(api: GitHub, run: dict) -> str:
             except APIError as ref_error:
                 if ref_error.status != 404:
                     raise
-            else:
-                # The winning guard owns PR creation; a later run resumes an orphan.
-                existing = api.items(pr_listing)
-                if existing:
-                    notify_author(api, originals[0], existing[0], run)
-                    return "Revert PR already exists"
-                return "Revert branch created concurrently"
-            issue(api, "main-red", "Main CI is failing", f"{detail}\n{exc}")
-            return "Revert conflict or preparation failure recorded"
+                issue(api, "main-red", "Main CI is failing", f"{detail}\n{exc}")
+                return "Revert conflict or preparation failure recorded"
+            # The push may have landed despite its error; resume PR creation below.
     try:
         revert = api.request(
             "pulls",

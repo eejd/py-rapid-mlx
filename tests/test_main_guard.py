@@ -513,21 +513,54 @@ def test_concurrent_revert_branch_creation(monkeypatch, has_pr, notified, failur
 
     def prepare(*args):
         api.data[f"git/ref/heads/{BRANCH}"] = {}
-        api.data[listing] = [revert] if has_pr else []
         raise failure
 
+    def handler(path, method, data, pat):
+        if (path, method) == ("pulls", "POST") and has_pr:
+            api.data[listing] = [revert]
+            raise APIError("PR already exists for head", 422)
+        return NotImplemented
+
+    api.handler = handler
     monkeypatch.setattr(g, "revert_commit", prepare)
     if notified:
         api.data["issues/3/comments"] = [dict(body=f"<!-- main-guard:{SHA} -->")]
     assert g.guard(api, run()) == (
-        "Revert PR already exists" if has_pr else "Revert branch created concurrently"
+        "Revert PR already exists" if has_pr else "Revert PR proposed"
     )
     assert sum(c[0] == f"git/ref/heads/{BRANCH}" for c in api.calls) == 2
-    assert sum(c[0] == listing for c in api.calls) == 2
+    assert sum(c[0] == listing for c in api.calls) == (2 if has_pr else 1)
     writes = [c for c in api.calls if c[1] != "GET"]
-    assert [c[0] for c in writes] == (
-        ["issues/3/comments"] if has_pr and not notified else []
-    )
+    expected_writes = ["pulls"]
+    if not has_pr:
+        expected_writes.append("issues/4/labels")
+    if not notified:
+        expected_writes.append("issues/3/comments")
+    assert [c[0] for c in writes] == expected_writes
+    pr = writes[0]
+    assert pr[3] and pr[2]["head"] == BRANCH and pr[2]["base"] == "main"
+    if not notified:
+        assert "@author" in writes[-1][2]["body"]
+        assert revert["html_url"] in writes[-1][2]["body"]
+
+
+@pytest.mark.parametrize("status", [403, 422, 500])
+def test_revert_push_failure_with_branch_records_pr_creation_failure(
+    monkeypatch, status
+):
+    api = setup_api()
+
+    def prepare(*args):
+        api.data[f"git/ref/heads/{BRANCH}"] = {}
+        raise APIError("push response lost")
+
+    monkeypatch.setattr(g, "revert_commit", prepare)
+    api.data[("POST", "pulls")] = APIError("PR creation refused", status)
+    assert g.guard(api, run()) == "Revert PR creation failure recorded"
+    recorded = next(c for c in api.calls if c[:2] == ("issues", "POST"))
+    assert recorded[2]["labels"] == ["main-red"]
+    assert "PR creation refused" in recorded[2]["body"]
+    assert not any(c[:2] == ("issues/3/comments", "POST") for c in api.calls)
 
 
 @pytest.mark.parametrize("notified", [False, True])
