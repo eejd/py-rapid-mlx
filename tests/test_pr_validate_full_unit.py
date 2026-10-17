@@ -20,6 +20,7 @@ from scripts.pr_validate.steps.full_unit import (
 def clean_workers(monkeypatch):
     monkeypatch.delenv("PR_VALIDATE_UNIT_WORKERS", raising=False)
     monkeypatch.setattr(_xdist.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(_xdist.os, "getloadavg", lambda: (0.0, 0.0, 0.0), raising=False)
 
 
 @pytest.mark.parametrize("value", ["-1", "abc", "", "2.5"])
@@ -29,12 +30,19 @@ def test_invalid_workers(monkeypatch, value):
         _xdist.pytest_parallel_args()
 
 
-@pytest.mark.parametrize("workers", [0, 1, 4, 20])
+@pytest.mark.parametrize("workers", [0, 1, 4, 20, 32])
 def test_override(monkeypatch, workers):
     monkeypatch.setenv("PR_VALIDATE_UNIT_WORKERS", str(workers))
+
+    def unexpected_call():
+        pytest.fail("override must bypass load and core detection")
+
+    monkeypatch.setattr(_xdist.os, "getloadavg", unexpected_call)
+    monkeypatch.setattr(_xdist, "_performance_cores", unexpected_call)
     args, note = _xdist.pytest_parallel_args()
     assert args == ([] if workers <= 1 else ["-n", str(workers), "--dist", "loadgroup"])
     assert ("serially" if workers <= 1 else f"{workers} workers") in note
+    assert f"PR_VALIDATE_UNIT_WORKERS={workers}" in note
 
 
 def test_missing_xdist(monkeypatch):
@@ -42,8 +50,59 @@ def test_missing_xdist(monkeypatch):
     monkeypatch.setattr(_xdist.importlib.util, "find_spec", lambda name: None)
     assert _xdist.pytest_parallel_args() == (
         [],
-        "pytest-xdist not installed — running serially",
+        "pytest-xdist not installed — running serially "
+        "(requested 4 workers; PR_VALIDATE_UNIT_WORKERS=4)",
     )
+
+
+@pytest.mark.parametrize(
+    ("cores", "load1", "workers"),
+    [
+        (20, 0.0, 20),
+        (20, 0.2, 19),
+        (20, 8.3, 11),
+        (20, 90.0, 4),
+        (2, 90.0, 2),
+        (1, 8.3, 1),
+        (128, 90.0, 20),
+    ],
+)
+def test_load_aware_default(monkeypatch, cores, load1, workers):
+    monkeypatch.setattr(_xdist, "_performance_cores", lambda: cores)
+    monkeypatch.setattr(_xdist.os, "getloadavg", lambda: (load1, 99.0, 99.0))
+    args, note = _xdist.pytest_parallel_args()
+    assert args == ([] if workers <= 1 else ["-n", str(workers), "--dist", "loadgroup"])
+    assert f"load1={load1:.2f}, perf cores={cores}" in note
+    assert (
+        "1 pytest worker — running serially" if workers == 1 else f"{workers} workers"
+    ) in note
+
+
+@pytest.mark.parametrize("error", [OSError, AttributeError, None])
+@pytest.mark.parametrize("cores", [6, 128])
+def test_load_unavailable_falls_back(monkeypatch, error, cores):
+    monkeypatch.setattr(_xdist, "_performance_cores", lambda: cores)
+
+    def fail():
+        raise error("load unavailable")
+
+    if error is None:
+        monkeypatch.delattr(_xdist.os, "getloadavg")
+    else:
+        monkeypatch.setattr(_xdist.os, "getloadavg", fail)
+    args, note = _xdist.pytest_parallel_args()
+    assert args == ["-n", str(min(20, cores)), "--dist", "loadgroup"]
+    assert "load1=0.00" in note
+
+
+def test_missing_xdist_includes_load(monkeypatch):
+    monkeypatch.setattr(_xdist, "_performance_cores", lambda: 20)
+    monkeypatch.setattr(_xdist.os, "getloadavg", lambda: (8.37, 0.0, 0.0))
+    monkeypatch.setattr(_xdist.importlib.util, "find_spec", lambda name: None)
+    args, note = _xdist.pytest_parallel_args()
+    assert args == []
+    assert "running serially" in note
+    assert "requested 11 workers; load1=8.37, perf cores=20" in note
 
 
 def test_default_perf_cores(monkeypatch):

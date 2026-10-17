@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import os
 import subprocess
 import sys
@@ -44,18 +45,30 @@ def pytest_parallel_args() -> tuple[list[str], str]:
                 "PR_VALIDATE_UNIT_WORKERS must be a non-negative integer "
                 "(0 or 1 runs serially)"
             ) from exc
+        reason = f"PR_VALIDATE_UNIT_WORKERS={workers}"
     else:
         # 2026-10-16, M3 Ultra (20 performance cores, 256 GiB): the full suite
         # took 279/212/213/192 s at 8/12/16/20 workers, with >=90% free memory.
-        # Cap at the fastest measured count; smaller hosts use their core count.
-        workers = min(20, _performance_cores())
+        # Cap at the fastest measured count, subtract current host load, and
+        # retain at least four workers (or the core count on smaller hosts).
+        perf_cores = _performance_cores()
+        cap = min(20, perf_cores)
+        try:
+            load1 = os.getloadavg()[0]
+        except (OSError, AttributeError):
+            load1 = 0.0
+        workers = max(min(4, cap), min(cap, perf_cores - math.ceil(load1)))
+        reason = f"load1={load1:.2f}, perf cores={perf_cores}"
     if importlib.util.find_spec("xdist") is None:
-        return [], "pytest-xdist not installed — running serially"
+        return [], (
+            "pytest-xdist not installed — running serially "
+            f"(requested {workers} workers; {reason})"
+        )
     if workers <= 1:
-        return [], f"{workers} pytest worker — running serially"
+        return [], f"{workers} pytest worker — running serially ({reason})"
     return [
         "-n",
         str(workers),
         "--dist",
         "loadgroup",
-    ], f"pytest-xdist: {workers} workers (loadgroup)"
+    ], f"pytest-xdist: {workers} workers (loadgroup; {reason})"
