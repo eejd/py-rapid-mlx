@@ -82,11 +82,9 @@ def _owned_attr(
         pass
     try:
         for cls in type(obj).__mro__:
-            slots = cls.__dict__.get("__slots__", ())
-            if name in ((slots,) if isinstance(slots, str) else slots):
-                descriptor = cls.__dict__.get(name)
-                if isinstance(descriptor, MemberDescriptorType):
-                    return descriptor, descriptor.__get__(obj, type(obj))
+            descriptor = cls.__dict__.get(name)
+            if isinstance(descriptor, MemberDescriptorType):
+                return descriptor, descriptor.__get__(obj, type(obj))
     except Exception:
         pass
     return None

@@ -605,6 +605,24 @@ def test_retirement_continues_after_storage_mutation_fails(assignment_fails):
     assert batch._next_tokens is None
 
 
+def test_retirement_clears_retained_batch_with_iterator_slots():
+    class Batch:
+        __slots__ = iter(("prompt_cache", "_next_tokens"))
+
+    batch = Batch()
+    batch.prompt_cache = [object()]
+    batch._next_tokens = object()
+    retired = _RetiredGenerator(_RetiredCache())
+    retired._generation_batch = batch
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = retired
+
+    scheduler._close_batch_generator()
+
+    assert batch.prompt_cache == []
+    assert batch._next_tokens is None
+
+
 def test_retirement_reads_inherited_string_slots_with_unreadable_dict():
     class BaseBatch:
         __slots__ = "prompt_cache"
