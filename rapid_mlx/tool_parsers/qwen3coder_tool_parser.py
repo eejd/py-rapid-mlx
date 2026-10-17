@@ -95,6 +95,14 @@ class _MarkdownCodeTracker:
         self._committed = 0
         self._fence: str | None = None
         self._line = ""
+        self._fence_committed = 0
+        self._fence_only: str | None = None
+        self._fence_line_phase = "indent"
+        self._fence_line_indent = 0
+        self._fence_line_marker: str | None = None
+        self._fence_line_run = 0
+        self._fence_line_tail_nonspace = False
+        self._fence_line_tail_backtick = False
 
     def inside(self, text: str, pos: int, *, buffered: bool = False) -> bool:
         if buffered:
@@ -123,6 +131,141 @@ class _MarkdownCodeTracker:
             cursor = close + len(self._CLOSE)
         self._committed = max(self._committed, cursor)
         return self._result()
+
+    def inside_fence(self, text: str, pos: int) -> bool:
+        """Whether ``pos`` is in a fenced block, ignoring inline backticks."""
+        if pos < self._fence_committed:
+            return _MarkdownCodeTracker().inside_fence(text, pos)
+        cursor = self._fence_committed
+        while cursor < pos:
+            start = text.find(self._OPEN, cursor, pos)
+            if start == -1:
+                self._feed_fence(text[cursor:pos])
+                cursor = pos
+                break
+            self._feed_fence(text[cursor:start])
+            close = text.find(self._CLOSE, start + len(self._OPEN), pos)
+            if close == -1 or close + len(self._CLOSE) > pos:
+                self._fence_committed = start
+                state = self._fence_state()
+                self._feed_fence(text[start:pos])
+                result = self._fence_result()
+                self._restore_fence_state(state)
+                return result
+            cursor = close + len(self._CLOSE)
+        self._fence_committed = max(self._fence_committed, cursor)
+        return self._fence_result()
+
+    def skip_fence_span(self, text: str, start: int, end: int) -> None:
+        """Advance across recognized non-content without reading its fences."""
+        self.inside_fence(text, start)
+        cursor = self._fence_committed
+        if cursor < start:
+            # ``inside_fence`` cannot commit an as-yet unclosed wrapper prefix.
+            # The recognized function makes that prefix safe to commit now.
+            self._feed_fence(text[cursor:start])
+            cursor = start
+        if cursor < end:
+            self._feed_fence_plain(text[cursor:end])
+            cursor = end
+        self._fence_committed = cursor
+
+    def _feed_fence_plain(self, chunk: str) -> None:
+        """Update line position while disabling fence recognition in ``chunk``."""
+        last_newline = chunk.rfind("\n")
+        if last_newline >= 0:
+            # A skipped newline cannot complete an opener or closer, but it does
+            # make everything before it irrelevant to the next fence position.
+            self._fence_line_phase = "indent"
+            self._fence_line_indent = 0
+            self._fence_line_marker = None
+            self._fence_line_run = 0
+            self._fence_line_tail_nonspace = False
+            self._fence_line_tail_backtick = False
+            chunk = chunk[last_newline + 1 :]
+        if not chunk:
+            return
+        if self._fence_line_phase == "indent":
+            leading_spaces = len(chunk) - len(chunk.lstrip(" "))
+            total_indent = self._fence_line_indent + leading_spaces
+            self._fence_line_indent = min(3, total_indent)
+            if leading_spaces < len(chunk) or total_indent > 3:
+                self._fence_line_phase = "invalid"
+        elif self._fence_line_phase == "run":
+            self._fence_line_phase = "tail"
+            self._fence_line_tail_nonspace = not chunk.isspace()
+        elif self._fence_line_phase == "tail" and not chunk.isspace():
+            self._fence_line_tail_nonspace = True
+
+    def _fence_state(
+        self,
+    ) -> tuple[str | None, str, int, str | None, int, bool, bool]:
+        return (
+            self._fence_only,
+            self._fence_line_phase,
+            self._fence_line_indent,
+            self._fence_line_marker,
+            self._fence_line_run,
+            self._fence_line_tail_nonspace,
+            self._fence_line_tail_backtick,
+        )
+
+    def _restore_fence_state(
+        self, state: tuple[str | None, str, int, str | None, int, bool, bool]
+    ) -> None:
+        (
+            self._fence_only,
+            self._fence_line_phase,
+            self._fence_line_indent,
+            self._fence_line_marker,
+            self._fence_line_run,
+            self._fence_line_tail_nonspace,
+            self._fence_line_tail_backtick,
+        ) = state
+
+    def _feed_fence(self, chunk: str) -> None:
+        for char in chunk:
+            if char == "\n":
+                self._finish_fence_line()
+                continue
+            if self._fence_line_phase == "indent":
+                if char == " " and self._fence_line_indent < 3:
+                    self._fence_line_indent += 1
+                elif char in "`~":
+                    self._fence_line_phase = "run"
+                    self._fence_line_marker = char
+                    self._fence_line_run = 1
+                else:
+                    self._fence_line_phase = "invalid"
+            elif self._fence_line_phase == "run":
+                if char == self._fence_line_marker:
+                    self._fence_line_run += 1
+                else:
+                    self._fence_line_phase = "tail"
+                    self._fence_line_tail_nonspace = not char.isspace()
+                    self._fence_line_tail_backtick = char == "`"
+            elif self._fence_line_phase == "tail" and not char.isspace():
+                self._fence_line_tail_nonspace = True
+                self._fence_line_tail_backtick |= char == "`"
+
+    def _finish_fence_line(self) -> None:
+        marker = self._fence_line_marker
+        if marker is not None and self._fence_line_run >= 3:
+            if self._fence_only is None:
+                if not (marker == "`" and self._fence_line_tail_backtick):
+                    self._fence_only = marker * self._fence_line_run
+            elif (
+                marker == self._fence_only[0]
+                and self._fence_line_run >= len(self._fence_only)
+                and not self._fence_line_tail_nonspace
+            ):
+                self._fence_only = None
+        self._fence_line_phase = "indent"
+        self._fence_line_indent = 0
+        self._fence_line_marker = None
+        self._fence_line_run = 0
+        self._fence_line_tail_nonspace = False
+        self._fence_line_tail_backtick = False
 
     def _inside_buffered(self, text: str, pos: int) -> bool:
         """One linear query; retain multiline inline spans without changing streams."""
@@ -218,6 +361,13 @@ class _MarkdownCodeTracker:
                 opener_length = None
             cursor = end
         return opener_length is not None
+
+    def _fence_result(self) -> bool:
+        """Fence state at the current cursor without scanning inline spans."""
+        pending_opener = self._fence_line_run >= 3 and not (
+            self._fence_line_marker == "`" and self._fence_line_tail_backtick
+        )
+        return self._fence_only is not None or pending_opener
 
 
 def _strip_trailing_tool_envelope(
@@ -606,6 +756,7 @@ class Qwen3CoderToolParser(ToolParser):
         self._streaming_request = None
         self._pending_tool_start: int | None = None
         self._pending_tool_wrapped = False
+        self._pending_partial_opener = False
         self.prev_tool_call_arr = []
         self.in_param_emitted_chars = 0
         self.in_param_opened = False
@@ -1012,11 +1163,23 @@ class Qwen3CoderToolParser(ToolParser):
         # otherwise both delimiters belong to the rejected content sibling.
         search_from = 0
         range_index = 0
+        fence_range_index = 0
         wrapper_ranges: list[tuple[int, int]] = []
+        fence_tracker = _MarkdownCodeTracker()
         while True:
             wrapper_start = model_output.find(self.tool_call_start_token, search_from)
             if wrapper_start < 0:
                 break
+            while (
+                fence_range_index < len(ranges)
+                and ranges[fence_range_index][1] <= wrapper_start
+            ):
+                start, end = ranges[fence_range_index]
+                fence_tracker.skip_fence_span(model_output, start, end)
+                fence_range_index += 1
+            if fence_tracker.inside_fence(model_output, wrapper_start):
+                search_from = wrapper_start + len(self.tool_call_start_token)
+                continue
             inner_start = wrapper_start + len(self.tool_call_start_token)
             wrapper_close = model_output.find(self.tool_call_end_token, inner_start)
             if wrapper_close < 0:
@@ -1379,16 +1542,20 @@ class Qwen3CoderToolParser(ToolParser):
         return _strip_trailing_tool_envelope(text, declared)
 
     def flush_held_content(self, full_text: str) -> str:
-        """Text of an undeclared-tool block still held when the stream ends.
+        """Release non-call content still held when the stream ends.
 
-        The block never completed, so it is not a lone canonical block and,
-        as in non-streaming, it is returned as content (#4038).
+        An incomplete undeclared block is not canonical, and a partial bare
+        opener is ordinary text. Return either unchanged.
         """
-        if self._undeclared_start is None:
-            return ""
-        held: str = self._undeclared_text[self._undeclared_start :]
-        self._undeclared_start = None
-        return held
+        if self._undeclared_start is not None:
+            held: str = self._undeclared_text[self._undeclared_start :]
+            self._undeclared_start = None
+            return held
+        if self._pending_partial_opener and self._pending_tool_start is not None:
+            start = self._undeclared_offset + self._pending_tool_start
+            self._pending_partial_opener = False
+            return full_text[start:]
+        return ""
 
     # --- streaming helpers -----------------------------------------------
     #
@@ -1407,15 +1574,21 @@ class Qwen3CoderToolParser(ToolParser):
         opener is present so callers can use it as an unconditional slice
         endpoint.
         """
-        tc = text.find(self.tool_call_start_token)
-        fn = text.find(self.tool_call_prefix)
-        if tc == -1 and fn == -1:
-            return len(text)
-        if tc == -1:
-            return fn
-        if fn == -1:
-            return tc
-        return min(tc, fn)
+        tracker = _MarkdownCodeTracker()
+        cursor = 0
+        while cursor < len(text):
+            positions = [
+                pos
+                for marker in (self.tool_call_start_token, self.tool_call_prefix)
+                if (pos := text.find(marker, cursor)) >= 0
+            ]
+            if not positions:
+                return len(text)
+            pos = min(positions)
+            if not tracker.inside_fence(text, pos):
+                return pos
+            cursor = pos + 1
+        return len(text)
 
     def _new_opener_position(
         self, previous_text: str, current_text: str, delta_token_ids: Sequence[int]
@@ -1429,18 +1602,41 @@ class Qwen3CoderToolParser(ToolParser):
         transition out of content-only mode.
         """
         start = len(previous_text)
-        positions = [
-            pos
-            for marker in (self.tool_call_start_token, self.tool_call_prefix)
-            if (pos := current_text.find(marker, start)) >= 0
-        ]
-        if positions:
-            return min(positions)
+        cursor = start
+        opener_in_fence = False
+        while cursor < len(current_text):
+            positions = [
+                pos
+                for marker in (self.tool_call_start_token, self.tool_call_prefix)
+                if (pos := current_text.find(marker, cursor)) >= 0
+            ]
+            if not positions:
+                break
+            pos = min(positions)
+            if not self._code_tracker.inside_fence(
+                self._stream_text, self._undeclared_offset + pos
+            ):
+                return pos
+            opener_in_fence = True
+            cursor = pos + 1
         if (
-            self.tool_call_start_token_id is not None
+            not opener_in_fence
+            and self.tool_call_start_token_id is not None
             and self.tool_call_start_token_id in delta_token_ids
         ):
             return len(previous_text)
+        if self._undeclared_blocked:
+            return -1
+        partial_start = max(0, len(current_text) - len(self.tool_call_prefix) + 1)
+        for pos in range(partial_start, len(current_text)):
+            tail = current_text[pos:]
+            if self.tool_call_prefix.startswith(
+                tail
+            ) and not self._code_tracker.inside_fence(
+                self._stream_text, self._undeclared_offset + pos
+            ):
+                self._pending_partial_opener = True
+                return pos
         return -1
 
     def _top_level_function_close(self, text: str, start: int) -> int:
@@ -1549,12 +1745,22 @@ class Qwen3CoderToolParser(ToolParser):
         prefix_len = len(self.tool_call_prefix)
         param_open_len = len(self.parameter_prefix)
         param_close_len = len(self.parameter_end_token)
+        code = _MarkdownCodeTracker()
+        next_func = text.find(self.tool_call_prefix)
+        next_param = text.find(self.parameter_prefix)
         while i < n:
-            next_func = text.find(self.tool_call_prefix, i)
-            next_param = text.find(self.parameter_prefix, i)
-            if next_func == -1:
+            candidates = [pos for pos in (next_func, next_param) if pos >= 0]
+            if not candidates:
                 return positions
-            if next_param != -1 and next_param < next_func:
+            next_marker = min(candidates)
+            if code.inside_fence(text, next_marker):
+                i = next_marker + 1
+                if next_marker == next_func:
+                    next_func = text.find(self.tool_call_prefix, i)
+                else:
+                    next_param = text.find(self.parameter_prefix, i)
+                continue
+            if next_marker == next_param:
                 header_end = text.find(">", next_param + param_open_len)
                 if header_end == -1:
                     return positions
@@ -1562,10 +1768,48 @@ class Qwen3CoderToolParser(ToolParser):
                 if close_pos == -1:
                     return positions
                 i = close_pos + param_close_len
+                next_func = text.find(self.tool_call_prefix, i)
+                next_param = text.find(self.parameter_prefix, i)
                 continue
             positions.append(next_func)
+            close_pos = self._top_level_function_close(text, next_func)
+            if close_pos >= 0:
+                i = close_pos + len(self.function_end_token)
+                code.skip_fence_span(text, next_func, i)
+                next_func = text.find(self.tool_call_prefix, i)
+                next_param = text.find(self.parameter_prefix, i)
+                continue
             i = next_func + prefix_len
+            next_func = text.find(self.tool_call_prefix, i)
         return positions
+
+    @staticmethod
+    def mask_markdown_fenced_regions(text: str) -> str:
+        """Mask fenced examples before cross-format recovery."""
+        masked: list[str] = []
+        fence: str | None = None
+        for line in text.splitlines(keepends=True):
+            match = _MARKDOWN_FENCE_RE.match(line)
+            in_fence = fence is not None
+            if fence is None and match:
+                marker = match.group(1)
+                info = line[match.end() :]
+                if marker[0] == "~" or "`" not in info:
+                    fence = marker
+                    in_fence = True
+            elif (
+                fence is not None
+                and match
+                and match.group(1)[0] == fence[0]
+                and len(match.group(1)) >= len(fence)
+                and not line[match.end() :].strip()
+            ):
+                fence = None
+            if in_fence:
+                masked.append("".join(char if char in "\r\n" else " " for char in line))
+            else:
+                masked.append(line)
+        return "".join(masked)
 
     def extract_tool_calls_streaming(
         self,
@@ -1826,9 +2070,15 @@ class Qwen3CoderToolParser(ToolParser):
                 # emit an empty tail. ``</function>`` is the actual tool
                 # close; ``</tool_call>`` may follow as optional framing.
                 trailing = current_text.rstrip()
-                if delta_text.strip() == "" and (
-                    trailing.endswith(self.tool_call_end_token)
-                    or trailing.endswith(self.function_end_token)
+                if (
+                    delta_text.strip() == ""
+                    and (
+                        trailing.endswith(self.tool_call_end_token)
+                        or trailing.endswith(self.function_end_token)
+                    )
+                    and not self._code_tracker.inside_fence(
+                        self._stream_text, len(self._stream_text)
+                    )
                 ):
                     return None
                 return {"content": delta_text}
@@ -1841,7 +2091,13 @@ class Qwen3CoderToolParser(ToolParser):
         # value can't corrupt the slice.
         function_starts = self._function_start_positions(current_text)
         if self.current_tool_index >= len(function_starts):
+            if self._pending_partial_opener and self._pending_tool_start is not None:
+                held = current_text[self._pending_tool_start :]
+                if not self.tool_call_prefix.startswith(held):
+                    self._advance_past(0)
+                    return {"content": held}
             return None
+        self._pending_partial_opener = False
 
         tool_start_idx = function_starts[self.current_tool_index]
         func_close_idx = self._top_level_function_close(current_text, tool_start_idx)
