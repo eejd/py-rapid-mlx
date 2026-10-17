@@ -676,6 +676,9 @@ def test_streaming_unchanged_against_base():
                                 "mask_markdown_fenced_regions",
                                 "flush_held_content",
                                 "_streaming_step_once",
+                                # #4788 treats CR and CRLF as line boundaries.
+                                "_feed",
+                                "inside",
                             }
                         )
                     ]

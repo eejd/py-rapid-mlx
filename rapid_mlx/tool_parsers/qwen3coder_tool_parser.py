@@ -95,8 +95,10 @@ class _MarkdownCodeTracker:
         self._committed = 0
         self._fence: str | None = None
         self._line = ""
+        self._line_cr = False
         self._fence_committed = 0
         self._fence_only: str | None = None
+        self._fence_line_cr = False
         self._fence_line_phase = "indent"
         self._fence_line_indent = 0
         self._fence_line_marker: str | None = None
@@ -123,10 +125,10 @@ class _MarkdownCodeTracker:
                 # Unclosed before ``pos``: its text counts for this query
                 # only; resume from the opener next time.
                 self._committed = start
-                fence, line = self._fence, self._line
+                fence, line, line_cr = self._fence, self._line, self._line_cr
                 self._feed(text[start:pos])
                 result = self._result()
-                self._fence, self._line = fence, line
+                self._fence, self._line, self._line_cr = fence, line, line_cr
                 return result
             cursor = close + len(self._CLOSE)
         self._committed = max(self._committed, cursor)
@@ -172,7 +174,12 @@ class _MarkdownCodeTracker:
 
     def _feed_fence_plain(self, chunk: str) -> None:
         """Update line position while disabling fence recognition in ``chunk``."""
-        last_newline = chunk.rfind("\n")
+        if self._fence_line_cr and chunk.startswith("\n"):
+            chunk = chunk[1:]
+            self._fence_line_cr = False
+        if chunk:
+            self._fence_line_cr = chunk.endswith("\r")
+        last_newline = max(chunk.rfind("\n"), chunk.rfind("\r"))
         if last_newline >= 0:
             # A skipped newline cannot complete an opener or closer, but it does
             # make everything before it irrelevant to the next fence position.
@@ -199,7 +206,7 @@ class _MarkdownCodeTracker:
 
     def _fence_state(
         self,
-    ) -> tuple[str | None, str, int, str | None, int, bool, bool]:
+    ) -> tuple[str | None, str, int, str | None, int, bool, bool, bool]:
         return (
             self._fence_only,
             self._fence_line_phase,
@@ -208,10 +215,11 @@ class _MarkdownCodeTracker:
             self._fence_line_run,
             self._fence_line_tail_nonspace,
             self._fence_line_tail_backtick,
+            self._fence_line_cr,
         )
 
     def _restore_fence_state(
-        self, state: tuple[str | None, str, int, str | None, int, bool, bool]
+        self, state: tuple[str | None, str, int, str | None, int, bool, bool, bool]
     ) -> None:
         (
             self._fence_only,
@@ -221,11 +229,16 @@ class _MarkdownCodeTracker:
             self._fence_line_run,
             self._fence_line_tail_nonspace,
             self._fence_line_tail_backtick,
+            self._fence_line_cr,
         ) = state
 
     def _feed_fence(self, chunk: str) -> None:
         for char in chunk:
-            if char == "\n":
+            after_cr = self._fence_line_cr
+            self._fence_line_cr = char == "\r"
+            if char == "\n" and after_cr:
+                continue
+            if char in "\r\n":
                 self._finish_fence_line()
                 continue
             if self._fence_line_phase == "indent":
@@ -287,7 +300,7 @@ class _MarkdownCodeTracker:
             match = buffered_fence_re.match(line)
             if fence is not None:
                 if (
-                    line.endswith("\n")
+                    line.endswith(("\r", "\n"))
                     and match
                     and match.group(1)[0] == fence[0]
                     and len(match.group(1)) >= len(fence)
@@ -323,7 +336,12 @@ class _MarkdownCodeTracker:
         )
 
     def _feed(self, chunk: str) -> None:
-        *done, self._line = (self._line + chunk).split("\n")
+        if self._line_cr and chunk.startswith("\n"):
+            chunk = chunk[1:]
+            self._line_cr = False
+        if chunk:
+            self._line_cr = chunk.endswith("\r")
+        *done, self._line = re.split(r"\r\n?|\n", self._line + chunk)
         for line in done:
             match = _MARKDOWN_FENCE_RE.match(line)
             if self._fence is None:
