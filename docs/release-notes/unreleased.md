@@ -7,6 +7,8 @@
 
 **<Named thing>** — what changed, and why a user should care. Link the merged PR.
 
+- **Local web pages work from `localhost` and `127.0.0.1` alike**: a page served from `http://localhost:<port>` can call the server on the same port even when it is addressed as `127.0.0.1` or `[::1]`; other origins stay blocked.
+
 - **Smaller Desktop download**: the bundled runtime no longer ships build-only headers, test suites, or Intel code slices, trimming about 14 MB from the DMG, about 110 MB and 11,000 files from the installed app.
 
 - **Desktop no longer quits when you open a generated video**: clicking a finished video's preview now plays it in the app instead of crashing Rapid-MLX Desktop.

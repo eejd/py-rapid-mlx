@@ -187,6 +187,138 @@ def test_same_origin_browser_and_native_clients_work(local_app, base, origin):
     assert len(calls) == 2
 
 
+LOOPBACK_SPELLINGS = ("localhost", "127.0.0.1", "[::1]")
+
+
+def _check_browser_origin(app, calls, scheme, host, origin, *, allowed):
+    """Exercise the shared boundary through both public browser transports."""
+    headers = {"Host": host, "Origin": origin}
+    client = TestClient(app)
+    if scheme in ("ws", "wss"):
+
+        @app.websocket("/socket")
+        async def socket(websocket: WebSocket):
+            calls.append(True)
+            await websocket.accept()
+            await websocket.send_json({"ok": True})
+            await websocket.close()
+
+        if allowed:
+            with client.websocket_connect(
+                f"{scheme}://localhost/socket", headers=headers
+            ) as ws:
+                assert ws.receive_json() == {"ok": True}
+        else:
+            with (
+                pytest.raises(WebSocketDisconnect) as exc,
+                client.websocket_connect(
+                    f"{scheme}://localhost/socket", headers=headers
+                ),
+            ):
+                pytest.fail("Rejected WebSocket reached the application")
+            assert exc.value.code == 1008
+    else:
+        response = client.post(f"{scheme}://localhost/probe", headers=headers)
+        assert response.status_code == (200 if allowed else 403)
+        if not allowed:
+            assert response.text == "Cross-origin requests disabled"
+            assert "access-control-allow-origin" not in response.headers
+    assert calls == ([True] if allowed else [])
+
+
+@pytest.mark.parametrize("scheme", ["http", "https", "ws", "wss"])
+@pytest.mark.parametrize(
+    "port_style", ["explicit", "implicit", "origin-default", "host-default"]
+)
+@pytest.mark.parametrize(
+    "host_name,origin_name",
+    [
+        (host, origin)
+        for host in LOOPBACK_SPELLINGS
+        for origin in LOOPBACK_SPELLINGS
+        if host != origin
+    ],
+)
+def test_loopback_origin_aliases_work(
+    local_app, scheme, port_style, host_name, origin_name
+):
+    app, calls = local_app
+    origin_scheme = {"ws": "http", "wss": "https"}.get(scheme, scheme)
+    default_port = 443 if origin_scheme == "https" else 80
+    host_port, origin_port = {
+        "explicit": (":8898", ":8898"),
+        "implicit": ("", ""),
+        "origin-default": ("", f":{default_port}"),
+        "host-default": (f":{default_port}", ""),
+    }[port_style]
+    _check_browser_origin(
+        app,
+        calls,
+        scheme,
+        f"{host_name}{host_port}",
+        f"{origin_scheme}://{origin_name}{origin_port}",
+        allowed=True,
+    )
+
+
+@pytest.mark.parametrize("scheme", ["http", "ws"])
+@pytest.mark.parametrize("deny_cross_origin", [True, False])
+@pytest.mark.parametrize(
+    "host,origin",
+    [
+        ("127.0.0.1:8898", origin)
+        for origin in [
+            "http://localhost.evil.com:8898",
+            "http://localhost.evil.example:8898",
+            "http://evil-localhost:8898",
+            "http://127.0.0.1.evil.com:8898",
+            "http://app.localhost:8898",
+            "http://127.0.0.2:8898",
+            "http://0.0.0.0:8898",
+            "http://[::ffff:127.0.0.1]:8898",
+            "http://localhost:9999",
+            "https://127.0.0.1:8898",
+            "http://localhost:8898@evil.example",
+            "http://evil.example:8898",
+            "http://localhost:8898/",
+            "http://localhost:8898,evil.example",
+            "http://local host:8898",
+            "http://localhost:bad",
+            "http://localhost:65536",
+            "http://[::1]:bad",
+            "http://[::1]:65536",
+            "null",
+        ]
+    ]
+    + [
+        ("myhost.lan:8898", "http://localhost:8898"),
+        ("localhost:8898", "http://myhost.lan:8898"),
+        ("app.localhost:8898", "http://localhost:8898"),
+        ("127.0.0.2:8898", "http://localhost:8898"),
+        ("0.0.0.0:8898", "http://localhost:8898"),
+        ("[::ffff:127.0.0.1]:8898", "http://localhost:8898"),
+    ],
+)
+def test_loopback_origin_boundary(local_app, scheme, deny_cross_origin, host, origin):
+    app, calls = local_app
+    # Explicitly trust these Hosts so Origin policy must enforce the boundary.
+    app.user_middleware.clear()
+    app.add_middleware(
+        security.BrowserSecurityMiddleware,
+        hosts=[
+            *security.DEFAULT_TRUSTED_HOSTS,
+            "myhost.lan",
+            "127.0.0.2",
+            "0.0.0.0",
+            "[::ffff:127.0.0.1]",
+        ],
+        deny_cross_origin=deny_cross_origin,
+    )
+    _check_browser_origin(
+        app, calls, scheme, host, origin, allowed=not deny_cross_origin
+    )
+
+
 def test_explicit_cors_does_not_disable_host_protection(monkeypatch):
     import rapid_mlx.server as server
 

@@ -13,6 +13,8 @@ _configured_hosts: list[str] | None = None
 
 
 DEFAULT_TRUSTED_HOSTS = ("localhost", "127.0.0.1", "[::1]", "*.localhost")
+# Closed set of URL hostname spellings; do not expand via DNS or IP ranges.
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def resolve_trusted_hosts(cli_hosts: list[str] | None = None) -> list[str]:
@@ -117,10 +119,23 @@ class BrowserSecurityMiddleware:
             if origins:
                 origin = origins[0]
                 prefix = f"{scheme}://"
+                origin_authority = (
+                    _authority(origin[len(prefix) :], scheme)
+                    if origin.startswith(prefix)
+                    else None
+                )
                 if (
                     len(origins) != 1
                     or not origin.startswith(prefix)
-                    or _authority(origin[len(prefix) :], scheme) != authority
+                    or (
+                        origin_authority != authority
+                        and not (
+                            origin_authority is not None
+                            and authority[0] in _LOOPBACK_HOSTNAMES
+                            and origin_authority[0] in _LOOPBACK_HOSTNAMES
+                            and origin_authority[1] == authority[1]
+                        )
+                    )
                 ):
                     status = 403
         if status is not None:
