@@ -130,6 +130,136 @@ def test_routing_and_profiles(size, moe, tmp_path):
         assert not config.supports_spec_decode
 
 
+def test_release_probe_recognizes_minicpm_vision():
+    from scripts.release_check_m3_random import _is_multimodal
+
+    assert _is_multimodal("minicpm-v4.7-1b-8bit")
+    assert _is_multimodal("custom-name", "mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4")
+    assert not _is_multimodal("minicpm3-4b")
+
+
+@pytest.fixture
+def isolated_loader_modules(monkeypatch):
+    """Replace optional architecture dependencies, never importing MLX."""
+    import sys
+    from types import ModuleType
+
+    modules = {}
+    for name in (
+        "mlx_vlm",
+        "mlx_vlm.utils",
+        "mlx_vlm.models",
+        "mlx_vlm.prompt_utils",
+        "rapid_mlx.models.mlx_vlm_vendored.models.minicpmv4_7",
+        "rapid_mlx.patches.glm5_next_runtime",
+        "rapid_mlx.patches.glm5_next_processor",
+        "rapid_mlx.patches.glm5_next_forget_gate_quant",
+    ):
+        module = ModuleType(name)
+        monkeypatch.setitem(sys.modules, name, module)
+        modules[name] = module
+    for module, installer in (
+        ("glm5_next_runtime", "install_glm5_next_runtime_fix"),
+        ("glm5_next_processor", "install_glm5_next_processor_patch"),
+        ("glm5_next_forget_gate_quant", "install_glm5_next_forget_gate_quant_fix"),
+    ):
+        setattr(modules[f"rapid_mlx.patches.{module}"], installer, lambda: None)
+    modules["mlx_vlm.prompt_utils"].MODEL_CONFIG = {}
+    from enum import Enum
+
+    class MessageFormat(Enum):
+        LIST_WITH_IMAGE_FIRST = "image-first"
+
+    modules["mlx_vlm.prompt_utils"].MessageFormat = MessageFormat
+    # Restore an existing binding, if any, after checking the real installer.
+    monkeypatch.setitem(sys.modules, "mlx_vlm.models.minicpmv4_7", None)
+    monkeypatch.delitem(sys.modules, "mlx_vlm.models.minicpmv4_7")
+    return modules
+
+
+def test_loader_binding_is_idempotent_without_mlx(isolated_loader_modules):
+    import sys
+
+    from rapid_mlx.models.minicpmv4_7 import install_minicpmv4_7
+
+    modules = isolated_loader_modules
+    package = modules["rapid_mlx.models.mlx_vlm_vendored.models.minicpmv4_7"]
+    for _ in range(2):
+        install_minicpmv4_7()
+        assert sys.modules["mlx_vlm.models.minicpmv4_7"] is package
+        assert modules["mlx_vlm.models"].minicpmv4_7 is package
+        prompt = modules["mlx_vlm.prompt_utils"]
+        assert prompt.MODEL_CONFIG["minicpmv4_7"] is (
+            prompt.MessageFormat.LIST_WITH_IMAGE_FIRST
+        )
+
+
+@pytest.mark.parametrize("kind", ["minicpmv4_7", "other", "none", "object"])
+@pytest.mark.parametrize("trust_remote_code", [True, False])
+def test_mllm_installs_binding_before_load(
+    isolated_loader_modules, monkeypatch, kind, trust_remote_code
+):
+    import sys
+    from types import SimpleNamespace
+
+    from rapid_mlx.models import mllm
+    from rapid_mlx.utils import tokenizer
+
+    monkeypatch.delenv("RAPID_MLX_TRUST_REMOTE_CODE", raising=False)
+    monkeypatch.setattr(mllm, "_require_mlx_vlm", lambda: None)
+    monkeypatch.setattr(
+        tokenizer, "augment_eos_token_ids_from_generation_config", lambda *a: None
+    )
+    monkeypatch.setattr(tokenizer, "repair_byte_level_decoder", lambda *a: None)
+    modules = isolated_loader_modules
+    config = (
+        None
+        if kind == "none"
+        else SimpleNamespace()
+        if kind == "object"
+        else {"model_type": kind}
+    )
+    calls = []
+
+    def load_config(name, **kwargs):
+        calls.append(("config", name, kwargs))
+        return config
+
+    model = SimpleNamespace(config=SimpleNamespace())
+    processor = SimpleNamespace(tokenizer=object())
+
+    def load(name, **kwargs):
+        calls.append(("model", name, kwargs))
+        if kind == "minicpmv4_7":
+            assert (
+                sys.modules["mlx_vlm.models.minicpmv4_7"]
+                is modules["rapid_mlx.models.mlx_vlm_vendored.models.minicpmv4_7"]
+            )
+            assert "minicpmv4_7" in modules["mlx_vlm.prompt_utils"].MODEL_CONFIG
+        else:
+            assert "mlx_vlm.models.minicpmv4_7" not in sys.modules
+            assert not modules["mlx_vlm.prompt_utils"].MODEL_CONFIG
+        return model, processor
+
+    modules["mlx_vlm.utils"].load_config = load_config
+    modules["mlx_vlm"].load = load
+    wrapper = mllm.MLXMultimodalLM(
+        "local-checkpoint", trust_remote_code=trust_remote_code, enable_cache=False
+    )
+    wrapper.load()
+    wrapper.load()
+    options = {} if trust_remote_code else {"trust_remote_code": False}
+    assert calls == [
+        ("config", "local-checkpoint", options),
+        ("model", "local-checkpoint", options),
+    ]
+    assert wrapper._loaded
+    assert wrapper.model is model
+    assert wrapper.processor is processor
+    assert wrapper.config is config
+    assert "4.7 dense and MoE" in wrapper.list_supported_model_families()["MiniCPM-V"]
+
+
 @pytest.mark.parametrize("size", ["1B", "35B-A3B"])
 def test_checkpoint_template_and_existing_parser(size):
     from rapid_mlx.tool_parsers.qwen3coder_tool_parser import Qwen3CoderToolParser

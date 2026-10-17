@@ -1674,7 +1674,10 @@ class MLXMultimodalLM:
                 self.model_name,
                 **({} if trust_remote_code else {"trust_remote_code": False}),
             )
-            if self.config.get("model_type") == "minicpmv4_7":
+            if (
+                isinstance(self.config, dict)
+                and self.config.get("model_type") == "minicpmv4_7"
+            ):
                 from .minicpmv4_7 import install_minicpmv4_7
 
                 install_minicpmv4_7()
