@@ -12,7 +12,7 @@ def install_minicpmv4_7() -> None:
     )
     sys.modules["mlx_vlm.models.minicpmv4_7"] = package
     parent = importlib.import_module("mlx_vlm.models")
-    parent.minicpmv4_7 = package
+    vars(parent)["minicpmv4_7"] = package
     # Upstream's 4.7 image-message registry entry is absent from 0.7.2.
     # Native serving renders ordered image/video parts through the processor;
     # the pinned prompt helper also needs this entry for text/image callers.
