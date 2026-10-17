@@ -3181,7 +3181,11 @@ def _reject_tensorfold_lanes_off_lane_or_exit(args) -> None:
     config = getattr(args, "_speculative_config", None)
     if config is not None and config.backend == "tensorfold":
         return
-    model = getattr(args, "_original_alias", None) or args.model
+    model = (
+        getattr(args, "_original_alias", None)
+        or getattr(args, "model", None)
+        or getattr(args, "embedding_model", None)
+    )
     value = os.environ.get(LANES_ENV, "1")
     profiles = ", ".join(sorted(QUALIFIED_PROFILES))
     try:
@@ -5674,6 +5678,7 @@ def serve_command(args):
     install_parent_watchdog(resolve_expected_ppid(getattr(args, "watchdog_ppid", None)))
 
     if embeddings_only:
+        _reject_tensorfold_lanes_off_lane_or_exit(args)
         args.port = _resolve_serve_port(
             getattr(args, "host", "127.0.0.1"),
             getattr(args, "port", None),

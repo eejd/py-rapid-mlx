@@ -113,6 +113,44 @@ def test_serve_refuses_tensorfold_lanes_before_download(monkeypatch, capsys, val
     assert LANES_ENV in output.err
 
 
+@pytest.mark.parametrize("has_model", [False, True])
+@pytest.mark.parametrize("value", ["4", None])
+def test_embedding_only_serve_tensorfold_lanes(monkeypatch, capsys, has_model, value):
+    from argparse import Namespace
+    from unittest.mock import Mock
+
+    from rapid_mlx import cli
+    from rapid_mlx.speculative.tensorfold_concurrency import LANES_ENV
+
+    monkeypatch.delenv(LANES_ENV, raising=False)
+    if value is not None:
+        monkeypatch.setenv(LANES_ENV, value)
+    args = Namespace(embedding_model="mlx-community/all-MiniLM-L6-v2-4bit")
+    if has_model:
+        args.model = None
+    embed_only = Mock()
+    resolve_port = Mock(return_value=cli.DEFAULT_SERVE_PORT)
+    monkeypatch.setattr(cli, "_serve_embedding_only_mode", embed_only)
+    monkeypatch.setattr(cli, "_resolve_serve_port", resolve_port)
+
+    if value is not None:
+        with pytest.raises(SystemExit) as exc:
+            cli.serve_command(args)
+        assert exc.value.code == 2
+        embed_only.assert_not_called()
+        resolve_port.assert_not_called()
+        output = capsys.readouterr()
+        assert not output.out
+        assert f"{LANES_ENV}=4" in output.err
+        assert repr(args.embedding_model) in output.err
+    else:
+        cli.serve_command(args)
+        resolve_port.assert_called_once()
+        embed_only.assert_called_once_with(args)
+        assert args.port == cli.DEFAULT_SERVE_PORT
+        assert capsys.readouterr() == ("", "")
+
+
 def test_one_provider_keeps_nonstream_token_results_per_request(monkeypatch):
     provider = TensorFoldRequestProvider(SimpleNamespace())
     first_drained, second_drained = Event(), Event()
