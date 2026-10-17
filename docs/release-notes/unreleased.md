@@ -10,4 +10,4 @@
 - **Desktop no longer quits when you open a generated video**: clicking a finished video's preview now plays it in the app instead of crashing Rapid-MLX Desktop.
 
 - **Cleaner tool-call replies**: unfinished tool payloads stay out of visible replies when arguments contain literal tool markers or a forced tool call is returned.
-- **XML tool-call examples stay visible**: Markdown code examples remain content even when they name an available tool, including in streamed replies; real calls after a closed code fence still execute.
+- **XML tool-call examples stay visible**: fenced code-block examples remain content even when they name an available tool, including in streamed replies; real calls after a closed fence still execute.
