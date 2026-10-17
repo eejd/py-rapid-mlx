@@ -670,6 +670,7 @@ def test_streaming_unchanged_against_base():
                                 "_fence_state",
                                 "_restore_fence_state",
                                 "_feed_fence",
+                                "_feed_fence_plain",
                                 "_finish_fence_line",
                                 "_fence_result",
                                 "mask_markdown_fenced_regions",

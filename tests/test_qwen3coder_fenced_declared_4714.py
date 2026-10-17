@@ -65,6 +65,92 @@ def test_fence_tracker_handles_current_line_and_out_of_order_queries():
     assert tracker.inside_fence(text, text.index("<function="))
 
 
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "",
+        "  ",
+        "text ",
+        "```",
+        "``` ",
+        "```xml\n",
+        "<tool_call>\n",
+        "```xml\nx\n```\n<tool_call>\n",
+    ],
+)
+@pytest.mark.parametrize(
+    "span",
+    [
+        "",
+        " ",
+        "  ",
+        "x",
+        "`",
+        "\t",
+        "\n",
+        "x\n",
+        "x\n  ",
+        "x\n    ",
+        "x\n`",
+        "x\n\t",
+        "x\ny",
+        "x\ny\n",
+        BARE,
+        CALL,
+        CALL + "\n",
+    ],
+)
+def test_skipped_fence_span_matches_plain_text_line_state(prefix, span):
+    from rapid_mlx.tool_parsers.qwen3coder_tool_parser import _MarkdownCodeTracker
+
+    expected = _MarkdownCodeTracker()
+    expected._feed_fence(prefix)
+    for char in span:
+        if char == "\n":
+            expected._fence_line_phase = "indent"
+            expected._fence_line_indent = 0
+            expected._fence_line_marker = None
+            expected._fence_line_run = 0
+            expected._fence_line_tail_nonspace = False
+        elif expected._fence_line_phase == "indent":
+            if char == " " and expected._fence_line_indent < 3:
+                expected._fence_line_indent += 1
+            else:
+                expected._fence_line_phase = "invalid"
+        elif expected._fence_line_phase == "run":
+            expected._fence_line_phase = "tail"
+            expected._fence_line_tail_nonspace = not char.isspace()
+        elif expected._fence_line_phase == "tail" and not char.isspace():
+            expected._fence_line_tail_nonspace = True
+
+    actual = _MarkdownCodeTracker()
+    text = prefix + span
+    actual.skip_fence_span(text, len(prefix), len(text))
+
+    assert actual._fence_state() == expected._fence_state()
+    assert actual._fence_committed == len(text)
+
+
+@pytest.mark.parametrize("size", [None, 1, 2, 3, 5, 7, 13, 0])
+@pytest.mark.parametrize(
+    "first, fence",
+    [
+        (CALL, "```xml\n"),
+        (BARE, "```\n"),
+    ],
+    ids=["wrapped-close-same-line", "bare-close-same-line"],
+)
+def test_call_close_then_same_line_backticks_do_not_hide_later_call(first, fence, size):
+    text = first + fence + CALL.replace("Paris", "Rome")
+    got_calls, _ = (
+        non_stream(text, REQUEST) if size is None else stream(text, REQUEST, size)
+    )
+    assert got_calls == [
+        ("get_weather", '{"city": "Paris"}'),
+        ("get_weather", '{"city": "Rome"}'),
+    ]
+
+
 @pytest.mark.parametrize("size", [None, 0, 1, 2, 7, 13, 10000])
 @pytest.mark.parametrize(
     "text, content, calls",

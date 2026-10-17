@@ -158,7 +158,42 @@ class _MarkdownCodeTracker:
     def skip_fence_span(self, text: str, start: int, end: int) -> None:
         """Advance across recognized non-content without reading its fences."""
         self.inside_fence(text, start)
-        self._fence_committed = max(self._fence_committed, end)
+        cursor = self._fence_committed
+        if cursor < start:
+            # ``inside_fence`` cannot commit an as-yet unclosed wrapper prefix.
+            # The recognized function makes that prefix safe to commit now.
+            self._feed_fence(text[cursor:start])
+            cursor = start
+        if cursor < end:
+            self._feed_fence_plain(text[cursor:end])
+            cursor = end
+        self._fence_committed = cursor
+
+    def _feed_fence_plain(self, chunk: str) -> None:
+        """Update line position while disabling fence recognition in ``chunk``."""
+        last_newline = chunk.rfind("\n")
+        if last_newline >= 0:
+            # A skipped newline cannot complete an opener or closer, but it does
+            # make everything before it irrelevant to the next fence position.
+            self._fence_line_phase = "indent"
+            self._fence_line_indent = 0
+            self._fence_line_marker = None
+            self._fence_line_run = 0
+            self._fence_line_tail_nonspace = False
+            chunk = chunk[last_newline + 1 :]
+        if not chunk:
+            return
+        if self._fence_line_phase == "indent":
+            leading_spaces = len(chunk) - len(chunk.lstrip(" "))
+            total_indent = self._fence_line_indent + leading_spaces
+            self._fence_line_indent = min(3, total_indent)
+            if leading_spaces < len(chunk) or total_indent > 3:
+                self._fence_line_phase = "invalid"
+        elif self._fence_line_phase == "run":
+            self._fence_line_phase = "tail"
+            self._fence_line_tail_nonspace = not chunk.isspace()
+        elif self._fence_line_phase == "tail" and not chunk.isspace():
+            self._fence_line_tail_nonspace = True
 
     def _fence_state(self) -> tuple[str | None, str, int, str | None, int, bool]:
         return (
