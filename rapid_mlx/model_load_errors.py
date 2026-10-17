@@ -34,6 +34,10 @@ class IncompatibleWeights(ValueError):  # noqa: N818 - domain name is user-facin
     """Checkpoint parameter names or shapes do not match the model."""
 
 
+class IncompleteCheckpoint(IncompatibleWeights):  # noqa: N818 - domain name is user-facing
+    """The checkpoint's own safetensors manifest or headers prove missing data."""
+
+
 class QuantizationMismatch(ValueError):  # noqa: N818 - domain name is user-facing
     """Checkpoint quantization metadata and tensors are incompatible."""
 

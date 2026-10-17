@@ -192,6 +192,9 @@ def _startup_only_diagnostic(
     """Diagnose observed loader shapes for display without changing event classes."""
     try:
         errors = list(_chain(exc))
+        incomplete = _incomplete_checkpoint_diagnostic(errors, model_ref, error_class)
+        if incomplete is not None:
+            return incomplete
         if error_class == "other" and any(
             isinstance(error, OSError) and error.errno == errno.ENOSPC
             for error in errors
@@ -297,4 +300,68 @@ def _startup_only_diagnostic(
             )
     except BaseException:
         return None
+    return None
+
+
+def _redownload_step(model_ref: object) -> str:
+    """Next step for a checkpoint whose own files are incomplete."""
+    from rapid_mlx.local_model_path import is_local_model_ref
+
+    if isinstance(model_ref, str) and not is_local_model_ref(model_ref):
+        return (
+            f"Remove the cached copy (all revisions) with `rapid-mlx rm {model_ref}`, "
+            f"download it again with `rapid-mlx pull {model_ref}`, then retry."
+        )
+    return (
+        "Re-download or re-export the complete checkpoint into this "
+        "directory, then retry."
+    )
+
+
+def _incomplete_checkpoint_diagnostic(
+    errors: list[BaseException], model_ref: object, error_class: str
+) -> tuple[str, str, str] | None:
+    """Name missing checkpoint data: absent shards/tensors or truncated files."""
+    from rapid_mlx.model_load_errors import IncompatibleWeights, IncompleteCheckpoint
+
+    for error in errors:
+        if isinstance(error, IncompleteCheckpoint):
+            return ("incomplete_checkpoint", str(error), _redownload_step(model_ref))
+
+    if error_class == "incompatible_weights":
+        from rapid_mlx.models.mllm import (
+            _parse_missing_count,
+            _parse_missing_param_names,
+        )
+
+        for error in errors:
+            if isinstance(error, IncompatibleWeights):
+                names = _parse_missing_param_names(str(error))
+                if names and _parse_missing_count(str(error)) == len(names):
+                    return (
+                        "missing_parameters",
+                        f"The checkpoint is missing {len(names)} weights this "
+                        f"model needs (for example {names[0]}).",
+                        "Re-download the complete checkpoint, or use the "
+                        "config.json that matches these weights.",
+                    )
+
+    if (
+        error_class == "corrupt_weights"
+        and isinstance(model_ref, str)
+        and not any(
+            isinstance(error, PermissionError)
+            or str(error).startswith("[load_safetensors] Failed to open file ")
+            for error in errors
+        )
+    ):
+        from rapid_mlx.checkpoint_integrity import incomplete_checkpoint_reason
+
+        reason = incomplete_checkpoint_reason(Path(model_ref).expanduser())
+        if reason is not None:
+            return (
+                "incomplete_checkpoint",
+                f"The model checkpoint is incomplete: {reason}.",
+                _redownload_step(model_ref),
+            )
     return None

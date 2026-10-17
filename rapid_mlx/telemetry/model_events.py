@@ -256,6 +256,7 @@ def serve_error_class(exc: BaseException, *, model_ref: object = None) -> str:
         from rapid_mlx.model_aliases import DraftModelNotServableError
         from rapid_mlx.model_load_errors import (
             IncompatibleWeights,
+            IncompleteCheckpoint,
             InvalidModelConfig,
             QuantizationMismatch,
             TokenizerLoadFailed,
@@ -285,6 +286,10 @@ def serve_error_class(exc: BaseException, *, model_ref: object = None) -> str:
                 return "invalid_config"
             if isinstance(current, TokenizerLoadFailed):
                 return "tokenizer_load_failed"
+            if isinstance(current, IncompleteCheckpoint):
+                # Missing shards/tensors in the download itself, not a
+                # model/weights mismatch.
+                return "corrupt_weights"
             if isinstance(current, IncompatibleWeights):
                 from rapid_mlx.local_serve_diagnostics import local_serve_diagnostic
 
