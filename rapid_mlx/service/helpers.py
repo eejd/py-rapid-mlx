@@ -3543,24 +3543,22 @@ def _strip_trailing_tool_envelope(
         parser_cls = ToolParserManager.get_tool_parser(cfg.tool_call_parser)
     except (KeyError, ValueError):
         return text
-    cleaned = parser_cls.strip_trailing_tool_envelope(
-        text, request.model_dump() if request is not None else None
-    )
-    # A reasoning parser can promote tool-shaped reasoning into content. Never
-    # let suffix cleanup consume a closing boundary or the answer beyond it.
+    # Tool-shaped reasoning can be promoted into this visible lane. Preserve
+    # its closing boundary and clean only the content following the last one.
     end_token = getattr(cfg.reasoning_parser, "end_token", None)
+    boundary = 0
     if end_token:
-        source = reasoning_source or text
-        source_cleaned = (
-            parser_cls.strip_trailing_tool_envelope(
-                source, request.model_dump() if request is not None else None
-            )
-            if reasoning_source
-            else cleaned
-        )
-        if end_token in source[len(source_cleaned) :]:
-            return text
-    return cleaned
+        if end_token in text:
+            boundary = text.rfind(end_token) + len(end_token)
+        elif end_token in reasoning_source:
+            # Promotion removes the end token before prepending reasoning wire.
+            # Locate the original visible suffix instead of vetoing all cleanup.
+            visible = reasoning_source.rsplit(end_token, 1)[1].strip()
+            if text.endswith(visible):
+                boundary = len(text) - len(visible)
+    return text[:boundary] + parser_cls.strip_trailing_tool_envelope(
+        text[boundary:], request.model_dump() if request is not None else None
+    )
 
 
 def _parse_tool_calls_with_parser(

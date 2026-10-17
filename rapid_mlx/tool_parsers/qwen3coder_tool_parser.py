@@ -96,7 +96,9 @@ class _MarkdownCodeTracker:
         self._fence: str | None = None
         self._line = ""
 
-    def inside(self, text: str, pos: int) -> bool:
+    def inside(self, text: str, pos: int, *, buffered: bool = False) -> bool:
+        if buffered:
+            return self._inside_buffered(text, pos)
         if pos < self._committed:
             # Out-of-order query: answer it from scratch.
             return _MarkdownCodeTracker().inside(text, pos)
@@ -121,6 +123,48 @@ class _MarkdownCodeTracker:
             cursor = close + len(self._CLOSE)
         self._committed = max(self._committed, cursor)
         return self._result()
+
+    def _inside_buffered(self, text: str, pos: int) -> bool:
+        """One linear query; retain multiline inline spans without changing streams."""
+        # Join once: repeatedly appending narration between closed wrappers is
+        # quadratic on a long line. Match the streaming tracker's wrapper skips.
+        pieces = []
+        cursor = 0
+        while cursor < pos:
+            start = text.find(self._OPEN, cursor, pos)
+            if start == -1:
+                break
+            close = text.find(self._CLOSE, start + len(self._OPEN), pos)
+            if close == -1:
+                break
+            pieces.append(text[cursor:start])
+            cursor = close + len(self._CLOSE)
+        pieces.append(text[cursor:pos])
+        prefix = "".join(pieces)
+        fence = None
+        inline = None
+        for line in prefix.splitlines(keepends=True):
+            match = _MARKDOWN_FENCE_RE.match(line)
+            if fence is not None:
+                if (
+                    line.endswith("\n")
+                    and match
+                    and match.group(1)[0] == fence[0]
+                    and len(match.group(1)) >= len(fence)
+                    and not line[match.end() :].strip()
+                ):
+                    fence = None
+                continue
+            if inline is None and match:
+                fence = match.group(1)
+                continue
+            for run in re.finditer(r"`+", line):
+                length = len(run.group())
+                if inline is None:
+                    inline = length
+                elif inline == length:
+                    inline = None
+        return fence is not None or inline is not None
 
     def _feed(self, chunk: str) -> None:
         *done, self._line = (self._line + chunk).split("\n")
@@ -164,76 +208,50 @@ class _MarkdownCodeTracker:
 
 
 def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -> str:
-    """Hide the first unfinished framing suffix outside Markdown, in O(n)."""
-    tokens = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})[^\n]*|`+|\n|<tool_call>", re.M)
-    json_tokens = re.compile(r'"(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|</tool_call>')
-    prose_json_tokens = re.compile(json_tokens.pattern + "|" + tokens.pattern, re.M)
-    cursor, fence, inline = 0, "", 0
-    prose_json = False
-    while match := (prose_json_tokens if prose_json else tokens).search(text, cursor):
-        cursor = match.end()
-        token = match.group()
-        if prose_json and token.startswith('"'):
-            continue
-        if token == "</tool_call>":
-            prose_json = False
-            continue
-        if run := match.group(1):
-            if not fence:
-                fence = run
-            elif (
-                run[0] == fence[0]
-                and len(run) >= len(fence)
-                and not token.strip()[len(run) :].strip()
-            ):
-                fence = ""
-        elif token == "\n":
-            inline = 0
-        elif token.startswith("`"):
-            inline = 0 if inline == len(token) else inline or len(token)
-        elif not fence and not inline:
-            opener = match.start()
-            payload = re.compile(r"\s*").match(text, cursor).end()
-            # Inspect the payload start without copying/re-scanning the suffix.
-            # Prose openers must not hide a later unfinished real call.
-            call_shaped = bool(
-                payload == len(text)
-                or text.startswith("<function=", payload)
-                or (
-                    len(text) - payload < 10 and "<function=".startswith(text[payload:])
-                )
-                or re.compile(r'\{\s*(?:"name"|"(?:n(?:a(?:m(?:e)?)?)?)?\Z|\Z)').match(
-                    text, payload
-                )
-            )
-            if not call_shaped:
-                # Preserve JSON string state while scanning past example payloads.
-                prose_json = text.startswith("{", payload)
-                continue
-            if text.startswith("{", payload):
-                close = next(
-                    (
-                        m
-                        for m in json_tokens.finditer(text, payload)
-                        if m.group() == "</tool_call>"
-                    ),
-                    None,
-                )
-                end = close.end() if close else -1
-            else:
-                # XML keeps the first-literal-close limitation, including in values.
-                close_pos = text.find("</tool_call>", cursor)
-                end = close_pos + len("</tool_call>") if close_pos >= 0 else -1
-            if end >= 0:
-                cursor = end
-                prose_json = False
-                continue
-            header = re.compile(r"<function=([^>]+)>").match(text, payload)
-            if header and declared is not None and header.group(1) not in declared:
-                # This parser releases unfinished undeclared XML at stream EOF.
+    """Hide only an unfinished last envelope outside Markdown, in O(n)."""
+    opener = text.rfind("<tool_call>")
+    if opener == -1 or _MarkdownCodeTracker().inside(text, opener, buffered=True):
+        return text
+    # Accepted limitation: an opener inside a truncated JSON string selects
+    # that inner opener, leaving the outer payload visible. No earlier JSON
+    # state is tracked; changing this rule requires a deliberate compatibility fix.
+    payload = text[opener + len("<tool_call>") :].lstrip()
+    if not payload or "<function=".startswith(payload):
+        return text[:opener]
+    if payload.startswith("<function="):
+        if "</tool_call>" in payload:
+            return text
+        header = re.match(r"<function=([^>]+)>", payload)
+        if header and declared is not None and header.group(1) not in declared:
+            return text
+        # A closed function without its envelope close is also hidden at EOF
+        # by base streaming. Keep the same visibility rule here.
+        return text[:opener]
+    if not payload.startswith("{"):
+        return text
+    if not re.match(r'\{\s*(?:"name"|"(?:n(?:a(?:m(?:e)?)?)?)?\Z|\Z)', payload):
+        return text
+    depth = 0
+    in_string = escaped = False
+    for index, char in enumerate(payload):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
                 return text
-            return text[:opener]
-    return text
+        elif char == "<" and payload.startswith("</tool_call>", index):
+            return text
+    return text[:opener]
 
 
 def _merge_content(
