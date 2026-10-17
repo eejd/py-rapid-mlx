@@ -196,8 +196,67 @@ def test_mac_lane_requires_correct_check():
     pr = pull()
     pr["labels"] = [dict(name="merge-ready-mac")]
     assert "merge-lane-mac" in m.eligibility(api, pr)
-    api.data[f"commits/{SHA}/check-runs?filter=all"].append(check("merge-lane-mac"))
+    checks = api.data[f"commits/{SHA}/check-runs?filter=all"]
+    checks[:] = [c for c in checks if c["name"] != "merge-lane-no-mac"]
+    checks.append(check("merge-lane-mac"))
     assert not m.eligibility(api, pr)
+
+
+@pytest.mark.parametrize("label", ["merge-ready", "merge-ready-mac"])
+@pytest.mark.parametrize(
+    "status,conclusion",
+    [
+        ("completed", "success"),
+        ("completed", "failure"),
+        ("completed", "cancelled"),
+        ("completed", None),
+        ("queued", None),
+        ("in_progress", None),
+        ("in_progress", "skipped"),
+        ("completed", "skipped"),
+        (None, None),
+    ],
+)
+def test_other_lane_must_be_absent_or_completed_skipped(label, status, conclusion):
+    api = ready()
+    pr = pull()
+    pr["labels"] = [dict(name=label)]
+    selected = "merge-lane-no-mac" if label == "merge-ready" else "merge-lane-mac"
+    other = "merge-lane-mac" if label == "merge-ready" else "merge-lane-no-mac"
+    checks = api.data[f"commits/{SHA}/check-runs?filter=all"]
+    checks[:] = [c for c in checks if not c["name"].startswith("merge-lane-")]
+    checks.append(check(selected))
+    if status is not None:
+        item = check(other, 2, conclusion)
+        item["status"] = status
+        checks.append(item)
+    expected = (
+        ""
+        if status is None or (status == "completed" and conclusion == "skipped")
+        else "label does not match CI lane"
+    )
+    assert m.eligibility(api, pr) == expected
+
+
+@pytest.mark.parametrize("label", ["merge-ready", "merge-ready-mac"])
+def test_other_lane_uses_latest_trusted_ci_check(label):
+    api = ready()
+    pr = pull()
+    pr["labels"] = [dict(name=label)]
+    selected = "merge-lane-no-mac" if label == "merge-ready" else "merge-lane-mac"
+    other = "merge-lane-mac" if label == "merge-ready" else "merge-lane-no-mac"
+    checks = api.data[f"commits/{SHA}/check-runs?filter=all"]
+    checks[:] = [c for c in checks if not c["name"].startswith("merge-lane-")]
+    checks.extend([check(selected), check(other, 2), check(other, 3, "skipped")])
+    spoof = check(other, 999)
+    spoof["check_suite"]["id"] = 99
+    checks.extend([spoof, check(other, 1000, app="foreign")])
+    api.data[f"actions/runs?head_sha={SHA}"].append(
+        dict(check_suite_id=99, path=".github/workflows/pr-added.yml")
+    )
+    assert m.eligibility(api, pr) == ""
+    checks.append(check(other, 4, "failure"))
+    assert m.eligibility(api, pr) == "label does not match CI lane"
 
 
 @pytest.mark.parametrize("state", ["pending", "failure", "error", "missing"])
@@ -718,6 +777,11 @@ def test_same_named_foreign_workflow_cannot_satisfy_or_mask(
     pr = pull()
     if name == "merge-lane-mac":
         pr["labels"] = [dict(name="merge-ready-mac")]
+        api.data[f"commits/{SHA}/check-runs?filter=all"] = [
+            c
+            for c in api.data[f"commits/{SHA}/check-runs?filter=all"]
+            if c["name"] != "merge-lane-no-mac"
+        ]
     checks = api.data[f"commits/{SHA}/check-runs?filter=all"]
     checks[:] = [c for c in checks if c["name"] != name]
     if real != "missing":

@@ -202,6 +202,13 @@ def eligibility(api: GitHub, pr: dict) -> str:
         allowed = {"success", "skipped"} if name == "type-check" else {"success"}
         if check.get("status") != "completed" or check.get("conclusion") not in allowed:
             return f"{name} missing or not green on head"
+    other_lane = "merge-lane-mac" if "merge-ready" in ready else "merge-lane-no-mac"
+    other_check = latest.get(other_lane)
+    if other_check is not None and (
+        other_check.get("status") != "completed"
+        or other_check.get("conclusion") != "skipped"
+    ):
+        return "label does not match CI lane"
     statuses = api.items(f"commits/{sha}/statuses")
     binding = [
         s
