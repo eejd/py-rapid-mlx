@@ -146,7 +146,7 @@ struct LocalSearchPreviewDismissal {
     func acquire(_ controller: LocalSearchPreviewController) -> Bool {
         finishClosingIfHidden(reopen: false)
         guard let window = controller.window else { return false }
-        let panel = panel ?? QLPreviewPanel.shared()!
+        guard let panel = panel ?? QLPreviewPanel.shared() else { return false }
         self.panel = panel
         owner = controller
         if ownerWindow == nil {
