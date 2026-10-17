@@ -41,7 +41,7 @@ rapid_mlx/gdn_in_proj_fusion.py 1
 rapid_mlx/gdn_prefill.py 2
 rapid_mlx/gradio_app.py 5
 rapid_mlx/image/engine.py 1
-rapid_mlx/kernels/turboquant_fused.py 5
+rapid_mlx/kernels/turboquant_fused.py 3
 rapid_mlx/launch/_common.py 1
 rapid_mlx/launch/cli.py 9
 rapid_mlx/mcp/executor.py 1

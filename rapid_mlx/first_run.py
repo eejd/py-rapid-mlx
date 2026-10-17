@@ -244,36 +244,6 @@ def claim_chat_agent_tip() -> bool:
         return False
 
 
-def _session_seen_marker() -> Path:
-    return _state_dir() / "session_seen"
-
-
-def mark_first_session() -> bool:
-    """Atomically record that this client has reached a recorded session.
-
-    Returns ``True`` for exactly ONE call per machine -- the first process to
-    create the ``session_seen`` marker via exclusive ``O_EXCL`` creation.
-    Every later call (and any concurrent racer that loses) gets ``False``.
-    The marker is local state shared with the desktop activation flow. The
-    caller decides whether and how to report the derived boolean; this helper
-    performs no consent check and sends nothing.
-
-    Fail-safe toward ``False`` on any error (unwritable state dir, etc.):
-    under-reporting a first run is conservative -- it never inflates the
-    funnel's new-client count -- and never crashes the session.
-    """
-    try:
-        marker = _session_seen_marker()
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        with open(marker, "x"):
-            pass
-        return True
-    except FileExistsError:
-        return False
-    except Exception:
-        return False
-
-
 def chat_agent_tip_text() -> str:
     """The one-line tip shown after a user's first successful chat.
 

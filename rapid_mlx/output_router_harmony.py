@@ -421,20 +421,6 @@ class HarmonyStreamingRouter:
         }
 
 
-def is_openai_harmony_available() -> bool:
-    """Return True iff the optional ``openai-harmony`` dep can be
-    imported. The detection caller (``OutputRouter.from_tokenizer``)
-    uses this to decide whether to construct the new harmony router
-    or fall back to the legacy custom state machine.
-    """
-    try:
-        import openai_harmony  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
 # Codex round-3 NIT: cache by tokenizer identity so the compatibility
 # probe + harmony encoding load only happen once per model identity,
 # not once per request. The streaming factory runs per
@@ -524,8 +510,7 @@ def is_openai_harmony_compatible(token_map: TokenMap, tokenizer: Any) -> bool:
     All three must pass. Result is cached per tokenizer identity
     (codex round-3 NIT) so the probe runs at most once per model.
     """
-    # Codex round-8 NIT: skip the redundant ``is_openai_harmony_available``
-    # call — ``_get_harmony_encoding`` is the single dependency probe
+    # ``_get_harmony_encoding`` is the single dependency probe
     # and returns ``None`` if the import fails. The pre-cache return
     # path below collapses cleanly to ``False`` in that case.
 
