@@ -69,6 +69,7 @@ class NemotronToolParser(ToolParser):
     _content_upto = 0
     _stream_started = False
     _post_call_wrapped = False
+    _wrapped_whitespace: tuple[int, int] | None = None
 
     # Pattern for Nemotron-style with parameters.
     #
@@ -110,6 +111,7 @@ class NemotronToolParser(ToolParser):
         self._content_upto = 0
         self._stream_started = False
         self._post_call_wrapped = False
+        self._wrapped_whitespace = None
         self._undeclared_logged = False
         self._opener_scan_upto = 0
         self._opener_scan_result = False
@@ -122,11 +124,35 @@ class NemotronToolParser(ToolParser):
         # Inspect only the held range: old markers elsewhere in the response
         # must not hide trailing prose. A full opener or ambiguous suffix still
         # belongs to markup and must never be flushed onto the content channel.
+        whitespace = self._wrapped_whitespace
+        if (
+            not final
+            and self._post_call_wrapped
+            and whitespace is not None
+            and whitespace[0] == self._content_upto
+            and len(full_text) >= whitespace[1]
+        ):
+            added = full_text[whitespace[1] :]
+            if not added or added.isspace():
+                # A held function close plus whitespace still cannot decide
+                # whether a wrapper close follows. Check only new whitespace.
+                self._wrapped_whitespace = (self._content_upto, len(full_text))
+                return ""
+        self._wrapped_whitespace = None
         held = full_text[self._content_upto :]
         if self._post_call_wrapped:
             consumed, pending_pair = self._wrapped_tail_boundary(held)
             self._content_upto += consumed
             held = held[consumed:]
+            if pending_pair is not None:
+                candidate = held[pending_pair:]
+                if candidate.startswith("</function>"):
+                    gap = candidate[len("</function>") :]
+                    if not gap or gap.isspace():
+                        self._wrapped_whitespace = (
+                            self._content_upto,
+                            len(full_text),
+                        )
         else:
             pending_pair = None
         pending = self._pending_markup_index(
@@ -179,7 +205,7 @@ class NemotronToolParser(ToolParser):
         if upto and len(prefix) >= upto:
             # Narration cannot change opener state, even with a wrapper still
             # open. Include bounded lookbehind for tags split at watermarks.
-            markers = ("<function=", "<tool_call>")
+            markers: tuple[str, ...] = ("<function=", "<tool_call>")
             if self._opener_scan_result:
                 markers += ("</function>", "</tool_call>")
             added = prefix[max(0, upto - max(map(len, markers))) :]
@@ -688,6 +714,7 @@ class NemotronToolParser(ToolParser):
             self._content_upto = len(previous_text)
             self._opener_scan_upto = 0
             self._post_call_wrapped = False
+            self._wrapped_whitespace = None
             self._stream_started = True
         if "<tool_call>" not in current_text and "<function=" not in current_text:
             # Ordinary prose, forwarded verbatim — already on the wire, so a

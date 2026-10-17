@@ -495,6 +495,42 @@ def test_trailing_narration_does_not_rescan_accounted_prefix(parser, monkeypatch
     assert scans <= 1
 
 
+@pytest.mark.parametrize("ending", ["", "</tool_call> visible", " literal"])
+def test_wrapped_tail_bytewise_whitespace_has_linear_scan_work(
+    parser, monkeypatch, ending
+):
+    scanned_bytes = 0
+    scans = 0
+    boundary = parser._wrapped_tail_boundary
+
+    def counted_boundary(held):
+        nonlocal scanned_bytes, scans
+        scanned_bytes += len(held)
+        scans += 1
+        return boundary(held)
+
+    monkeypatch.setattr(parser, "_wrapped_tail_boundary", counted_boundary)
+    whitespace = " \n" * 4096
+    tail = " held prose </function>" + whitespace + ending
+    previous = ""
+    content = ""
+    calls = []
+    for chunk in [_COMPLETED_WRAPPER, *tail]:
+        current = previous + chunk
+        delta = parser.extract_tool_calls_streaming(previous, current, chunk) or {}
+        calls.extend(delta.get("tool_calls", []))
+        content += delta.get("content", "")
+        previous = current
+    content += parser.flush_held_content(previous)
+    assert len(calls) == 1
+    assert json.loads(calls[0]["function"]["arguments"]) == {"city": "Paris"}
+    assert content == (
+        " held prose  visible" if ending.startswith("</tool_call>") else tail
+    )
+    assert scanned_bytes <= 32 * len(previous), (scanned_bytes, scans)
+    assert scans <= 64
+
+
 @pytest.mark.parametrize("reset", [False, True])
 def test_opener_scan_cache_does_not_hide_next_turn_wrapper(parser, reset):
     parser.extract_tool_calls_streaming(
