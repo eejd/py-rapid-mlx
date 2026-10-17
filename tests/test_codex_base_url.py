@@ -277,26 +277,90 @@ def test_cli_unusable_saved_endpoint_falls_back(cli_runner, tmp_path, contents, 
     assert "Using saved Codex endpoint" not in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("available", [True, False])
-def test_cli_saved_endpoint_credentials_are_not_printed(
-    cli_runner, tmp_path, capsys, available
+@pytest.mark.parametrize("endpoint_source", ["saved", "explicit"])
+@pytest.mark.parametrize("refresh_fails", [False, True])
+def test_cli_endpoint_credentials_are_not_printed(
+    tmp_path, monkeypatch, capsys, caplog, endpoint_source, refresh_fails
 ):
+    import httpx
+
+    from rapid_mlx.cli import agents_command
+
+    endpoint = "http://credential-user:credential-password@127.0.0.1:8581/v1"
+    requests = []
+
+    def handle_request(_transport, request):
+        requests.append(request)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={})
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "local-qwen"}]})
+        return httpx.Response(401, json={"error": "Unauthorized"})
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+    monkeypatch.setattr(AgentTestRunner, "_agent_binary_available", lambda _: False)
+    if refresh_fails:
+
+        def fail_refresh(*args, **kwargs):
+            raise RuntimeError(f"Cannot refresh config for {endpoint}")
+
+        monkeypatch.setattr("rapid_mlx.agents.adapter.setup_agent_config", fail_refresh)
+
+    flags = ["codex", "--test"]
+    if endpoint_source == "saved":
+        config = tmp_path / "codex" / "config.toml"
+        config.parent.mkdir()
+        config.write_text(
+            'model_provider = "custom"\n[model_providers.custom]\n'
+            f'base_url = "{endpoint}"\n'
+        )
+    else:
+        flags += ["--base-url", endpoint]
+
+    with pytest.raises(SystemExit) as raised:
+        agents_command(_cli_args(*flags))
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + caplog.text
+    assert "401 Unauthorized" in output
+    assert "http://127.0.0.1:8581/v1/chat/completions" in output
+    assert "credential-user" not in output
+    assert "credential-password" not in output
+    posts = [request for request in requests if request.method == "POST"]
+    assert posts
+    for request in posts:
+        assert request.url.userinfo == b"credential-user:credential-password"
+        assert request.headers["authorization"].startswith("Basic ")
+    if refresh_fails:
+        assert "could not refresh codex" in output
+
+
+def test_cli_unavailable_saved_endpoint_credentials_are_not_printed(
+    tmp_path, monkeypatch, capsys
+):
+    import httpx
+
+    from rapid_mlx.cli import agents_command
+
     config = tmp_path / "codex" / "config.toml"
     config.parent.mkdir()
     config.write_text(
         'model_provider = "custom"\n[model_providers.custom]\n'
-        'base_url = "http://user:saved-password@127.0.0.1:8581"\n'
+        'base_url = "http://credential-user:credential-password@127.0.0.1:8581"\n'
     )
-    cli_runner.return_value._server_available.return_value = available
-    assert _run_cli_test(cli_runner, "codex", exit_code=0 if available else 1) == (
-        "http://user:saved-password@127.0.0.1:8581/v1"
+    monkeypatch.setattr(
+        httpx.HTTPTransport,
+        "handle_request",
+        lambda *_: httpx.Response(503, json={}),
     )
-    output = capsys.readouterr().out
-    assert "Using saved Codex endpoint: http://127.0.0.1:8581/v1" in output
-    assert "user" not in output
-    assert "saved-password" not in output
-    if not available:
-        assert "Server not running at http://127.0.0.1:8581/v1" in output
+    with pytest.raises(SystemExit) as raised:
+        agents_command(_cli_args("codex", "--test"))
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "Server not running at http://127.0.0.1:8581/v1" in output
+    assert "credential-user" not in output
+    assert "credential-password" not in output
 
 
 def test_cli_other_agent_keeps_default_without_readback(cli_runner, monkeypatch):
