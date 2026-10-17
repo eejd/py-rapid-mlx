@@ -9220,6 +9220,38 @@ def test_closest_only_after_empty_normal_results(tmp_path, monkeypatch, group_li
     asyncio.run(scenario())
 
 
+def test_closest_sorts_off_event_loop(tmp_path, monkeypatch):
+    from rapid_mlx.local_search import service
+
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "file.txt").write_text("apple contract")
+        search = engine(tmp_path)
+        try:
+            await search.add_folder(str(root))
+            await search.wait_idle()
+            monkeypatch.setattr(service, "semantic_ranking", lambda *a, **kw: [])
+            loop_thread = threading.current_thread()
+            sort_threads = []
+
+            def checked_sorted(iterable, *, key):
+                def checked_key(item):
+                    sort_threads.append(threading.current_thread())
+                    assert threading.current_thread() is not loop_thread
+                    return key(item)
+
+                return sorted(iterable, key=checked_key)
+
+            monkeypatch.setattr(service, "sorted", checked_sorted, raising=False)
+            response = await search.search("paraphrase", 20, None)
+            assert sort_threads
+            assert [hit["matched"] for hit in response["results"]] == [["closest"]]
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("content_indexed", [True, False])
 @pytest.mark.parametrize("limit", [1, 20])
 def test_closest_stops_safety_checks_after_admitted_limit(

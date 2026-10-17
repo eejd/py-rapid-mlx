@@ -1081,14 +1081,16 @@ class LocalSearch:
                 break
         if not hits and mode == "hybrid" and semantic_scores is not None:
             # Reuse scoped scores and per-file/safety checks only on empty results.
-            closest = sorted(
-                semantic_scores.items(), key=lambda item: (-item[1], item[0])
-            )
             hits = await asyncio.to_thread(
                 lambda: list(
                     islice(
                         admitted(
-                            (i, score, ["closest"]) for i, score in closest if score > 0
+                            (i, score, ["closest"])
+                            for i, score in sorted(
+                                semantic_scores.items(),
+                                key=lambda item: (-item[1], item[0]),
+                            )
+                            if score > 0
                         ),
                         min(limit, SEMANTIC_FALLBACK_FILES),
                     )
