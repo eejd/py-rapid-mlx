@@ -36,8 +36,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from rapid_mlx.errors import MetalMemoryBackpressureError
-from rapid_mlx.request import Request, SamplingParams
-from rapid_mlx.scheduler import BackpressureError, Scheduler, SchedulerConfig
+from rapid_mlx.request import Request, RequestStatus, SamplingParams
+from rapid_mlx.scheduler import (
+    BackpressureError,
+    BatchGenerator,
+    Scheduler,
+    SchedulerConfig,
+)
 
 # Rotating-cache capacity granularity — mirrors kv_estimation's
 # ``_ROTATING_CACHE_STEP`` / ``_ROTATING_CACHE_KEEP`` (mlx_lm's
@@ -508,29 +513,18 @@ class TestInFlightKVReservation:
         )
         return Scheduler(model=MagicMock(), tokenizer=MagicMock(), config=config)
 
-    def test_waiting_reservations_counted_in_cap_check(self):
-        """3 already-admitted-but-not-stepped requests of ~25 GB each
-        → admission of a 4th request that ALONE would fit must reject
-        because the cumulative WAITING reservations push over cap."""
+    def test_waiting_reservations_queue_instead_of_rejecting(self):
+        """Temporary waiting pressure belongs to promotion, not the 503 gate."""
         sched = self._make_scheduler(kv_bytes_per_token=1_000_000)
-        # Pre-seed 3 WAITING requests of ~25 GB each (25_000 tokens)
         for i in range(3):
-            prev = _make_request(rid=f"prev-{i}", tokens=25_000)
-            prev.sampling_params = SamplingParams(max_tokens=1)
-            sched.waiting.append(prev)
-        # The NEW request alone: 25 GB
+            sched.waiting.append(_make_request(rid=f"prev-{i}", tokens=25_000))
         new_req = _make_request(rid="new", tokens=25_000)
-        new_req.sampling_params = SamplingParams(max_tokens=1)
-        # Cap is 100 GB, active is 10 GB. Alone, new_req would fit
-        # (10 + 25 = 35 < 100). With 3 × 25 GB waiting, the cap
-        # check sees 10 + 75 + 25 = 110 GB > 100 GB → reject.
         with (
             patch.object(sched, "_resolve_metal_cap_bytes", return_value=100 * 10**9),
             patch.object(sched, "_current_metal_active_bytes", return_value=10 * 10**9),
-            pytest.raises(BackpressureError, match="reserved KV"),
         ):
             sched._enforce_metal_cap_at_admission(new_req)
-        assert sched.num_metal_cap_violations == 1
+        assert sched.num_metal_cap_violations == 0
 
     def test_running_reservations_excluded_to_avoid_double_count(self):
         """Codex round 6 BLOCKING #3: requests in ``self.running``
@@ -951,12 +945,9 @@ class TestArchitectureAwareKVEstimate:
         assert sched._kv_sliding_slot_bytes == 2 * (n // 2) * kv * hd * 2
         assert sched._kv_sliding_window == window
 
-    def test_nested_config_without_layer_types_stays_byte_identical(self):
-        # BYTE-IDENTICAL guard: a multimodal config whose text_config carries NO
-        # valid layer_types (a non-hybrid nested model) must NOT adopt the nested
-        # dims — the outer config has no num_hidden_layers, so admission
-        # accounting stays exactly as before (0, no phantom estimate). Only a
-        # genuine nested hybrid (valid layer_types) flips to the nested dims.
+    def test_nested_config_without_layer_types_uses_geometry_fallback(self):
+        # When the outer config lacks geometry, the live-dims fallback can
+        # still resolve valid integer text-tower dims without hybrid metadata.
         cfg = SimpleNamespace(
             vision_config=SimpleNamespace(num_hidden_layers=27),
             text_config=SimpleNamespace(
@@ -968,7 +959,7 @@ class TestArchitectureAwareKVEstimate:
             dtype="bfloat16",
         )
         sched = self._sched(cfg)
-        assert sched._resolve_kv_bytes_per_token() == 0
+        assert sched._resolve_kv_bytes_per_token() == 2 * 32 * 8 * 128 * 4
         assert sched._resolve_kv_fixed_baseline_bytes() == 0
 
     def test_operator_override_wins_and_zeroes_baseline(self):
@@ -1519,3 +1510,855 @@ class TestOverCapGarbageReclaim:
         message = str(info.value)
         assert "needs approximately" in message
         assert "Retry after in-flight requests drain" in message
+
+
+# Cohort admission uses fake allocator bytes and a recording generator; no GPU
+# allocations are needed to exercise the production waiting->running path.
+def _cohort_scheduler():
+    sched = _make_scheduler()
+    sched._resolve_metal_cap_bytes = lambda: 1000
+    sched._current_metal_active_bytes = lambda: 400
+    sched._resolve_kv_bytes_per_token = lambda: 0
+    sched._resolve_kv_fixed_baseline_bytes = lambda: 0
+    sched._kv_sliding_slot_bytes = 0
+    sched._kv_sliding_window = 0
+    sched._estimate_request_kv_bytes = lambda r, **kwargs: 50
+    sched._prefill_workspace_high_water = 1.5
+    sched._prefill_workspace_calibrated = True
+    sched.config.prefill_step_size = 10
+    queue = []
+
+    def insert(tokens, **kwargs):
+        uid = len(sched.running) + 100
+        queue.append((uid, [tokens[0]], 1, None, []))
+        return [uid]
+
+    sched.batch_generator = SimpleNamespace(
+        prefill_step_size=10,
+        _prompt_batch=SimpleNamespace(uids=[]),
+        _currently_processing=[],
+        _unprocessed_sequences=queue,
+        insert=insert,
+    )
+    sched._ensure_batch_generator = lambda params: True
+    return sched
+
+
+def test_prefill_cohorts_queue_eight_finish_in_order_and_retry(caplog):
+    sched = _cohort_scheduler()
+    requests = [_make_request(str(i), 10) for i in range(8)]
+    for r in requests:
+        sched._enforce_metal_cap_at_admission(r)
+        sched.waiting.append(r)
+        sched.requests[r.request_id] = r
+    with caplog.at_level(logging.INFO):
+        first = sched._schedule_waiting()
+        assert first == requests[:3]
+        assert list(sched.waiting) == requests[3:]
+        assert sched._schedule_waiting() == []
+    assert sum("[prefill-cohort]" in r.message for r in caplog.records) == 1
+    finished = []
+    while sched.running or sched.waiting:
+        finished.extend(sched.running.values())
+        for r in sched.running.values():
+            r.output_token_ids = [1]
+            r.status = RequestStatus.FINISHED_STOPPED
+        with patch("rapid_mlx.scheduler.mx.clear_cache"):
+            sched._cleanup_finished(set(sched.running))
+        sched.batch_generator._unprocessed_sequences.clear()
+        sched._schedule_waiting()
+    assert finished == requests
+    assert sched.finished_req_ids == {r.request_id for r in requests}
+    assert all(r.status == RequestStatus.FINISHED_STOPPED for r in requests)
+    assert sched.num_metal_cap_violations == 0
+
+
+def test_prefill_existing_processed_and_hidden_insert_rows_counted():
+    sched = _cohort_scheduler()
+    rows = [_make_request(str(i), 10) for i in range(4)]
+    sched.waiting.extend(rows[:2])
+    assert sched._schedule_waiting() == rows[:2]
+    bg = sched.batch_generator
+    uid = rows[0].batch_uid
+    bg._unprocessed_sequences.pop(0)
+    bg._prompt_batch.uids = [uid]
+    bg._currently_processing = [[[[1, 2]], 8, 10]]
+    assert sched._prefill_memory_rows() == [(rows[0], 8), (rows[1], 0)]
+    sched.waiting.extend(rows[2:])
+    reclaims = []
+    original_reclaim = sched._reclaim_prefix_cache_for_prefill
+    sched._reclaim_prefix_cache_for_prefill = lambda *a, **k: (
+        reclaims.append(a) or original_reclaim(*a, **k)
+    )
+    assert sched._schedule_waiting() == []  # stepped cohorts stay sealed
+    assert reclaims == []  # a sealed cohort never evicts prefixes to defer
+    bg._currently_processing[0][1] = 0
+    assert sched._schedule_waiting() == rows[2:3]
+    assert list(sched.waiting) == rows[3:]
+
+
+def test_prefill_prefix_and_processed_kv_are_not_double_charged():
+    sched = _cohort_scheduler()
+    r = _make_request(tokens=10)
+    sched._resolve_kv_bytes_per_token = lambda: 10
+    sched._resolve_kv_fixed_baseline_bytes = lambda: 20
+    sched._estimate_request_kv_bytes = lambda r, **kwargs: 130
+    assert sched._prefill_unmaterialized_bytes(r, 0) == 130
+    r.cached_tokens = 6
+    assert sched._prefill_unmaterialized_bytes(r, 2) == 30
+    r.batch_uid = 100
+    sched.running[r.request_id] = r
+    r.output_token_ids = [7]
+    assert sched._prefill_unmaterialized_bytes(r, 0) == 0
+    assert sched._prefill_workspace_units(r) == 40  # full context, suffix chunk
+
+
+@pytest.mark.parametrize("disabled_cap", [0, -1])
+def test_prefill_singleton_progress_and_disabled_cap(disabled_cap):
+    sched = _cohort_scheduler()
+    sched._current_metal_active_bytes = lambda: 9999
+    sched.waiting.extend([_make_request("a", 10), _make_request("b", 10)])
+    assert [r.request_id for r in sched._schedule_waiting()] == ["a"]
+    assert [r.request_id for r in sched.waiting] == ["b"]
+    sched._resolve_metal_cap_bytes = lambda: disabled_cap
+    assert sched._begin_prefill_memory_sample() is None
+    assert [r.request_id for r in sched._schedule_waiting()] == ["b"]
+
+
+def test_prefill_memory_sample_skips_without_generator():
+    sched = _cohort_scheduler()
+    sched._resolve_metal_cap_bytes = lambda: 1000
+    sched.batch_generator = None
+    assert sched._begin_prefill_memory_sample() is None
+
+
+def test_prefill_uncalibrated_cohort_is_narrow_and_high_water_only_rises():
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_high_water
+    del sched._prefill_workspace_calibrated
+    sched.waiting.extend(_make_request(str(i), 10) for i in range(8))
+    assert len(sched._schedule_waiting()) == 1
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory") as reset:
+        before = sched._begin_prefill_memory_sample()
+        reset.assert_called_once()
+    assert before is not None
+    assert before[:2] == (400, [(next(iter(sched.running.values())), 10)])
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=500):
+        sched._finish_prefill_memory_sample(before)
+    assert sched._prefill_workspace_high_water == 1
+    assert sched._schedule_waiting() == []  # one chunk cannot widen the cohort
+    req = next(iter(sched.running.values()))
+    sched._process_batch_responses(
+        [
+            SimpleNamespace(
+                uid=req.batch_uid,
+                token=1,
+                finish_reason="stop",
+                logprobs=None,
+                prompt_cache=None,
+                all_tokens=req.prompt_token_ids,
+            )
+        ]
+    )
+    assert sched._prefill_workspace_calibrated
+    assert not req._prefill_memory_sampled
+    sched.running.clear()
+    sched.batch_generator._unprocessed_sequences.clear()
+    assert len(sched._schedule_waiting()) == 4
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=900):
+        sched._finish_prefill_memory_sample(before)
+    assert sched._prefill_workspace_high_water == 5
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=450):
+        sched._finish_prefill_memory_sample(before)
+    sched._finish_prefill_memory_sample(None)
+    assert sched._prefill_workspace_high_water == 5
+    assert sched._schedule_waiting() == []
+    sched.running.clear()
+    sched.batch_generator._unprocessed_sequences.clear()
+    assert sched._begin_prefill_memory_sample() is None
+    assert len(sched._schedule_waiting()) == 1
+
+
+def test_prefill_decode_growth_reserved_while_new_rows_wait():
+    sched = _cohort_scheduler()
+    r = _make_request("decode", 10)
+    r.output_token_ids = [2]
+    sched.running[r.request_id] = r
+    sched._current_metal_active_bytes = lambda: 760
+    assert not sched._prefill_cohort_fits(_make_request("new", 10))
+
+
+def test_args_geometry_reuses_hybrid_estimator_and_override_wins():
+    sched = _make_scheduler()
+    args = SimpleNamespace(
+        num_hidden_layers=4,
+        num_key_value_heads=2,
+        head_dim=64,
+        layer_types=["full_attention", "linear_attention"] * 2,
+        linear_num_value_heads=4,
+        linear_num_key_heads=2,
+        linear_key_head_dim=64,
+        linear_value_head_dim=64,
+        linear_conv_kernel_dim=4,
+    )
+    sched.model = SimpleNamespace(args=args)
+    expected = sched._footprint_from_model_dims()
+    assert expected.per_token_growth_bytes > 0
+    assert expected.fixed_baseline_bytes > 0
+    assert sched._resolve_kv_bytes_per_token() == expected.per_token_growth_bytes
+    assert sched._resolve_kv_fixed_baseline_bytes() == expected.fixed_baseline_bytes
+    sched._kv_bytes_per_token_resolved = False
+    sched.config.metal_cap_kv_bytes_per_token = 777
+    assert sched._resolve_kv_bytes_per_token() == 777
+    assert sched._resolve_kv_fixed_baseline_bytes() == 0
+
+
+def test_args_missing_dims_preserves_zero_geometry():
+    sched = _make_scheduler()
+    sched.model = SimpleNamespace(args=SimpleNamespace())
+    assert sched._resolve_kv_bytes_per_token() == 0
+
+
+def test_prefill_cohort_reclaims_prefixes_before_deferring_without_pressure_discount():
+    sched = _cohort_scheduler()
+    active = [900]
+    sched._current_metal_active_bytes = lambda: active[0]
+    sched.memory_aware_cache = SimpleNamespace(_entries={1: object()})
+    sched._prefill_reclaim_footprint = lambda: None  # dense also reclaims for cohorts
+
+    def evict():
+        active[0] -= 300
+        return True
+
+    sched._evict_one_prefix_cache_entry = evict
+    with patch("rapid_mlx.scheduler.mx.clear_cache"):
+        assert sched._prefill_cohort_fits(_make_request(tokens=10))
+    assert active[0] == 600
+    assert sched.num_prefix_cache_pressure_evictions == 1
+    # Fit below the cap but above the 90% cache-pressure watermark.
+    active[0] = 750
+    assert sched._prefill_cohort_fits(_make_request(tokens=10))
+    assert sched.num_prefix_cache_pressure_evictions == 1
+
+
+@pytest.mark.parametrize("prompt", ["raw long prompt", [1, 2, 3]])
+def test_prefill_admission_projects_actual_tokens_before_rejecting(prompt):
+    sched = _cohort_scheduler()
+    sched._encode_prompt_string = lambda text: [1, 2]
+    req = Request(
+        request_id="untokenized",
+        prompt=prompt,
+        sampling_params=SamplingParams(max_tokens=1),
+    )
+    sched._enforce_metal_cap_at_admission(req)
+    assert req.num_prompt_tokens == (2 if isinstance(prompt, str) else 3)
+
+
+def test_prefill_no_generator_and_tiny_warmup_dont_calibrate():
+    sched = _cohort_scheduler()
+    bg = sched.batch_generator
+    sched.batch_generator = None
+    assert sched._prefill_memory_rows() == []
+    sched.batch_generator = bg
+    req = _make_request(tokens=1)
+    sched.waiting.append(req)
+    sched._schedule_waiting()
+    assert sched._begin_prefill_memory_sample() is None
+
+
+def test_prefill_held_request_can_be_cancelled():
+    sched = _cohort_scheduler()
+    requests = [_make_request(str(i), 10) for i in range(8)]
+    sched.waiting.extend(requests)
+    sched.requests.update((r.request_id, r) for r in requests)
+    assert len(sched._schedule_waiting()) == 3
+    assert sched.abort_request("4")
+    sched._process_pending_aborts()
+    assert requests[4] not in sched.waiting
+    assert [r.request_id for r in sched.waiting] == ["3", "5", "6", "7"]
+
+
+def test_prefill_calibration_uses_dispatched_chunk_and_bounds_shorter_context():
+    sched = _cohort_scheduler()
+    sched.config.prefill_step_size = 2048
+    sched.batch_generator.prefill_step_size = 512
+    req = _make_request(tokens=8192)
+    sched.waiting.append(req)
+    sched._schedule_waiting()
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
+        before = sched._begin_prefill_memory_sample()
+    assert before is not None
+    assert before[:2] == (400, [(req, 512)])
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
+        sched._finish_prefill_memory_sample(before)
+    # A shorter context still reserves the activation high-water per chunk.
+    shorter = _make_request("shorter", 2048)
+    assert sched._prefill_workspace_bytes(shorter) >= 4096
+    # Growing final attention context never lowers the bound.
+    assert sched._prefill_workspace_bytes(req) >= sched._prefill_workspace_bytes(
+        shorter
+    )
+
+
+def test_prefill_heterogeneous_rows_reserve_padded_workspace():
+    sched = _cohort_scheduler()
+    long = _make_request("long", 100)
+    long.cached_tokens = 99
+    short = _make_request("short", 10)
+    # Long prefix-hit row needs only a one-token chunk; adding the ten-token
+    # short row pads the forward. Both must price ten tokens at context 100.
+    sched.waiting.append(long)
+    assert sched._schedule_waiting() == [long]
+    assert not sched._prefill_cohort_fits(short)
+
+
+def test_prefill_invalid_prefix_is_priced_as_cold_before_inserting():
+    sched = _cohort_scheduler()
+    sched._current_metal_active_bytes = lambda: 500
+    rows = [_make_request(str(i), 10) for i in range(3)]
+    sched.waiting.extend(rows[:2])
+    assert sched._schedule_waiting() == rows[:2]
+    stale = rows[2]
+    stale.prompt_cache = []
+    stale.cached_tokens = 9
+    stale.remaining_tokens = [9]
+    sched.waiting.append(stale)
+    assert sched._schedule_waiting() == []
+    assert list(sched.waiting) == [stale]
+    assert stale.cached_tokens == 0
+    assert stale.remaining_tokens == stale.prompt_token_ids
+    assert len(sched.batch_generator._unprocessed_sequences) == 2
+
+
+def test_prefill_failed_cache_insert_rechecks_cold_retry_budget():
+    sched = _cohort_scheduler()
+    sched._current_metal_active_bytes = lambda: 450
+    sched._resolve_kv_bytes_per_token = lambda: 10
+    rows = [_make_request(str(i), 10) for i in range(3)]
+    sched.waiting.extend(rows[:2])
+    assert sched._schedule_waiting() == rows[:2]
+    stale = rows[2]
+    stale.prompt_cache = [object()]
+    stale.cached_tokens = 9
+    stale.remaining_tokens = [9]
+    sched._validate_cache = lambda cache: True
+    sched.block_aware_cache = MagicMock()
+    stale.block_table = object()
+    stale.shared_prefix_blocks = 2
+    original = sched.batch_generator.insert
+
+    def insert(tokens, **kwargs):
+        if kwargs.get("caches"):
+            raise ValueError("incompatible cached shapes")
+        return original(tokens, **kwargs)
+
+    sched.batch_generator.insert = insert
+    sched.waiting.append(stale)
+    assert sched._schedule_waiting() == []
+    assert list(sched.waiting) == [stale]
+    assert stale.cached_tokens == 0
+    assert stale.block_table is None
+    assert stale.shared_prefix_blocks == 0
+    sched.block_aware_cache.release_cache.assert_called_once_with(stale.request_id)
+    assert len(sched.batch_generator._unprocessed_sequences) == 2
+
+
+def test_prefill_deferral_restores_position_after_shared_prefix_follower_bypass():
+    sched = _cohort_scheduler()
+    sched.waiting.extend(_make_request(str(i), 10) for i in range(3))
+    assert len(sched._schedule_waiting()) == 3
+    head, candidate = _make_request("follower", 10), _make_request("candidate", 10)
+    sched.waiting.extend([head, candidate])
+
+    def select_unblocked():
+        sched.waiting.remove(candidate)
+        return candidate
+
+    sched._pop_waiting_for_admission = select_unblocked
+    assert sched._schedule_waiting() == []
+    assert list(sched.waiting) == [head, candidate]
+
+
+def test_prefill_sample_preserves_process_cumulative_peak(monkeypatch):
+    from rapid_mlx import memory_peak
+
+    sched = _cohort_scheduler()
+    sched.waiting.append(_make_request("sample", 10))
+    sched._schedule_waiting()
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 400)
+    )
+    assert memory_peak.cumulative_peak_bytes() == 9_000_000_000
+    before = sched._begin_prefill_memory_sample()
+    peak[0] = 500
+    sched._finish_prefill_memory_sample(before)
+    assert sched._prefill_workspace_high_water == 1.5
+    assert memory_peak.cumulative_peak_bytes() == 9_000_000_000
+    assert sched.get_stats()["metal_peak_memory_gb"] == 9.0
+    peak[0] = 12_000_000_000
+    assert memory_peak.cumulative_peak_bytes() == 12_000_000_000
+    sched._begin_prefill_memory_sample()
+    assert memory_peak.cumulative_peak_bytes() == 12_000_000_000
+
+
+@pytest.mark.parametrize(
+    "generator",
+    [
+        object(),
+        BatchGenerator.__new__(BatchGenerator),
+        SimpleNamespace(
+            _prompt_batch=SimpleNamespace(uids=[101]), _currently_processing=[(101, 3)]
+        ),
+    ],
+)
+def test_prefill_rows_tolerate_generators_without_private_queues(generator):
+    sched = _cohort_scheduler()
+    request = _make_request("live", 10)
+    request.batch_uid = 101
+    sched.running[request.request_id] = request
+    sched.batch_generator = generator
+    expected = [(request, 3)] if hasattr(generator, "_prompt_batch") else []
+    assert sched._prefill_memory_rows() == expected
+
+
+def test_optimization_status_keeps_cumulative_peak_after_sample(monkeypatch):
+    from rapid_mlx import memory_peak, optimizations
+
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 1_000_000_000)
+    )
+    memory_peak.reset_peak_for_sample()
+    assert (
+        optimizations.get_optimization_status()["mlx_memory"]["peak_bytes"]
+        == 9_000_000_000
+    )
+
+
+def test_periodic_memory_log_keeps_cumulative_peak_after_sample(monkeypatch, caplog):
+    from rapid_mlx import memory_peak
+
+    sched = _make_scheduler()
+    sched._memory_log_interval = 1
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 1_000_000_000)
+    )
+    monkeypatch.setattr(memory_peak.mx.metal, "is_available", lambda: True)
+    memory_peak.reset_peak_for_sample()
+    with caplog.at_level(logging.INFO):
+        sched.step()
+    assert any(
+        "[Metal memory]" in r.message and "peak=9.0GB" in r.message
+        for r in caplog.records
+    )
+
+
+def test_mllm_stats_keep_cumulative_peak_after_prefill_sample(monkeypatch):
+    from rapid_mlx import memory_peak
+    from rapid_mlx.mllm_scheduler import MLLMScheduler
+
+    scheduler = MLLMScheduler.__new__(MLLMScheduler)
+    scheduler.running = {}
+    scheduler.num_requests_processed = 0
+    scheduler.total_prompt_tokens = 0
+    scheduler.total_completion_tokens = 0
+    scheduler.performance = SimpleNamespace(snapshot=lambda: SimpleNamespace())
+    scheduler.waiting = []
+    scheduler._aborted_queue_ids = set()
+    scheduler.finished_req_ids = set()
+    scheduler.num_requests_cancelled = 0
+    scheduler.num_requests_cancelled_via_disconnect = 0
+    scheduler.batch_generator = None
+    scheduler.vision_cache = None
+    peak = [9_000_000_000]
+    monkeypatch.setattr(memory_peak, "_peak_carry", 0)
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: peak[0])
+    monkeypatch.setattr(
+        memory_peak.mx, "reset_peak_memory", lambda: peak.__setitem__(0, 1_000_000_000)
+    )
+    monkeypatch.setattr(memory_peak.mx.metal, "is_available", lambda: True)
+    memory_peak.reset_peak_for_sample()
+    assert scheduler.get_stats()["metal_peak_memory_gb"] == 9.0
+
+
+@pytest.mark.parametrize("failure", ["nontrimmable", "inspection", "trim"])
+def test_review_exact_hit_cold_fallback_defers_and_releases_refs(failure):
+    sched = _cohort_scheduler()
+    decode = _make_request("decode", 1)
+    decode.output_token_ids = [1]
+    sched.running[decode.request_id] = decode
+    req = _make_request("exact", 100)
+    req.prompt_cache = [object()]
+    req.cached_tokens = 100
+    req.remaining_tokens = []
+    req.block_table = object()
+    req.shared_prefix_blocks = 3
+    sched._validate_cache = lambda cache: True
+    sched.block_aware_cache = MagicMock()
+    sched.waiting.append(req)
+    with (
+        patch(
+            "mlx_lm.models.cache.can_trim_prompt_cache",
+            return_value=failure != "nontrimmable",
+            side_effect=ValueError("inspect") if failure == "inspection" else None,
+        ),
+        patch(
+            "mlx_lm.models.cache.trim_prompt_cache",
+            side_effect=ValueError("trim") if failure == "trim" else None,
+        ),
+    ):
+        assert sched._schedule_waiting() == []
+    assert list(sched.waiting) == [req]
+    assert req.prompt_cache is None
+    assert req.cached_tokens == 0
+    assert req.block_table is None
+    assert req.shared_prefix_blocks == 0
+    sched.block_aware_cache.release_cache.assert_called_once_with("exact")
+    assert not sched.batch_generator._unprocessed_sequences
+    assert not sched._hybrid_checkpoints
+    # Cold retry proceeds normally once the decoding row drains.
+    sched.running.clear()
+    assert sched._schedule_waiting() == [req]
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "abort", "error"])
+def test_review_interrupted_sample_does_not_qualify_calibration(interruption):
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_calibrated
+    sched.waiting.append(_make_request("sample", 10))
+    req = sched._schedule_waiting()[0]
+    sched.requests[req.request_id] = req
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
+        before = sched._begin_prefill_memory_sample()
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=500):
+        sched._finish_prefill_memory_sample(before)
+    if interruption == "error":
+        with patch("rapid_mlx.scheduler.mx.clear_cache"):
+            sched._recover_from_generation_error()
+        # Simulate the newly created compatible generator.
+        sched.batch_generator = _cohort_scheduler().batch_generator
+    else:
+        sched.batch_generator.remove = lambda uids: None
+        if interruption == "cancel":
+            sched.abort_request(req.request_id)
+            sched._process_pending_aborts()
+        else:
+            sched._do_abort_request(req.request_id)
+        sched.batch_generator._unprocessed_sequences.clear()
+    sched.waiting.extend(_make_request(str(i), 10) for i in range(3))
+    assert len(sched._schedule_waiting()) == 1
+    assert not getattr(sched, "_prefill_workspace_calibrated", False)
+    assert not getattr(req, "_prefill_memory_sampled", False)
+
+
+def test_review_pflash_physical_kv_reservation_preserves_usage_and_add_gate():
+    sched = _cohort_scheduler()
+    del sched._estimate_request_kv_bytes
+    sched._resolve_kv_bytes_per_token = lambda: 10
+    req = _make_request("compressed", 100)
+    req.prompt_token_ids = req.prompt_token_ids[:10]
+    req.model_prompt_tokens = 10
+    assert sched._estimate_request_kv_bytes(req) == 1010  # pre-transform add gate
+    sched.waiting.append(req)
+    assert sched._sum_in_flight_kv_bytes() == 1010
+    sched.waiting.clear()
+    assert sched._prefill_unmaterialized_bytes(req, 0) == 110
+    req.cached_tokens = 3
+    assert sched._prefill_unmaterialized_bytes(req, 2) == 60
+    req.cached_tokens = 0
+    req.output_token_ids = [1]
+    sched.running[req.request_id] = req
+    assert sched._prefill_unmaterialized_bytes(req, 0) == 0
+    assert sched._prefill_cohort_fits(_make_request("candidate", 1))
+    assert req.num_prompt_tokens == 100
+
+
+def test_review_abort_response_cannot_qualify_sample():
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_calibrated
+    req = _make_request("aborted-response", 10)
+    sched.waiting.append(req)
+    sched._schedule_waiting()
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory"):
+        before = sched._begin_prefill_memory_sample()
+    sched._finish_prefill_memory_sample(before)
+    sched._process_batch_responses(
+        [
+            SimpleNamespace(
+                uid=req.batch_uid,
+                token=1,
+                finish_reason="abort",
+                logprobs=None,
+                prompt_cache=None,
+                all_tokens=req.prompt_token_ids,
+            )
+        ]
+    )
+    assert not getattr(sched, "_prefill_workspace_calibrated", False)
+    assert not req._prefill_memory_sampled
+    assert req.status == RequestStatus.FINISHED_ABORTED
+
+
+@pytest.fixture
+def review2_generator(monkeypatch):
+    import importlib
+
+    import mlx.core as mx
+
+    # Earlier tests in the same worker may leave MLX's default stream and
+    # mlx-lm's generation stream bound to another thread's stream. Rebind both
+    # to a stream owned by this thread, restoring the default afterwards.
+    previous_default = mx.default_stream(mx.default_device())
+    current_stream = mx.new_stream(mx.default_device())
+    mx.set_default_stream(current_stream)
+    monkeypatch.setattr(
+        importlib.import_module("mlx_lm.generate"),
+        "generation_stream",
+        current_stream,
+    )
+
+    class Model:
+        def __call__(self, tokens, cache):
+            return mx.zeros((*tokens.shape, 4))
+
+    try:
+        with patch("mlx.core.metal.is_available", return_value=False):
+            generator = BatchGenerator(Model(), prefill_step_size=2048)
+        yield generator
+        generator.close()
+    finally:
+        mx.set_default_stream(previous_default)
+
+
+@pytest.mark.parametrize(
+    "lengths, qualifies", [([1, 254, 1], False), ([1, 256, 1], True)]
+)
+def test_review2_segmented_sample_requires_representative_dispatch(
+    review2_generator, lengths, qualifies
+):
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_calibrated
+    sched.config.prefill_step_size = 2048
+    sched.batch_generator = bg = review2_generator
+    del sched._prefill_workspace_high_water
+    req = _make_request("segmented", sum(lengths))
+    segments = [[0] * n for n in lengths]
+    req.batch_uid = bg.insert_segments([segments], caches=[[]], max_tokens=[1])[0]
+    sched.running[req.request_id] = req
+    sched.uid_to_request_id[req.batch_uid] = req.request_id
+    # The initial one-token segment must not reset peaks or qualify a sample.
+    with patch("rapid_mlx.scheduler.mx.reset_peak_memory") as reset:
+        before = sched._begin_prefill_memory_sample()
+    assert before is None
+    reset.assert_not_called()
+    bg.next()
+    # Subsequent sampling must see the active segment, rather than total suffix.
+    before = sched._begin_prefill_memory_sample()
+    assert (before is not None) == qualifies
+    bg.next()
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
+        sched._finish_prefill_memory_sample(before)
+    for _ in range(2):
+        _, responses = bg.next()
+        sched._process_batch_responses(responses)
+    assert bool(getattr(sched, "_prefill_workspace_calibrated", False)) == qualifies
+    if qualifies:
+        assert sched._prefill_workspace_per_chunk == 4  # 1024 / 256
+        assert sched._prefill_workspace_high_water == 1024 / (256 * sum(lengths))
+
+
+def test_review2_generation_batch_prompt_kv_already_resident(review2_generator):
+    sched = _cohort_scheduler()
+    del sched._estimate_request_kv_bytes
+    sched._resolve_kv_bytes_per_token = lambda: 10
+    sched.batch_generator = bg = review2_generator
+    req = _make_request("promoted", 40)
+    req.batch_uid = bg.insert([req.prompt_token_ids], caches=[[]], max_tokens=[1])[0]
+    sched.running[req.request_id] = req
+    bg.next()  # prefill 39 tokens
+    _, responses = bg.next()  # final prompt token; first output arrives next step
+    assert not responses and not req.num_output_tokens
+    assert req.batch_uid in bg._generation_batch.uids
+    assert sched._prefill_memory_rows() == []
+    assert sched._prefill_unmaterialized_bytes(req, 0) == 10
+    # Resident KV must not force cache eviction or defer a fitting candidate.
+    sched._prefill_workspace_high_water = 0
+    sched._resolve_metal_cap_bytes = lambda: 500
+    sched._reclaim_prefix_cache_for_prefill = MagicMock()
+    assert sched._prefill_cohort_fits(_make_request("candidate", 1))
+    assert sched._reclaim_prefix_cache_for_prefill.call_args.kwargs["cohort_need"] < 100
+
+
+@pytest.mark.parametrize("dispatch", ["tiny", "large", "both", "none"])
+def test_review2_sample_counts_only_dispatched_rows_and_marks_large_rows(dispatch):
+    sched = _cohort_scheduler()
+    del sched._prefill_workspace_high_water
+    del sched._prefill_workspace_calibrated
+    sched.config.prefill_step_size = 2048
+    bg = sched.batch_generator
+    bg.prefill_step_size = 2048
+    tiny = _make_request("tiny", 400)
+    large = _make_request("large", 800)
+    tiny.batch_uid, large.batch_uid = 101, 102
+    sched.running.update((r.request_id, r) for r in (tiny, large))
+    # One active segment plus an inserted row which may remain queued.
+    bg._prompt_batch.uids = [101]
+    bg._currently_processing = [[[[0], [0] * 399], 0, 400]]
+    bg._unprocessed_sequences = [(102, [[0] * 512, [0] * 288])]
+    before = sched._begin_prefill_memory_sample()
+    assert before is not None
+    assert before[:2] == (400, [(tiny, 1), (large, 512)])
+    assert not getattr(large, "_prefill_memory_sampled", False)
+    uids = {"tiny": [101], "large": [102], "both": [101, 102], "none": []}[dispatch]
+    with patch("rapid_mlx.scheduler.mx.get_peak_memory", return_value=1424):
+        sched._finish_prefill_memory_sample(
+            before, ([SimpleNamespace(uid=uid) for uid in uids], [])
+        )
+    assert not getattr(tiny, "_prefill_memory_sampled", False)
+    if dispatch in ("tiny", "none"):
+        assert not hasattr(sched, "_prefill_workspace_high_water")
+        assert not getattr(large, "_prefill_memory_sampled", False)
+    else:
+        assert large._prefill_memory_sampled
+        chunks = 513 if dispatch == "both" else 512
+        units = 512 * 800 + (400 if dispatch == "both" else 0)
+        assert sched._prefill_workspace_high_water == 1024 / units
+        assert sched._prefill_workspace_per_chunk == 1024 / chunks
+
+
+def test_review2_failed_sample_cannot_mark_a_trajectory():
+    sched = _cohort_scheduler()
+    sched.waiting.append(_make_request("sample", 10))
+    req = sched._schedule_waiting()[0]
+    before = sched._begin_prefill_memory_sample()
+    with (
+        patch("rapid_mlx.scheduler.mx.get_peak_memory", side_effect=RuntimeError),
+        pytest.raises(RuntimeError),
+    ):
+        sched._finish_prefill_memory_sample(before)
+    assert not getattr(req, "_prefill_memory_sampled", False)
+
+
+@pytest.mark.parametrize("timing", [False, True])
+def test_review2_step_samples_generator_dispatch_with_timing(review2_generator, timing):
+    sched = _cohort_scheduler()
+    sched._step_timing_enabled = timing
+    sched.config.prefill_step_size = 2048
+    sched.batch_generator = bg = review2_generator
+    req = _make_request("step-sample", 512)
+    req.batch_uid = bg.insert([req.prompt_token_ids], caches=[[]], max_tokens=[1])[0]
+    sched.running[req.request_id] = req
+    sched.requests[req.request_id] = req
+    sched.uid_to_request_id[req.batch_uid] = req.request_id
+    with patch.object(
+        sched,
+        "_finish_prefill_memory_sample",
+        wraps=sched._finish_prefill_memory_sample,
+    ) as finish:
+        for _ in range(2):
+            output = sched.step()
+            assert not output.finished_request_ids
+        assert finish.call_count == 2
+        before, raw_next = finish.call_args_list[0].args
+        assert before[1] == [(req, 511)]
+        assert raw_next[0][0].uid == req.batch_uid
+    assert req._prefill_memory_sampled
+
+
+@pytest.mark.parametrize("config", [SimpleNamespace(), {}])
+def test_incomplete_config_falls_back_to_integer_args_geometry(config):
+    sched = _make_scheduler()
+    sched.model = SimpleNamespace(
+        config=config,
+        args=SimpleNamespace(num_hidden_layers=4, num_key_value_heads=2, head_dim=64),
+    )
+    assert sched._resolve_kv_bytes_per_token() == 2 * 4 * 2 * 64 * 4
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        SimpleNamespace(config=SimpleNamespace()),
+        SimpleNamespace(config=SimpleNamespace(), args=SimpleNamespace()),
+        SimpleNamespace(config=SimpleNamespace(), args=MagicMock()),
+        MagicMock(),
+    ],
+)
+def test_incomplete_geometry_does_not_fabricate_kv_bytes(model):
+    sched = _make_scheduler()
+    sched.model = model
+    assert sched._footprint_from_model_dims() is None
+    assert sched._resolve_kv_bytes_per_token() == 0
+
+
+def test_peak_window_token_is_invalidated_by_each_reset(monkeypatch):
+    from rapid_mlx import memory_peak
+
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: 400)
+    monkeypatch.setattr(memory_peak.mx, "reset_peak_memory", lambda: None)
+    first = memory_peak.reset_peak_for_sample()
+    assert memory_peak.sample_window_intact(first)
+    second = memory_peak.reset_peak_for_sample()
+    assert second > first
+    assert not memory_peak.sample_window_intact(first)
+    assert memory_peak.sample_window_intact(second)
+    third = memory_peak.reset_peak_for_sample()
+    assert third > second
+    assert not memory_peak.sample_window_intact(second)
+    assert memory_peak.sample_window_intact(third)
+
+
+@pytest.mark.parametrize("interruption", [None, "before_read", "during_read"])
+def test_prefill_peak_window_controls_high_water_and_calibration(
+    monkeypatch, interruption
+):
+    from rapid_mlx import memory_peak
+
+    sched = _cohort_scheduler()
+    sched._prefill_workspace_calibrated = False
+    sched._prefill_workspace_per_chunk = 1.0
+    sched.waiting.append(_make_request("window", 10))
+    req = sched._schedule_waiting()[0]
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: 400)
+    monkeypatch.setattr(memory_peak.mx, "reset_peak_memory", lambda: None)
+    before = sched._begin_prefill_memory_sample()
+    assert before is not None
+    if interruption == "before_read":
+        memory_peak.reset_peak_for_sample()
+
+    def read_peak():
+        if interruption == "during_read":
+            # A second scheduler resets while the first reads its final peak.
+            monkeypatch.setattr(memory_peak.mx, "get_peak_memory", lambda: 400)
+            memory_peak.reset_peak_for_sample()
+        return 900
+
+    monkeypatch.setattr(memory_peak.mx, "get_peak_memory", read_peak)
+    sched._finish_prefill_memory_sample(before)
+    intact = interruption is None
+    assert sched._prefill_workspace_high_water == (5 if intact else 1.5)
+    assert sched._prefill_workspace_per_chunk == (50 if intact else 1.0)
+    assert bool(getattr(req, "_prefill_memory_sampled", False)) == intact
+    assert not sched._prefill_workspace_calibrated
+    sched._process_batch_responses(
+        [
+            SimpleNamespace(
+                uid=req.batch_uid,
+                token=1,
+                finish_reason="stop",
+                logprobs=None,
+                prompt_cache=None,
+                all_tokens=req.prompt_token_ids,
+            )
+        ]
+    )
+    assert sched._prefill_workspace_calibrated == intact
+    assert not getattr(req, "_prefill_memory_sampled", False)

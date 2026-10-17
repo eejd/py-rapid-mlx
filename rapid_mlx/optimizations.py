@@ -27,6 +27,8 @@ from dataclasses import dataclass
 
 import mlx.core as mx
 
+from .memory_peak import cumulative_peak_bytes
+
 logger = logging.getLogger(__name__)
 
 
@@ -198,7 +200,7 @@ def get_optimization_status() -> dict:
         "mlx_memory": {
             "active_bytes": mx.get_active_memory(),
             "cache_bytes": mx.get_cache_memory(),
-            "peak_bytes": mx.get_peak_memory(),
+            "peak_bytes": cumulative_peak_bytes(),
         },
         "mlx_lm_features": {
             "flash_attention": "built-in" if flash_available else "not available",
