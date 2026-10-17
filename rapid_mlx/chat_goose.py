@@ -320,6 +320,8 @@ def run(args, base_url: str, model: str, *, max_tokens_explicit: bool) -> bool:
                 "--no-profile",
                 "--with-builtin",
                 BUILTINS,
+                "--output-format",
+                args.output_format,
                 "--text",
                 first_prompt,
             ],

@@ -2579,6 +2579,12 @@ def _add_chat_parser(
         ),
     )
     chat_parser.add_argument(
+        "--output-format",
+        choices=("text", "stream-json"),
+        default="text",
+        help="Goose output format (default: text; stream-json is useful for scripts)",
+    )
+    chat_parser.add_argument(
         "--disable-prefix-cache",
         action="store_true",
         help=(

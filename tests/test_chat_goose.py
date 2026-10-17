@@ -37,6 +37,7 @@ def test_goose_cli_starts_desktop_helpers_and_runs_pinned_harness(
         max_tokens=2048,
         think=False,
         disable_prefix_cache=True,
+        output_format="stream-json",
     )
 
     assert chat_goose.run(
