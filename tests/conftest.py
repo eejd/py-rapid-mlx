@@ -3,6 +3,7 @@
 
 import argparse
 import contextlib
+import importlib.machinery
 import importlib.util
 import ipaddress
 import os
@@ -45,6 +46,130 @@ def _assert_no_uninjected_posthog_posts(calls: list[str]) -> None:
 def _posthog_transport_guard_assertion():
     """Expose the session guard assertion for its self-check."""
     return _assert_no_uninjected_posthog_posts
+
+
+# Launch configuration assigned by the CLI, standalone main, and their helpers.
+# Keep this explicit: the AST guard test makes new launch settings opt in here.
+# Engine/manager instances and task ownership are left to lifecycle fixtures;
+# the telemetry latches already have a dedicated reset below.
+_SERVER_SERVE_CONFIG_GLOBALS = (
+    "_alias_recommended_sampling",
+    "_api_key",
+    "_body_receive_timeout_seconds",
+    "_context_length",
+    "_default_frequency_penalty",
+    "_default_max_tokens",
+    "_default_max_tokens_is_explicit",
+    "_default_min_p",
+    "_default_presence_penalty",
+    "_default_reasoning_effort",
+    "_default_repetition_penalty",
+    "_default_temperature",
+    "_default_timeout",
+    "_default_top_k",
+    "_default_top_p",
+    "_embedding_max_length",
+    "_embedding_model_locked",
+    "_embedding_overflow_policy",
+    "_enable_audio_lane",
+    "_enable_auto_tool_choice",
+    "_enable_tool_logits_bias",
+    "_gc_control",
+    "_generation_config_sampling",
+    "_last_resolved_cors_policy",
+    "_max_prompt_tokens",
+    "_max_request_bytes",
+    "_mcp_config_path",
+    "_model_alias",
+    "_model_name",
+    "_model_path",
+    "_no_thinking",
+    "_pin_system_prompt",
+    "_primary_idle_unload_seconds",
+    "_primary_lazy_load",
+    "_rate_limiter",
+    "_reasoning_parser",
+    "_reasoning_parser_name",
+    "_relocate_mid_conversation_system",
+    "_resident_gpu_memory_utilization",
+    "_resident_idle_ttl_seconds",
+    "_resident_memory_limit_bytes",
+    "_served_model_name_set",
+    "_sse_keepalive_seconds",
+    "_standalone_start_model",
+    "_telemetry_auto_selected",
+    "_tool_call_parser",
+    "_tool_parser_instance",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_server_serve_config():
+    """Restore launch settings without importing the optional server stack.
+
+    If a test first imports the server, observe its normal source loader and
+    snapshot immediately after module execution, before the importer can call
+    serve/main. This also works in pytest-only CI: no server import is forced.
+    Save references rather than deep-copying parser objects or runtime locks.
+    The shared rate limiter also needs its in-place configuration restored.
+    """
+    missing = object()
+    snapshots = []
+
+    def snapshot(module):
+        limiter = getattr(module, "_rate_limiter", None)
+        limiter_config = {
+            name: getattr(limiter, name)
+            for name in ("requests_per_minute", "enabled")
+            if hasattr(limiter, name)
+        }
+        snapshots.append(
+            (
+                module,
+                {
+                    name: getattr(module, name, missing)
+                    for name in _SERVER_SERVE_CONFIG_GLOBALS
+                },
+                limiter,
+                limiter_config,
+            )
+        )
+
+    class ServerImportObserver:
+        def find_spec(self, fullname, path, target=None):
+            if fullname != "rapid_mlx.server":
+                return None
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+            if spec is None or spec.loader is None:
+                return None
+            execute = spec.loader.exec_module
+
+            def execute_and_snapshot(module):
+                # Do not retain this test's snapshot closure on module.__loader__.
+                spec.loader.exec_module = execute
+                execute(module)
+                snapshot(module)
+
+            spec.loader.exec_module = execute_and_snapshot
+            return spec
+
+    server_module = sys.modules.get("rapid_mlx.server")
+    if server_module is not None:
+        snapshot(server_module)
+    observer = ServerImportObserver()
+    sys.meta_path.insert(0, observer)
+    try:
+        yield
+    finally:
+        sys.meta_path.remove(observer)
+        for module, values, limiter, limiter_config in reversed(snapshots):
+            for name, value in values.items():
+                if value is missing:
+                    module.__dict__.pop(name, None)
+                else:
+                    setattr(module, name, value)
+            for name, value in limiter_config.items():
+                setattr(limiter, name, value)
 
 
 @pytest.fixture(autouse=True)
