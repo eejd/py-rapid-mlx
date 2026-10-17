@@ -120,6 +120,42 @@ def test_first_attempt_rerun():
     assert api.calls[-1] == ("actions/runs/10/rerun-failed-jobs", "POST", None, False)
 
 
+@pytest.mark.parametrize(
+    "overrides,superseded",
+    [
+        (dict(id=11), True),
+        (dict(id=9), False),
+        (dict(id=10), False),
+        (dict(id=11, conclusion="failure"), False),
+        (dict(id=11, conclusion="cancelled"), False),
+        (dict(id=11, status="in_progress"), False),
+        (dict(id=11, event="pull_request"), False),
+        (dict(id=11, head_branch="feature"), False),
+    ],
+)
+def test_second_attempt_superseded_only_by_newer_completed_green_push(
+    monkeypatch, overrides, superseded
+):
+    api = setup_api()
+    api.data["actions/workflows/1/runs?branch=main&event=push"].append(
+        run(head_sha="c" * 40, conclusion="success") | overrides
+    )
+    prepare = Mock()
+    monkeypatch.setattr(g, "revert_commit", prepare)
+    assert g.guard(api, run()) == (
+        "Failure superseded by a newer green main run"
+        if superseded
+        else "Revert PR proposed"
+    )
+    if superseded:
+        prepare.assert_not_called()
+        assert not any(c[1] != "GET" for c in api.calls)
+        assert not any(c[0].startswith("commits/") for c in api.calls)
+    else:
+        prepare.assert_called_once_with(api, SHA, BRANCH)
+        assert sum(c[:2] == ("pulls", "POST") for c in api.calls) == 1
+
+
 def test_attributable_direct_child_and_nearest_non_cancelled_run():
     api = setup_api()
     history = api.data["actions/workflows/1/runs?branch=main&event=push"]
@@ -182,7 +218,7 @@ def test_revert_pr_and_author_comment_idempotence(monkeypatch):
         and "https://example.test/pull/4" in comment["body"]
     )
     api.data[f"pulls?state=all&head=owner:{BRANCH}"] = [
-        dict(number=4, html_url="url", state="closed")
+        dict(number=4, html_url="url", state="open")
     ]
     api.data["issues/3/comments"] = [comment]
     api.calls.clear()
@@ -585,6 +621,55 @@ def test_concurrent_revert_pr_creation(monkeypatch, notified):
     )
 
 
+@pytest.mark.parametrize("race", [False, True])
+@pytest.mark.parametrize(
+    "state,merged_at", [("closed", None), ("open", None), ("closed", "today")]
+)
+def test_existing_revert_pr_state_reporting(monkeypatch, race, state, merged_at):
+    api = setup_api()
+    listing = f"pulls?state=all&head=owner:{BRANCH}"
+    revert = dict(
+        number=4,
+        html_url="https://example.test/pull/4",
+        state=state,
+        merged_at=merged_at,
+    )
+    prepare = Mock()
+    monkeypatch.setattr(g, "revert_commit", prepare)
+    if race:
+        api.data[f"git/ref/heads/{BRANCH}"] = {}
+
+        def handler(path, method, data, pat):
+            if (path, method) == ("pulls", "POST"):
+                api.data[listing] = [revert]
+                raise APIError("PR already exists for head", 422)
+            return NotImplemented
+
+        api.handler = handler
+    else:
+        api.data[listing] = [revert]
+    closed_unmerged = state == "closed" and not merged_at
+    assert g.guard(api, run()) == (
+        "Closed revert PR recorded" if closed_unmerged else "Revert PR already exists"
+    )
+    prepare.assert_not_called()
+    assert sum(c[:2] == ("pulls", "POST") for c in api.calls) == int(race)
+    assert not any(c[:2] == ("issues/4/labels", "POST") for c in api.calls)
+    if closed_unmerged:
+        recorded = next(c[2] for c in api.calls if c[:2] == ("issues", "POST"))
+        assert recorded["title"] == "Main CI is failing"
+        assert recorded["labels"] == ["main-red"]
+        assert revert["html_url"] in recorded["body"]
+        assert f"{PARENT}..{SHA}" in recorded["body"]
+        assert "CI: https://example.test/run/10" in recorded["body"]
+    else:
+        assert not any(c[:2] == ("issues", "POST") for c in api.calls)
+        comment = next(
+            c[2]["body"] for c in api.calls if c[:2] == ("issues/3/comments", "POST")
+        )
+        assert "@author" in comment and revert["html_url"] in comment
+
+
 @pytest.mark.parametrize("status", [403, 500])
 def test_revert_branch_recheck_errors_fail_closed(monkeypatch, status):
     api = setup_api()
@@ -603,9 +688,9 @@ def test_revert_branch_recheck_errors_fail_closed(monkeypatch, status):
     "sha,created_at,expected",
     [
         (SHA, "2026-10-15T09:17:00Z", "recorded"),
-        (PARENT, "2026-10-17T09:17:00Z", "recorded"),
-        (PARENT, "2026-10-17T15:17:00Z", "recorded"),
-        (PARENT, "2026-10-17T03:17:00Z", "recorded"),
+        (PARENT, "2026-10-17T09:17:00Z", "pending"),
+        (PARENT, "2026-10-17T15:17:00Z", "pending"),
+        (PARENT, "2026-10-17T03:17:00Z", "pending"),
         (PARENT, "2026-10-17T15:17:01Z", "pending"),
         (PARENT, "2026-10-17T03:16:59Z", "pending"),
         (PARENT, "2026-10-16T09:17:00Z", "pending"),
