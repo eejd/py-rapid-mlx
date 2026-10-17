@@ -708,8 +708,7 @@ def test_streaming_unchanged_against_base():
                 for node in tree.body
                 if not (
                     isinstance(node, ast.FunctionDef)
-                    and node.name
-                    in {"_strip_trailing_tool_envelope", "_mask_markdown_fences"}
+                    and node.name == "_strip_trailing_tool_envelope"
                 )
             ]
             return ast.dump(tree, include_attributes=False)

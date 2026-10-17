@@ -370,31 +370,6 @@ class _MarkdownCodeTracker:
         return self._fence_only is not None or pending_opener
 
 
-def _mask_markdown_fences(text: str) -> str:
-    """Blank fenced regions while preserving offsets and line endings."""
-    masked: list[str] = []
-    fence: str | None = None
-    for line in text.splitlines(keepends=True):
-        match = _MARKDOWN_FENCE_RE.match(line)
-        in_fence = fence is not None
-        if fence is None and match:
-            fence = match.group(1)
-            in_fence = True
-        elif (
-            fence is not None
-            and match
-            and match.group(1)[0] == fence[0]
-            and len(match.group(1)) >= len(fence)
-            and not line[match.end() :].strip()
-        ):
-            fence = None
-        if in_fence:
-            masked.append("".join(char if char in "\r\n" else " " for char in line))
-        else:
-            masked.append(line)
-    return "".join(masked)
-
-
 def _strip_trailing_tool_envelope(
     text: str,
     declared: set[str] | None = None,
