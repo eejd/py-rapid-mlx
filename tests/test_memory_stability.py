@@ -387,6 +387,140 @@ def test_retired_generator_releases_graph_without_gc(monkeypatch, close_raises):
     assert scheduler.batch_generator.next() == ([], [])
 
 
+def test_retirement_clears_slotted_generator_and_retained_batch():
+    import gc
+    import weakref
+    from collections import deque
+
+    class SlottedBatch:
+        __slots__ = (
+            "prompt_cache",
+            "tokens",
+            "uids",
+            "_current_tokens",
+            "_next_tokens",
+            "_step",
+        )
+
+        def __init__(self, cache):
+            self.prompt_cache = [cache]
+            self.tokens = [cache]
+            self.uids = [cache]
+            self._current_tokens = cache
+            self._next_tokens = cache
+            self._step = cache
+
+    class SlottedGenerator:
+        __slots__ = (
+            "_compiled_decode_teardown",
+            "_unprocessed_sequences",
+            "_currently_processing",
+            "_prompt_batch",
+            "_generation_batch",
+            "active_batch",
+        )
+
+        def close(self):
+            closed.append(True)
+
+    scheduler = _make_scheduler()
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    batch = SlottedBatch(cache)
+    retired = SlottedGenerator()
+    closed = []
+    torn_down = []
+    retired._compiled_decode_teardown = lambda: torn_down.append(True)
+    retired._unprocessed_sequences = deque([cache])
+    retired._currently_processing = [cache]
+    retired._prompt_batch = batch
+    retired._generation_batch = batch
+    retired.active_batch = batch
+    scheduler.batch_generator = retired
+
+    scheduler._close_batch_generator()
+
+    assert torn_down == [True]
+    assert closed == [True]
+    assert not retired._unprocessed_sequences
+    assert not retired._currently_processing
+    assert retired._prompt_batch is None
+    assert retired._generation_batch is None
+    assert retired.active_batch is None
+    assert batch.prompt_cache == []
+    assert batch.tokens == []
+    assert batch.uids == []
+    assert batch._current_tokens is None
+    assert batch._next_tokens is None
+    assert getattr(batch, "_step", None) is None
+    assert scheduler.batch_generator is None
+    # Retirement must preserve the class method rather than shadowing it.
+    assert retired.close.__func__ is SlottedGenerator.close
+    scheduler.batch_generator = retired
+    scheduler._close_batch_generator()
+    assert torn_down == [True]
+    del cache
+    gc.collect()
+    assert ref() is None
+
+
+@pytest.mark.parametrize("error_type", [AttributeError, TypeError])
+@pytest.mark.parametrize("assignment_fails", [False, True])
+def test_retirement_tolerates_restricted_attributes(error_type, assignment_fails):
+    import weakref
+
+    class RestrictedGenerator(_RetiredGenerator):
+        def __getattribute__(self, name):
+            if name == "_suffix_teardown":
+                raise error_type("unreadable hook")
+            return super().__getattribute__(name)
+
+        def __delattr__(self, name):
+            if name == "_compiled_decode_teardown":
+                raise error_type("hook cannot be deleted")
+            return super().__delattr__(name)
+
+        def __setattr__(self, name, value):
+            if (
+                assignment_fails
+                and name == "_compiled_decode_teardown"
+                and value is None
+            ):
+                raise error_type("hook cannot be replaced")
+            return super().__setattr__(name, value)
+
+    class RestrictedBatch(_RetiredBatch):
+        def __setattr__(self, name, value):
+            if name == "tokens" and value == []:
+                raise error_type("tokens cannot be replaced")
+            return super().__setattr__(name, value)
+
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    retired = RestrictedGenerator(cache)
+    batch = RestrictedBatch(cache)
+    retired._prompt_batch = batch
+    calls = []
+    retired._compiled_decode_teardown = lambda: calls.append(True)
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = retired
+    del cache
+
+    scheduler._close_batch_generator()
+
+    assert calls == [True]
+    assert retired.closed
+    assert retired._prompt_batch is None
+    assert retired._generation_batch is None
+    assert batch.tokens == [[1]]
+    assert batch.prompt_cache == []
+    assert batch._current_tokens is None
+    assert batch._next_tokens is None
+    assert (retired._compiled_decode_teardown is None) is not assignment_fails
+    assert ref() is None
+    assert scheduler.batch_generator is None
+
+
 @pytest.mark.parametrize(
     "generator_kind",
     ["regular", "slotted", "slotted_batch", "unreadable_generator", "unreadable_batch"],
