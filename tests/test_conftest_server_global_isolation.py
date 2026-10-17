@@ -163,7 +163,11 @@ def test_next_test_sees_defaults():
 
     assert server._default_timeout == 1800.0
     for name, value in _expected.items():
-        assert getattr(server, name) is value, name
+        # Containers are restored from shallow copies; others by reference.
+        if isinstance(value, (dict, list, set)):
+            assert getattr(server, name) == value, name
+        else:
+            assert getattr(server, name) is value, name
     for name, value in _limiter_config.items():
         assert getattr(server._rate_limiter, name) == value, name
 """
