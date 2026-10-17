@@ -368,6 +368,7 @@ class Soak:
         reply = None
         details = None
         validation_body = None
+        stream_started = False
         validation_message_count = len(payload["messages"])
         try:
             if payload["stream"]:
@@ -375,7 +376,8 @@ class Soak:
                 done = False
                 finished = False
                 content = []
-                reasoning = []
+                reasoning = ""
+                reasoning_length = 0
                 finish_reason = None
                 usage = None
                 async with client.stream(
@@ -391,6 +393,7 @@ class Soak:
                             f"HTTP {response.status_code}: "
                             f"{detail.decode(errors='replace')}"
                         )
+                    stream_started = True
                     async for line in response.aiter_lines():
                         if line.startswith("data: "):
                             if line == "data: [DONE]":
@@ -418,7 +421,8 @@ class Soak:
                                         content.append(part)
                                     part = delta.get("reasoning_content")
                                     if isinstance(part, str):
-                                        reasoning.append(part)
+                                        reasoning_length += len(part)
+                                        reasoning += part[: 2000 - len(reasoning)]
                                 chunks += 1
                         if kind == "disconnect" and chunks >= 3:
                             disconnected = True
@@ -427,18 +431,6 @@ class Soak:
                             requested_cancel = True
                             asyncio.current_task().cancel()
                             await asyncio.sleep(0)
-                validation_body = {
-                    "choices": [
-                        {
-                            "finish_reason": finish_reason,
-                            "message": {
-                                "content": "".join(content),
-                                "reasoning_content": "".join(reasoning),
-                            },
-                        }
-                    ],
-                    "usage": usage,
-                }
                 if kind == "disconnect" and not disconnected:
                     error = "disconnect stream ended before 3 chunks"
                 elif kind == "cancel":
@@ -457,7 +449,9 @@ class Soak:
                 response.raise_for_status()
                 body = response.json()
                 validation_body = body
-                if not body.get("choices"):
+                if not isinstance(body, dict):
+                    error = "response body is not an object"
+                elif not body.get("choices"):
                     error = "no choices"
                 elif (
                     kind != "tool"
@@ -502,8 +496,14 @@ class Soak:
                     )
                     followup_response.raise_for_status()
                     validation_body = followup_response.json()
-                    followup_choices = validation_body.get("choices")
-                    if not followup_choices:
+                    followup_choices = (
+                        validation_body.get("choices")
+                        if isinstance(validation_body, dict)
+                        else None
+                    )
+                    if not isinstance(validation_body, dict):
+                        error = "tool follow-up body is not an object"
+                    elif not followup_choices:
                         error = "tool follow-up has no choices"
                     elif not (
                         followup_choices[0]["message"].get("content") or ""
@@ -513,7 +513,7 @@ class Soak:
                         reply = [assistant, *replies, followup_choices[0]["message"]]
                 else:
                     reply = body["choices"][0]["message"]
-            if error:
+            if error and not payload["stream"]:
                 details = response_details(
                     validation_body or {}, validation_message_count
                 )
@@ -526,6 +526,21 @@ class Soak:
             error = f"HTTP {exc.response.status_code}: {exc.response.text[:240]}"
         except Exception as exc:
             error = f"{type(exc).__name__}: {str(exc)[:240]}"
+        if error and stream_started:
+            validation_body = {
+                "choices": [
+                    {
+                        "finish_reason": finish_reason,
+                        "message": {
+                            "content": "".join(content),
+                            "reasoning_content": reasoning,
+                        },
+                    }
+                ],
+                "usage": usage,
+            }
+            details = response_details(validation_body, validation_message_count)
+            details["reasoning_content_length"] = reasoning_length
         return disconnected, cancelled, stage, error, reply, details
 
     async def worker(self, index):

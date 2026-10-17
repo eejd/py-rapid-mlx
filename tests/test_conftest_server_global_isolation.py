@@ -19,6 +19,29 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _collect_server_writes(source, aliases):
+    mutating_methods = {
+        "update",
+        "append",
+        "extend",
+        "insert",
+        "pop",
+        "popitem",
+        "clear",
+        "remove",
+        "discard",
+        "add",
+        "setdefault",
+        "sort",
+        "reverse",
+    }
+
+    def collect_root(node):
+        while isinstance(node, (ast.Subscript, ast.Attribute)):
+            if isinstance(node, ast.Attribute) and ast.unparse(node.value) in aliases:
+                mutated.add(node.attr)
+                return
+            node = node.value
+
     mutated = set()
     for node in ast.walk(ast.parse(source)):
         if (
@@ -27,6 +50,16 @@ def _collect_server_writes(source, aliases):
             and ast.unparse(node.value) in aliases
         ):
             mutated.add(node.attr)
+        elif isinstance(node, ast.Subscript) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            collect_root(node)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in mutating_methods
+        ):
+            collect_root(node.func.value)
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -42,6 +75,54 @@ def _collect_server_writes(source, aliases):
 
 def test_collect_server_writes_recognizes_setattr():
     assert _collect_server_writes('setattr(server, "_x", 1)', {"server"}) == {"_x"}
+
+
+def test_collect_server_writes_recognizes_subscript_store():
+    assert _collect_server_writes('server._cfg["x"] = 1', {"server"}) == {"_cfg"}
+
+
+def test_collect_server_writes_recognizes_nested_subscript_store():
+    assert _collect_server_writes('server._cfg["a"]["b"] = 1', {"server"}) == {"_cfg"}
+
+
+def test_collect_server_writes_recognizes_subscript_delete():
+    assert _collect_server_writes('del server._cfg["x"]', {"server"}) == {"_cfg"}
+
+
+def test_collect_server_writes_recognizes_augmented_subscript_store():
+    assert _collect_server_writes('server._cfg["x"] += 1', {"server"}) == {"_cfg"}
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "update",
+        "append",
+        "extend",
+        "insert",
+        "pop",
+        "popitem",
+        "clear",
+        "remove",
+        "discard",
+        "add",
+        "setdefault",
+        "sort",
+        "reverse",
+    ],
+)
+def test_collect_server_writes_recognizes_mutating_method(method):
+    assert _collect_server_writes(f"server._cfg.{method}()", {"server"}) == {"_cfg"}
+
+
+def test_collect_server_writes_recognizes_chained_mutating_method():
+    assert _collect_server_writes('server._cfg["a"].append(x)', {"server"}) == {"_cfg"}
+
+
+def test_collect_server_writes_ignores_reads_and_nonmutating_calls():
+    assert not _collect_server_writes(
+        'server._cfg.get("x"); server._cfg["a"]; other._cfg.append(x)', {"server"}
+    )
 
 
 def test_serve_config_tuple_covers_launch_writers():
