@@ -503,11 +503,11 @@ def test_wrapped_tail_bytewise_whitespace_has_linear_scan_work(
     scans = 0
     boundary = parser._wrapped_tail_boundary
 
-    def counted_boundary(held):
+    def counted_boundary(held, start=0, stop=None):
         nonlocal scanned_bytes, scans
-        scanned_bytes += len(held)
+        scanned_bytes += (stop or len(held)) - start
         scans += 1
-        return boundary(held)
+        return boundary(held, start, stop)
 
     monkeypatch.setattr(parser, "_wrapped_tail_boundary", counted_boundary)
     whitespace = " \n" * 4096
