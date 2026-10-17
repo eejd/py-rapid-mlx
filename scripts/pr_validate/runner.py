@@ -94,7 +94,15 @@ STEPS: list[Step] = [
 # ``PR_VALIDATE_FAIL_FAST=1`` (typical for CI / incoming-PR gating).
 # Missing SDK prerequisites invalidate the matrix and stop before costly tests,
 # even when the caller wants the full picture for ordinary product failures.
+# Codex review runs early (~1 min): blocking findings mean the head must be
+# re-pushed, so spending 5–30 min on tests would be wasted. Only "fail" carrying
+# [BLOCKING] findings stops by default. Infrastructure failures (timeout,
+# auth/backend error, empty or malformed reply), "error", and "skip" let tests
+# provide signal. PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL=1 restores the full
+# picture, while --fail-fast still stops on any fail/error.
 FAIL_FAST_STEPS = {"fetch", "sdk_env_check"}
+# Only failures carrying [BLOCKING] findings stop these steps by default.
+STOP_ON_BLOCKING_FINDINGS_STEPS = {"codex_review"}
 
 
 def run_pipeline(
@@ -112,6 +120,11 @@ def run_pipeline(
 
     Strict scoring: ANY single ``fail`` or ``error`` blocks merge.
     ``skip`` is neutral (a step decided it didn't apply).
+
+    Codex review ``fail`` carrying ``[BLOCKING]`` findings stops before tests; set
+    ``PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL=1`` to continue instead.
+    Infrastructure failures (timeout, auth/backend error, empty or malformed
+    reply), ``error``, and ``skip`` do not trigger this default stop.
 
     With ``fail_fast=True`` the pipeline stops at the first ``fail`` /
     ``error`` after fetch — useful for CI gating where running the
@@ -236,6 +249,19 @@ def run_pipeline(
             print(
                 f"  fail-fast: [{step.name}] failed and --fail-fast is on, "
                 "stopping pipeline (subsequent steps not run)",
+                file=sys.stderr,
+            )
+            break
+        if (
+            result.status == "fail"
+            and step.name in STOP_ON_BLOCKING_FINDINGS_STEPS
+            and any(f.startswith("[BLOCKING]") for f in result.findings)
+            and not env_truthy("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL")
+        ):
+            print(
+                f"  fail-fast: [{step.name}] found blocking issues; stopping before tests "
+                "(fix and re-push; set PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL=1 "
+                "to run the remaining steps anyway)",
                 file=sys.stderr,
             )
             break

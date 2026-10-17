@@ -294,6 +294,16 @@ missing. Once Codex is invoked, a timeout, auth/backend error, unusable
 binary, or any other unsuccessful exit fails closed: an unavailable
 review cannot produce a MERGE-SAFE verdict.
 
+By default, only a `codex_review` status of `fail` carrying `[BLOCKING]`
+findings stops the pipeline before tests: fix the blocking findings and
+re-push first. Later steps are not run or included in the scorecard.
+Codex infrastructure failures (timeout, auth/backend error, empty or
+malformed reply), `error`, and `skip` do not trigger this stop, so tests
+still provide signal; `fail` and `error` still block the verdict. Set
+`PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL=1` to run the remaining steps
+after `fail` as well; `--fail-fast` still stops on any `fail` or `error`
+regardless of this override.
+
 Authentication: codex uses its own ChatGPT login at
 `~/.codex/auth.json`. No auth/API-key env var is read here; the repo is
 public and we explicitly do not want a fallback key in source. (The

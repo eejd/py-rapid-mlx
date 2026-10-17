@@ -3,8 +3,8 @@
 
 We want to lock in two contracts:
 
-1. Default (``fail_fast=False``) runs every step even after one fails,
-   so the scorecard surfaces the FULL picture for a maintainer review.
+1. Default (``fail_fast=False``) continues after ordinary failures,
+   but stops on critical prerequisites or blocking Codex findings.
 2. Opt-in ``fail_fast=True`` stops at the first ``fail`` / ``error``
    AFTER the always-on fetch fail-fast — so CI doesn't waste compute on
    stress/bench when an earlier cheap check already blocked the PR.
@@ -16,9 +16,12 @@ data over the network and is not unit-testable here.
 
 from __future__ import annotations
 
+import json
 import subprocess
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -48,14 +51,18 @@ class _FakeFetch(Step):
 class _FakeStep(Step):
     """A configurable step that returns a preset status."""
 
-    def __init__(self, name: str, status: str = "pass"):
+    def __init__(self, name: str, status: str = "pass", findings: Sequence[str] = ()):
         self.name = name
         self.description = f"fake {name}"
         self._status = status
+        self._findings = list(findings)
 
     def run(self, ctx):  # type: ignore[no-untyped-def]
         return StepResult(
-            name=self.name, status=self._status, summary=f"{self._status}"
+            name=self.name,
+            status=self._status,
+            summary=f"{self._status}",
+            findings=self._findings,
         )
 
 
@@ -76,9 +83,11 @@ def repo_root_cwd(monkeypatch, tmp_path):
     return tmp_path
 
 
-def _fake_pipeline(after_fetch: list[tuple[str, str]]) -> list[Step]:
-    """Build a [fake-fetch, ...named steps with a status...] pipeline."""
-    return [_FakeFetch(), *(_FakeStep(name, status) for name, status in after_fetch)]
+def _fake_pipeline(
+    after_fetch: list[tuple[str, str] | tuple[str, str, list[str]]],
+) -> list[Step]:
+    """Build fake steps with a status and optional findings after fetch."""
+    return [_FakeFetch(), *(_FakeStep(*spec) for spec in after_fetch)]
 
 
 @pytest.mark.parametrize(
@@ -145,6 +154,177 @@ def test_cli_opt_in_reaches_runner(monkeypatch):
 
 
 class TestFailFast:
+    @pytest.mark.parametrize(
+        ("reply", "expected_status", "expected_findings", "stops_before_tests"),
+        [
+            (
+                "1. [BLOCKING] scripts/x.py:1 — bug\n2. [NIT] style",
+                "fail",
+                ["[BLOCKING] scripts/x.py:1 — bug", "[NIT] style"],
+                True,
+            ),
+            ("1. [NIT] style", "pass", ["[NIT] style"], False),
+        ],
+        ids=["numbered-blocking-and-nit", "numbered-nit-only"],
+    )
+    def test_numbered_codex_reply_controls_stop_before_tests(
+        self,
+        repo_root_cwd,
+        monkeypatch,
+        capsys,
+        reply,
+        expected_status,
+        expected_findings,
+        stops_before_tests,
+    ):
+        from scripts.pr_validate import runner
+        from scripts.pr_validate.steps import codex_review
+
+        for variable in (
+            "PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL",
+            "PR_VALIDATE_NO_CODEX",
+            "PR_VALIDATE_NO_DEEPSEEK",
+        ):
+            monkeypatch.delenv(variable, raising=False)
+        ctx = Context(pr_number=999, work_dir=repo_root_cwd / "artifacts")
+        monkeypatch.setattr(runner, "Context", lambda **kwargs: ctx)
+        diff_path = repo_root_cwd / "pr.diff"
+        diff_path.write_text("diff --git a/scripts/x.py b/scripts/x.py\n")
+
+        class FetchWithDiff(_FakeFetch):
+            def run(self, ctx):
+                result = super().run(ctx)
+                ctx.diff_path = str(diff_path)
+                return result
+
+        monkeypatch.setattr(codex_review.shutil, "which", lambda _: "/fake/codex")
+        codex_run = Mock(
+            return_value=subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": reply},
+                    }
+                ),
+                stderr="",
+            )
+        )
+        monkeypatch.setattr(codex_review.subprocess, "run", codex_run)
+        test_steps = [
+            _FakeStep(name)
+            for name in ("targeted_tests", "full_unit", "stress_e2e_bench")
+        ]
+
+        rc = run_pipeline(
+            pr_number=999,
+            fail_fast=False,
+            steps=[FetchWithDiff(), codex_review.CodexReviewStep(), *test_steps],
+        )
+
+        captured = capsys.readouterr()
+        codex_run.assert_called_once()
+        assert ctx.results[1].name == "codex_review"
+        assert ctx.results[1].status == expected_status
+        assert ctx.results[1].findings == expected_findings
+        assert rc == (1 if stops_before_tests else 0)
+        assert [result.name for result in ctx.results] == [
+            "fetch",
+            "codex_review",
+            *([] if stops_before_tests else [step.name for step in test_steps]),
+        ]
+        assert ("stopping before tests" in captured.err) is stops_before_tests
+
+    @pytest.mark.parametrize("override", [None, "0"])
+    def test_codex_fail_stops_before_tests_by_default(
+        self, repo_root_cwd, monkeypatch, capsys, override
+    ):
+        monkeypatch.delenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", raising=False)
+        if override is not None:
+            monkeypatch.setenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", override)
+        steps = _fake_pipeline(
+            [("codex_review", "fail", ["[BLOCKING] something"]), ("step_c", "pass")]
+        )
+
+        rc = run_pipeline(pr_number=999, fail_fast=False, steps=steps)
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "## [step_c]" not in captured.err
+        assert "step_c" not in captured.out
+        assert "codex_review" in captured.out
+        assert (
+            "fail-fast: [codex_review] found blocking issues; stopping before tests "
+            "(fix and re-push; set PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL=1 "
+            "to run the remaining steps anyway)"
+        ) in captured.err
+        verdict_line = next(
+            line for line in captured.err.splitlines() if line.startswith("Verdict:")
+        )
+        assert verdict_line != "Verdict: MERGE-SAFE"
+
+    @pytest.mark.parametrize("findings", [[], ["[NIT] x"]])
+    def test_codex_fail_without_blocking_findings_continues(
+        self, repo_root_cwd, monkeypatch, capsys, findings
+    ):
+        monkeypatch.delenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", raising=False)
+        steps = _fake_pipeline([("codex_review", "fail", findings), ("step_c", "pass")])
+
+        rc = run_pipeline(pr_number=999, fail_fast=False, steps=steps)
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "## [step_c]" in captured.err
+        assert "step_c" in captured.out
+        assert "stopping before tests" not in captured.err
+
+    @pytest.mark.parametrize("status", ["pass", "error", "skip"])
+    def test_codex_non_fail_continues_by_default(
+        self, repo_root_cwd, monkeypatch, capsys, status
+    ):
+        monkeypatch.delenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", raising=False)
+        steps = _fake_pipeline([("codex_review", status), ("step_c", "pass")])
+
+        rc = run_pipeline(pr_number=999, fail_fast=False, steps=steps)
+
+        captured = capsys.readouterr()
+        assert rc == (1 if status == "error" else 0)
+        assert "## [step_c]" in captured.err
+        assert "step_c" in captured.out
+        assert "stopping before tests" not in captured.err
+
+    def test_codex_fail_escape_hatch_continues(
+        self, repo_root_cwd, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", "1")
+        steps = _fake_pipeline(
+            [("codex_review", "fail", ["[BLOCKING] something"]), ("step_c", "pass")]
+        )
+
+        rc = run_pipeline(pr_number=999, fail_fast=False, steps=steps)
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "## [step_c]" in captured.err
+        assert "step_c" in captured.out
+        assert "stopping before tests" not in captured.err
+
+    @pytest.mark.parametrize("status", ["fail", "error"])
+    def test_fail_fast_overrides_codex_escape_hatch(
+        self, repo_root_cwd, monkeypatch, capsys, status
+    ):
+        monkeypatch.setenv("PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL", "1")
+        steps = _fake_pipeline([("codex_review", status), ("step_c", "pass")])
+
+        rc = run_pipeline(pr_number=999, fail_fast=True, steps=steps)
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "## [step_c]" not in captured.err
+        assert "step_c" not in captured.out
+        assert "[codex_review] failed and --fail-fast is on" in captured.err
+
     def test_default_runs_all_steps_after_a_fail(self, repo_root_cwd, capsys):
         """Without fail_fast, every step after fetch runs even when one
         fails — the scorecard is supposed to show ALL the issues at once."""
