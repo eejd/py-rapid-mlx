@@ -13,6 +13,15 @@ import yaml
 from scripts import merge_on_green as m
 
 SHA = "a" * 40
+WORKFLOWS = {
+    "tests": "ci.yml",
+    "type-check": "ci.yml",
+    "merge-lane-mac": "ci.yml",
+    "merge-lane-no-mac": "ci.yml",
+    "desktop-tests": "rapid-mac-ci.yml",
+    "version-bump-guard": "version-check.yml",
+}
+SUITES = {"ci.yml": 10, "rapid-mac-ci.yml": 20, "version-check.yml": 30}
 
 
 class Fake(m.GitHub):
@@ -62,6 +71,7 @@ def check(name, identifier=1, conclusion="success", app="github-actions"):
         conclusion=conclusion,
         status="completed",
         app=dict(slug=app),
+        check_suite=dict(id=SUITES[WORKFLOWS[name]]),
     )
 
 
@@ -73,8 +83,17 @@ def ready():
         check(n)
         for n in ("tests", "desktop-tests", "version-bump-guard", "merge-lane-no-mac")
     ]
+    api.data[f"actions/runs?head_sha={SHA}"] = [
+        dict(check_suite_id=suite, path=f".github/workflows/{path}")
+        for path, suite in SUITES.items()
+    ]
     api.data[f"commits/{SHA}/statuses"] = [
-        dict(context="merge-ready-head", id=1, state="success")
+        dict(
+            context="merge-ready-head",
+            id=1,
+            state="success",
+            creator=dict(login="github-actions[bot]"),
+        )
     ]
     api.data["actions/workflows/auto-release.yml/runs"] = []
     for status in ("queued", "in_progress", "waiting", "pending", "requested"):
@@ -188,7 +207,14 @@ def test_latest_status_binding(state):
     if state == "missing":
         statuses.clear()
     else:
-        statuses.append(dict(context="merge-ready-head", id=2, state=state))
+        statuses.append(
+            dict(
+                context="merge-ready-head",
+                id=2,
+                state=state,
+                creator=dict(login="github-actions[bot]"),
+            )
+        )
     statuses.append(dict(context="other", id=100, state="success"))
     assert "merge-ready-head" in m.eligibility(api, pull())
 
@@ -510,6 +536,9 @@ def test_live_head_changed_with_green_new_evidence():
     api.data[f"commits/{new_sha}/check-runs?filter=all"] = api.data[
         f"commits/{SHA}/check-runs?filter=all"
     ]
+    api.data[f"actions/runs?head_sha={new_sha}"] = api.data[
+        f"actions/runs?head_sha={SHA}"
+    ]
     api.data[f"commits/{new_sha}/statuses"] = api.data[f"commits/{SHA}/statuses"]
     reads = 0
 
@@ -671,3 +700,102 @@ def test_release_union_api_errors_fail_closed(path):
     api.data["actions/runs/7"] = dict(id=7, status="waiting")
     api.data[path] = m.APIError("offline")
     assert m.freeze(api) == "Release freeze evaluation failed: offline"
+
+
+@pytest.mark.parametrize("name", WORKFLOWS)
+@pytest.mark.parametrize(
+    "real,foreign,expected",
+    [
+        ("failure", "success", False),
+        ("success", "failure", True),
+        ("missing", "success", False),
+    ],
+)
+def test_same_named_foreign_workflow_cannot_satisfy_or_mask(
+    name, real, foreign, expected
+):
+    api = ready()
+    pr = pull()
+    if name == "merge-lane-mac":
+        pr["labels"] = [dict(name="merge-ready-mac")]
+    checks = api.data[f"commits/{SHA}/check-runs?filter=all"]
+    checks[:] = [c for c in checks if c["name"] != name]
+    if real != "missing":
+        checks.append(check(name, 2, real))
+    spoof = check(name, 999, foreign)
+    spoof["check_suite"]["id"] = 99
+    checks.append(spoof)
+    api.data[f"actions/runs?head_sha={SHA}"].append(
+        dict(check_suite_id=99, path=".github/workflows/pr-added.yml")
+    )
+    # Type checking remains optional when absent from its trusted workflow.
+    if name == "type-check" and real == "missing":
+        expected = True
+    assert (m.eligibility(api, pr) == "") is expected
+
+
+def test_unmapped_check_suite_is_not_trusted():
+    api = ready()
+    api.data[f"actions/runs?head_sha={SHA}"] = []
+    assert "tests missing" in m.eligibility(api, pull())
+
+
+def test_workflow_identity_pagination_and_ref_suffix(monkeypatch):
+    api = ready()
+    fixtures = api.data
+    real_api = m.GitHub(api.repo, "read")
+    workflow_path = f"actions/runs?head_sha={SHA}"
+
+    def response(path):
+        if path == f"{workflow_path}&per_page=100&page=1":
+            return dict(
+                workflow_runs=[
+                    dict(check_suite_id=100 + i, path="other.yml") for i in range(100)
+                ]
+            )
+        if path == f"{workflow_path}&per_page=100&page=2":
+            return dict(
+                workflow_runs=[
+                    r | dict(path=r["path"] + "@refs/heads/main")
+                    for r in fixtures[workflow_path]
+                ]
+            )
+        if path == f"commits/{SHA}/check-runs?filter=all&per_page=100&page=1":
+            return dict(check_runs=fixtures[f"commits/{SHA}/check-runs?filter=all"])
+        if path == f"commits/{SHA}/statuses?per_page=100&page=1":
+            return fixtures[f"commits/{SHA}/statuses"]
+        raise AssertionError(path)
+
+    request = Mock(side_effect=response)
+    monkeypatch.setattr(real_api, "request", request)
+    assert m.eligibility(real_api, pull()) == ""
+    assert any(
+        c.args[0] == f"{workflow_path}&per_page=100&page=2"
+        for c in request.call_args_list
+    )
+
+
+@pytest.mark.parametrize(
+    "trusted,foreign,expected",
+    [
+        ("failure", "success", False),
+        ("success", "failure", True),
+        ("missing", "success", False),
+    ],
+)
+def test_head_binding_ignores_foreign_creators(trusted, foreign, expected):
+    api = ready()
+    statuses = api.data[f"commits/{SHA}/statuses"]
+    if trusted == "missing":
+        statuses.clear()
+    else:
+        statuses[0]["state"] = trusted
+    statuses.append(
+        dict(
+            context="merge-ready-head",
+            id=999,
+            state=foreign,
+            creator=dict(login="other-user"),
+        )
+    )
+    assert (m.eligibility(api, pull()) == "") is expected

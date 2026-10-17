@@ -80,9 +80,6 @@ def setup_api():
                 "success",
                 "cancelled",
                 "skipped",
-                "startup_failure",
-                "timed_out",
-                "action_required",
                 "neutral",
             )
         ],
@@ -440,3 +437,60 @@ def test_tracking_issue_dedupes_concurrent_creation_and_refresh(refresh, label):
         assert api.calls.index(comment) < api.calls.index(close)
     assert not any(c[0].startswith("issues/2") for c in api.calls)
     assert reads >= (1 if refresh else 2)
+
+
+@pytest.mark.parametrize("conclusion", ["timed_out", "startup_failure"])
+def test_push_infrastructure_conclusions_rerun_once_then_track(conclusion):
+    api = setup_api()
+    api.data[("POST", "actions/runs/10/rerun-failed-jobs")] = None
+    assert "rerun once" in g.guard(api, run(conclusion=conclusion, run_attempt=1))
+    assert api.calls == [("actions/runs/10/rerun-failed-jobs", "POST", None, False)]
+    api.calls.clear()
+    assert "recorded" in g.guard(api, run(conclusion=conclusion))
+    body = next(c[2]["body"] for c in api.calls if c[:2] == ("issues", "POST"))
+    assert SHA in body and "https://example.test/run/10" in body and conclusion in body
+    assert all(c[0].startswith(("labels/", "issues")) for c in api.calls)
+
+
+@pytest.mark.parametrize("attempt", [1, 2])
+def test_push_action_required_only_tracks(attempt):
+    api = setup_api()
+    assert "recorded" in g.guard(
+        api, run(conclusion="action_required", run_attempt=attempt)
+    )
+    assert any(
+        c[:2] == ("issues", "POST") and c[2]["labels"] == ["main-red"]
+        for c in api.calls
+    )
+    assert all(c[0].startswith(("labels/", "issues")) for c in api.calls)
+
+
+@pytest.mark.parametrize(
+    "conclusion",
+    ["failure", "timed_out", "startup_failure", "action_required", "unknown", None],
+)
+@pytest.mark.parametrize("existing", [False, True])
+def test_nightly_unhealthy_conclusions_open_or_refresh(conclusion, existing):
+    api = setup_api()
+    api.data["actions/workflows/1/runs?branch=main&event=schedule"] = []
+    if existing:
+        api.data["issues?state=open&labels=nightly-failure"] = [dict(number=8)]
+        api.data[("PATCH", "issues/8")] = {}
+    assert "failure recorded" in g.guard(
+        api, run(event="schedule", conclusion=conclusion)
+    )
+    update = next(
+        c
+        for c in api.calls
+        if c[:2] == (("issues/8", "PATCH") if existing else ("issues", "POST"))
+    )
+    assert (
+        SHA in update[2]["body"] and "https://example.test/run/10" in update[2]["body"]
+    )
+
+
+@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", "neutral"])
+def test_nightly_ignored_conclusions(conclusion):
+    api = setup_api()
+    assert "ignored" in g.guard(api, run(event="schedule", conclusion=conclusion))
+    assert not api.calls

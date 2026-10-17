@@ -69,7 +69,7 @@ def runs(api: GitHub, workflow: str, event: str) -> list[dict]:
 
 
 def nightly(api: GitHub, run: dict) -> str:
-    if run["conclusion"] == "failure":
+    if run["conclusion"] not in {"success", "cancelled", "skipped", "neutral"}:
         previous = next(
             (
                 r
@@ -207,8 +207,27 @@ def guard(api: GitHub, run: dict) -> str:
         return "Non-main run ignored"
     if run["event"] == "schedule":
         return nightly(api, run)
-    if run["event"] != "push" or run["conclusion"] != "failure":
+    if run["event"] != "push" or run["conclusion"] not in {
+        "failure",
+        "timed_out",
+        "startup_failure",
+        "action_required",
+    }:
         return "Run ignored"
+    if run["conclusion"] != "failure":
+        if (
+            run["conclusion"] in {"timed_out", "startup_failure"}
+            and run["run_attempt"] == 1
+        ):
+            api.request(f"actions/runs/{run['id']}/rerun-failed-jobs", "POST")
+            return "Failed jobs rerun once"
+        issue(
+            api,
+            "main-red",
+            "Main CI is failing",
+            f"{run['name']}: {run['html_url']}\nSHA: {run['head_sha']}\nConclusion: {run['conclusion']}",
+        )
+        return "Infrastructure or action-required run recorded"
     jobs = api.items(
         f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs"
     )

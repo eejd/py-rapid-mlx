@@ -138,6 +138,16 @@ def freeze(api: GitHub, manual: str = "") -> str:
         return f"Release freeze evaluation failed: {exc}"
 
 
+CHECK_WORKFLOWS = {
+    "tests": ".github/workflows/ci.yml",
+    "type-check": ".github/workflows/ci.yml",
+    "merge-lane-mac": ".github/workflows/ci.yml",
+    "merge-lane-no-mac": ".github/workflows/ci.yml",
+    "desktop-tests": ".github/workflows/rapid-mac-ci.yml",
+    "version-bump-guard": ".github/workflows/version-check.yml",
+}
+
+
 def eligibility(api: GitHub, pr: dict) -> str:
     """Return the first rejection reason, or an empty string for eligible heads."""
     labels = {x["name"] for x in pr["labels"]}
@@ -166,10 +176,19 @@ def eligibility(api: GitHub, pr: dict) -> str:
     }:
         return "Mergeability not confirmed"
     sha = pr["head"]["sha"]
+    workflows = {
+        run["check_suite_id"]: run["path"].split("@", 1)[0]
+        for run in api.items(f"actions/runs?head_sha={sha}", "workflow_runs")
+    }
     latest = {}
     for check in api.items(f"commits/{sha}/check-runs?filter=all", "check_runs"):
-        if check["app"]["slug"] == "github-actions":
-            name = check["name"]
+        name = check["name"]
+        if (
+            check["app"]["slug"] == "github-actions"
+            and name in CHECK_WORKFLOWS
+            and workflows.get(check.get("check_suite", {}).get("id"))
+            == CHECK_WORKFLOWS[name]
+        ):
             if name not in latest or check["id"] > latest[name]["id"]:
                 latest[name] = check
     required = [
@@ -184,7 +203,12 @@ def eligibility(api: GitHub, pr: dict) -> str:
         if check.get("status") != "completed" or check.get("conclusion") not in allowed:
             return f"{name} missing or not green on head"
     statuses = api.items(f"commits/{sha}/statuses")
-    binding = [s for s in statuses if s["context"] == "merge-ready-head"]
+    binding = [
+        s
+        for s in statuses
+        if s["context"] == "merge-ready-head"
+        and s.get("creator", {}).get("login") == "github-actions[bot]"
+    ]
     if not binding or max(binding, key=lambda s: s["id"])["state"] != "success":
         return "merge-ready-head missing or not successful on head"
     return ""

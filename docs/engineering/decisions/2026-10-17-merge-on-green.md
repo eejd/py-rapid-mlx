@@ -14,7 +14,8 @@ evidence. This change itself can therefore pass through the existing queue.
 
 Once enabled, merge authorized PR heads directly, one squash merge at a time,
 without requiring an up-to-date branch. Preserve both exclusive ready labels,
-the exact-head `merge-ready-head` commit status, trusted Actions check identity,
+the exact-head `merge-ready-head` commit status created by `github-actions[bot]`,
+Actions checks bound by check suite to their expected workflow file,
 and every existing queue admission condition. Optional type checking must pass
 or be skipped. Version-bump PRs remain human merges. Use PR-number order rather
 than extra timeline API calls. Re-fetch live authorization and match the head
@@ -42,9 +43,12 @@ validation, with these safeguards:
   failures. A second failure proposes a revert PR only for the direct child of
   a successful ancestor run. Ambiguous ranges, protected bump/revert commits,
   missing original PRs and revert conflicts go to one `main-red` issue.
+  Push timeouts and startup failures rerun failed jobs once, then track in
+  `main-red` without reverting; action-required runs go directly to `main-red`.
   Revert PRs are never automatically authorized for merge. The original author
-  receives one marked comment. Scheduled failures use one `nightly-failure`
-  issue, closed only when both workflows' latest nightly runs are green.
+  receives one marked comment. Scheduled conclusions other than success,
+  cancelled, skipped or neutral use one `nightly-failure` issue, closed only
+  when both workflows' latest nightly runs are green.
 - Release detection freezes merges while a releasing or undetermined
   auto-release run is active, including manually dispatched releases. A bump
   at main HEAD freezes merges until its exact-SHA push release run completes,
