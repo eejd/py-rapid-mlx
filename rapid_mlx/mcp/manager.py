@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from .client import MCPClient
-from .tools import openai_call_to_mcp
+from .tools import mcp_tools_to_openai, merge_tools, openai_call_to_mcp
 from .types import (
     MCPConfig,
     MCPServerStatus,
@@ -186,6 +186,32 @@ class MCPClientManager:
             if client.is_connected:
                 tools.extend(client.tools)
         return tools
+
+    def get_all_tools_openai(self) -> list[dict[str, Any]]:
+        """
+        Get all tools in OpenAI function calling format.
+
+        Returns:
+            List of OpenAI-compatible tool definitions
+        """
+        return mcp_tools_to_openai(self.get_all_tools())
+
+    def get_merged_tools(
+        self,
+        user_tools: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Get MCP tools merged with user-provided tools.
+
+        User tools take precedence on name conflicts.
+
+        Args:
+            user_tools: Optional user-provided tools in OpenAI format
+
+        Returns:
+            Combined list of tools in OpenAI format
+        """
+        return merge_tools(self.get_all_tools(), user_tools)
 
     def get_server_status(self) -> list[MCPServerStatus]:
         """

@@ -289,6 +289,17 @@ class MCPTool:
         """Get namespaced tool name (server__tool)."""
         return f"{self.server_name}__{self.name}"
 
+    def to_openai_format(self) -> dict[str, Any]:
+        """Convert to OpenAI function calling format."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.full_name,
+                "description": self.description,
+                "parameters": self.input_schema,
+            },
+        }
+
 
 @dataclass
 class MCPToolResult:
