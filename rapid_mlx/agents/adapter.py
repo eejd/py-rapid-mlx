@@ -416,11 +416,8 @@ def setup_agent_config(
     return "No config to write (template not specified)"
 
 
-def codex_setup_report(profile: AgentProfile, agent_version: str | None = None) -> str:
-    """Read back saved defaults, without claiming to resolve every Codex layer."""
-    import json
-    from urllib.parse import urlsplit, urlunsplit
-
+def _read_codex_config(profile: AgentProfile, agent_version: str | None):
+    """Read the same versioned, relocatable config that setup writes."""
     try:
         import tomllib
     except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
@@ -428,21 +425,52 @@ def codex_setup_report(profile: AgentProfile, agent_version: str | None = None) 
 
     cfg = profile.get_config_for_version(agent_version)
     path = _resolve_config_path(cfg)
-    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    return path, tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def _codex_provider_base_url(config: dict) -> str | None:
+    provider_id = config.get("model_provider")
+    if not isinstance(provider_id, str):
+        return None
+    providers = config.get("model_providers", {})
+    provider = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
+    endpoint = provider.get("base_url") if isinstance(provider, dict) else None
+    return endpoint if isinstance(endpoint, str) else None
+
+
+def saved_codex_base_url(
+    profile: AgentProfile, agent_version: str | None = None
+) -> str | None:
+    """Return the saved provider endpoint, or None for unusable config."""
+    try:
+        _, config = _read_codex_config(profile, agent_version)
+        endpoint = _codex_provider_base_url(config)
+        return profile.normalize_base_url(endpoint) if endpoint is not None else None
+    except (OSError, ValueError):
+        return None
+
+
+def _redact_endpoint(endpoint: str) -> str:
+    """Keep authentication and URL query details out of endpoint notices."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    url = urlsplit(endpoint)
+    return urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
+
+
+def codex_setup_report(profile: AgentProfile, agent_version: str | None = None) -> str:
+    """Read back saved defaults, without claiming to resolve every Codex layer."""
+    import json
+
+    path, config = _read_codex_config(profile, agent_version)
     model = config.get("model")
     provider_id = config.get("model_provider")
     if not isinstance(model, str) or not isinstance(provider_id, str):
         raise ValueError("saved Codex config has no model or model_provider")
-    providers = config.get("model_providers", {})
-    provider = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
-    endpoint = provider.get("base_url") if isinstance(provider, dict) else None
-    if not isinstance(endpoint, str):
+    endpoint = _codex_provider_base_url(config)
+    if endpoint is None:
         raise ValueError("saved Codex provider has no base_url")
-    # Authentication is never part of a setup report, including URL credentials.
-    url = urlsplit(endpoint)
-    safe_endpoint = urlunsplit(
-        (url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", "")
-    )
+    safe_endpoint = _redact_endpoint(endpoint)
     lines = [
         f"Saved Codex defaults (read back from {path}):",
         f"  Model: {model}",

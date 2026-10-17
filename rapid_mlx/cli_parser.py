@@ -2659,7 +2659,7 @@ def _add_agents_parser(
     agents_parser.add_argument(
         "--base-url",
         type=str,
-        default="http://localhost:8000/v1",
+        default=None,
         help="Rapid-MLX server URL (default: http://localhost:8000/v1)",
     )
     agents_parser.add_argument(
