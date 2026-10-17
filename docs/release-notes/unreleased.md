@@ -15,3 +15,4 @@
 - **XML tool-call examples stay visible**: fenced code-block examples remain content even when they name an available tool, including in streamed replies; real calls after a closed fence still execute.
 - **XML tool-call examples with CR line endings stay visible**: fenced examples written with bare CR or CRLF line endings remain content instead of running as tool calls, in streamed and non-streamed replies.
 - **Leaner Desktop app bundle**: the app now ships only the math font it renders equations with, trimming about 6 MB from the installed app.
+- **Packaged license notices**: installed packages now include the license and notice files for the vendored speculative-decoding (MTP) code and the MiniCPM-V 4.7 vision model code.
