@@ -249,7 +249,15 @@ class NemotronToolParser(ToolParser):
                 (match.start(), match.end())
                 for match in self.RESIDUAL_WRAPPER_PATTERN.finditer(text)
             )
-        removed.sort()
+        # Accepted calls, rejected siblings and wrappers can overlap. Project
+        # their union in source order so no earlier markup becomes a gap.
+        merged: list[tuple[int, int]] = []
+        for span_start, span_end in sorted(removed):
+            if merged and span_start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], span_end))
+            else:
+                merged.append((span_start, span_end))
+        removed = merged
 
         parts: list[str] = []
         cursor = start

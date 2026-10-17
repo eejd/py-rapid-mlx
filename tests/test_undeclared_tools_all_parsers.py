@@ -986,3 +986,80 @@ def test_nemotron_round5_consumes_resolved_wrapper_suffix(name):
     assert parser._content_upto == len(previous)
     assert len(calls) == (name == "write_file")
     assert bool(parser._undeclared_dropped) == (name == "send_email")
+
+
+@pytest.mark.parametrize("separate_wrappers", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+def test_nemotron_rejected_sibling_before_declared_has_no_markup(
+    separate_wrappers, stream
+):
+    rejected = '<function=send_email>{"x":1}</function>'
+    declared = '<function=write_file>{"path":"x"}</function>'
+    if separate_wrappers:
+        text = f"<tool_call>{rejected}</tool_call><tool_call>{declared}</tool_call>"
+    else:
+        text = f"<tool_call>{rejected}\n  {declared}</tool_call>"
+    expected = ("", ["write_file"], "tool_calls")
+    assert _route_reply(text, stream=stream, deltas=[text]) == expected
+    if stream:
+        assert _route_reply(text, stream=True, deltas=list(text)) == expected
+
+
+@pytest.mark.parametrize("separate_chunks", [False, True])
+def test_channel_complete_router_calls_filter_before_assigning_wire_indices(
+    separate_chunks,
+):
+    pp = processor()
+    # Routers emit complete flat calls at call boundaries, without source indices.
+    router_calls = [
+        {"name": "send_email", "arguments": "{}"},
+        {"name": "write_file", "arguments": '{"path":"x"}'},
+    ]
+    batches = [[call] for call in router_calls] if separate_chunks else [router_calls]
+    events = []
+    for batch in batches:
+        events.extend(
+            pp.process_chunk(_make_output(channel="tool_call", tool_calls=batch))
+        )
+    events.extend(
+        pp.process_chunk(
+            _make_output(channel="tool_call", finished=True, finish_reason="tool_calls")
+        )
+    )
+    calls = [tc for event in events for tc in (event.tool_calls or [])]
+    assert len(calls) == 1
+    assert calls[0]["index"] == 0
+    assert calls[0]["function"] == {
+        "name": "write_file",
+        "arguments": '{"path":"x"}',
+    }
+    assert events[-1].finish_reason == "tool_calls"
+    assert pp.undeclared_tool_dropped
+
+
+@pytest.mark.parametrize("text", ["", "<tool_call><function=send_email>{"])
+def test_nemotron_incomplete_call_has_no_safe_accounting_boundary(text):
+    from rapid_mlx.tool_parsers.nemotron_tool_parser import NemotronToolParser
+
+    assert NemotronToolParser._safe_accounting_boundary(text) == 0
+
+
+def test_rejected_channel_call_preserves_held_reasoning_on_finalize():
+    from rapid_mlx.reasoning.k2_horizon_parser import K2HorizonReasoningParser
+
+    pp = StreamingPostProcessor(
+        _make_cfg(reasoning_parser=K2HorizonReasoningParser()),
+        request={"tools": TOOLS},
+        enable_thinking=True,
+    )
+    text = "plan</ifm|thi"
+    events = pp.process_chunk(_make_output(text))
+    events.extend(
+        pp.process_chunk(
+            _make_output(channel="tool_call", tool_calls=[anchor("send_email")])
+        )
+    )
+    events.extend(pp.finalize())
+    assert "".join(event.reasoning or "" for event in events) == text
+    assert all(not event.content and not event.tool_calls for event in events)
+    assert pp.undeclared_tool_dropped
