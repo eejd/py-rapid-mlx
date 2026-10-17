@@ -740,8 +740,14 @@ def install_compiled_decode(
         step = state["step"]
         try:
             if step is not None:
-                step.poison(RuntimeError("generator retired"), phase="retirement")
-                step.detach()
+                try:
+                    step.poison(RuntimeError("generator retired"), phase="retirement")
+                except Exception as exc:
+                    logger.debug("Error poisoning retired compiled decode: %s", exc)
+                try:
+                    step.detach()
+                except Exception as exc:
+                    logger.debug("Error detaching retired compiled decode: %s", exc)
         finally:
             state["step"] = None
             declined_uids.clear()

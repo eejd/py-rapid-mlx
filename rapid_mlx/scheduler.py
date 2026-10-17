@@ -11322,7 +11322,14 @@ class Scheduler:
                 request.batch_uid = None
             # Discard failed KV; do not route through successful cache storage.
             if self.block_aware_cache is not None:
-                self.block_aware_cache.release_cache(request_id)
+                try:
+                    self.block_aware_cache.release_cache(request_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to release cache for request %s during recovery: %s",
+                        request_id,
+                        exc,
+                    )
             aborted_ids.add(request_id)
             self.finished_req_ids.add(request_id)
         self.running.clear()

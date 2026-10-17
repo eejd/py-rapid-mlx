@@ -476,6 +476,72 @@ def test_generation_recovery_releases_request_and_checkpoint_ownership(
     assert ref() is None
 
 
+@pytest.mark.parametrize("release_raises", [False, True])
+def test_generation_recovery_continues_after_cache_release_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    release_raises: bool,
+) -> None:
+    import mlx.core as mx
+
+    from rapid_mlx.paged_cache import PagedCacheManager
+    from rapid_mlx.prefix_cache import BlockAwarePrefixCache
+    from rapid_mlx.request import Request, RequestStatus
+
+    scheduler = _make_scheduler()
+    manager = PagedCacheManager(max_blocks=4)
+    cache = BlockAwarePrefixCache(scheduler.model, manager)
+    scheduler.block_aware_cache = cache
+    request_ids = ["first", "failed", "last"]
+    calls: list[str] = []
+    released: list[str] = []
+    original_release = cache.release_cache
+
+    def release_cache(request_id: str) -> None:
+        calls.append(request_id)
+        if release_raises and request_id == "failed":
+            raise RuntimeError("release failed")
+        original_release(request_id)
+        released.append(request_id)
+
+    def grammar(tokens: mx.array, logits: mx.array) -> mx.array:
+        return logits
+
+    for uid, request_id in enumerate(request_ids):
+        request = Request(request_id, "prompt", SamplingParams())
+        request.status = RequestStatus.RUNNING
+        request.batch_uid = uid
+        scheduler.running[request_id] = request
+        scheduler.requests[request_id] = request
+        scheduler.request_id_to_uid[request_id] = uid
+        scheduler.uid_to_request_id[uid] = request_id
+        scheduler._register_uid_processors(uid, request, [grammar], grammar)
+        manager.create_block_table(request_id)
+
+    monkeypatch.setattr(cache, "release_cache", release_cache)
+    monkeypatch.setattr("rapid_mlx.scheduler.mx.clear_cache", lambda: None)
+
+    assert scheduler._recover_from_generation_error() == set(request_ids)
+
+    assert calls == request_ids
+    assert released == (["first", "last"] if release_raises else request_ids)
+    assert set(manager.request_tables) == ({"failed"} if release_raises else set())
+    assert not scheduler.running
+    assert scheduler.finished_req_ids == set(request_ids)
+    assert not scheduler.request_id_to_uid
+    assert not scheduler.uid_to_request_id
+    assert not scheduler.uid_to_request_processors
+    assert not scheduler._uids_with_grammar
+    assert not scheduler._known_stateful_processors
+    assert not scheduler._stateful_processor_objs
+    assert not scheduler._stateful_tombstones
+    assert all(
+        request.status == RequestStatus.FINISHED_ABORTED and request.batch_uid is None
+        for request in scheduler.requests.values()
+    )
+    assert ("release failed" in caplog.text) is release_raises
+
+
 def test_retirement_detaches_externally_retained_mtp_hooks():
     import weakref
     from types import SimpleNamespace
