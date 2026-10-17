@@ -73,17 +73,60 @@ def percentile(values, fraction):
     return round(ordered[min(len(ordered) - 1, int((len(ordered) - 1) * fraction))], 1)
 
 
+def diagnostic_repr(value):
+    try:
+        return repr(value)
+    except (ValueError, RecursionError):
+        # Huge integers and deeply nested JSON values may not be representable.
+        return f"<{type(value).__name__}>"
+
+
 def response_details(body, message_count):
-    choice = (body.get("choices") or [{}])[0]
-    message = choice.get("message") or {}
-    content = message.get("content") or ""
-    reasoning = message.get("reasoning_content") or ""
+    body = body if isinstance(body, dict) else {}
+    choices = body.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    choice = choice if isinstance(choice, dict) else {}
+    message = choice.get("message")
+    message = message if isinstance(message, dict) else {}
+    content = message.get("content")
+    content = "" if content is None else content
+    reasoning = message.get("reasoning_content")
+    reasoning = "" if reasoning is None else reasoning
+    finish_reason = choice.get("finish_reason")
+    if finish_reason is not None:
+        finish_reason = (
+            finish_reason
+            if isinstance(finish_reason, str)
+            else diagnostic_repr(finish_reason)
+        )[:200]
+    usage = body.get("usage")
+    if isinstance(usage, dict):
+        # A fixed schema and 64-bit counts bound both field count and value size.
+        usage = {
+            key: usage[key]
+            for key in (
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "input_tokens",
+                "output_tokens",
+                "cached_tokens",
+                "reasoning_tokens",
+            )
+            if type(usage.get(key)) is int and usage[key].bit_length() <= 64
+        }
+    elif usage is not None:
+        usage = diagnostic_repr(usage)[:500]
     return {
-        "finish_reason": choice.get("finish_reason"),
-        "usage": body.get("usage"),
-        "content_length": len(content),
-        "reasoning_content": reasoning[:2000],
-        "content_repr": repr(content)[:500],
+        "finish_reason": finish_reason,
+        "usage": usage,
+        "content_length": len(
+            content if isinstance(content, str) else diagnostic_repr(content)
+        ),
+        "reasoning_content": (
+            reasoning if isinstance(reasoning, str) else diagnostic_repr(reasoning)
+        )[:2000],
+        "content_repr": diagnostic_repr(content)[:500],
         "request_message_count": message_count,
     }
 

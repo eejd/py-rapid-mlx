@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from scripts.longrun_agent_soak import Soak
+from scripts.longrun_agent_soak import Soak, response_details
 
 
 def make_soak(tmp_path):
@@ -213,3 +213,103 @@ def test_request_exceptions_do_not_add_response_details(tmp_path, failure):
     asyncio.run(run())
     error = read_error(tmp_path)
     assert "finish_reason" not in error
+
+
+@pytest.mark.parametrize("reasoning", [["r" * 3000], {"text": "r" * 3000}, 123, 0])
+def test_nonstring_reasoning_preserves_empty_answer(tmp_path, reasoning):
+    body = {"choices": [{"message": {"content": "", "reasoning_content": reasoning}}]}
+
+    async def run():
+        soak = make_soak(tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json=body)
+            )
+        ) as client:
+            await soak.request(0, client=client)
+        await close_soak(soak)
+
+    asyncio.run(run())
+    error = read_error(tmp_path)
+    assert error["error"] == "empty answer"
+    assert error["reasoning_content"] == repr(reasoning)[:2000]
+    assert error["content_length"] == 0
+    assert error["content_repr"] == "''"
+    assert error["request_message_count"] == 2
+
+
+@pytest.mark.parametrize(
+    "finish_reason", ["f" * 3000, ["f" * 3000], 123], ids=["string", "list", "int"]
+)
+@pytest.mark.parametrize(
+    ("usage", "expected_usage"),
+    [
+        (
+            {
+                "prompt_tokens": 31,
+                "completion_tokens": 80,
+                "total_tokens": 111,
+                "prompt_tokens_details": {"payload": "u" * 10000},
+                "arbitrary_tokens": 123,
+                "input_tokens": True,
+                "output_tokens": "u" * 10000,
+                "cached_tokens": 2**10000,
+            },
+            {"prompt_tokens": 31, "completion_tokens": 80, "total_tokens": 111},
+        ),
+        (["u" * 10000], repr(["u" * 10000])[:500]),
+        ("u" * 10000, repr("u" * 10000)[:500]),
+        (0, "0"),
+    ],
+)
+def test_oversized_response_metadata_is_bounded(finish_reason, usage, expected_usage):
+    details = response_details(
+        {"choices": [{"finish_reason": finish_reason}], "usage": usage}, 2
+    )
+    expected_reason = (
+        finish_reason if isinstance(finish_reason, str) else repr(finish_reason)
+    )[:200]
+    assert details["finish_reason"] == expected_reason
+    assert details["usage"] == expected_usage
+    assert len(json.dumps(details)) < 1000
+
+
+@pytest.mark.parametrize(
+    "value", [None, False, 0, 123, "invalid", [], [123], {"0": 123}]
+)
+def test_response_details_handles_malformed_containers(value):
+    for body in (value, {"choices": value}, {"choices": [value]}):
+        details = response_details(body, 2)
+        assert details["content_length"] == 0
+        assert details["content_repr"] == "''"
+    details = response_details({"choices": [{"message": value}]}, 2)
+    assert details["content_length"] == 0
+    assert details["reasoning_content"] == ""
+
+
+@pytest.mark.parametrize("content", [["c" * 3000], {"text": "c" * 3000}, 123, 0, False])
+def test_response_details_serializes_nonstring_content(content):
+    details = response_details({"choices": [{"message": {"content": content}}]}, 2)
+    assert details["content_length"] == len(repr(content))
+    assert details["content_repr"] == repr(content)[:500]
+
+
+def test_response_details_handles_unrepresentable_json_values():
+    value = 10**5000
+    details = response_details(
+        {
+            "choices": [
+                {
+                    "finish_reason": value,
+                    "message": {"content": value, "reasoning_content": value},
+                }
+            ],
+            "usage": value,
+        },
+        2,
+    )
+    assert details["finish_reason"] == "<int>"
+    assert details["usage"] == "<int>"
+    assert details["content_length"] == 5
+    assert details["content_repr"] == "<int>"
+    assert details["reasoning_content"] == "<int>"
