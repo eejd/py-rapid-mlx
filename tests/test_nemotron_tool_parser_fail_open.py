@@ -952,3 +952,84 @@ def test_bare_malformed_json_body_preserves_raw_arguments(streamed):
         result = parser.extract_tool_calls(function + tail)
         assert _only_call(result)["arguments"] == "{broken"
         assert result.content == tail.strip()
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_many_wrapped_calls_bound_tail_scan_and_slice_work(monkeypatch, streamed):
+    """Each extraction stays linear, including repeated streaming close events."""
+    scanned_bytes = sliced_bytes = input_bytes = 0
+    boundary = NemotronToolParser._wrapped_tail_boundary
+    spans = NemotronToolParser._function_spans
+
+    class CountedText(str):
+        def __getitem__(self, key):
+            nonlocal sliced_bytes
+            result = super().__getitem__(key)
+            if isinstance(key, slice):
+                sliced_bytes += len(result)
+                return CountedText(result)
+            return result
+
+    def counted_boundary(text, start=0, stop=None):
+        nonlocal scanned_bytes
+        scanned_bytes += (len(text) if stop is None else stop) - start
+        if start == 0 and stop is None:
+            return boundary(text)
+        return boundary(text, start, stop)
+
+    def counted_spans(cls, text, valid_names=None):
+        nonlocal input_bytes
+        input_bytes += len(text)
+        return spans(CountedText(text), valid_names)
+
+    monkeypatch.setattr(
+        NemotronToolParser, "_wrapped_tail_boundary", staticmethod(counted_boundary)
+    )
+    monkeypatch.setattr(
+        NemotronToolParser, "_function_spans", classmethod(counted_spans)
+    )
+    call = "<tool_call><function=f><parameter=a>v</parameter></function></tool_call>"
+    if streamed:
+        calls, content = _capture_stream([call] * 500)
+        assert calls == [{"a": "v"}] * 500
+        assert content == ""
+    else:
+        result = NemotronToolParser().extract_tool_calls(call * 500)
+        assert [json.loads(c["arguments"]) for c in result.tool_calls] == [
+            {"a": "v"}
+        ] * 500
+        assert not result.content
+    assert scanned_bytes <= 2 * input_bytes, (scanned_bytes, input_bytes)
+    assert sliced_bytes <= 8 * input_bytes, (sliced_bytes, input_bytes)
+    print(f"{streamed=}: {scanned_bytes=}, {sliced_bytes=}, {input_bytes=}")
+
+
+def test_narration_does_not_copy_accounted_prefix_per_chunk():
+    sliced_bytes = 0
+
+    class CountedText(str):
+        def __getitem__(self, key):
+            nonlocal sliced_bytes
+            result = super().__getitem__(key)
+            if isinstance(key, slice):
+                sliced_bytes += len(result)
+            return result
+
+    parser = NemotronToolParser()
+    prefix = (
+        "<tool_call><function=f><parameter=a>"
+        + "x" * 8192
+        + "</parameter></function></tool_call>"
+    )
+    parser.extract_tool_calls_streaming("", prefix, prefix)
+    previous = prefix
+    chunk = " Explain </function> literally."
+    content = ""
+    for _ in range(500):
+        current = CountedText(previous + chunk)
+        delta = parser.extract_tool_calls_streaming(previous, current, chunk) or {}
+        content += delta.get("content", "")
+        previous = current
+    content += parser.flush_held_content(previous)
+    assert content == chunk * 500
+    assert sliced_bytes <= 8 * len(previous), (sliced_bytes, len(previous))

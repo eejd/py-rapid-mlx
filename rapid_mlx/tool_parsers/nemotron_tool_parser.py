@@ -90,6 +90,10 @@ class NemotronToolParser(ToolParser):
     # Residual bare wrapper tags left behind after the function bodies have
     # been stripped from ``content``; removed so they don't leak as text.
     RESIDUAL_WRAPPER_PATTERN = re.compile(r"</?tool_call>")
+    _TAIL_OPENER_PATTERN = re.compile(r"<tool_call>|<function=")
+    _TAIL_PAIR_PATTERN = re.compile(r"</function>\s*</tool_call>")
+    _TAIL_PARTIAL_PATTERN = re.compile(r"</function>\s*(<[^>]*|)?$")
+    _PARAMETER_CLOSE_PATTERN = re.compile(r"</parameter>\s*</function>$")
 
     # Pattern to extract parameters
     PARAM_PATTERN = re.compile(
@@ -157,7 +161,7 @@ class NemotronToolParser(ToolParser):
             pending_pair = None
         pending = self._pending_markup_index(
             held,
-            include_closers=self._has_unmatched_opener(full_text[: self._content_upto]),
+            include_closers=self._has_unmatched_opener(full_text, self._content_upto),
         )
         # At EOF a partial continuation cannot become a pair: release it as
         # prose. Complete openers and ambiguous opener prefixes stay held.
@@ -168,52 +172,54 @@ class NemotronToolParser(ToolParser):
         return held[:safe_end]
 
     @staticmethod
-    def _wrapped_tail_boundary(held: str) -> tuple[int, int | None]:
+    def _wrapped_tail_boundary(
+        held: str, start: int = 0, stop: int | None = None
+    ) -> tuple[int, int | None]:
         """Consume continuation pairs and hold a possible final pair prefix."""
-        opener = re.search(r"<tool_call>|<function=", held)
-        stop = opener.start() if opener else len(held)
-        tail = held[:stop]
-        consumed = 0
+        if stop is None:
+            opener = NemotronToolParser._TAIL_OPENER_PATTERN.search(held, start)
+            stop = opener.start() if opener else len(held)
+        consumed = start
         # Buffered wrapped calls end at the LAST pair. Even prose containing
         # such a pair is payload by that rule; an emitted call cannot retract,
         # but its still-held continuation must never leak as visible content.
-        for pair in re.finditer(r"</function>\s*</tool_call>", tail):
+        for pair in NemotronToolParser._TAIL_PAIR_PATTERN.finditer(held, start, stop):
             consumed = pair.end()
-        if opener:
-            return consumed, None
-        tail = tail[consumed:]
-        partial = re.search(r"</function>\s*(<[^>]*|)?$", tail)
+        if stop < len(held):
+            return consumed - start, None
+        partial = NemotronToolParser._TAIL_PARTIAL_PATTERN.search(held, consumed, stop)
         if partial:
             suffix = partial.group(1) or ""
             if "</tool_call>".startswith(suffix):
-                return consumed, partial.start()
+                return consumed - start, partial.start() - consumed
         for size in range(1, len("</function>")):
-            if tail.endswith("</function>"[:size]):
-                return consumed, len(tail) - size
-        return consumed, None
+            if held.endswith("</function>"[:size], consumed, stop):
+                return consumed - start, stop - consumed - size
+        return consumed - start, None
 
-    def _has_unmatched_opener(self, prefix: str) -> bool:
+    def _has_unmatched_opener(self, text: str, end: int | None = None) -> bool:
         """Whether accounted markup still needs a function or wrapper close.
 
         Skip complete function spans using the same literal-safe scanner as
         extraction. Counting textual tags would let wrapper-shaped payload
         close a real wrapper, or leave a payload opener spuriously pending.
         """
+        end = len(text) if end is None else end
         upto = getattr(self, "_opener_scan_upto", 0)
-        if upto and len(prefix) == upto:
+        if upto and end == upto:
             return self._opener_scan_result
-        if upto and len(prefix) >= upto:
+        if upto and end >= upto:
             # Narration cannot change opener state, even with a wrapper still
             # open. Include bounded lookbehind for tags split at watermarks.
             markers: tuple[str, ...] = ("<function=", "<tool_call>")
             if self._opener_scan_result:
                 markers += ("</function>", "</tool_call>")
-            added = prefix[max(0, upto - max(map(len, markers))) :]
-            if not any(marker in added for marker in markers):
-                self._opener_scan_upto = len(prefix)
+            start = max(0, upto - max(map(len, markers)))
+            if not any(text.find(marker, start, end) != -1 for marker in markers):
+                self._opener_scan_upto = end
                 return self._opener_scan_result
-        result = self._scan_unmatched_opener(prefix)
-        self._opener_scan_upto = len(prefix)
+        result = self._scan_unmatched_opener(text[:end])
+        self._opener_scan_upto = end
         self._opener_scan_result = result
         return result
 
@@ -252,6 +258,9 @@ class NemotronToolParser(ToolParser):
             text, r"<function=([^>]+)>", "</function>", valid_names=valid_names
         )
         bounded = []
+        # A single forward scan bounds every tail, including literal openers
+        # inside payloads. Never copy the whole remainder for each call.
+        openers = [m.start() for m in cls._TAIL_OPENER_PATTERN.finditer(text)]
         previous_end = 0
         wrapped = False
         for name, body, start, end in calls:
@@ -259,17 +268,17 @@ class NemotronToolParser(ToolParser):
             body_start = text.index(">", start) + 1
             close = None
             if wrapped:
-                consumed, _ = cls._wrapped_tail_boundary(text[body_start:])
-                if consumed and re.search(
-                    r"</parameter>\s*</function>$", text[body_start + consumed : end]
+                next_opener = bisect_left(openers, body_start)
+                stop = openers[next_opener] if next_opener < len(openers) else len(text)
+                consumed, _ = cls._wrapped_tail_boundary(text, body_start, stop)
+                if consumed and cls._PARAMETER_CLOSE_PATTERN.search(
+                    text, body_start + consumed, end
                 ):
                     # A later complete parameter payload already closed the
                     # function, even if its wrapper close is still arriving.
                     close = end - len("</function>")
                 elif consumed:
-                    close = body_start + text[body_start : body_start + consumed].rfind(
-                        "</function>"
-                    )
+                    close = text.rfind("</function>", body_start, body_start + consumed)
             if close is None:
                 # Bare calls end at the first complete payload, matching the
                 # streaming path. Missing wrapper closes retain that fallback.
@@ -509,7 +518,7 @@ class NemotronToolParser(ToolParser):
             return latest_close
         pending = self._pending_markup_index(
             tail,
-            include_closers=self._has_unmatched_opener(text[:latest_close]),
+            include_closers=self._has_unmatched_opener(text, latest_close),
         )
         if pending is not None and tail[:pending].isspace():
             return latest_close
@@ -734,7 +743,7 @@ class NemotronToolParser(ToolParser):
 
         held = current_text[self._content_upto :]
         unmatched_opener = bool(self._content_upto) and self._has_unmatched_opener(
-            current_text[: self._content_upto]
+            current_text, self._content_upto
         )
         if (
             self._content_upto
