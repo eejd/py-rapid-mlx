@@ -2,12 +2,13 @@
 """Guard launch-setting coverage and exercise real pytest teardown boundaries."""
 
 import ast
+import importlib.machinery
 import os
 import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -169,6 +170,68 @@ def test_preloaded_nested_container_restored_after_in_place_mutation(monkeypatch
         module._alias_recommended_sampling["model"]["temperature"] = 0.1
         module._alias_recommended_sampling["model"]["top_p"] = 0.9
     assert module._alias_recommended_sampling == {"model": {"temperature": 0.7}}
+
+
+def test_server_import_observer_delegates_to_remaining_finders(monkeypatch):
+    calls = []
+    module = ModuleType("rapid_mlx.server")
+    path = []
+    target = module
+
+    def execute(module):
+        assert loader.exec_module is execute
+        module._default_timeout = 1800.0
+
+    loader = SimpleNamespace(exec_module=execute)
+    spec = importlib.machinery.ModuleSpec("rapid_mlx.server", loader)
+
+    def find_spec(fullname, path, target):
+        calls.append((fullname, path, target))
+        return spec
+
+    def unexpected_find_spec(*args):
+        pytest.fail("finder outside the remaining search order was consulted")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "meta_path", [])
+        isolate = contextmanager(_isolate_server_serve_config.__wrapped__)
+        with isolate():
+            observer = sys.meta_path[0]
+            sys.meta_path.insert(0, SimpleNamespace(find_spec=unexpected_find_spec))
+            sys.meta_path.extend(
+                [
+                    object(),  # Legacy finders without find_spec are skipped.
+                    SimpleNamespace(find_spec=lambda *args: None),
+                    SimpleNamespace(find_spec=find_spec),
+                    SimpleNamespace(find_spec=unexpected_find_spec),
+                ]
+            )
+            assert observer.find_spec("rapid_mlx.server", path, target) is spec
+            assert calls == [("rapid_mlx.server", path, target)]
+            assert loader.exec_module is not execute
+            loader.exec_module(module)
+            module._default_timeout = 60
+    assert module._default_timeout == 1800.0
+    assert loader.exec_module is execute
+
+
+@pytest.mark.parametrize("change", ["remove", "clear", "replace"])
+def test_server_import_observer_teardown_tolerates_removal(monkeypatch, change):
+    module = ModuleType("rapid_mlx.server")
+    module._default_timeout = 1800.0
+    monkeypatch.setitem(sys.modules, "rapid_mlx.server", module)
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "meta_path", [])
+        isolate = contextmanager(_isolate_server_serve_config.__wrapped__)
+        with isolate():
+            module._default_timeout = 60
+            if change == "remove":
+                sys.meta_path.remove(sys.meta_path[0])
+            elif change == "clear":
+                sys.meta_path.clear()
+            else:
+                sys.meta_path = []
+    assert module._default_timeout == 1800.0
 
 
 # Run this pair in one fresh worker so xdist/random ordering cannot separate it.

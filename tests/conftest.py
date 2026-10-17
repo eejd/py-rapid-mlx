@@ -4,7 +4,6 @@
 import argparse
 import contextlib
 import copy
-import importlib.machinery
 import importlib.util
 import ipaddress
 import os
@@ -145,8 +144,17 @@ def _isolate_server_serve_config():
         def find_spec(self, fullname, path, target=None):
             if fullname != "rapid_mlx.server":
                 return None
-            spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
-            if spec is None or spec.loader is None:
+            for finder in sys.meta_path[sys.meta_path.index(self) + 1 :]:
+                if finder is self:
+                    continue
+                find_spec = getattr(finder, "find_spec", None)
+                if find_spec is not None:
+                    spec = find_spec(fullname, path, target)
+                    if spec is not None:
+                        break
+            else:
+                return None
+            if spec.loader is None:
                 return None
             execute = spec.loader.exec_module
 
@@ -167,7 +175,8 @@ def _isolate_server_serve_config():
     try:
         yield
     finally:
-        sys.meta_path.remove(observer)
+        if observer in sys.meta_path:
+            sys.meta_path.remove(observer)
         for module, values, limiter, limiter_config in reversed(snapshots):
             for name, value in values.items():
                 if value is missing:
