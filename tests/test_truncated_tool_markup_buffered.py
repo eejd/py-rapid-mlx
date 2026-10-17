@@ -758,3 +758,56 @@ def test_closed_inline_code_before_rejected_call(client, stream):
     content, calls, _ = _reply(client, "chat", raw, stream=stream)
     assert content.strip() == prefix.strip()
     assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "<tool_call>\n<function=write_file>\n<parameter=path>README",
+        '<tool_call>{"name":"write_file","arguments":{"path":"README',
+    ],
+    ids=["xml", "hermes-json"],
+)
+@pytest.mark.parametrize(
+    "example,kept",
+    [
+        (r"\`", False),
+        (r"\\\`", False),
+        (r"\\`", True),
+        (r"\\\\`", True),
+        (r"`code\`", False),
+        (r"``code\``", False),
+    ],
+    ids=[
+        "one-slash",
+        "three-slashes",
+        "two-slashes",
+        "four-slashes",
+        "literal-slash-in-span",
+        "literal-slash-in-double-span",
+    ],
+)
+def test_escaped_backtick_before_truncated_call(
+    client, parser, route, suffix, example, kept
+):
+    client[1].tool_call_parser = parser
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+        }
+    ]
+    prefix = f"Escape a backtick as {example} in Markdown.\n"
+    prefix += "I will update the documentation.\n"
+    raw = prefix + suffix
+    content, calls, _ = _reply(client, route, raw, tools=tools)
+    assert content == (raw if kept else prefix.rstrip())
+    assert not calls

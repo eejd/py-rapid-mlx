@@ -161,6 +161,14 @@ class _MarkdownCodeTracker:
             for run in re.finditer(r"`+", line):
                 length = len(run.group())
                 if inline is None:
+                    # Only openers honor escapes; backslashes inside code are
+                    # literal. These backward scans are disjoint, hence O(n).
+                    start = run.start()
+                    back = start
+                    while back > 0 and line[back - 1] == "\\":
+                        back -= 1
+                    if (start - back) % 2:
+                        continue
                     inline = length
                 elif inline == length:
                     inline = None
