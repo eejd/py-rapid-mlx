@@ -3,7 +3,6 @@
 # Tighten after fixes: python scripts/check_mypy_error_budget.py --update
 # Environment: Python 3.11 + config/mypy-requirements.txt
 
-rapid_mlx/_integration_tests/test_anthropic_sdk.py 1
 rapid_mlx/_integration_tests/test_hermes.py 1
 rapid_mlx/_mlx_compat.py 2
 rapid_mlx/_pysample.py 1

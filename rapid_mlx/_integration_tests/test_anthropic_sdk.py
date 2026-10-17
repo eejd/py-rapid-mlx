@@ -1,1 +1,0 @@
-../../tests/integrations/test_anthropic_sdk.py
