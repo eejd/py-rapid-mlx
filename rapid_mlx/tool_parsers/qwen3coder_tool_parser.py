@@ -143,8 +143,17 @@ class _MarkdownCodeTracker:
         prefix = "".join(pieces)
         fence = None
         inline = None
+        # Buffered cleanup errs toward preserving examples, including fences
+        # nested in lists. Leave the streaming fence rules unchanged.
+        buffered_fence_re = re.compile(r"[ \t]*(`{3,}|~{3,})")
+        indented = False
+        previous_blank = True
         for line in prefix.splitlines(keepends=True):
-            match = _MARKDOWN_FENCE_RE.match(line)
+            indented = bool(re.match(r"(?: {4}| *\t)", line)) and (
+                previous_blank or indented
+            )
+            previous_blank = not line.strip()
+            match = buffered_fence_re.match(line)
             if fence is not None:
                 if (
                     line.endswith("\n")
@@ -157,6 +166,8 @@ class _MarkdownCodeTracker:
                 continue
             if inline is None and match:
                 fence = match.group(1)
+                continue
+            if indented:
                 continue
             for run in re.finditer(r"`+", line):
                 length = len(run.group())
@@ -172,7 +183,13 @@ class _MarkdownCodeTracker:
                     inline = length
                 elif inline == length:
                     inline = None
-        return fence is not None or inline is not None
+        # At column zero the queried line has no indentation, even when the
+        # preceding complete line belonged to an indented block.
+        return (
+            fence is not None
+            or inline is not None
+            or (indented and not prefix.endswith(("\n", "\r")))
+        )
 
     def _feed(self, chunk: str) -> None:
         *done, self._line = (self._line + chunk).split("\n")

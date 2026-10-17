@@ -291,6 +291,66 @@ def test_prose_and_code_preserved(client, parser, route, text):
 
 @pytest.mark.parametrize("parser", PARSERS)
 @pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("indent", ["    ", "        ", "\t", "  \t"])
+@pytest.mark.parametrize("fence", ["~~~", "````"])
+def test_nested_fenced_example_preserved(client, parser, route, indent, fence):
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    client[1].tool_call_parser = parser
+    text = (
+        f"Example:\n\n- XML tool format:\n\n{indent}{fence}xml\n"
+        f"{indent}<tool_call>\n{indent}<function=get_weather\n{indent}{fence}\n"
+    )
+    content, calls, _ = _reply(client, route, text)
+    # Routes already trim outer whitespace; cleanup itself must preserve it.
+    assert content == text.strip()
+    cls = ToolParserManager.get_tool_parser(parser)
+    assert cls.strip_trailing_tool_envelope(text, {"tools": TOOLS}) == text
+    assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("indent", ["    ", "        ", "\t", "  \t"])
+@pytest.mark.parametrize("preceding", ["", "Example:\n\n", "Example:\n\n    code\n"])
+def test_indented_example_preserved(client, parser, route, indent, preceding):
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    client[1].tool_call_parser = parser
+    text = preceding + indent + "<tool_call>\n" + indent + "<function=get_weather"
+    content, calls, _ = _reply(client, route, text)
+    assert content == text.strip()
+    cls = ToolParserManager.get_tool_parser(parser)
+    assert cls.strip_trailing_tool_envelope(text, {"tools": TOOLS}) == text
+    assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("closing", ["~~~", "~~~~~", "```", "~~", "~~~ trailing"])
+def test_nested_fence_closing_rules(client, parser, route, closing):
+    client[1].tool_call_parser = parser
+    prefix = f"Example:\n\n    ~~~xml\n    code\n    {closing}\n"
+    text = prefix + "<tool_call>\n<function=get_weather"
+    content, calls, _ = _reply(client, route, text)
+    assert content == (prefix.strip() if closing in ("~~~", "~~~~~") else text)
+    assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("prefix", ["Prose\n", "Example:\n\n    code\nProse\n"])
+def test_indentation_after_prose_is_not_code(client, parser, route, prefix):
+    client[1].tool_call_parser = parser
+    content, calls, _ = _reply(
+        client, route, prefix + "    <tool_call>\n    <function=get_weather"
+    )
+    assert content == prefix.strip()
+    assert not calls
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize(
     "tail", ["", "\n<tool_call>", "\n<tool_call>\n<function", '\n<tool_call>\n{"name']
 )
