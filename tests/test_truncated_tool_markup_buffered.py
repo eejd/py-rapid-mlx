@@ -97,6 +97,7 @@ def _reply(
     tools=TOOLS,
     chunks=None,
     budget=16,
+    with_reasoning=False,
 ):
     http, cfg = client
     cfg.engine = _Engine(text, finish_reason, chunks)
@@ -139,6 +140,8 @@ def _reply(
             choices[-1]["finish_reason"],
         )
     data = response.json()
+    if with_reasoning:
+        return data
     if route == "chat":
         choice = data["choices"][0]
         return (
@@ -249,7 +252,7 @@ def test_buffered_truncated(client, parser, route, text, narration, finish_reaso
     content, calls, finish = _reply(
         client, route, narration + text, budget=4, finish_reason=finish_reason
     )
-    assert content == narration.rstrip()
+    assert content == narration.strip()
     assert not calls
     expected = {
         "length": {
@@ -352,7 +355,7 @@ def test_cleanup_guards(client, parser):
     assert _clean_content("```xml\n<tool_call>") == "```xml\n<tool_call>"
     assert (
         _clean_content("```xml\n<tool_call>\n```\n<tool_call>")
-        == "```xml\n<tool_call>\n```"
+        == "```xml\n<tool_call>\n```\n"
     )
 
 
@@ -388,6 +391,7 @@ def _stream_snapshots():
     """Review reproducers at the shared streaming seam, including EOF events."""
     from dataclasses import asdict
 
+    from rapid_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
     from rapid_mlx.service.postprocessor import StreamingPostProcessor
     from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
     from tests.test_postprocessor import _make_cfg, _make_output
@@ -402,6 +406,9 @@ def _stream_snapshots():
     reproducers = [
         '<tool_call>{"name":"get_weather","arguments":{"city":"Paris"}}</tool_call>\n<tool_call>\n',
         "Use <tool_call> {json} to describe the format.",
+        "Use the <tool_call> tag.\nLet me check.\n<tool_call>\n<function=get_weather",
+        "<think>Let me think.</think><tool_call>\n<function=get_weather",
+        "<think>I should use <tool_call>\n<function=get_weather> to look this up.</think>Final answer.",
         "Let me check.\n<tool_call>\n<function=get_weather>\n",
         "Hello\n<tool_call>\n<function=get_weather>\n<parameter=city>P",
         "<tool_call>\n<function",
@@ -415,9 +422,9 @@ def _stream_snapshots():
             sizes = [len(raw)]
             if parser_name == "hermes" and raw in (
                 reproducers[0],
-                reproducers[2],
-                reproducers[3],
+                reproducers[5],
                 reproducers[6],
+                reproducers[9],
             ):
                 sizes.append(1)
             for size in sizes:
@@ -427,6 +434,9 @@ def _stream_snapshots():
                         enable_auto_tool_choice=True,
                         tool_call_parser=parser_name,
                         tool_parser_instance=parser,
+                        reasoning_parser=Qwen3ReasoningParser(None)
+                        if "<think>" in raw
+                        else None,
                     ),
                     tools_requested=True,
                     request={"tools": TOOLS, "tool_choice": "auto"},
@@ -536,3 +546,117 @@ def test_linear_cleanup_closed_wrappers(client, parser, record_property):
     elapsed = perf_counter() - start
     record_property("closed_wrappers_seconds", elapsed)
     assert elapsed < 0.15
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+def test_prose_opener_before_real_call(client, parser, route):
+    client[1].tool_call_parser = parser
+    narration = "Use the <tool_call> tag.\nLet me check.\n"
+    raw = narration + "<tool_call>\n<function=get_weather"
+    expected = _reply(client, route, narration)[0]
+    assert _reply(client, route, raw)[0] == expected
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+def test_exact_whitespace_streaming_parity(client, parser):
+    client[1].tool_call_parser = parser
+    narration = "Let me check.\n"
+    raw = narration + "<tool_call>\n<function=get_weather"
+    buffered = _reply(client, "chat", raw)[0]
+    streamed = _reply(client, "chat", raw, stream=True)[0]
+    # Buffered routes normalize ordinary text too. Check exact parser parity
+    # before that normalization, and the route's ordinary-text policy after it.
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    cleaned = ToolParserManager.get_tool_parser(parser).strip_trailing_tool_envelope(
+        raw
+    )
+    if parser == "qwen3_coder_xml":
+        assert cleaned == streamed == narration
+    else:
+        assert (
+            cleaned
+            == _reply(client, "chat", raw, stream=True, chunks=list(raw))[0]
+            == narration
+        )
+    assert buffered == _reply(client, "chat", narration)[0]
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("inside_reasoning", [False, True])
+@pytest.mark.parametrize("rescue_enabled", [False, True])
+def test_reasoning_boundaries(
+    client, parser, route, inside_reasoning, rescue_enabled, monkeypatch
+):
+    from rapid_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+
+    monkeypatch.setenv("RAPID_MLX_REASONING_RESCUE", "on" if rescue_enabled else "off")
+    cfg = client[1]
+    cfg.tool_call_parser = parser
+    cfg.reasoning_parser_name = "qwen3"
+    cfg.reasoning_parser = Qwen3ReasoningParser(tokenizer=None)
+    raw = (
+        "<think>I should use <tool_call>\n"
+        "<function=get_weather> to look this up.</think>Final answer."
+        if inside_reasoning
+        else "<think>Let me think.</think><tool_call>\n<function=get_weather"
+    )
+    content = _reply(client, route, raw)[0]
+    assert content.endswith("Final answer.") if inside_reasoning else content == ""
+    data = _reply(client, route, raw, with_reasoning=True)
+    if route == "chat":
+        reasoning = data["choices"][0]["message"].get("reasoning_content")
+    elif route == "messages":
+        reasoning = "".join(
+            b["thinking"] for b in data["content"] if b["type"] == "thinking"
+        )
+    else:
+        reasoning = "".join(
+            c["text"]
+            for b in data["output"]
+            if b["type"] == "reasoning"
+            for c in b["summary"]
+        )
+    if not inside_reasoning:
+        assert reasoning == "Let me think."
+    if route == "chat" and not inside_reasoning and not rescue_enabled:
+        assert content == _reply(client, route, raw, stream=True)[0]
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+def test_linear_cleanup_prose_then_real_call(client, parser):
+    from time import perf_counter
+
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    cls = ToolParserManager.get_tool_parser(parser)
+    narration = "Use <tool_call> for a call.\n" * 20000
+    raw = narration + "<tool_call>\n<function=get_weather"
+    start = perf_counter()
+    assert cls.strip_trailing_tool_envelope(raw) == narration
+    assert perf_counter() - start < 0.2
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("closed", [False, True])
+def test_prose_json_string_state(client, parser, route, closed):
+    client[1].tool_call_parser = parser
+    raw = '<tool_call>{"example":"<tool_call>\n<function=get_weather'
+    if closed:
+        raw += '"}</tool_call>'
+    assert _reply(client, route, raw)[0] == raw
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+def test_reasoning_boundary_guard_without_source(client, parser):
+    from rapid_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
+    from rapid_mlx.service.helpers import _strip_trailing_tool_envelope
+
+    client[1].tool_call_parser = parser
+    client[1].reasoning_parser = Qwen3ReasoningParser(None)
+    raw = "<tool_call>\n<function=get_weather</think>Final answer."
+    assert _strip_trailing_tool_envelope(raw) == raw
+    assert _strip_trailing_tool_envelope("<tool_call>\n<function=get_weather") == ""

@@ -71,6 +71,7 @@ from ..service.helpers import (
     _resolve_reasoning_enabled,
     _resolve_temperature,
     _resolve_top_p,
+    _strip_trailing_tool_envelope,
     _tool_use_required_named_suffix,
     _uses_deepseek_v4_reasoning,
     _validate_model_name,
@@ -1273,6 +1274,18 @@ async def create_anthropic_message(
             finish_reason,
             include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
         )
+
+        # Clean only the finalized visible lane; keep raw reasoning boundaries.
+        if (
+            cfg.reasoning_parser is not None
+            and openai_request.tools
+            and not engine_tool_calls
+        ):
+            final_content = _strip_trailing_tool_envelope(
+                final_content or "",
+                openai_request,
+                reasoning_source=output.raw_text or output.text,
+            ).strip()
 
         openai_response = ChatCompletionResponse(
             model=cfg.model_name or openai_request.model,

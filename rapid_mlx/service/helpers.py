@@ -475,9 +475,9 @@ def _finalize_content_and_reasoning(
     if tool_calls:
         reasoning_text, _ = extract(raw_text)
     else:
-        # An empty cleaned buffer can be intentional: do not resurrect a
-        # trailing tool envelope while recovering reasoning from raw output.
-        text_to_parse = cleaned_text or _strip_trailing_tool_envelope(raw_text)
+        # Preserve raw reasoning boundaries; suffix cleanup runs on the visible
+        # content after this extraction in each buffered route.
+        text_to_parse = cleaned_text or raw_text
         new_reasoning, new_cleaned = extract(text_to_parse)
         # Capture the FIRST-parse Case-4 signal BEFORE the harmony
         # retry overwrites ``new_reasoning``. The leak plug below
@@ -3532,7 +3532,9 @@ def _request_declared_tool_names(request_dict: dict | None) -> set[str]:
     return names
 
 
-def _strip_trailing_tool_envelope(text: str, request=None) -> str:
+def _strip_trailing_tool_envelope(
+    text: str, request=None, *, reasoning_source: str = ""
+) -> str:
     """Apply the configured parser's EOF visibility rule to buffered content."""
     cfg = get_config()
     if not cfg.enable_auto_tool_choice or not cfg.tool_call_parser:
@@ -3541,9 +3543,24 @@ def _strip_trailing_tool_envelope(text: str, request=None) -> str:
         parser_cls = ToolParserManager.get_tool_parser(cfg.tool_call_parser)
     except (KeyError, ValueError):
         return text
-    return parser_cls.strip_trailing_tool_envelope(
+    cleaned = parser_cls.strip_trailing_tool_envelope(
         text, request.model_dump() if request is not None else None
     )
+    # A reasoning parser can promote tool-shaped reasoning into content. Never
+    # let suffix cleanup consume a closing boundary or the answer beyond it.
+    end_token = getattr(cfg.reasoning_parser, "end_token", None)
+    if end_token:
+        source = reasoning_source or text
+        source_cleaned = (
+            parser_cls.strip_trailing_tool_envelope(
+                source, request.model_dump() if request is not None else None
+            )
+            if reasoning_source
+            else cleaned
+        )
+        if end_token in source[len(source_cleaned) :]:
+            return text
+    return cleaned
 
 
 def _parse_tool_calls_with_parser(
@@ -3568,7 +3585,7 @@ def _parse_tool_calls_with_parser(
     content, tool_calls = _run_tool_parser(
         output_text, request, structured_tool_calls=structured_tool_calls
     )
-    if not structured_tool_calls:
+    if not structured_tool_calls and get_config().reasoning_parser is None:
         request_dict = request.model_dump() if request else None
         if request_dict and request_dict.get("tools"):
             content = _strip_trailing_tool_envelope(content, request)

@@ -107,6 +107,7 @@ from ..service.helpers import (
     _resolve_max_tokens,
     _resolve_temperature,
     _resolve_top_p,
+    _strip_trailing_tool_envelope,
     _uses_deepseek_v4_reasoning,
     _validate_model_name,
     _validate_tool_call_params,
@@ -2405,6 +2406,18 @@ async def _non_stream(
         finish_reason,
         include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
     )
+
+    # Clean only the finalized visible lane; keep raw reasoning boundaries.
+    if (
+        cfg.reasoning_parser is not None
+        and openai_request.tools
+        and not engine_tool_calls
+    ):
+        final_content = _strip_trailing_tool_envelope(
+            final_content or "",
+            openai_request,
+            reasoning_source=output.raw_text or output.text,
+        ).strip()
 
     if (
         output.finish_reason == "stop"

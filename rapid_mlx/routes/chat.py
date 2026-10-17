@@ -117,6 +117,7 @@ from ..service.helpers import (
     _resolve_top_p,
     _scan_messages_for_lone_surrogates,
     _should_start_in_thinking,
+    _strip_trailing_tool_envelope,
     _tool_use_required_named_suffix,
     _uses_deepseek_v4_reasoning,
     _validate_model_name,
@@ -6954,6 +6955,14 @@ async def _create_chat_completion_impl(
         from ..tool_parsers.qwen3coder_tool_parser import UNAVAILABLE_TOOL_NOTICE
 
         final_content = UNAVAILABLE_TOOL_NOTICE
+
+    # Clean only the finalized visible lane; keep raw reasoning boundaries.
+    if cfg.reasoning_parser is not None and request.tools and not engine_tool_calls:
+        final_content = _strip_trailing_tool_envelope(
+            final_content or "",
+            request,
+            reasoning_source=output.raw_text or output.text,
+        ).strip()
 
     # Build logprobs for response if requested.
     #

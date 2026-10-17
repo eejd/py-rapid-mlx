@@ -167,10 +167,17 @@ def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -
     """Hide the first unfinished framing suffix outside Markdown, in O(n)."""
     tokens = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})[^\n]*|`+|\n|<tool_call>", re.M)
     json_tokens = re.compile(r'"(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|</tool_call>')
+    prose_json_tokens = re.compile(json_tokens.pattern + "|" + tokens.pattern, re.M)
     cursor, fence, inline = 0, "", 0
-    while match := tokens.search(text, cursor):
+    prose_json = False
+    while match := (prose_json_tokens if prose_json else tokens).search(text, cursor):
         cursor = match.end()
         token = match.group()
+        if prose_json and token.startswith('"'):
+            continue
+        if token == "</tool_call>":
+            prose_json = False
+            continue
         if run := match.group(1):
             if not fence:
                 fence = run
@@ -185,8 +192,24 @@ def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -
         elif token.startswith("`"):
             inline = 0 if inline == len(token) else inline or len(token)
         elif not fence and not inline:
-            opener, body_start = match.start(), cursor
+            opener = match.start()
             payload = re.compile(r"\s*").match(text, cursor).end()
+            # Inspect the payload start without copying/re-scanning the suffix.
+            # Prose openers must not hide a later unfinished real call.
+            call_shaped = bool(
+                payload == len(text)
+                or text.startswith("<function=", payload)
+                or (
+                    len(text) - payload < 10 and "<function=".startswith(text[payload:])
+                )
+                or re.compile(r'\{\s*(?:"name"|"(?:n(?:a(?:m(?:e)?)?)?)?\Z|\Z)').match(
+                    text, payload
+                )
+            )
+            if not call_shaped:
+                # Preserve JSON string state while scanning past example payloads.
+                prose_json = text.startswith("{", payload)
+                continue
             if text.startswith("{", payload):
                 close = next(
                     (
@@ -201,26 +224,16 @@ def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -
                 # XML keeps the first-literal-close limitation, including in values.
                 close_pos = text.find("</tool_call>", cursor)
                 end = close_pos + len("</tool_call>") if close_pos >= 0 else -1
-            if end < 0:
-                break
-            cursor = end
-    else:
-        return text
-    body = text[body_start:].lstrip()
-    if not (
-        not body
-        or "<function=".startswith(body)
-        or body.startswith("<function=")
-        or re.fullmatch(r"\{\s*", body)
-        or re.fullmatch(r'\{\s*"(n(a(m(e("?)?)?)?)?)?$', body)
-        or re.match(r'\{\s*"name"', body)
-    ):
-        return text
-    header = re.match(r"<function=([^>]+)>", body)
-    if header and declared is not None and header.group(1) not in declared:
-        # This parser releases unfinished undeclared XML blocks at stream EOF.
-        return text
-    return text[:opener].rstrip()
+            if end >= 0:
+                cursor = end
+                prose_json = False
+                continue
+            header = re.compile(r"<function=([^>]+)>").match(text, payload)
+            if header and declared is not None and header.group(1) not in declared:
+                # This parser releases unfinished undeclared XML at stream EOF.
+                return text
+            return text[:opener]
+    return text
 
 
 def _merge_content(
