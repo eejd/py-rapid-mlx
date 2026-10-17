@@ -101,6 +101,8 @@ def test_no_choices_records_missing_response_fields(tmp_path):
             "empty tool follow-up answer",
         ),
         ({"choices": []}, "tool follow-up has no choices"),
+        (["invalid"], "tool follow-up body is not an object"),
+        ("invalid", "tool follow-up body is not an object"),
         ({"choices": [{"message": {"content": "answer"}}]}, None),
     ],
 )
@@ -154,10 +156,12 @@ def test_tool_followup_records_actual_request_message_count(
     assert error["stage"] == "tool_followup"
     assert error["finish_reason"] == (
         followup_body["choices"][0]["finish_reason"]
-        if followup_body["choices"]
+        if isinstance(followup_body, dict) and followup_body["choices"]
         else None
     )
-    assert error["usage"] == followup_body.get("usage")
+    assert error["usage"] == (
+        followup_body.get("usage") if isinstance(followup_body, dict) else None
+    )
     assert error["request_message_count"] == 4
 
 
@@ -430,7 +434,128 @@ def test_stream_completion_and_failure_diagnostics(
     assert result[3] == expected_error
     if kind == "disconnect" and expected_error:
         assert result[5]["content_repr"] == "'answer'"
+    elif chunks is None:
+        assert result[5] == {
+            **response_details({}, 0),
+            "reasoning_content_length": 0,
+        }
     elif expected_error:
         assert result[5] is None
     elif kind == "stream":
         assert result[4] == {"role": "assistant", "content": "answer"}
+
+
+@pytest.mark.parametrize("body", [["invalid"], "invalid", None])
+def test_nonobject_response_records_validation_details(tmp_path, body):
+    async def run():
+        soak = make_soak(tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, text=json.dumps(body))
+            )
+        ) as client:
+            await soak.request(0, client=client)
+        await close_soak(soak)
+
+    asyncio.run(run())
+    error = read_error(tmp_path)
+    assert error["error"] == "response body is not an object"
+    for key, value in response_details(body, 2).items():
+        assert error[key] == value
+
+
+@pytest.mark.parametrize(
+    ("bad_line", "expected_error"),
+    [
+        ("{}", "ValueError: stream chunk missing choices"),
+        ('{"error": "broken"}', "ValueError: stream error: broken"),
+        ("invalid", "JSONDecodeError:"),
+    ],
+)
+def test_malformed_stream_records_accumulated_details(
+    tmp_path, bad_line, expected_error
+):
+    chunk = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "delta": {"content": "c" * 600, "reasoning_content": "r" * 2100},
+            }
+        ],
+        "usage": {"completion_tokens": 80},
+    }
+
+    async def run():
+        soak = make_soak(tmp_path)
+        soak.sequence = 1
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, text=f"data: {json.dumps(chunk)}\n\ndata: {bad_line}\n\n"
+                )
+            )
+        ) as client:
+            await soak.request(0, client=client)
+        await close_soak(soak)
+
+    asyncio.run(run())
+    error = read_error(tmp_path)
+    assert error["error"].startswith(expected_error)
+    expected = response_details(
+        {
+            "choices": [
+                {"finish_reason": "length", "message": chunk["choices"][0]["delta"]}
+            ],
+            "usage": chunk["usage"],
+        },
+        2,
+    )
+    for key, value in expected.items():
+        assert error[key] == value
+    assert error["reasoning_content_length"] == 2100
+
+
+def test_stream_reasoning_buffer_is_bounded(tmp_path, monkeypatch):
+    captured_reasoning = []
+
+    def capture_details(body, message_count):
+        captured_reasoning.append(body["choices"][0]["message"]["reasoning_content"])
+        return response_details(body, message_count)
+
+    monkeypatch.setattr("scripts.longrun_agent_soak.response_details", capture_details)
+    fragments = ["a" * 1500, "b" * 1500, "c" * 1500]
+    text = "".join(
+        "data: "
+        + json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "reasoning_content": fragment,
+                            "content": " " * 600,
+                        }
+                    }
+                ]
+            }
+        )
+        + "\n\n"
+        for fragment in fragments
+    )
+
+    async def run():
+        soak = make_soak(tmp_path)
+        soak.sequence = 1
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, text=text)
+            )
+        ) as client:
+            await soak.request(0, client=client)
+        await close_soak(soak)
+
+    asyncio.run(run())
+    assert captured_reasoning == ["a" * 1500 + "b" * 500]
+    error = read_error(tmp_path)
+    assert error["reasoning_content_length"] == 4500
+    assert error["reasoning_content"] == captured_reasoning[0]
+    assert error["content_length"] == 1800
