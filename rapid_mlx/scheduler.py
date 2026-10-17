@@ -20,6 +20,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field, replace
+from types import MemberDescriptorType
 from typing import Any, cast
 
 import mlx.core as mx
@@ -69,38 +70,56 @@ from .memory_peak import (  # noqa: E402
 )
 
 
+def _owned_attr(
+    obj: object, name: str
+) -> tuple[dict[str, object] | MemberDescriptorType, object] | None:
+    """Resolve only instance storage, without invoking properties or proxies."""
+    try:
+        state = object.__getattribute__(obj, "__dict__")
+        if isinstance(state, dict) and name in state:
+            return state, state[name]
+    except Exception:
+        pass
+    try:
+        for cls in type(obj).__mro__:
+            slots = cls.__dict__.get("__slots__", ())
+            if name in ((slots,) if isinstance(slots, str) else slots):
+                descriptor = cls.__dict__.get(name)
+                if isinstance(descriptor, MemberDescriptorType):
+                    return descriptor, descriptor.__get__(obj, type(obj))
+    except Exception:
+        pass
+    return None
+
+
 def _take_attr(obj: object, name: str) -> object | None:
-    """Detach known owned state, including slots that only permit assignment."""
-    try:
-        value: object | None = getattr(obj, name)
-    except (AttributeError, TypeError):
+    """Detach owned state, falling back to assignment for restricted slots."""
+    owned = _owned_attr(obj, name)
+    if owned is None:
         return None
+    storage, value = owned
     try:
-        delattr(obj, name)
-    except (AttributeError, TypeError):
-        try:
-            setattr(obj, name, None)
-        except (AttributeError, TypeError):
-            pass
+        if isinstance(storage, dict):
+            storage.pop(name, None)
+        else:
+            storage.__delete__(obj)
+    except Exception:
+        _replace_attr(obj, name, None)
     return value
 
 
 def _replace_attr(obj: object, name: str, value: object) -> None:
-    """Replace an existing field without introducing unsupported batch state."""
+    """Replace only existing instance storage; never synthesize attributes."""
+    owned = _owned_attr(obj, name)
+    if owned is None:
+        return
+    storage, _ = owned
     try:
-        getattr(obj, name)
-        setattr(obj, name, value)
-    except (AttributeError, TypeError):
-        pass
-
-
-def _drop_attr(obj: object, name: str) -> None:
-    """Remove instance overrides or slots without shadowing class methods."""
-    try:
-        # Bypass proxy __delattr__ hooks: remove only real instance storage,
-        # leaving dynamically supplied methods and class methods intact.
-        object.__delattr__(obj, name)
-    except (AttributeError, TypeError):
+        if isinstance(storage, dict):
+            storage[name] = value
+        else:
+            storage.__set__(obj, value)
+    except Exception:
         pass
 
 
@@ -6132,17 +6151,19 @@ class Scheduler:
                             except Exception as exc:
                                 logger.debug("Error retiring generator hook: %s", exc)
                     for name in ("_unprocessed_sequences", "_currently_processing"):
-                        queue = getattr(generator, name, None)
+                        owned_queue = _owned_attr(generator, name)
+                        queue = owned_queue[1] if owned_queue is not None else None
                         if queue is not None:
                             try:
-                                queue.clear()
+                                cast(Any, queue).clear()
                             except Exception as exc:
                                 logger.debug(
                                     "Error clearing retired generator queue: %s", exc
                                 )
                                 _take_attr(generator, name)
                     for name in ("_prompt_batch", "_generation_batch", "active_batch"):
-                        batch = getattr(generator, name, None)
+                        owned_batch = _owned_attr(generator, name)
+                        batch = owned_batch[1] if owned_batch is not None else None
                         if batch is None:
                             continue
                         try:
@@ -6166,7 +6187,7 @@ class Scheduler:
                             for field in ("_current_tokens", "_next_tokens"):
                                 _replace_attr(batch, field, None)
                             for field in ("_step", "next", "filter"):
-                                _drop_attr(batch, field)
+                                _take_attr(batch, field)
                         except Exception as exc:
                             logger.debug(
                                 "Error clearing retired generator batch: %s", exc
@@ -6183,7 +6204,7 @@ class Scheduler:
                         "_continuous_mtp_driver",
                         "_continuous_mtp_removed_states",
                     ):
-                        _drop_attr(generator, name)
+                        _take_attr(generator, name)
         except Exception as exc:
             logger.debug("Error retiring BatchGenerator state: %s", exc)
         finally:
