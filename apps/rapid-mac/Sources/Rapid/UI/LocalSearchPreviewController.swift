@@ -118,7 +118,12 @@ struct LocalSearchPreviewDismissal {
     }
 
     /// Returns whether a late open with no remaining intent needs another orderOut.
-    mutating func finish(isVisible: Bool, wantsControl: Bool) -> Bool {
+    mutating func finish(isVisible: Bool, wantsControl: Bool, ownedByOther: Bool = false) -> Bool {
+        if ownedByOther {
+            closing = false
+            awaitingLateOpen = false
+            return false
+        }
         if awaitingLateOpen, isVisible {
             awaitingLateOpen = false
             if !wantsControl {
@@ -135,6 +140,7 @@ struct LocalSearchPreviewDismissal {
     private var panel: QLPreviewPanel?
     private weak var ownerWindow: NSWindow?
     private weak var owner: LocalSearchPreviewController?
+    private weak var lastController: LocalSearchPreviewController?
     private var presented = false
     private var dismissal = LocalSearchPreviewDismissal()
     private var closing: Bool { dismissal.closing }
@@ -149,6 +155,7 @@ struct LocalSearchPreviewDismissal {
         guard let panel = panel ?? QLPreviewPanel.shared() else { return false }
         self.panel = panel
         owner = controller
+        lastController = controller
         if ownerWindow == nil {
             ownerWindow = window
             controller.nextResponder = window.nextResponder
@@ -238,7 +245,13 @@ struct LocalSearchPreviewDismissal {
     // continue opening themselves; release completes closing without reopening.
     private func finishClosingIfHidden(reopen: Bool = true) {
         let wasClosing = closing
-        if dismissal.finish(isVisible: isVisible, wantsControl: owner?.wantsControl == true) {
+        // The shared panel may have been claimed by a new view while our open
+        // was still in flight. Neither ownership reference may belong to it.
+        let ownedByOther = (panel?.currentController != nil
+            && panel?.currentController as AnyObject? !== lastController)
+            || (panel?.dataSource != nil && panel?.dataSource !== lastController)
+        if dismissal.finish(isVisible: isVisible, wantsControl: owner?.wantsControl == true,
+                            ownedByOther: ownedByOther) {
             panel?.orderOut(nil)
             return
         }
@@ -247,7 +260,7 @@ struct LocalSearchPreviewDismissal {
             if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
             closeObserver = nil
         }
-        guard wasClosing else { return }
+        guard wasClosing, !ownedByOther else { return }
         if reopen, let owner, owner.wantsControl {
             if acquire(owner) { reload(); show() }
         }

@@ -215,6 +215,19 @@ import Testing
         #expect(panel.calls == ["acquire", "reload", "show", "release", "acquire", "reload", "show", "release"])
         #expect(!panel.isVisible && panel.dataSource == nil && panel.delegate == nil)
     }
+    @Test func lateOpenOwnedByAnotherControllerIsNotDismissed() {
+        for initiallyVisible in [false, true] {
+            var dismissal = LocalSearchPreviewDismissal()
+            let began = dismissal.begin(isVisible: initiallyVisible)
+            #expect(began)
+            let shouldOrderOut = dismissal.finish(isVisible: true, wantsControl: false, ownedByOther: true)
+            #expect(!shouldOrderOut)
+            #expect(!dismissal.closing)
+            #expect(!dismissal.awaitingLateOpen)
+            let shouldOrderOutAgain = dismissal.finish(isVisible: true, wantsControl: false)
+            #expect(!shouldOrderOutAgain)
+        }
+    }
     @Test func sameFileToggleClosesBeforePanelBecomesVisible() async {
         let panel = Panel()
         panel.defersVisibility = true
