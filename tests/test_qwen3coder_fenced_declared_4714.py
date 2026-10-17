@@ -182,6 +182,29 @@ def test_fence_inside_call_does_not_hide_following_call(run_call, code, size):
     assert got_content == ""
 
 
+@pytest.mark.parametrize("size", [1, 2, 3, 5, 7, 13, 0])
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"Sure. {CALL.replace('Paris', 'Rome')}\n{EXAMPLE}",
+        f"Sure. {BARE.replace('Paris', 'Rome')}\n{EXAMPLE}",
+        f"Sure. {CALL.replace('Paris', 'Rome')} trailing text\n{EXAMPLE}",
+        f"{CALL.replace('Paris', 'Rome')}\n```xml\n{CALL}\n```\n",
+        f"{BARE.replace('Paris', 'Rome')}\n```xml\n{CALL}\n```\n",
+    ],
+    ids=[
+        "wrapped-after-prose",
+        "bare-after-prose",
+        "wrapped-close-before-trailing-text",
+        "wrapped-before-fence",
+        "bare-before-fence",
+    ],
+)
+def test_call_newlines_keep_subsequent_fenced_example_out_of_tool_calls(text, size):
+    got_calls, _ = stream(text, REQUEST, size)
+    assert got_calls == [("get_weather", '{"city": "Rome"}')]
+
+
 @pytest.mark.parametrize("text", ["<funx", "<fun"])
 def test_partial_bare_opener_is_released_as_content(text):
     assert stream(text, MULTI_TOOL_REQUEST, 1) == ([], text)
