@@ -11,7 +11,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timedelta
 from pathlib import Path
 
 from scripts.merge_on_green import APIError, GitHub
@@ -103,12 +102,7 @@ def nightly(api: GitHub, run: dict) -> str:
                 return "Nightly recovery pending"
             latest.append(history[0])
         if len({r["head_sha"] for r in latest}) != 1:
-            created = [
-                datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
-                for r in latest
-            ]
-            if max(created) - min(created) > timedelta(hours=6):
-                return "Nightly recovery pending"
+            return "Nightly recovery pending"
         for item in api.items("issues?state=open&labels=nightly-failure"):
             if "pull_request" not in item:
                 api.request(
@@ -212,6 +206,21 @@ def notify_author(api: GitHub, original: dict, revert: dict, run: dict) -> None:
         )
 
 
+def existing_revert(
+    api: GitHub, original: dict, revert: dict, run: dict, detail: str
+) -> str:
+    if revert.get("state") == "closed" and not revert.get("merged_at"):
+        issue(
+            api,
+            "main-red",
+            "Main CI is failing",
+            f"{detail}\nClosed unmerged revert PR: {revert['html_url']}",
+        )
+        return "Closed revert PR recorded"
+    notify_author(api, original, revert, run)
+    return "Revert PR already exists"
+
+
 def guard(api: GitHub, run: dict) -> str:
     if run["head_branch"] != "main":
         return "Non-main run ignored"
@@ -258,6 +267,13 @@ def guard(api: GitHub, run: dict) -> str:
     if run["run_attempt"] == 1:
         api.request(f"actions/runs/{run['id']}/rerun-failed-jobs", "POST")
         return "Failed jobs rerun once"
+    if any(
+        r["id"] > run["id"]
+        and r["status"] == "completed"
+        and r["conclusion"] == "success"
+        for r in runs(api, str(run["workflow_id"]), "push")
+    ):
+        return "Failure superseded by a newer green main run"
     blame, span = attributable(api, run)
     sha = run["head_sha"]
     title = api.request(f"commits/{sha}")["commit"]["message"].splitlines()[0]
@@ -280,8 +296,7 @@ def guard(api: GitHub, run: dict) -> str:
     pr_listing = f"pulls?state=all&head={api.repo.split('/')[0]}:{branch}"
     existing = api.items(pr_listing)
     if existing:
-        notify_author(api, originals[0], existing[0], run)
-        return "Revert PR already exists"
+        return existing_revert(api, originals[0], existing[0], run, detail)
     if not api.pat:
         raise APIError("RELEASE_PAT is required for revert writes")
     try:
@@ -317,8 +332,7 @@ def guard(api: GitHub, run: dict) -> str:
         if exc.status == 422:
             existing = api.items(pr_listing)
             if existing:
-                notify_author(api, originals[0], existing[0], run)
-                return "Revert PR already exists"
+                return existing_revert(api, originals[0], existing[0], run, detail)
         issue(api, "main-red", "Main CI is failing", f"{detail}\n{exc}")
         return "Revert PR creation failure recorded"
     ensure_label(api, "post-merge-revert")
