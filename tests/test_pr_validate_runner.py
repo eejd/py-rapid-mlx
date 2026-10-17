@@ -16,10 +16,12 @@ data over the network and is not unit-testable here.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -152,6 +154,88 @@ def test_cli_opt_in_reaches_runner(monkeypatch):
 
 
 class TestFailFast:
+    @pytest.mark.parametrize(
+        ("reply", "expected_status", "expected_findings", "stops_before_tests"),
+        [
+            (
+                "1. [BLOCKING] scripts/x.py:1 — bug\n2. [NIT] style",
+                "fail",
+                ["[BLOCKING] scripts/x.py:1 — bug", "[NIT] style"],
+                True,
+            ),
+            ("1. [NIT] style", "pass", ["[NIT] style"], False),
+        ],
+        ids=["numbered-blocking-and-nit", "numbered-nit-only"],
+    )
+    def test_numbered_codex_reply_controls_stop_before_tests(
+        self,
+        repo_root_cwd,
+        monkeypatch,
+        capsys,
+        reply,
+        expected_status,
+        expected_findings,
+        stops_before_tests,
+    ):
+        from scripts.pr_validate import runner
+        from scripts.pr_validate.steps import codex_review
+
+        for variable in (
+            "PR_VALIDATE_CONTINUE_AFTER_CODEX_FAIL",
+            "PR_VALIDATE_NO_CODEX",
+            "PR_VALIDATE_NO_DEEPSEEK",
+        ):
+            monkeypatch.delenv(variable, raising=False)
+        ctx = Context(pr_number=999, work_dir=repo_root_cwd / "artifacts")
+        monkeypatch.setattr(runner, "Context", lambda **kwargs: ctx)
+        diff_path = repo_root_cwd / "pr.diff"
+        diff_path.write_text("diff --git a/scripts/x.py b/scripts/x.py\n")
+
+        class FetchWithDiff(_FakeFetch):
+            def run(self, ctx):
+                result = super().run(ctx)
+                ctx.diff_path = str(diff_path)
+                return result
+
+        monkeypatch.setattr(codex_review.shutil, "which", lambda _: "/fake/codex")
+        codex_run = Mock(
+            return_value=subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": reply},
+                    }
+                ),
+                stderr="",
+            )
+        )
+        monkeypatch.setattr(codex_review.subprocess, "run", codex_run)
+        test_steps = [
+            _FakeStep(name)
+            for name in ("targeted_tests", "full_unit", "stress_e2e_bench")
+        ]
+
+        rc = run_pipeline(
+            pr_number=999,
+            fail_fast=False,
+            steps=[FetchWithDiff(), codex_review.CodexReviewStep(), *test_steps],
+        )
+
+        captured = capsys.readouterr()
+        codex_run.assert_called_once()
+        assert ctx.results[1].name == "codex_review"
+        assert ctx.results[1].status == expected_status
+        assert ctx.results[1].findings == expected_findings
+        assert rc == (1 if stops_before_tests else 0)
+        assert [result.name for result in ctx.results] == [
+            "fetch",
+            "codex_review",
+            *([] if stops_before_tests else [step.name for step in test_steps]),
+        ]
+        assert ("stopping before tests" in captured.err) is stops_before_tests
+
     @pytest.mark.parametrize("override", [None, "0"])
     def test_codex_fail_stops_before_tests_by_default(
         self, repo_root_cwd, monkeypatch, capsys, override
