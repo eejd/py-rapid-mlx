@@ -47,11 +47,12 @@ from rapid_mlx.service.postprocessor import StreamingPostProcessor
 # ``tools`` drop — an undeclared name/param, the reported reproduction.
 LFM_WIRE = '[GetWeather({"location": "Rome"})]'
 
+# Keep the auto-mode positive controls declared; authorization is tested separately.
 DECLARED_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_weather",
+            "name": "GetWeather",
             "parameters": {
                 "type": "object",
                 "properties": {
