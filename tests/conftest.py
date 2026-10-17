@@ -110,7 +110,8 @@ def _isolate_server_serve_config():
     If a test first imports the server, observe its normal source loader and
     snapshot immediately after module execution, before the importer can call
     serve/main. This also works in pytest-only CI: no server import is forced.
-    Deep-copy builtin containers; keep other values by reference.
+    Deep-copy builtin containers and restore mutable containers in place so
+    aliases are restored too; keep other values by reference.
     The shared rate limiter also needs its in-place configuration restored.
     """
     missing = object()
@@ -121,9 +122,10 @@ def _isolate_server_serve_config():
         for name in _SERVER_SERVE_CONFIG_GLOBALS:
             value = getattr(module, name, missing)
             values[name] = (
+                value,
                 copy.deepcopy(value)
                 if isinstance(value, (dict, list, set, tuple))
-                else value
+                else value,
             )
         limiter = getattr(module, "_rate_limiter", None)
         limiter_config = {
@@ -178,10 +180,17 @@ def _isolate_server_serve_config():
         if observer in sys.meta_path:
             sys.meta_path.remove(observer)
         for module, values, limiter, limiter_config in reversed(snapshots):
-            for name, value in values.items():
-                if value is missing:
+            for name, (original, value) in values.items():
+                if original is missing:
                     module.__dict__.pop(name, None)
                 else:
+                    if isinstance(original, (dict, set)):
+                        original.clear()
+                        original.update(copy.deepcopy(value))
+                        value = original
+                    elif isinstance(original, list):
+                        original[:] = copy.deepcopy(value)
+                        value = original
                     setattr(module, name, value)
             for name, value in limiter_config.items():
                 setattr(limiter, name, value)

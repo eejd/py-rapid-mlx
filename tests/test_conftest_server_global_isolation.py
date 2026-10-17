@@ -2,6 +2,7 @@
 """Guard launch-setting coverage and exercise real pytest teardown boundaries."""
 
 import ast
+import copy
 import importlib.machinery
 import os
 import subprocess
@@ -170,6 +171,32 @@ def test_preloaded_nested_container_restored_after_in_place_mutation(monkeypatch
         module._alias_recommended_sampling["model"]["temperature"] = 0.1
         module._alias_recommended_sampling["model"]["top_p"] = 0.9
     assert module._alias_recommended_sampling == {"model": {"temperature": 0.7}}
+
+
+@pytest.mark.parametrize("change", ["mutate", "rebind", "delete"])
+@pytest.mark.parametrize("container", [dict, list, set])
+def test_preloaded_container_alias_restored(monkeypatch, container, change):
+    module = ModuleType("rapid_mlx.server")
+    original = (
+        {"model": {"temperature": 0.7}} if container is dict else container(["model"])
+    )
+    module._alias_recommended_sampling = alias = copy.deepcopy(original)
+    monkeypatch.setitem(sys.modules, "rapid_mlx.server", module)
+    isolate = contextmanager(_isolate_server_serve_config.__wrapped__)
+    with isolate():
+        if container is dict:
+            alias["model"]["temperature"] = 0.1
+            alias["model"]["top_p"] = 0.9
+        elif container is list:
+            alias.append("changed")
+        else:
+            alias.add("changed")
+        if change == "rebind":
+            module._alias_recommended_sampling = None
+        elif change == "delete":
+            del module._alias_recommended_sampling
+    assert module._alias_recommended_sampling is alias
+    assert alias == original
 
 
 def test_server_import_observer_delegates_to_remaining_finders(monkeypatch):
