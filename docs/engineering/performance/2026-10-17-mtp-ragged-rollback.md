@@ -25,8 +25,8 @@ are outside this change.
 
 - Apple M5 Max, 36 GiB unified memory; macOS 27.0.1, arm64.
 - Python 3.12.13; MLX 0.32.4; mlx-lm 0.31.3.
-- Baseline: `76b8296cd1cf3a009de045d719dd4823974afae2`, preserved as a
-  separate scratch module; both arms run in fresh processes.
+- Baseline: `76b8296cd1cf3a009de045d719dd4823974afae2`; both arms run in
+  fresh processes using the module extraction described in the appendix.
 - Measured product source SHA-256 (before the validation-only compatibility fix):
   `b0fb2986c9d68a1ca4eafef1f93332b2145b2262557fe7f27ddd42b921cbaef7`.
 - Cached Qwen3.6-35B-A3B-4bit config snapshot
@@ -92,7 +92,8 @@ Its throughput therefore does not measure continuous-cohort rollback gains.
 Exact serve commands below preserve the measured flags and environment, with
 checkout, executable and model paths generalized. `<snapshot path>` is the
 target snapshot; `<MTP snapshot path>` is the draft snapshot. Run each command
-in its indicated checkout with the isolated venv's `rapid-mlx` on PATH.
+in its indicated checkout with a Rapid-MLX dev install on PATH. The loopback
+host is written as `localhost`; all other flags and environment values are unchanged.
 Boot 2 repeats the patched, main and plain commands in that order, changing
 only their ports to 18913, 18914 and 18915 respectively.
 
@@ -100,13 +101,13 @@ only their ports to 18913, 18914 and 18915 respectively.
 # plain, patched checkout (boot 1)
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH="$PWD" \
   PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false \
-  rapid-mlx serve '<snapshot path>' --host 127.0.0.1 --port 18910 \
+  rapid-mlx serve '<snapshot path>' --host localhost --port 18910 \
   --served-model-name q36 --max-num-seqs 8 --max-tokens 4096 --no-spec-decode
 
 # cohort-main, baseline checkout (boot 1)
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH="$PWD" \
   PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false \
-  rapid-mlx serve '<snapshot path>' --host 127.0.0.1 --port 18911 \
+  rapid-mlx serve '<snapshot path>' --host localhost --port 18911 \
   --served-model-name q36 --max-num-seqs 8 --max-tokens 4096 \
   --speculative-config '{"method":"mtp","model":"<MTP snapshot path>","continuous_batching":true,"allow_dynamic_membership":true}' \
   --force-spec-decode
@@ -114,16 +115,39 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH="$PWD" \
 # cohort-patched, patched checkout (boot 1)
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH="$PWD" \
   PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false \
-  rapid-mlx serve '<snapshot path>' --host 127.0.0.1 --port 18912 \
+  rapid-mlx serve '<snapshot path>' --host localhost --port 18912 \
   --served-model-name q36 --max-num-seqs 8 --max-tokens 4096 \
   --speculative-config '{"method":"mtp","model":"<MTP snapshot path>","continuous_batching":true,"allow_dynamic_membership":true}' \
   --force-spec-decode
 ```
 
-Raw rounds, admission evidence, parity records and commands remain in
-`/private/tmp/rapid-mlx-4589/dogfood/`, summarized in `report.md`. These serving
-measurements used the product source hash recorded above, before the later
-validation-only compatibility fix; serving was not rerun for that fix.
+The load driver uses `httpx` with one pooled connection per lane, releasing all
+requests in a batch in the same event-loop turn against `/v1/chat/completions`.
+Each user prompt starts with a deterministic 16-character SHA-256 nonce, then
+"Background vocabulary:" and seeded random space-prefixed common words that
+each encode to one token with the target tokenizer. Use 350 words for short
+prompts, 8,000 for long prompts, and 600 for calibration; append: "Write a detailed
+six hundred word explanation of how a reliable computer cache works. Include
+examples, tradeoffs, and practical design advice. Continue until the explanation
+is complete." Build fixtures once and reuse identical prompts across arms/boots;
+verify served prompt counts against `apply_chat_template` with
+`add_generation_prompt=True, enable_thinking=False`.
+
+After readiness, send one calibration request (at least 512 templated tokens),
+then short c=1/2/4/8 and long c=2/4 batches. At each point run one warm round and
+three measured rounds, using distinct deterministic fixtures per round. Every
+request uses `model="q36"`, `max_tokens=300` and the decoding settings above.
+For each round, aggregate tok/s is the sum of API-reported completion tokens
+divided by wall time from releasing the batch until all responses finish; report
+the arithmetic mean of the three measured rates. Compare cohort-main and
+cohort-patched by matching boot, workload, concurrency, round and request key;
+require matching prompt hashes, full response messages, completion-token counts,
+and completion text re-encoded with the target tokenizer
+(`add_special_tokens=False`). Check server admission logs per round and
+speculative counters before/after each workload.
+
+These serving measurements used the product source hash recorded above, before
+the later validation-only compatibility fix; serving was not rerun for that fix.
 
 ## Item decisions
 
@@ -166,15 +190,14 @@ drops, left padding, reserved tails, differing K/V dimensions, BF16/FP32, and
 recurrent boundary-list/legacy snapshots. Failure cases prove validation precedes
 mutation; fake-cache instrumentation proves once-per-cache validation.
 
-From the patched checkout, using the isolated scratch venv:
+From the patched checkout, using `python` from a Rapid-MLX dev install:
 
 ```bash
 export HF_HUB_OFFLINE=1
-PY=/private/tmp/rapid-mlx-4589/venv/bin/python
-$PY -m pytest -q tests/test_mtp_ragged_cache.py \
+python -m pytest -q tests/test_mtp_ragged_cache.py \
   tests/test_continuous_self_mtp_mlx_backend.py tests/test_continuous_mtp_runtime.py \
   --cov=rapid_mlx.spec_decode.mtp.ragged_cache --cov-report=xml:coverage.xml
-$PY -m pytest -q -k 'mtp or ragged or cohort or continuous'
+python -m pytest -q -k 'mtp or ragged or cohort or continuous'
 diff-cover coverage.xml --compare-branch=origin/main \
   --include=rapid_mlx/spec_decode/mtp/ragged_cache.py --fail-under=100
 ```
@@ -182,34 +205,21 @@ diff-cover coverage.xml --compare-branch=origin/main \
 After the validation-only compatibility fix, local fake-only verification of
 `tests/test_mtp_ragged_cache.py` passes **58 tests**, including validation-only
 leaves and rejection before mutation for standalone trim and adapter rollback.
-MLX imports are disabled by the scratch `pure_pytest.py` runner; no GPU is used.
-The real MLX results above precede this final fix.
-
-```bash
-COVERAGE_FILE=/private/tmp/rapid-mlx-4589/coverage-final-fixes.data \
-  $PY -m coverage run --source=rapid_mlx.spec_decode.mtp.ragged_cache \
-  /private/tmp/rapid-mlx-4589/pure_pytest.py -q tests/test_mtp_ragged_cache.py
-```
+That historical fake-only run disabled MLX imports and pytest plugin autoload
+with an import-blocking wrapper; no GPU was used. The real MLX results above
+precede this final fix. The focused command above runs the same test file from
+the dev install without requiring that wrapper.
 
 Current diff coverage is **80/80 changed product lines (100%)**. Local `ruff check`,
 `ruff format --check`, and `mypy --follow-imports=silent` pass on all three
 changed Python files. The added MLX tests live in the existing Apple CI-listed
 `tests/test_continuous_self_mtp_mlx_backend.py`.
 
-Benchmark scripts and raw samples remain in `/private/tmp/rapid-mlx-4589/`
-on the measurement host and the development host:
-
-```bash
-$PY /private/tmp/rapid-mlx-4589/bench_rollback.py --mode before --repeats 30
-$PY /private/tmp/rapid-mlx-4589/bench_rollback.py --mode after --repeats 30
-$PY /private/tmp/rapid-mlx-4589/bench_roll_candidates.py
-$PY /private/tmp/rapid-mlx-4589/bench_snapshot_group.py
-```
-
-`max-final-before.jsonl` and `max-final-after.jsonl` contain the final full
-rollback samples and source hashes; `max-candidates.jsonl` and
-`max-snapshot-group.jsonl` contain candidate measurements. Runs use bounded,
-foreground subprocesses (`run_final.py`); no concurrent test or benchmark load.
+The appendix reproduces the full rollback workload without model files. Run
+before/after in separate foreground processes with no concurrent test or
+benchmark load. The tables above record the final full rollback and isolated
+candidate medians; the appendix emits source hashes and raw timing samples for
+new full rollback runs.
 
 ## O(verify-width) follow-up
 
@@ -224,3 +234,108 @@ from the shared right-aligned cursor, coordinating attention masks, append
 positions, RoPE offsets, and merge/filter/extract contracts. Increasing left
 padding alone leaves accepted history at incorrect physical positions. That
 layout change is required for O(verify-width) rollback and is outside this task.
+
+## Appendix: rollback micro-benchmark
+
+Save the following as `bench_rollback.py` in the patched checkout root. It needs
+`mlx`, `mlx-lm` and a Rapid-MLX dev install on Apple hardware with Metal support.
+Extract the baseline module from the repository, then run each arm in a fresh
+process using the same dev install and patched checkout:
+
+```bash
+git show 76b8296cd1cf3a009de045d719dd4823974afae2:rapid_mlx/spec_decode/mtp/ragged_cache.py > baseline_ragged_cache.py
+python bench_rollback.py --mode before --baseline baseline_ragged_cache.py --repeats 30
+python bench_rollback.py --mode after --repeats 30
+```
+
+The workload uses 30 recurrent layers and 10 KV layers, with every fourth layer
+KV. Setup and template evaluation are outside timing; each sample includes
+rollback, output evaluation and synchronization. Five warmups precede 30 measured
+samples per context/pattern. JSON output includes the loaded module's source
+hash, dependency versions, medians and individual samples.
+
+```python
+import argparse
+import hashlib
+import importlib.util
+import json
+import pathlib
+import platform
+import statistics
+import sys
+import time
+from importlib.metadata import version
+
+import mlx.core as mx
+from mlx_lm.models import cache as cm
+from rapid_mlx.spec_decode.mtp.continuous_engine import SelfMTPCachePair
+
+p = argparse.ArgumentParser()
+p.add_argument('--mode', choices=['before', 'after'], required=True)
+p.add_argument('--repeats', type=int, default=30)
+p.add_argument('--baseline', default='baseline_ragged_cache.py')
+a = p.parse_args()
+if a.mode == 'before':
+    name = 'rapid_mlx.spec_decode.mtp._baseline_ragged_cache'
+    spec = importlib.util.spec_from_file_location(name, a.baseline)
+    r = importlib.util.module_from_spec(spec)
+    sys.modules[name] = r
+    spec.loader.exec_module(r)
+else:
+    from rapid_mlx.spec_decode.mtp import ragged_cache as r
+r.install_ragged_cache_rollback(cache_module=cm, qwen4_state_cls=None, qsa_cls=None)
+assert cm.BatchKVCache.trim_ragged.__module__ == r.__name__
+assert cm.ArraysCache.trim_ragged.__module__ == r.__name__
+# Recorded model dimensions; no config, tokenizer, or weights are needed.
+b = 8
+shapes = [(b, 3, 8192), (b, 32, 128, 128)]
+print(json.dumps(dict(mode=a.mode,
+    source_sha256=hashlib.sha256(pathlib.Path(r.__file__).read_bytes()).hexdigest(),
+    platform=platform.platform(), python=platform.python_version(),
+    mlx=version('mlx'), mlx_lm=version('mlx-lm'))), flush=True)
+adapter = r.RapidRaggedCacheAdapter()
+for ctx in (512, 4096, 16384, 32768):
+    # Independent, evaluated buffers for every layer and boundary. No weights loaded.
+    templates = []
+    for layer in range(40):
+        if (layer + 1) % 4 != 0:
+            states = [[mx.contiguous(mx.full(s, boundary+1, dtype=mx.bfloat16 if slot == 0 else mx.float32)) for slot,s in enumerate(shapes)] for boundary in range(3)]
+            mx.eval(states)
+            templates.append(('gdn', states))
+        else:
+            shape = (b, 2, ((ctx+3+255)//256)*256, 256)
+            kv = [mx.contiguous(mx.full(shape, v, dtype=mx.bfloat16)) for v in (1, 2)]
+            mx.eval(kv)
+            templates.append(('kv', kv))
+    mx.synchronize()
+    for pattern, drops in [('uniform', [1]*b), ('ragged', [0,1,2,0,1,2,0,1])]:
+        timings = []
+        for iteration in range(5+a.repeats):
+            group = []
+            for kind, arrays in templates:
+                if kind == 'gdn':
+                    cache = cm.ArraysCache(size=2)
+                    cache.cache = list(arrays[2])
+                    cache.rollback_state = [tuple(arrays[0]), tuple(arrays[1])]
+                else:
+                    cache = cm.BatchKVCache(left_padding=[0,1,2,3,0,1,2,3])
+                    # Fresh array wrappers prevent slice assignment from mutating templates.
+                    cache.keys, cache.values = [mx.array(x) for x in arrays]
+                    cache._idx = ctx+3
+                    cache.offset = mx.array([ctx+3-x for x in [0,1,2,3,0,1,2,3]])
+                group.append(cache)
+            pair = SelfMTPCachePair(group, [cm.BatchKVCache(left_padding=[0]*b)])
+            mx.eval([x.state for x in group])
+            mx.synchronize()
+            start = time.perf_counter_ns()
+            adapter.rollback(pair, target_drops=drops, draft_drops=[0]*b, verify_width=3)
+            mx.eval([x.state for x in group])
+            mx.synchronize()
+            elapsed = (time.perf_counter_ns()-start)/1e6
+            if iteration >= 5:
+                timings.append(elapsed)
+        print(json.dumps(dict(mode=a.mode, context=ctx, pattern=pattern, median_ms=statistics.median(timings), samples_ms=timings)), flush=True)
+        del pair, group
+    del templates
+    mx.clear_cache()
+```
