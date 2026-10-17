@@ -111,7 +111,7 @@ def _isolate_server_serve_config():
     If a test first imports the server, observe its normal source loader and
     snapshot immediately after module execution, before the importer can call
     serve/main. This also works in pytest-only CI: no server import is forced.
-    Shallow-copy mutable builtin containers; keep other values by reference.
+    Deep-copy builtin containers; keep other values by reference.
     The shared rate limiter also needs its in-place configuration restored.
     """
     missing = object()
@@ -122,7 +122,9 @@ def _isolate_server_serve_config():
         for name in _SERVER_SERVE_CONFIG_GLOBALS:
             value = getattr(module, name, missing)
             values[name] = (
-                copy.copy(value) if isinstance(value, (dict, list, set)) else value
+                copy.deepcopy(value)
+                if isinstance(value, (dict, list, set, tuple))
+                else value
             )
         limiter = getattr(module, "_rate_limiter", None)
         limiter_config = {

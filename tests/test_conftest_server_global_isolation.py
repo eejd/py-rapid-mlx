@@ -79,7 +79,7 @@ def test_serve_config_tuple_covers_launch_writers():
         "_telemetry_audio_model_served_state",
         "_telemetry_embedding_model_served_state",
     }
-    helpers = {
+    original_helpers = {
         "load_model",
         "load_embedding_model",
         "configure_model_residency",
@@ -87,21 +87,49 @@ def test_serve_config_tuple_covers_launch_writers():
         "configure_cors_from_env",
         "init_mcp",
     }
-    for function in server.body:
-        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
-            function.name == "main" or function.name in helpers
-        ):
-            names = {
-                name
-                for node in ast.walk(function)
-                if isinstance(node, ast.Global)
-                for name in node.names
-            }
-            names.update(_collect_server_writes(ast.unparse(function), aliases))
-            # No exclusions for main: every declared global must be covered.
-            mutated.update(
-                names if function.name == "main" else names - runtime_globals
-            )
+    functions = {
+        node.name: node
+        for node in server.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    cli_helpers = {
+        node.func.attr
+        for node in ast.walk(cli)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in aliases
+        and node.func.attr in functions
+    }
+    # Preserve the original coverage while following both launch entry points.
+    roots = {"main"} | cli_helpers | original_helpers
+    helpers = set()
+    pending = list(roots)
+    while pending:
+        name = pending.pop()
+        if name in helpers:
+            continue
+        helpers.add(name)
+        pending.extend(
+            node.func.id
+            for node in ast.walk(functions[name])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in functions
+            and node.func.id not in helpers
+        )
+    assert original_helpers <= helpers, original_helpers - helpers
+    for name in helpers:
+        function = functions[name]
+        names = {
+            name
+            for node in ast.walk(function)
+            if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        names.update(_collect_server_writes(ast.unparse(function), aliases))
+        # No exclusions for main: every declared global must be covered.
+        mutated.update(names if function.name == "main" else names - runtime_globals)
     assert len(_SERVER_SERVE_CONFIG_GLOBALS) == len(set(_SERVER_SERVE_CONFIG_GLOBALS))
     assert not (mutated - set(_SERVER_SERVE_CONFIG_GLOBALS))
 
@@ -130,6 +158,17 @@ def test_preloaded_container_restored_after_in_place_mutation(monkeypatch):
         module._alias_recommended_sampling["temperature"] = 0.1
         module._alias_recommended_sampling["top_p"] = 0.9
     assert module._alias_recommended_sampling == {"temperature": 0.7}
+
+
+def test_preloaded_nested_container_restored_after_in_place_mutation(monkeypatch):
+    module = ModuleType("rapid_mlx.server")
+    module._alias_recommended_sampling = {"model": {"temperature": 0.7}}
+    monkeypatch.setitem(sys.modules, "rapid_mlx.server", module)
+    isolate = contextmanager(_isolate_server_serve_config.__wrapped__)
+    with isolate():
+        module._alias_recommended_sampling["model"]["temperature"] = 0.1
+        module._alias_recommended_sampling["model"]["top_p"] = 0.9
+    assert module._alias_recommended_sampling == {"model": {"temperature": 0.7}}
 
 
 # Run this pair in one fresh worker so xdist/random ordering cannot separate it.
@@ -163,8 +202,8 @@ def test_next_test_sees_defaults():
 
     assert server._default_timeout == 1800.0
     for name, value in _expected.items():
-        # Containers are restored from shallow copies; others by reference.
-        if isinstance(value, (dict, list, set)):
+        # Containers are restored from deep copies; others by reference.
+        if isinstance(value, (dict, list, set, tuple)):
             assert getattr(server, name) == value, name
         else:
             assert getattr(server, name) is value, name
