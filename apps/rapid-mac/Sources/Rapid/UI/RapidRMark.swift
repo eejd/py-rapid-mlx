@@ -16,14 +16,6 @@ import Foundation
 /// reproduced: a menu-bar template must be ink-plus-alpha, and a filled
 /// tile is exactly the "coloured square" a status item must never be.
 ///
-/// ## Why this exists alongside ``RapidMark``
-///
-/// ``RapidMark`` is a hand-drawn "three speed streaks" abstraction whose
-/// own documentation says to replace it "when the real vector logo is
-/// available". It is still what onboarding renders, and this phase does
-/// not touch onboarding — so the two coexist for now. This type is the
-/// real mark and is currently consumed only by the menu-bar status item.
-///
 /// ## The menu-bar variant
 ///
 /// ``menuBarTemplateImage(height:)`` renders the **`R` glyph only**
