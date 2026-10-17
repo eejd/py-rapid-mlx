@@ -32,6 +32,18 @@ CUA_HELPER_EXECUTABLE="$CUA_HELPER/Contents/MacOS/RapidComputerUse"
 
 CONFIG="${RAPID_BUILD_CONFIG:-release}"
 
+assert_debug_map_removed() {
+    # Consume all nm output so pipefail also catches nm errors, without SIGPIPE.
+    if ! nm -a "$1" | awk '
+        / T / { has_text = 1 }
+        / - / { has_debug = 1 }
+        END { exit (!has_text || has_debug) }
+    '; then
+        echo "ERR: $1 must retain text symbols and contain no STABS debug map" >&2
+        exit 1
+    fi
+}
+
 # A signed release spends roughly the same amount of time compiling Swift as it
 # does assembling and signing the Python sidecar.  They share only read-only
 # source inputs and write to disjoint staging directories, so the release action
@@ -261,6 +273,16 @@ fi
 ditto "$SPARKLE_FRAMEWORK_SRC" "$SPARKLE_FRAMEWORK_DST"
 if ! otool -l "$CONTENTS/MacOS/Rapid" | grep -Fq '@executable_path/../Frameworks'; then
     install_name_tool -add_rpath '@executable_path/../Frameworks' "$CONTENTS/MacOS/Rapid"
+fi
+
+# Remove only Rapid's debug map; keep its symbol table for crash-report symbolication.
+# Never use -x. Set RAPID_KEEP_DEBUG_MAP=1 for local debugging.
+if [[ "${RAPID_KEEP_DEBUG_MAP:-0}" != "1" ]]; then
+    if ! strip -S "$CONTENTS/MacOS/Rapid"; then
+        echo "ERR: failed to strip Rapid debug map" >&2
+        exit 1
+    fi
+    assert_debug_map_removed "$CONTENTS/MacOS/Rapid"
 fi
 
 # The EdDSA public key is release configuration, injected from an Actions
@@ -640,6 +662,8 @@ else
         "$CUA_HELPER/Contents/Info.plist"
     plutil -replace CFBundleVersion -string "$HELPER_BUILD" \
         "$CUA_HELPER/Contents/Info.plist"
+    # The bundled interpreter has no STABS debug map. Preserve its symbols unchanged;
+    # strip -S would only make this helper executable larger.
     cp "$CONTENTS/Resources/rapid-mlx/python/bin/python3.12" \
         "$CUA_HELPER_EXECUTABLE"
     cp "$CONTENTS/Resources/AppIcon.icns" "$CUA_HELPER/Contents/Resources/AppIcon.icns"
