@@ -2109,17 +2109,34 @@ def test_review_abort_response_cannot_qualify_sample():
 
 
 @pytest.fixture
-def review2_generator():
+def review2_generator(monkeypatch):
+    import importlib
+
     import mlx.core as mx
+
+    # Earlier tests in the same worker may leave MLX's default stream and
+    # mlx-lm's generation stream bound to another thread's stream. Rebind both
+    # to a stream owned by this thread, restoring the default afterwards.
+    previous_default = mx.default_stream(mx.default_device())
+    current_stream = mx.new_stream(mx.default_device())
+    mx.set_default_stream(current_stream)
+    monkeypatch.setattr(
+        importlib.import_module("mlx_lm.generate"),
+        "generation_stream",
+        current_stream,
+    )
 
     class Model:
         def __call__(self, tokens, cache):
             return mx.zeros((*tokens.shape, 4))
 
-    with patch("mlx.core.metal.is_available", return_value=False):
-        generator = BatchGenerator(Model(), prefill_step_size=2048)
-    yield generator
-    generator.close()
+    try:
+        with patch("mlx.core.metal.is_available", return_value=False):
+            generator = BatchGenerator(Model(), prefill_step_size=2048)
+        yield generator
+        generator.close()
+    finally:
+        mx.set_default_stream(previous_default)
 
 
 @pytest.mark.parametrize(
