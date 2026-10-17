@@ -642,7 +642,7 @@ Review.Footnote,Step2.Kicker}`,
 `Quickstart.Memory.{SwitchToLowMemory,LoadAnyway,Cancel}`.
 `UI/OnboardingComponents.swift`: `Quickstart.Choice.<alias>`,
 `Quickstart.CatalogRow.<alias>`. `UI/OnboardingDirectionD.swift`:
-`Quickstart.{Footer.Back,Footer.Primary,Progress,Compare,SelectionSummary,
+`Quickstart.{Footer.Back,Footer.Primary,Progress,Compare,
 Rail.ThisMac,Step2.Kicker,Subject.{Bytes,Percent,Rail,Rate}}`.
 
 **Settings rail / App / Privacy / Appearance — `UI/SettingsView.swift`:**

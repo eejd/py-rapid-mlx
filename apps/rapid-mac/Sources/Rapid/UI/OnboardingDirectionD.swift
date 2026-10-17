@@ -1052,29 +1052,6 @@ struct OnboardingComparisonTable: View {
     }
 }
 
-/// The "what the primary will do" summary Paper puts under the heading when
-/// nothing is on this Mac yet (05.1 state 07).
-struct OnboardingSelectionSummary: View {
-    let title: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .scaledSystemFont(10, relativeTo: .caption2, weight: .semibold, design: .monospaced)
-                .tracking(OnboardingD.Tracking.groupLabel)
-                .foregroundStyle(RapidTheme.textTertiary)
-            Text(detail)
-                .scaledSystemFont(13)
-                .foregroundStyle(RapidTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("Quickstart.SelectionSummary")
-        .accessibilityLabel("\(title). \(detail)")
-    }
-}
-
 /// A placeholder for a value that is genuinely still being read.
 ///
 /// Deliberately static. Paper 05.1 state 02 is explicit that the hardware read
