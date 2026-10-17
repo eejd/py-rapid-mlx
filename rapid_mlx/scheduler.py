@@ -6144,6 +6144,8 @@ class Scheduler:
                     ):
                         teardown = _take_attr(generator, name)
                         if teardown is not None:
+                            # Release memory even if detachment failed; clearing
+                            # self.batch_generator above prevents a second retirement.
                             try:
                                 cast(Any, teardown)()
                             except Exception as exc:

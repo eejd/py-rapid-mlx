@@ -658,42 +658,54 @@ def test_retirement_reads_inherited_string_slots_with_unreadable_dict():
 
 @pytest.mark.parametrize("error_type", [AttributeError, TypeError, RuntimeError])
 @pytest.mark.parametrize("assignment_fails", [False, True])
-def test_retirement_tolerates_restricted_attributes(error_type, assignment_fails):
+def test_retirement_tolerates_restricted_attributes(
+    monkeypatch, error_type, assignment_fails
+):
     import weakref
 
+    import rapid_mlx.scheduler as scheduler_module
+
     class RestrictedGenerator(_RetiredGenerator):
+        __slots__ = ("_compiled_decode_teardown",)
+
         def __getattribute__(self, name):
             if name == "_suffix_teardown":
                 raise error_type("unreadable hook")
             return super().__getattribute__(name)
 
-        def __delattr__(self, name):
-            if name == "_compiled_decode_teardown":
-                raise error_type("hook cannot be deleted")
-            return super().__delattr__(name)
+    slot = RestrictedGenerator._compiled_decode_teardown
+    attempts = []
 
-        def __setattr__(self, name, value):
-            if (
-                assignment_fails
-                and name == "_compiled_decode_teardown"
-                and value is None
-            ):
+    class RestrictedSlot:
+        def __delete__(self, obj):
+            attempts.append("delete")
+            raise error_type("hook cannot be deleted")
+
+        def __set__(self, obj, value):
+            attempts.append("set")
+            if assignment_fails:
                 raise error_type("hook cannot be replaced")
-            return super().__setattr__(name, value)
-
-    class RestrictedBatch(_RetiredBatch):
-        def __setattr__(self, name, value):
-            if name == "tokens" and value == []:
-                raise error_type("tokens cannot be replaced")
-            return super().__setattr__(name, value)
+            slot.__set__(obj, value)
 
     cache = _RetiredCache()
     ref = weakref.ref(cache)
     retired = RestrictedGenerator(cache)
-    batch = RestrictedBatch(cache)
+    batch = _RetiredBatch(cache)
     retired._prompt_batch = batch
     calls = []
-    retired._compiled_decode_teardown = lambda: calls.append(True)
+    hook = lambda: calls.append(True)
+    retired._compiled_decode_teardown = hook
+    owned_attr = scheduler_module._owned_attr
+    restricted_slot = RestrictedSlot()
+
+    def restricted_owned_attr(obj, name):
+        owned = owned_attr(obj, name)
+        # Real member descriptors cannot be patched to raise on delete/set.
+        if obj is retired and name == "_compiled_decode_teardown":
+            return restricted_slot, owned[1]
+        return owned
+
+    monkeypatch.setattr(scheduler_module, "_owned_attr", restricted_owned_attr)
     scheduler = _make_scheduler()
     scheduler.batch_generator = retired
     del cache
@@ -701,6 +713,7 @@ def test_retirement_tolerates_restricted_attributes(error_type, assignment_fails
     scheduler._close_batch_generator()
 
     assert calls == [True]
+    assert attempts == ["delete", "set"]
     assert retired.closed
     assert retired._prompt_batch is None
     assert retired._generation_batch is None
@@ -708,9 +721,14 @@ def test_retirement_tolerates_restricted_attributes(error_type, assignment_fails
     assert batch.prompt_cache == []
     assert batch._current_tokens is None
     assert batch._next_tokens is None
-    assert "_compiled_decode_teardown" not in vars(retired)
+    assert retired._compiled_decode_teardown is (hook if assignment_fails else None)
     assert ref() is None
     assert scheduler.batch_generator is None
+
+    scheduler._close_batch_generator()
+
+    assert calls == [True]
+    assert attempts == ["delete", "set"]
 
 
 @pytest.mark.parametrize(
