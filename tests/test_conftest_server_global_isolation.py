@@ -33,6 +33,9 @@ def _collect_server_writes(source, aliases):
         "setdefault",
         "sort",
         "reverse",
+        "difference_update",
+        "intersection_update",
+        "symmetric_difference_update",
     }
 
     def collect_root(node):
@@ -109,6 +112,9 @@ def test_collect_server_writes_recognizes_augmented_subscript_store():
         "setdefault",
         "sort",
         "reverse",
+        "difference_update",
+        "intersection_update",
+        "symmetric_difference_update",
     ],
 )
 def test_collect_server_writes_recognizes_mutating_method(method):
