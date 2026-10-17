@@ -194,44 +194,6 @@ class MultimodalProcessor:
             extra_kwargs=extra_kwargs,
         )
 
-    def process_for_request(
-        self,
-        prompt: str,
-        images: list[str] | None = None,
-        videos: list[str] | None = None,
-        **kwargs,
-    ) -> dict[str, Any]:
-        """
-        Process inputs and return a dict suitable for Request fields.
-
-        This is a convenience method that returns the processed data
-        in a format that can be directly assigned to Request fields.
-
-        Args:
-            prompt: Text prompt
-            images: List of image inputs
-            videos: List of video inputs
-            **kwargs: Additional parameters
-
-        Returns:
-            Dict with keys matching Request multimodal fields
-        """
-        processed = self.process(prompt, images, videos, **kwargs)
-
-        return {
-            "prompt_token_ids": (
-                processed.input_ids.tolist()
-                if processed.input_ids is not None
-                else None
-            ),
-            "num_prompt_tokens": processed.num_tokens,
-            "pixel_values": processed.pixel_values,
-            "attention_mask": processed.attention_mask,
-            "image_grid_thw": processed.image_grid_thw,
-            "multimodal_kwargs": processed.extra_kwargs,
-            "is_multimodal": processed.num_images > 0,
-        }
-
     def batch_pixel_values(
         self,
         pixel_values_list: list[mx.array | None],
@@ -373,49 +335,6 @@ class MultimodalProcessor:
         batch_kwargs = {k: v for k, v in batch_kwargs.items() if v is not None}
 
         return input_ids, batch_kwargs, padding_amounts
-
-    def extract_vision_embeddings(
-        self,
-        pixel_values: mx.array,
-        image_grid_thw: mx.array | None = None,
-    ) -> mx.array:
-        """
-        Extract vision embeddings from pixel values.
-
-        This runs the vision encoder part of the VLM to get embeddings
-        that can be cached and reused.
-
-        Args:
-            pixel_values: Processed image tensors
-            image_grid_thw: Optional grid info for Qwen-VL models
-
-        Returns:
-            Vision embeddings tensor
-        """
-        if not hasattr(self.model, "vision_tower") and not hasattr(
-            self.model, "vision_model"
-        ):
-            raise ValueError("Model does not have a vision encoder")
-
-        # Get the vision encoder
-        vision_encoder = getattr(self.model, "vision_tower", None)
-        if vision_encoder is None:
-            vision_encoder = getattr(self.model, "vision_model", None)
-
-        if vision_encoder is None:
-            raise ValueError("Could not find vision encoder in model")
-
-        # Run vision encoding
-        if image_grid_thw is not None:
-            # Qwen-VL style with grid info
-            try:
-                embeddings = vision_encoder(pixel_values, grid_thw=image_grid_thw)
-            except TypeError:
-                embeddings = vision_encoder(pixel_values)
-        else:
-            embeddings = vision_encoder(pixel_values)
-
-        return embeddings
 
     def compute_vision_hash(
         self,

@@ -6,12 +6,10 @@ arozanov/turboquant-mlx, Apache-2.0). This module loads the source at
 first call, dispatches via ``mx.fast.metal_kernel`` and caches the
 compiled handle at module scope.
 
-The two public helpers — :func:`fused_quantize_v4` and
-:func:`fused_dequant_v4_fp16` — match the V-side TurboQuant encode /
-decode contract; :func:`fused_quantize_k8` adds the rapid-mlx K-side
-symmetric uniform path for the K8V4 mix.
+:func:`fused_quantize_k8` provides the rapid-mlx K-side symmetric
+uniform path for the K8V4 mix.
 
-All three return ``None`` when Metal compilation fails so the caller
+It returns ``None`` when Metal compilation fails so the caller
 can fall back to the pure-MLX reference path without an unhandled
 exception (R15 Phase 4 deliverable: "Falls back to unfused path if
 Metal compilation fails").
@@ -20,7 +18,6 @@ Metal compilation fails").
 from __future__ import annotations
 
 import logging
-import math
 from pathlib import Path
 
 import mlx.core as mx
@@ -38,9 +35,6 @@ _KERNEL_SENTINEL = "// >>> kernel: "
 # "tried-and-failed" sentinel so we don't keep recompiling on the hot
 # path after the first failure.
 _KERNEL_CACHE: dict[str, object] = {}
-
-# Mirrors arozanov's packing table for uint32 word density.
-_VALS_PER_WORD = {1: 32, 2: 16, 3: 10, 4: 8}
 
 
 def _load_kernel_sources() -> dict[str, str]:
@@ -114,11 +108,6 @@ def _compile_kernel(
     return kernel
 
 
-def _packed_dim_v4(dim: int, bits: int) -> int:
-    vpw = _VALS_PER_WORD[bits]
-    return (dim + vpw - 1) // vpw
-
-
 # ---------------------------------------------------------------------------
 # Public bindings
 # ---------------------------------------------------------------------------
@@ -134,110 +123,6 @@ def is_metal_available() -> bool:
         return mx.default_device() == mx.gpu and mx.metal.is_available()
     except Exception:
         return False
-
-
-def fused_quantize_v4(
-    vectors: mx.array,
-    signs: mx.array,
-    boundaries: mx.array,
-    dim: int,
-    bits: int,
-) -> tuple[mx.array, mx.array] | None:
-    """Encode V vectors with the V-side TurboQuant fused kernel.
-
-    Returns ``(packed_uint32, norms_fp32)`` on success, ``None`` on
-    compile failure (caller falls back to :mod:`rapid_mlx.turboquant`'s
-    unfused path).
-    """
-    if not is_metal_available():
-        return None
-    kernel = _compile_kernel(
-        "tq_fused_quantize_v4",
-        input_names=["inp", "signs", "boundaries", "dims"],
-        output_names=["packed_out", "norms_out"],
-    )
-    if kernel is None:
-        return None
-
-    n_vecs = vectors.shape[0]
-    vpw = _VALS_PER_WORD[bits]
-    p_dim = _packed_dim_v4(dim, bits)
-    n_centroids = boundaries.shape[0] + 1
-    dims_arr = mx.array([dim, bits, vpw, p_dim, n_centroids], dtype=mx.uint32)
-
-    try:
-        outputs = kernel(
-            inputs=[
-                vectors.reshape(n_vecs * dim).astype(mx.float32),
-                signs.astype(mx.float32),
-                boundaries.astype(mx.float32),
-                dims_arr,
-            ],
-            template=[],
-            grid=(n_vecs * dim, 1, 1),
-            threadgroup=(dim, 1, 1),
-            output_shapes=[(n_vecs * p_dim,), (n_vecs,)],
-            output_dtypes=[mx.uint32, mx.float32],
-        )
-    except Exception as exc:  # pragma: no cover - mlx-version edge cases
-        logger.warning("turboquant_fused: V4 dispatch failed (%s); falling back", exc)
-        return None
-
-    packed = outputs[0].reshape(n_vecs, p_dim)
-    return packed, outputs[1]
-
-
-def fused_dequant_v4_fp16(
-    packed: mx.array,
-    norms: mx.array,
-    centroids: mx.array,
-    signs: mx.array,
-    dim: int,
-    bits: int,
-) -> mx.array | None:
-    """Decode V vectors with the V-side TurboQuant fused kernel.
-
-    Returns the dequantized FP16 array on success, ``None`` on compile
-    failure.
-    """
-    if not is_metal_available():
-        return None
-    kernel = _compile_kernel(
-        "tq_fused_dequant_v4_fp16",
-        input_names=["packed", "norms", "centroids", "signs", "scale", "dims"],
-        output_names=["out"],
-    )
-    if kernel is None:
-        return None
-
-    seq_len = norms.shape[0]
-    vpw = _VALS_PER_WORD[bits]
-    p_dim = _packed_dim_v4(dim, bits)
-    scale = mx.array([1.0 / math.sqrt(dim)], dtype=mx.float32)
-    dims_arr = mx.array([dim, bits, vpw, p_dim], dtype=mx.uint32)
-
-    try:
-        outputs = kernel(
-            inputs=[
-                packed.astype(mx.uint32).reshape(-1),
-                norms.astype(mx.float32),
-                centroids.astype(mx.float32),
-                signs.astype(mx.float32),
-                scale,
-                dims_arr,
-            ],
-            template=[],
-            grid=(seq_len * dim, 1, 1),
-            threadgroup=(dim, 1, 1),
-            output_shapes=[(seq_len, dim)],
-            output_dtypes=[mx.float16],
-        )
-    except Exception as exc:  # pragma: no cover
-        logger.warning(
-            "turboquant_fused: V4 dequant dispatch failed (%s); falling back", exc
-        )
-        return None
-    return outputs[0]
 
 
 def fused_quantize_k8(

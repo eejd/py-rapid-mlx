@@ -2684,105 +2684,6 @@ def _responses_keepalive_sse(state: dict[str, object]) -> str:
     return _sse("response.in_progress", data)
 
 
-async def _emit_function_call_item(tc, output_index: int) -> AsyncIterator[str]:
-    """Stream the SSE event triplet for a single ``function_call`` item.
-
-    Sequence: ``response.output_item.added`` →
-    ``response.function_call_arguments.delta`` →
-    ``response.output_item.done``. Args are sent in a single delta
-    because the underlying engine doesn't surface per-token tool-call
-    streaming yet (Codex CLI concatenates either way).
-    """
-    fc_id = f"fc_{uuid.uuid4().hex[:24]}"
-    yield _sse(
-        "response.output_item.added",
-        {
-            "type": "response.output_item.added",
-            "output_index": output_index,
-            "item": {
-                "type": "function_call",
-                "id": fc_id,
-                "call_id": tc.id,
-                "name": tc.function.name,
-                "arguments": "",
-                "status": "in_progress",
-            },
-        },
-    )
-    yield _sse(
-        "response.function_call_arguments.delta",
-        {
-            "type": "response.function_call_arguments.delta",
-            "item_id": fc_id,
-            "output_index": output_index,
-            "delta": tc.function.arguments or "",
-        },
-    )
-    yield _sse(
-        "response.output_item.done",
-        {
-            "type": "response.output_item.done",
-            "output_index": output_index,
-            "item": {
-                "type": "function_call",
-                "id": fc_id,
-                "call_id": tc.id,
-                "name": tc.function.name,
-                "arguments": tc.function.arguments or "",
-                "status": "completed",
-            },
-        },
-    )
-
-
-async def _emit_computer_call_item(tc, output_index: int) -> AsyncIterator[str]:
-    """Stream the SSE event pair for one Computer-Use ``computer_call``
-    item (Ana C-06, 0.8.5 dogfood).
-
-    Sequence: ``response.output_item.added`` →
-    ``response.output_item.done``. There is no per-token args delta
-    event for ``computer_call`` in the OpenAI spec — the entire
-    ``action`` envelope ships in the ``done`` payload.
-    """
-    # Lazy import to avoid the route module circular-importing the
-    # adapter at module load time (the adapter imports types from
-    # ``responses_models`` which the route also imports).
-    from ..api.responses_adapter import _parse_computer_action
-
-    cu_id = f"cu_{uuid.uuid4().hex[:24]}"
-    action = _parse_computer_action(tc.function.arguments or "")
-    yield _sse(
-        "response.output_item.added",
-        {
-            "type": "response.output_item.added",
-            "output_index": output_index,
-            "item": {
-                "type": "computer_call",
-                "id": cu_id,
-                "call_id": tc.id,
-                "status": "in_progress",
-                "action": action,
-                "pending_safety_checks": [],
-            },
-        },
-    )
-    yield _sse(
-        "response.output_item.done",
-        {
-            "type": "response.output_item.done",
-            "output_index": output_index,
-            "item": {
-                "type": "computer_call",
-                "id": cu_id,
-                "call_id": tc.id,
-                "status": "completed",
-                "action": action,
-                "pending_safety_checks": [],
-            },
-        },
-    )
-
-
 async def _stream_responses_with_nonprogress_retry(
     engine: BaseEngine,
     openai_request: ChatCompletionRequest,
@@ -5154,17 +5055,15 @@ async def _stream_responses(
         # reasoning item's index (both were 1).
         tool_output_index = len(completed_output)
         for tc in tool_calls or []:
-            # R10-C3: inline the tool-call event triplet here (instead of
-            # delegating to ``_emit_function_call_item`` / ``_emit_computer_call_item``)
+            # R10-C3: emit the tool-call event triplet here
             # so the ``completed_output`` array can be populated with the
             # finalized ``done`` item — needed for the terminal
             # ``response.completed.response.output[]`` payload. The inlined
             # logic uses the route-local ``_emit`` helper (monotonic
             # sequence numbers) instead of the module-level ``_sse`` the
-            # helpers used to call.
+            # former helpers used to call.
             if uses_computer_use and (tc.function.name or "") == "computer":
-                # Lazy import mirrors ``_emit_computer_call_item`` to avoid
-                # a circular import at module load time.
+                # Lazy import to avoid a circular import at module load time.
                 from ..api.responses_adapter import _parse_computer_action
 
                 cu_id = _item_id("computer_call", "cu")

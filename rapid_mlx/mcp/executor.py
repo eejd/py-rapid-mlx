@@ -13,7 +13,6 @@ from jsonschema import ValidationError
 
 from .manager import MCPClientManager
 from .security import MCPSecurityError, ToolSandbox, get_sandbox
-from .tools import extract_tool_calls, format_tool_result
 from .types import MCPTool, MCPToolResult
 
 logger = logging.getLogger(__name__)
@@ -413,67 +412,3 @@ class ToolExecutor:
                     )
                 )
         return results
-
-    async def execute_and_format(
-        self,
-        tool_calls: list[dict[str, Any]],
-        parallel: bool = True,
-    ) -> list[dict[str, Any]]:
-        """
-        Execute tool calls and format results as messages.
-
-        Args:
-            tool_calls: List of OpenAI tool call objects
-            parallel: Execute in parallel
-
-        Returns:
-            List of tool result messages ready for conversation
-        """
-        results = await self.execute_tool_calls(tool_calls, parallel)
-        return [format_tool_result(result, call_id) for result, call_id in results]
-
-    def extract_and_validate(
-        self,
-        response: dict[str, Any],
-    ) -> tuple[list[dict[str, Any]], bool]:
-        """
-        Extract tool calls from response and validate them.
-
-        Args:
-            response: Model response in OpenAI format
-
-        Returns:
-            Tuple of (tool_calls, all_valid)
-        """
-        tool_calls = extract_tool_calls(response)
-
-        if not tool_calls:
-            return [], True
-
-        # Validate each tool call
-        all_valid = True
-        for tc in tool_calls:
-            func = tc.get("function", {})
-            name = func.get("name", "")
-
-            # Check if tool exists
-            if not self._tool_exists(name):
-                logger.warning(f"Tool '{name}' not found in any MCP server")
-                all_valid = False
-
-        return tool_calls, all_valid
-
-    def _tool_exists(self, full_name: str) -> bool:
-        """Check if a tool exists in any connected server."""
-        # Check by full name
-        for tool in self.manager.get_all_tools():
-            if tool.full_name == full_name:
-                return True
-
-        # Check by just tool name (without server prefix)
-        if "__" not in full_name:
-            for tool in self.manager.get_all_tools():
-                if tool.name == full_name:
-                    return True
-
-        return False

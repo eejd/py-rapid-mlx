@@ -1521,46 +1521,6 @@ class AgentTestRunner:
             return query_cmd.replace("opencode run ", "opencode run --standalone ", 1)
         return query_cmd
 
-    def build_test_plan(self) -> list[str]:
-        """Build the list of test names that will run for this profile."""
-        tests = ["plain_chat"]
-
-        if self.profile.needs_function_calling:
-            tests += [
-                "single_tool_call",
-                "tool_choice",
-                "multi_turn_tool",
-                "no_tool_leak",
-                "no_tool_needed",
-            ]
-            if self.profile.needs_streaming:
-                tests.append("streaming_tool_call")
-
-        streaming = self.profile.get_streaming_for_version(self.agent_version)
-        if (
-            streaming.max_tools
-            and streaming.max_tools > 10
-            and self.profile.needs_function_calling
-        ):
-            tests.append("many_tools")
-
-        if streaming.extra_tool_tags:
-            tests.append("tag_suppression")
-
-        if self.profile.needs_streaming:
-            tests.append("streaming_basic")
-
-        if self.profile.needs_function_calling:
-            tests.append("stress_no_leak")
-
-        # E2E tests
-        if self._agent_binary_available():
-            tests += ["e2e_chat"]
-            if self.profile.needs_function_calling:
-                tests += ["e2e_file_read", "e2e_terminal"]
-
-        return tests
-
     def run(self) -> TestReport:
         """Run all applicable tests and return a report."""
         report = TestReport(

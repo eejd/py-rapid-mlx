@@ -478,7 +478,7 @@ def claim_activation_marker(kind: str) -> bool:
     Returns ``True`` for exactly ONE call per machine per kind — the first
     process to create the marker via exclusive ``O_CREAT | O_EXCL``
     creation. Every later call (and any concurrent racer that loses) gets
-    ``False``. Same mechanism as ``first_run.mark_first_session``.
+    ``False``.
 
     Fail-safe toward ``False`` on any error (invalid kind, unwritable state
     dir, etc.): under-reporting an activation is conservative — it never
