@@ -1679,11 +1679,17 @@ def mtp_generate_step(
                 # for temp>0 (categorical over target distro at position K).
                 bonus_tok_arr = toks[k_len]
 
+            # Rows cross threads; MLX streams are thread-local. Materialize
+            # the exact views we yield in the existing verify sync.
+            lp_rows = [lps[i] for i in range(k_len + 1)]
+
             # ------- SINGLE SYNC -------
             accepted_count = 0
             try:
                 _verify_sync_started = time.perf_counter()
-                mx.eval(toks, accept_mask_arr, residual_toks_arr, bonus_tok_arr, u)
+                mx.eval(
+                    toks, accept_mask_arr, residual_toks_arr, bonus_tok_arr, u, *lp_rows
+                )
                 _timing_add(
                     "verify_sync_seconds",
                     time.perf_counter() - _verify_sync_started,
@@ -1830,7 +1836,7 @@ def mtp_generate_step(
                 # verified target p(token); the distributions legitimately
                 # differ on a probabilistically accepted proposal.
                 emissions.append(
-                    (draft_id, lps[i], processor_position_states[i], True, "accept")
+                    (draft_id, lp_rows[i], processor_position_states[i], True, "accept")
                 )
                 if ntoks >= max_tokens:
                     round_done = True
@@ -1859,7 +1865,7 @@ def mtp_generate_step(
                     emissions.append(
                         (
                             bonus_id,
-                            lps[k_len],
+                            lp_rows[k_len],
                             processor_position_states[k_len],
                             False,
                             None,
@@ -1905,7 +1911,7 @@ def mtp_generate_step(
                     emissions.append(
                         (
                             verify_tok_id,
-                            lps[accepted_count],
+                            lp_rows[accepted_count],
                             processor_position_states[accepted_count],
                             False,
                             "reject",

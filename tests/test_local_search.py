@@ -2,6 +2,7 @@
 """CPU-only local-search pilot contracts; no MLX/model/network required."""
 
 import asyncio
+import errno
 import io
 import os
 import socket
@@ -10,6 +11,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 import zipfile
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
@@ -1072,6 +1074,15 @@ def test_resolved_folder(tmp_path):
     assert validate_folder(str(root)) == root.resolve()
 
 
+def test_virtual_environment_folder_stays_excluded(tmp_path):
+    root = folder(tmp_path)
+    (root / "pyvenv.cfg").touch()
+    with pytest.raises(
+        ValueError, match="^path is hidden, sensitive, or an excluded directory$"
+    ):
+        validate_folder(str(root))
+
+
 @pytest.mark.parametrize("root_kind", ["home", "ancestor", "outside"])
 def test_home_and_package_exclusions_for_any_root(tmp_path, monkeypatch, root_kind):
     from rapid_mlx.local_search.extraction import PACKAGE_SUFFIXES
@@ -1374,6 +1385,245 @@ def test_incremental_add_modify_delete_hash_and_restart(tmp_path):
         await restarted.wait_idle()
         assert len(fake.calls) == 4 and len(restarted.store.vectors) == 1
         await restarted.close()
+
+    asyncio.run(scenario())
+
+
+def test_refresh_pass_selects_only_stale_idle_folders(tmp_path, monkeypatch):
+    async def scenario():
+        search = engine(tmp_path)
+        monkeypatch.setattr(
+            "rapid_mlx.local_search.service.time", SimpleNamespace(time=lambda: 10000)
+        )
+        search.folders = AsyncMock(
+            return_value=[
+                {"id": fid, "state": state, "last_indexed_at": timestamp}
+                for fid, state, timestamp in [
+                    ("stale", "idle", 8199),
+                    ("never", "idle", None),
+                    ("fresh", "idle", 8201),
+                    ("boundary", "idle", 8200),
+                    ("indexing", "indexing", 0),
+                    ("queued", "queued", 0),
+                    ("pending", "idle", 0),
+                ]
+            ]
+        )
+        assert search.refresh_interval == 1800
+        search.pending = ["pending"]
+        search.queue = AsyncMock()
+        try:
+            await search._refresh_stale()
+            assert [call.args[0] for call in search.queue.await_args_list] == [
+                "stale",
+                "never",
+            ]
+            search.queue.reset_mock()
+            search.progress["active"] = True
+            await search._refresh_stale()
+            search.queue.assert_not_awaited()
+            search.progress["active"] = False
+            await search.close()
+            await search._refresh_stale()
+            search.queue.assert_not_awaited()
+            assert search.folders.await_count == 1
+        finally:
+            if not search.closed:
+                await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_refresh_stale_with_real_queue_does_not_deadlock(tmp_path, monkeypatch):
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "first.txt").write_text("apple")
+        search = engine(tmp_path)
+        release = asyncio.Event()
+
+        async def blocked_index(_folder):
+            await release.wait()
+
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            indexed_at = (await search.folder(fid))["last_indexed_at"]
+            monkeypatch.setattr(
+                "rapid_mlx.local_search.service.time",
+                SimpleNamespace(time=lambda: indexed_at + search.refresh_interval + 1),
+            )
+            monkeypatch.setattr(search, "_index", blocked_index)
+
+            await asyncio.wait_for(search._refresh_stale(), timeout=5)
+
+            assert fid in search.pending or (
+                search.task is not None and not search.task.done()
+            )
+            assert (await search.folder(fid))["state"] in {"queued", "indexing"}
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_refresh_loop_queues_folder_that_becomes_stale_between_ticks(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        search = engine(tmp_path, refresh_interval=1800)
+        now = 1800.0
+        tick = 60.0
+        sleeps = []
+        search.folders = AsyncMock(
+            return_value=[{"id": "folder", "state": "idle", "last_indexed_at": 61}]
+        )
+
+        async def advance_clock(delay):
+            nonlocal now
+            sleeps.append(delay)
+            assert delay == tick
+            assert len(sleeps) <= 2
+            if len(sleeps) == 2:
+                # The first tick was at age 1799, just before the stale threshold.
+                search.queue.assert_not_awaited()
+                assert search.folders.await_count == 1
+            now += delay
+
+        async def queued(_folder_id):
+            search.closed = True
+
+        search.queue = AsyncMock(side_effect=queued)
+        monkeypatch.setattr("rapid_mlx.local_search.service.REFRESH_TICK_SECONDS", tick)
+        monkeypatch.setattr(
+            "rapid_mlx.local_search.service.time", SimpleNamespace(time=lambda: now)
+        )
+        monkeypatch.setattr(
+            "rapid_mlx.local_search.service.asyncio",
+            SimpleNamespace(sleep=advance_clock, to_thread=asyncio.to_thread),
+        )
+        try:
+            await search._refresh_loop()
+            assert sleeps == [tick, tick]
+            assert now - 61 == 1859 < search.refresh_interval + tick
+            search.queue.assert_awaited_once_with("folder")
+        finally:
+            search.closed = False
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_refresh_loop_recovers_after_store_error(tmp_path, caplog):
+    async def scenario():
+        search = engine(tmp_path, refresh_interval=0.01)
+        search.folders = AsyncMock(
+            side_effect=[
+                RuntimeError("store unavailable"),
+                [{"id": "stale", "state": "idle", "last_indexed_at": 0}],
+            ]
+        )
+        queued = asyncio.Event()
+        search.queue = AsyncMock(side_effect=lambda _: queued.set())
+        task = asyncio.create_task(search._refresh_loop())
+        search.refresh_task = task
+        try:
+            await asyncio.wait_for(queued.wait(), SYNC_TIMEOUT)
+            assert search.folders.await_count == 2
+            search.queue.assert_awaited_once_with("stale")
+            assert not task.done()
+            assert (
+                "Local-search automatic refresh failed: store unavailable"
+                in caplog.text
+            )
+            assert any(
+                record.name == "rapid_mlx.local_search.service"
+                and record.levelname == "WARNING"
+                for record in caplog.records
+            )
+        finally:
+            await search.close()
+        assert task.cancelled()
+
+    asyncio.run(scenario())
+
+
+def test_refresh_discovers_new_files_without_reembedding_or_rewriting_unchanged(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        root = folder(tmp_path)
+        (root / "first.txt").write_text("apple")
+        fake = FakeEmbedder()
+        search = engine(tmp_path, fake)
+        try:
+            fid = (await search.add_folder(str(root)))[0]["id"]
+            await search.wait_idle()
+            indexed_at = (await search.folder(fid))["last_indexed_at"]
+            monkeypatch.setattr(
+                "rapid_mlx.local_search.service.time",
+                SimpleNamespace(time=lambda: indexed_at + search.refresh_interval + 1),
+            )
+            store_call = search.store.call
+            replacements = []
+
+            async def observe_replace(name, *args, **kwargs):
+                if name == "replace":
+                    replacements.append(args[1])
+                return await store_call(name, *args, **kwargs)
+
+            monkeypatch.setattr(search.store, "call", observe_replace)
+            await search._refresh_stale()
+            await search.wait_idle()
+            assert len(fake.calls) == 1
+            assert replacements == []
+            # Age the next pass too; no manual queue/reindex is used.
+            monkeypatch.setattr(
+                "rapid_mlx.local_search.service.time",
+                SimpleNamespace(
+                    time=lambda: indexed_at + 2 * (search.refresh_interval + 1),
+                    perf_counter=time.perf_counter,
+                ),
+            )
+            new_file = root / "today-memo.txt"
+            new_file.write_text("banana memorandum")
+            await search._refresh_stale()
+            await search.wait_idle()
+            assert fake.calls == [
+                ["title: first | text: apple"],
+                ["title: today-memo | text: banana memorandum"],
+            ]
+            assert replacements == [new_file]
+            results = await search.search("memorandum", 10, None)
+            assert results["results"][0]["path"] == str(new_file)
+        finally:
+            await search.close()
+
+    asyncio.run(scenario())
+
+
+def test_refresh_loop_sleeps_when_empty_and_stops_on_close(tmp_path, monkeypatch):
+    async def scenario():
+        search = engine(tmp_path, refresh_interval=0.01)
+        passed = asyncio.Event()
+        original = search._refresh_stale
+
+        async def observed_pass():
+            await original()
+            passed.set()
+
+        monkeypatch.setattr(search, "_refresh_stale", observed_pass)
+        search.start()
+        try:
+            await search.wait_idle()
+            await asyncio.wait_for(passed.wait(), SYNC_TIMEOUT)
+            assert not search.pending
+            assert not search.progress["active"]
+            task = search.refresh_task
+        finally:
+            await search.close()
+        assert task.cancelled()
+        # Also exercise a loop entered after shutdown: no sleep or store work.
+        await search._refresh_loop()
 
     asyncio.run(scenario())
 
@@ -6387,19 +6637,97 @@ def test_fusion_limit_fills_remaining_unreserved_results():
     assert [r[0] for r in result] == list(rows)
 
 
-def test_folder_route_unreadable_path_returns_validation_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize("os_errno", [errno.EPERM, errno.EACCES])
+def test_folder_route_scandir_permission_denied(tmp_path, monkeypatch, os_errno):
+    root = folder(tmp_path).resolve(strict=True)
+    assert root.is_dir()
+    scandir = os.scandir
+    probed = []
+
+    def denied(path):
+        if path == root:
+            probed.append(path)
+            raise PermissionError(os_errno, "access denied", str(path))
+        return scandir(path)
+
     async def scenario():
         async with client_app(tmp_path, monkeypatch) as (client, app, _):
-
-            async def denied(path):
-                raise PermissionError()
-
-            monkeypatch.setattr(app.state.local_search, "add_folder", denied)
+            monkeypatch.setattr(os, "scandir", denied)
             response = await client.post(
-                "/v1/local-search/folders", json={"path": str(tmp_path)}
+                "/v1/local-search/folders", json={"path": str(root)}
+            )
+            assert probed == [root]
+            assert response.status_code == 403
+            assert response.json()["error"]["code"] == "folder_permission_denied"
+            status = (await client.get("/v1/local-search/status")).json()
+            assert status["folders"] == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "failure", [PermissionError(), OSError(errno.EPERM, "storage denied")]
+)
+def test_folder_route_storage_permission_error_stays_generic(
+    tmp_path, monkeypatch, failure
+):
+    root = folder(tmp_path)
+
+    async def scenario():
+        async with client_app(tmp_path, monkeypatch) as (client, app, _):
+            validated = []
+
+            def denied(path):
+                validated.append(path)
+                raise failure
+
+            monkeypatch.setattr(app.state.local_search.store, "add_folder", denied)
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(root)}
+            )
+            assert validated == [root.resolve()]
+            assert response.status_code == 400
+            assert response.json()["error"] == {
+                "message": "path must be an existing absolute directory without '..', outside excluded directories, other than /",
+                "type": "invalid_request_error",
+                "code": "invalid_folder_path",
+                "param": "path",
+            }
+            assert app.state.local_search.store.folders() == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_folder_route_excluded_unreadable_path_stays_invalid(
+    tmp_path, monkeypatch, nested
+):
+    sensitive = folder(tmp_path, ".hidden")
+    root = folder(sensitive, "documents") if nested else sensitive
+    scandir = os.scandir
+    probed = []
+
+    def denied(path):
+        if path == root.resolve():
+            probed.append(path)
+            raise PermissionError("folder denied")
+        return scandir(path)
+
+    async def scenario():
+        async with client_app(tmp_path, monkeypatch) as (client, app, _):
+            monkeypatch.setattr(os, "scandir", denied)
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(root)}
             )
             assert response.status_code == 400
-            assert response.json()["error"]["code"] == "invalid_folder_path"
+            assert response.json()["error"] == {
+                "message": "path is hidden, sensitive, or an excluded directory",
+                "type": "invalid_request_error",
+                "code": "invalid_folder_path",
+                "param": "path",
+            }
+            assert probed == []
+            assert app.state.local_search.store.folders() == []
 
     asyncio.run(scenario())
 
@@ -8449,6 +8777,64 @@ def test_model_recovers_when_worker_returns(tmp_path, monkeypatch, outage, media
             assert not search._attempted_checkpoints
         finally:
             await search.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "failure,os_errno,status,code,message",
+    [
+        (
+            failure,
+            os_errno,
+            403,
+            "folder_permission_denied",
+            "Rapid-MLX isn't allowed to read this folder. Allow access in System Settings › Privacy & Security, then try again.",
+        )
+        for failure, os_errno in (
+            (PermissionError("denied"), None),
+            (OSError("operation not permitted"), errno.EPERM),
+            (OSError("access denied"), errno.EACCES),
+        )
+    ]
+    + [
+        (
+            OSError("unavailable"),
+            errno.EIO,
+            400,
+            "invalid_folder_path",
+            "path must be an existing absolute directory without '..', outside excluded directories, other than /",
+        )
+    ],
+)
+def test_add_folder_os_errors(
+    tmp_path, monkeypatch, failure, os_errno, status, code, message
+):
+    # OSError(errno, ...) normally constructs a PermissionError automatically.
+    # Set errno separately to cover raw OSError from other filesystem APIs too.
+    failure.errno = os_errno
+    root = folder(tmp_path).resolve()
+    scandir = os.scandir
+
+    def denied(path):
+        if path == root:
+            raise failure
+        return scandir(path)
+
+    async def scenario():
+        async with client_app(tmp_path, monkeypatch) as (client, app, _):
+            monkeypatch.setattr(os, "scandir", denied)
+            response = await client.post(
+                "/v1/local-search/folders", json={"path": str(root)}
+            )
+            assert response.status_code == status
+            assert response.json()["error"] == {
+                "message": message,
+                "type": "invalid_request_error",
+                "code": code,
+                "param": "path",
+            }
+            assert app.state.local_search.store.folders() == []
 
     asyncio.run(scenario())
 

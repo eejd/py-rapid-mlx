@@ -25,6 +25,8 @@ final class LocalSearchViewModel {
     var focusRequest = 0
     var selection: String?
     var pendingRemoval: LocalSearchFolder?
+    private(set) var permissionNotice = false
+    func dismissPermissionNotice() { permissionNotice = false }
     private(set) var isMutating = false
     var isIndexing: Bool { status?.needsPolling == true }
     var emptyResultsAction: EmptyResultsAction {
@@ -118,7 +120,25 @@ final class LocalSearchViewModel {
     }
     func appear(endpoint: LocalSearchClient.Endpoint?) async {
         visible = true
+        let token = sessionGeneration + 1
         await connect(endpoint)
+        guard visible, sessionGeneration == token, !Task.isCancelled,
+              let endpoint = self.endpoint, let status, status.enabled, !status.needsPolling else { return }
+        let staleFolders = status.folders.filter {
+            guard $0.path != "/", let indexedAt = $0.lastIndexedAt else { return false }
+            return Date().timeIntervalSince1970 - indexedAt > 120
+        }
+        guard !staleFolders.isEmpty else { return }
+        do {
+            for folder in staleFolders {
+                guard visible, sessionGeneration == token, !Task.isCancelled else { return }
+                try await client.reindex(id: folder.id, endpoint: endpoint)
+            }
+            guard visible, sessionGeneration == token, !Task.isCancelled else { return }
+            await refresh()
+        } catch {
+            NSLog("Local Search automatic refresh failed: %@", String(describing: error))
+        }
     }
     func connect(_ endpoint: LocalSearchClient.Endpoint?) async {
         sessionGeneration += 1
@@ -152,6 +172,7 @@ final class LocalSearchViewModel {
         isMutating = false
         retryAction = nil
         pendingRemoval = nil
+        permissionNotice = false
         operationError = false
     }
     private func validateMutation(_ token: Int) throws {
@@ -265,6 +286,13 @@ final class LocalSearchViewModel {
         state = .error(String(localized: "This file could not be opened. It may have moved or its drive may be disconnected. Reconnect the drive, or search again to refresh results."))
     }
     private func report(_ error: Error, operation: Bool = true) {
+        if operation, case LocalSearchClient.Failure.http(_, _, code: "folder_permission_denied") = error {
+            permissionNotice = true
+            operationError = false
+            if case .error = state { deriveState() }
+            return
+        }
+        permissionNotice = false
         operationError = operation
         if case LocalSearchClient.Failure.unsupported = error { state = .unsupported }
         else { state = .error(error.localizedDescription) }
@@ -296,6 +324,7 @@ final class LocalSearchViewModel {
                 try await action()
                 try self.validateMutation(token)
                 self.retryAction = nil
+                self.permissionNotice = false
                 self.operationError = false
                 await self.refresh()
                 if case .error = self.state { return true }

@@ -372,6 +372,13 @@ class ToolParser(ABC):
         """
         return "<tool_call>" in text or self.has_text_format_tool_call(text)
 
+    @classmethod
+    def strip_trailing_tool_envelope(
+        cls, text: str, request: dict[str, Any] | None = None
+    ) -> str:
+        """Optionally hide an unfinished buffered call suffix; default no-op."""
+        return text
+
     def flush_held_content(self, full_text: str) -> str:
         """Return any prefix-held content suffix to release at stream end.
 
@@ -494,10 +501,14 @@ class ToolParser(ABC):
 
         return tool_calls
 
+    # Parsers that consume rejected call markup report it to shared layers.
+    _undeclared_dropped: int = 0
+
     def reset(self) -> None:
         """Reset parser state for a new request."""
         self.current_tool_id = -1
         self.prev_tool_call_arr = []
+        self._undeclared_dropped = 0
 
 
 class ToolParserManager:

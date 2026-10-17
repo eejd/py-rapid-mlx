@@ -64,6 +64,7 @@ from ..api.utils import (
 from ..config import get_config
 from ..engine import BaseEngine, GenerationOutput
 from ..errors import BackpressureError, MetalMemoryBackpressureError
+from ..tool_call_authorization import call_name, declared_names, log_drop
 from ..tool_parsers import ToolParserManager
 from ..utils.chat_template import (
     detect_native_reasoning_effort_levels,
@@ -474,6 +475,8 @@ def _finalize_content_and_reasoning(
     if tool_calls:
         reasoning_text, _ = extract(raw_text)
     else:
+        # Preserve raw reasoning boundaries; suffix cleanup runs on the visible
+        # content after this extraction in each buffered route.
         text_to_parse = cleaned_text or raw_text
         new_reasoning, new_cleaned = extract(text_to_parse)
         # Capture the FIRST-parse Case-4 signal BEFORE the harmony
@@ -3529,11 +3532,63 @@ def _request_declared_tool_names(request_dict: dict | None) -> set[str]:
     return names
 
 
+def _strip_trailing_tool_envelope(
+    text: str,
+    request=None,
+    *,
+    reasoning_source: str = "",
+    finish_reason: str | None = None,
+) -> str:
+    """Hide truncated tool envelopes only after engine token-limit exhaustion."""
+    if finish_reason != "length":
+        return text
+    cfg = get_config()
+    if not cfg.enable_auto_tool_choice or not cfg.tool_call_parser:
+        return text
+    try:
+        parser_cls = ToolParserManager.get_tool_parser(cfg.tool_call_parser)
+    except (KeyError, ValueError):
+        return text
+    # Tool-shaped reasoning can be promoted into this visible lane. Preserve
+    # its closing boundary and clean only the content following the last one.
+    end_token = getattr(cfg.reasoning_parser, "end_token", None)
+    boundary = 0
+    if end_token:
+        if end_token in text:
+            boundary = text.rfind(end_token) + len(end_token)
+        elif end_token in reasoning_source:
+            # Promotion removes the end token before prepending reasoning wire.
+            # Locate the original visible suffix instead of vetoing all cleanup.
+            visible = reasoning_source.rsplit(end_token, 1)[1].strip()
+            if text.endswith(visible):
+                boundary = len(text) - len(visible)
+    return text[:boundary] + parser_cls.strip_trailing_tool_envelope(
+        text[boundary:], request.model_dump() if request is not None else None
+    )
+
+
+def _clean_final_content_tool_envelope(
+    content: str | None,
+    request=None,
+    *,
+    reasoning_source: str = "",
+    finish_reason: str | None = None,
+) -> str | None:
+    """Preserve finalized content unless cleanup removes a trailing envelope."""
+    if content is None:
+        return None
+    cleaned = _strip_trailing_tool_envelope(
+        content, request, reasoning_source=reasoning_source, finish_reason=finish_reason
+    )
+    return cleaned.rstrip() if cleaned != content else content
+
+
 def _parse_tool_calls_with_parser(
     output_text: str,
     request=None,
     *,
     structured_tool_calls: list[dict] | None = None,
+    finish_reason: str | None = None,
 ) -> tuple[str, list | None]:
     """Parse tool calls, then honor ``tool_choice="none"`` by dropping them.
 
@@ -3551,8 +3606,25 @@ def _parse_tool_calls_with_parser(
     content, tool_calls = _run_tool_parser(
         output_text, request, structured_tool_calls=structured_tool_calls
     )
+    if not structured_tool_calls and get_config().reasoning_parser is None:
+        request_dict = request.model_dump() if request else None
+        if request_dict and request_dict.get("tools"):
+            content = _strip_trailing_tool_envelope(
+                content, request, finish_reason=finish_reason
+            )
     if tool_choice_is_none(request):
         return content, None
+    declared = declared_names(request)
+    if declared and tool_calls:
+        kept = []
+        for call in tool_calls:
+            name = call_name(call)
+            if name in declared:
+                kept.append(call)
+            else:
+                log_drop(name)
+                _undeclared_tool_dropped_this_parse.set(True)
+        tool_calls = kept or None
     return content, tool_calls
 
 
@@ -3578,7 +3650,7 @@ def _run_tool_parser(
     the user-facing content directly in that case.
     """
     cfg = get_config()
-    request_dict = request.model_dump() if request else None
+    request_dict = request.model_dump() if hasattr(request, "model_dump") else request
     declared: set[str] | None = None
     if cfg.tool_call_parser == "qwen3_coder_xml":
         declared = _request_declared_tool_names(request_dict)
@@ -3586,9 +3658,16 @@ def _run_tool_parser(
             return output_text or "", None
 
     if structured_tool_calls:
-        if declared is not None and any(
-            tc.get("name") not in declared for tc in structured_tool_calls
+        # Preserve this parser's existing forced-choice refusal semantics.
+        if (
+            declared is not None
+            and isinstance(request_dict.get("tool_choice"), dict)
+            and any(tc.get("name") not in declared for tc in structured_tool_calls)
         ):
+            for call in structured_tool_calls:
+                if call["name"] not in declared_names(request):
+                    log_drop(call["name"])
+                    _undeclared_tool_dropped_this_parse.set(True)
             return output_text or "", None
         tool_calls = [
             ToolCall(
@@ -3608,7 +3687,7 @@ def _run_tool_parser(
         tokenizer = cfg.engine._tokenizer
 
     if not cfg.enable_auto_tool_choice or not cfg.tool_call_parser:
-        if cfg.reasoning_parser_name and request and request.tools:
+        if cfg.reasoning_parser_name and request_dict and request_dict.get("tools"):
             _PARSER_MAP = {"minimax": "minimax"}
             inferred = _PARSER_MAP.get(cfg.reasoning_parser_name)
             if inferred:
@@ -3617,6 +3696,11 @@ def _run_tool_parser(
                     parser = parser_cls(tokenizer)
                     parser.reset()
                     result = parser.extract_tool_calls(output_text, request_dict)
+                    _undeclared_tool_dropped_this_parse.set(
+                        bool(parser._undeclared_dropped)
+                    )
+                    if parser._undeclared_dropped and not result.tools_called:
+                        return result.content or "", None
                     if result.tools_called:
                         tool_calls = [
                             ToolCall(
@@ -3647,10 +3731,7 @@ def _run_tool_parser(
     try:
         parser.reset()
         result = parser.extract_tool_calls(output_text, request_dict)
-        if cfg.tool_call_parser == "qwen3_coder_xml":
-            _undeclared_tool_dropped_this_parse.set(
-                bool(getattr(parser, "_undeclared_dropped", 0))
-            )
+        _undeclared_tool_dropped_this_parse.set(bool(parser._undeclared_dropped))
         if result.tools_called:
             tool_calls = [
                 ToolCall(
@@ -3665,8 +3746,8 @@ def _run_tool_parser(
             ]
             return result.content or "", tool_calls
         else:
-            if cfg.tool_call_parser == "qwen3_coder_xml":
-                # The Qwen parser made an authoritative declared-name decision.
+            if parser._undeclared_dropped or cfg.tool_call_parser == "qwen3_coder_xml":
+                # The configured parser made an authoritative declared-name decision.
                 # Falling through to the generic parser would re-promote the
                 # exact undeclared/tool_choice=none span it rejected.
                 return result.content or "", None

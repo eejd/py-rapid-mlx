@@ -175,7 +175,7 @@ dependencies = [
     "opencv-python>=4.8.0",
     "torch>=2.3.0",
     "torchvision>=0.18.0",
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
     "mflux>=0.20.0,<0.21; platform_system == 'Darwin' and python_version >= '3.11'",
     "sentencepiece>=0.2.0; platform_system == 'Darwin'",
     # Video-generation runtime (LTX-2.3 / Wan). Upstream requires Python
@@ -207,7 +207,7 @@ vision = [
     "torchvision>=0.18.0",
     # rapid_mlx imports PIL directly on vision paths (mllm.py, benchmark.py
     # image mode); mlx-vlm requires it too — listed for explicitness.
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
 ]
 # DFlash speculative decoding for Qwen3.5/3.6 dense 8-bit models
 # (issue #264). Adds ~1-4 GB at runtime (drafter weights) and depends on
@@ -236,7 +236,7 @@ mtp = [
     # Required by the explicit native-MTP backend. Keep this exact pin aligned
     # with the signed Desktop sidecar and the vision/DFlash extras.
     "mlx-vlm==0.7.2",
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
 ]
 # Embedding endpoint
 embeddings = [
@@ -257,7 +257,7 @@ clef = [
     "torchvision>=0.26.0; platform_system == 'Darwin'",
     "accelerate>=1.4.0",
     "transformers>=5.10.2,!=5.13.0,<5.16",
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
 ]
 # HF → Cloudflare R2 mirror tooling (scripts/mirror_to_r2.py).
 # Off the hot path — only maintainers who seed models.rapidmlx.com need
@@ -283,7 +283,7 @@ all = [
     "opencv-python>=4.8.0",
     "torch>=2.3.0",
     "torchvision>=0.18.0",
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
     # chat
     "gradio>=4.0.0",
     "pytz>=2024.1",
@@ -327,6 +327,7 @@ all = [
 # canonical source, instead of every script hand-maintaining a list.
 test = [
     "pytest>=7.0.0",
+    "pytest-xdist>=3.8.0",
     # Community protocol tests use jsonschema's external Registry API. Keep
     # this explicit so a partial/no-deps test install fails instead of skipping
     # the complete contract suite.
@@ -352,7 +353,7 @@ test = [
     # [test] so pr_validate can rebuild a venv that actually runs
     # ``pytest tests/`` without hand-installed local extras.
     "aiohttp>=3.9.0",
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
     "mlx-vlm==0.7.2; platform_system == 'Darwin'",
     "mlx-audio>=0.5.3,<0.6; platform_system == 'Darwin'",
     # Powers the property-based invariant suite in tests/property/ — encodes
@@ -393,6 +394,7 @@ test = [
 ci-linux = [
     # Test infra — floors mirrored from `test`.
     "pytest>=7.0.0",
+    "pytest-xdist>=3.8.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
     "hypothesis>=6.100.0",
@@ -430,7 +432,7 @@ ci-linux = [
     "llguidance>=1.7.6",
     "jinja2",
     "aiohttp>=3.9.0",
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
     # Mirrors the base runtime dependency for CPU video-decoding contracts.
     "opencv-python>=4.8.0",
 ]
@@ -439,6 +441,7 @@ ci-linux = [
 # runtime comes from `[vision]` + core deps.
 ci-apple = [
     "pytest>=7.0.0",
+    "pytest-xdist>=3.8.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
 ]
@@ -449,12 +452,13 @@ dev = [
     # "install dev, run pytest" workflow contributors have used since
     # day one).
     "pytest>=7.0.0",
+    "pytest-xdist>=3.8.0",
     "referencing>=0.28.4",
     "pytest-asyncio>=0.21.0",
     "prometheus_client>=0.16.0",
     'tomli>=2.0.1; python_version < "3.11"',
     "aiohttp>=3.9.0",
-    "pillow>=10.0.0",
+    "pillow>=10.0.0,<13",
     "mlx-vlm==0.7.2; platform_system == 'Darwin'",
     "mlx-audio>=0.5.3,<0.6; platform_system == 'Darwin'",
     # Mirror of the [test] entry — keep `dev` a strict superset of `test`
@@ -563,7 +567,7 @@ video = [
     "mlx-video-with-audio==0.1.36; platform_system == 'Darwin' and python_version >= '3.11'",
     "mlx-arsenal>=0.10.1; platform_system == 'Darwin' and python_version >= '3.11'",
     "imageio[ffmpeg]>=2.34.0; platform_system == 'Darwin' and python_version >= '3.11'",
-    "pillow>=10.0.0; platform_system == 'Darwin' and python_version >= '3.11'",
+    "pillow>=10.0.0,<13; platform_system == 'Darwin' and python_version >= '3.11'",
     "sentencepiece>=0.2.0; platform_system == 'Darwin' and python_version >= '3.11'",
 ]
 # Image-generation runtime. Already part of the base install on macOS; kept as
@@ -586,7 +590,7 @@ image = [
     # because SDXL and SD3.5 also work on Rapid's Python 3.10 floor without
     # mflux. SD3.5's reviewed local T5 tokenizer additionally needs
     # sentencepiece on that same floor.
-    "pillow>=10.0.0; platform_system == 'Darwin'",
+    "pillow>=10.0.0,<13; platform_system == 'Darwin'",
     "sentencepiece>=0.2.0; platform_system == 'Darwin'",
 ]
 

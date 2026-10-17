@@ -273,12 +273,15 @@ class TestIncrementalCacheEval:
 class TestMemoryStats:
     """Tests for Metal memory stats in get_stats()."""
 
+    @patch("rapid_mlx.memory_peak.mx")
     @patch("rapid_mlx.scheduler.mx")
-    def test_metal_stats_included(self, mock_mx):
+    def test_metal_stats_included(self, mock_mx, mock_peak_mx):
         """Verify Metal memory stats appear in get_stats()."""
         mock_mx.metal.is_available.return_value = True
         mock_mx.get_active_memory.return_value = 10_000_000_000  # 10GB
         mock_mx.get_peak_memory.return_value = 15_000_000_000  # 15GB
+        # The cumulative peak is read through the shared peak helper.
+        mock_peak_mx.get_peak_memory.return_value = 15_000_000_000
         mock_mx.get_cache_memory.return_value = 2_000_000_000  # 2GB
 
         scheduler = _make_scheduler()
@@ -299,3 +302,486 @@ class TestMemoryStats:
         # Should still return basic stats without Metal info
         assert "num_waiting" in stats
         assert "metal_active_memory_gb" not in stats
+
+
+class _RetiredCache:
+    """Weak-referenceable stand-in for a cache owning a Metal graph."""
+
+
+class _RetiredBatch:
+    def __init__(self, cache):
+        self.prompt_cache = [cache]
+        self.tokens = [[1]]
+        self.uids = [0]
+        self.samplers = [cache]
+        self.logits_processors = [[cache]]
+        self.state_machines = [cache]
+        self.max_tokens = [10]
+        self._current_tokens = cache
+        self._next_tokens = cache
+        self._current_logprobs = [cache]
+        self._next_logprobs = [cache]
+        self._token_context = [cache]
+        self._num_tokens = [1]
+        self._matcher_states = [cache]
+
+    def _step(self):
+        return [], []
+
+    def next(self):
+        return []
+
+
+class _RetiredGenerator:
+    def __init__(self, cache, *, close_raises=False):
+        from collections import deque
+
+        self._prompt_batch = _RetiredBatch(cache)
+        self._generation_batch = _RetiredBatch(cache)
+        self._unprocessed_sequences = deque([(0, cache)])
+        self._currently_processing = [(0, cache)]
+        self.close_raises = close_raises
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+        if self.close_raises:
+            raise RuntimeError("synchronize failed")
+
+    def next(self):
+        return [], []
+
+    def remove(self, uids, return_prompt_caches=False):
+        return {}
+
+
+@pytest.mark.parametrize("close_raises", [False, True])
+def test_retired_generator_releases_graph_without_gc(monkeypatch, close_raises):
+    import weakref
+
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    scheduler = _make_scheduler()
+    retired = _RetiredGenerator(cache, close_raises=close_raises)
+    batches = (retired._prompt_batch, retired._generation_batch)
+    scheduler.batch_generator = retired
+    scheduler._hybrid_checkpoints[0] = [cache]
+    del cache
+
+    scheduler._close_batch_generator()
+
+    assert retired.closed
+    assert scheduler.batch_generator is None
+    assert not retired._unprocessed_sequences
+    assert not retired._currently_processing
+    assert not scheduler._hybrid_checkpoints
+    for batch in batches:
+        assert batch.prompt_cache == []
+        assert batch.uids == []
+        assert batch._next_tokens is None
+        assert batch._current_tokens is None
+    assert ref() is None
+    replacement = _RetiredGenerator(_RetiredCache())
+    monkeypatch.setattr(scheduler, "_create_batch_generator", lambda _: replacement)
+    assert scheduler._ensure_batch_generator(SamplingParams())
+    assert scheduler.batch_generator.next() == ([], [])
+
+
+@pytest.mark.parametrize(
+    "generator_kind",
+    ["regular", "slotted", "slotted_batch", "unreadable_generator", "unreadable_batch"],
+)
+def test_generation_recovery_releases_request_and_checkpoint_ownership(
+    monkeypatch, generator_kind
+):
+    import weakref
+
+    from rapid_mlx.request import Request, RequestStatus
+
+    scheduler = _make_scheduler()
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    request = Request("failed", "prompt", SamplingParams())
+    request.status = RequestStatus.RUNNING
+    request.batch_uid = 0
+    request.prompt_cache = [cache]
+    request._extracted_cache = [cache]
+    request._continuous_mtp_state = cache
+    scheduler.running[request.request_id] = request
+    scheduler.requests[request.request_id] = request
+    scheduler.request_id_to_uid[request.request_id] = 0
+    scheduler.uid_to_request_id[0] = request.request_id
+    scheduler._hybrid_checkpoints[0] = [cache]
+
+    class SlottedGenerator:
+        __slots__ = ()
+
+        def close(self):
+            pass
+
+    class SlottedBatch:
+        __slots__ = ("prompt_cache",)
+
+        def __init__(self, cache):
+            self.prompt_cache = [cache]
+
+    class UnreadableGenerator(SlottedGenerator):
+        @property
+        def __dict__(self):
+            raise RuntimeError("instance state unavailable")
+
+    class UnreadableBatch:
+        @property
+        def __dict__(self):
+            raise RuntimeError("batch state unavailable")
+
+    retired = _RetiredGenerator(cache)
+    if generator_kind == "slotted":
+        retired = SlottedGenerator()
+    elif generator_kind == "slotted_batch":
+        retired._prompt_batch = SlottedBatch(cache)
+    elif generator_kind == "unreadable_generator":
+        retired = UnreadableGenerator()
+    elif generator_kind == "unreadable_batch":
+        retired._prompt_batch = UnreadableBatch()
+    scheduler.batch_generator = retired
+    scheduler._admission_prefill_uids.add(0)
+    scheduler.spec_decode_runtime_method = "mtp"
+    scheduler.spec_decode_runtime_attempted = True
+    scheduler.block_aware_cache = MagicMock()
+    prefix = MagicMock()
+    scheduler.memory_aware_cache = prefix
+    monkeypatch.setattr("rapid_mlx.scheduler.mx.clear_cache", lambda: None)
+    del cache
+
+    assert scheduler._recover_from_generation_error() == {request.request_id}
+
+    assert request.status == RequestStatus.FINISHED_ABORTED
+    assert request.prompt_cache is None
+    assert request._extracted_cache is None
+    assert request._continuous_mtp_state is None
+    assert request.batch_uid is None
+    assert not scheduler.running
+    assert not scheduler._hybrid_checkpoints
+    assert not scheduler.request_id_to_uid
+    assert not scheduler.uid_to_request_id
+    assert not scheduler._admission_prefill_uids
+    assert scheduler.spec_decode_runtime_method is None
+    assert scheduler.spec_decode_runtime_attempted is False
+    scheduler.block_aware_cache.release_cache.assert_called_once_with(
+        request.request_id
+    )
+    prefix.store.assert_not_called()
+    prefix.clear.assert_not_called()
+    assert ref() is None
+
+
+@pytest.mark.parametrize("release_raises", [False, True])
+def test_generation_recovery_continues_after_cache_release_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    release_raises: bool,
+) -> None:
+    import mlx.core as mx
+
+    from rapid_mlx.paged_cache import PagedCacheManager
+    from rapid_mlx.prefix_cache import BlockAwarePrefixCache
+    from rapid_mlx.request import Request, RequestStatus
+
+    scheduler = _make_scheduler()
+    manager = PagedCacheManager(max_blocks=4)
+    cache = BlockAwarePrefixCache(scheduler.model, manager)
+    scheduler.block_aware_cache = cache
+    request_ids = ["first", "failed", "last"]
+    calls: list[str] = []
+    released: list[str] = []
+    original_release = cache.release_cache
+
+    def release_cache(request_id: str) -> None:
+        calls.append(request_id)
+        if release_raises and request_id == "failed":
+            raise RuntimeError("release failed")
+        original_release(request_id)
+        released.append(request_id)
+
+    def grammar(tokens: mx.array, logits: mx.array) -> mx.array:
+        return logits
+
+    for uid, request_id in enumerate(request_ids):
+        request = Request(request_id, "prompt", SamplingParams())
+        request.status = RequestStatus.RUNNING
+        request.batch_uid = uid
+        scheduler.running[request_id] = request
+        scheduler.requests[request_id] = request
+        scheduler.request_id_to_uid[request_id] = uid
+        scheduler.uid_to_request_id[uid] = request_id
+        scheduler._register_uid_processors(uid, request, [grammar], grammar)
+        manager.create_block_table(request_id)
+
+    monkeypatch.setattr(cache, "release_cache", release_cache)
+    monkeypatch.setattr("rapid_mlx.scheduler.mx.clear_cache", lambda: None)
+
+    assert scheduler._recover_from_generation_error() == set(request_ids)
+
+    assert calls == request_ids
+    assert released == (["first", "last"] if release_raises else request_ids)
+    assert set(manager.request_tables) == ({"failed"} if release_raises else set())
+    assert not scheduler.running
+    assert scheduler.finished_req_ids == set(request_ids)
+    assert not scheduler.request_id_to_uid
+    assert not scheduler.uid_to_request_id
+    assert not scheduler.uid_to_request_processors
+    assert not scheduler._uids_with_grammar
+    assert not scheduler._known_stateful_processors
+    assert not scheduler._stateful_processor_objs
+    assert not scheduler._stateful_tombstones
+    assert all(
+        request.status == RequestStatus.FINISHED_ABORTED and request.batch_uid is None
+        for request in scheduler.requests.values()
+    )
+    assert ("release failed" in caplog.text) is release_raises
+
+
+def test_retirement_detaches_externally_retained_mtp_hooks():
+    import weakref
+    from types import SimpleNamespace
+
+    from rapid_mlx.scheduler import (
+        _install_dense_sampler_fastpath,
+        _install_mtp_vendored,
+    )
+
+    class Generation(_RetiredBatch):
+        def _step(self):
+            return [], []
+
+        def next(self):
+            return []
+
+    cache = _RetiredCache()
+    cache_ref = weakref.ref(cache)
+    retired = _RetiredGenerator(cache)
+    retired._generation_batch = Generation(cache)
+    retired.completion_batch_size = 4
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = retired
+    model = SimpleNamespace(mtp_forward=object(), make_mtp_cache=object(), mtp=object())
+    assert _install_mtp_vendored(retired, model)
+    batch = retired._generation_batch
+    _install_dense_sampler_fastpath(retired)
+    scheduler._recurrent_output_chain_batch = batch
+    hooks = (
+        retired.next,
+        retired.remove,
+        batch.next,
+        batch._step.__func__.__closure__[0].cell_contents,
+    )
+    closed = []
+
+    def verifier(owned):
+        try:
+            yield owned
+        finally:
+            closed.append(True)
+
+    gen = verifier(cache)
+    next(gen)
+    batch._mtp_vendored_state[0] = {"gen": gen, "queue": [cache]}
+    generator_ref = weakref.ref(retired)
+    batch_ref = weakref.ref(batch)
+    del cache, gen
+
+    scheduler._close_batch_generator()
+
+    assert closed == [True]
+    assert scheduler._recurrent_output_chain_batch is None
+    assert batch._mtp_vendored_state == {}
+    assert "next" not in vars(retired)
+    assert "remove" not in vars(retired)
+    assert "_step" not in vars(batch)
+    assert "next" not in vars(batch)
+    del retired, batch
+    assert cache_ref() is None
+    assert generator_ref() is None
+    assert batch_ref() is None
+    assert all(callable(hook) for hook in hooks)
+
+
+@pytest.mark.parametrize("method", ["suffix", "dspark"])
+def test_retirement_reaps_other_speculative_hook_state(method):
+    import inspect
+    import weakref
+    from types import SimpleNamespace
+
+    from rapid_mlx.scheduler import _install_dspark, _install_suffix_decoding
+
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    retired = _RetiredGenerator(cache)
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = retired
+    if method == "suffix":
+        assert _install_suffix_decoding(retired, object(), None, 8, 4, 0.3, {}, {})
+        map_names = ("_pending_emits", "_drafters", "_uid_state")
+    else:
+        model = SimpleNamespace(
+            args=SimpleNamespace(dspark_block_size=5),
+            mtp=[object()],
+            dspark_forward=lambda *args: None,
+            make_dspark_cache=lambda: [],
+            _last_dspark_hidden=None,
+        )
+        assert _install_dspark(retired, model, {}, {}, max_draft=5)
+        map_names = ("_caches", "_pending", "_pending_replay")
+    teardown = getattr(retired, f"_{method}_teardown")
+    owned = inspect.getclosurevars(teardown).nonlocals
+    for name in map_names:
+        owned[name][0] = [cache]
+    hooks = (retired._generation_batch._step, retired._generation_batch.next)
+    # Keep only the exposed state maps, not our inspection's copy of gb.
+    maps = [owned[name] for name in map_names]
+    del owned, cache
+
+    scheduler._close_batch_generator()
+
+    assert all(not state for state in maps)
+    assert ref() is None
+    assert all(callable(hook) for hook in hooks)
+
+
+def test_retirement_continues_after_hook_teardown_raises():
+    import weakref
+
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    retired = _RetiredGenerator(cache)
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = retired
+    retired._mtp_vendored_teardown = lambda: (_ for _ in ()).throw(
+        RuntimeError("hook close failed")
+    )
+    scheduler._recurrent_output_chain_batch = retired._generation_batch
+    del cache
+
+    scheduler._close_batch_generator()
+
+    assert scheduler._recurrent_output_chain_batch is None
+    assert ref() is None
+
+
+@pytest.mark.parametrize(
+    "queue_name", ["_unprocessed_sequences", "_currently_processing"]
+)
+def test_retirement_continues_after_queue_clear_raises(queue_name):
+    import weakref
+
+    class BrokenQueue:
+        def __init__(self, cache):
+            self.cache = cache
+
+        def clear(self):
+            raise RuntimeError("queue clear failed")
+
+    cache = _RetiredCache()
+    ref = weakref.ref(cache)
+    retired = _RetiredGenerator(cache)
+    setattr(retired, queue_name, BrokenQueue(cache))
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = retired
+    del cache
+
+    scheduler._close_batch_generator()
+
+    assert queue_name not in vars(retired)
+    other_queue = (
+        "_currently_processing"
+        if queue_name == "_unprocessed_sequences"
+        else "_unprocessed_sequences"
+    )
+    assert not getattr(retired, other_queue)
+    assert retired._prompt_batch is None
+    assert retired._generation_batch is None
+    assert ref() is None
+
+
+def test_retirement_preserves_shared_prefix_layers():
+    cache = _RetiredCache()
+    cache.state = [object()]
+    prefix_entry = [cache]
+    scheduler = _make_scheduler()
+    scheduler.batch_generator = _RetiredGenerator(cache)
+    # The identical list can be shared too; retirement must replace ownership.
+    scheduler.batch_generator._prompt_batch.prompt_cache = prefix_entry
+
+    scheduler._close_batch_generator()
+
+    assert prefix_entry == [cache]
+    assert len(cache.state) == 1
+
+
+def test_retirement_drops_recurrent_barrier_external_root():
+    import weakref
+
+    scheduler = _make_scheduler()
+    retired = _RetiredGenerator(_RetiredCache())
+    batch = retired._generation_batch
+    ref = weakref.ref(batch)
+    scheduler.batch_generator = retired
+    scheduler._recurrent_output_chain_batch = batch
+    scheduler._recurrent_output_chain_failures = 2
+    scheduler._recurrent_chain_depth = 31
+    scheduler._recurrent_prev_running = 4
+
+    scheduler._close_batch_generator()
+
+    assert scheduler._recurrent_output_chain_batch is None
+    assert scheduler._recurrent_output_chain_failures == 0
+    assert scheduler._recurrent_chain_depth == 0
+    assert scheduler._recurrent_prev_running == 0
+    del batch, retired
+    assert ref() is None
+
+
+@pytest.mark.parametrize("active", [80, 95, 110])
+def test_recovery_preserves_existing_pressure_threshold_and_mru(monkeypatch, active):
+    from collections import OrderedDict
+    from threading import RLock
+    from types import SimpleNamespace
+
+    scheduler = _make_scheduler()
+    retired = _RetiredGenerator(_RetiredCache())
+    scheduler.batch_generator = retired
+    entries = OrderedDict([("valid-prefix", object())])
+    cache = SimpleNamespace(_lock=RLock(), _entries=entries, _max_memory=0)
+    # A single valid prefix is protected below the cap by existing policy.
+    cache._evict_lru = lambda: entries.popitem(last=False)
+    scheduler.memory_aware_cache = cache
+    monkeypatch.setattr(scheduler, "_resolve_metal_cap_bytes", lambda: 100)
+    monkeypatch.setattr(
+        scheduler,
+        "_current_metal_active_bytes",
+        lambda: active if not retired.closed else 50,
+    )
+    monkeypatch.setattr("rapid_mlx.scheduler.mx.clear_cache", lambda: None)
+
+    scheduler._recover_from_generation_error()
+
+    assert retired.closed
+    assert bool(entries) is (active < 100)
+    assert scheduler.num_prefix_cache_pressure_evictions == int(active >= 100)
+
+
+def test_failed_pressure_reclaim_does_not_prevent_retirement(monkeypatch):
+    scheduler = _make_scheduler()
+    retired = _RetiredGenerator(_RetiredCache(), close_raises=True)
+    scheduler.batch_generator = retired
+    monkeypatch.setattr(
+        scheduler,
+        "evict_prefix_cache_under_pressure",
+        lambda: (_ for _ in ()).throw(RuntimeError("eviction failed")),
+    )
+
+    assert scheduler._recover_from_generation_error() == set()
+    assert retired.closed
+    assert scheduler.batch_generator is None
+    assert retired._prompt_batch is None

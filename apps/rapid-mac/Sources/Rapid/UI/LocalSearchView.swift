@@ -1,5 +1,4 @@
 import AppKit
-import QuickLook
 import SwiftUI
 
 struct LocalSearchView: View {
@@ -10,13 +9,46 @@ struct LocalSearchView: View {
     @Environment(DownloadManager.self) private var downloads
     @State private var selectedShortcuts: Set<LocalSearchFolderShortcut> = [.desktop, .documents, .downloads]
     @State private var confirmingRestart = false
-    @State private var previewURL: URL?
+    @State private var preview = LocalSearchPreviewController()
     @ScaledMetric(relativeTo: .caption) private var indexLineHeight: CGFloat = 24
     @State private var gridWidth: CGFloat = 0
     @State private var folderContentHeight: CGFloat = 0
     @FocusState private var searchFocused: Bool
     @FocusState private var resultsFocused: Bool
     private static let searchAlias = "embeddinggemma-2-4bit"
+
+    private var permissionNotice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                Text("macOS blocked access to this folder.").font(.headline)
+                Spacer()
+                Button { model.dismissPermissionNotice() } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "Dismiss"))
+                .accessibilityIdentifier("LocalSearch.PermissionNotice.Dismiss")
+            }
+            Text("Allow Rapid-MLX under Privacy & Security › Files and Folders (or Full Disk Access for Whole Mac), then try again.")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button("Open Privacy Settings") {
+                    guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
+                    NSWorkspace.shared.open(url)
+                }
+                .buttonStyle(.rapidSecondary)
+                .accessibilityIdentifier("LocalSearch.PermissionNotice.OpenSettings")
+                Button("Try Again") { Task { await model.retry() } }
+                    .buttonStyle(.rapidSecondary)
+                    .disabled(model.isMutating)
+                    .accessibilityIdentifier("LocalSearch.PermissionNotice.Retry")
+            }
+        }
+        .padding(RapidTheme.Space.md)
+        .background(RapidTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("LocalSearch.PermissionNotice")
+    }
 
     private func beginEngineStart() {
         Task { await model.startEngine(using: onStartModel) }
@@ -91,6 +123,7 @@ struct LocalSearchView: View {
                     .accessibilityHint(caption.detail ?? "")
                     .accessibilityIdentifier("LocalSearch.SemanticCaption")
             }
+            if model.permissionNotice { permissionNotice }
             if case .error(let message) = model.state {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(message).foregroundStyle(.secondary)
@@ -135,7 +168,7 @@ struct LocalSearchView: View {
         .padding(RapidTheme.Space.xl)
         .background(RapidTheme.surfaceCanvas)
         .rapidChatDynamicTypeClamp()
-        .quickLookPreview($previewURL)
+        .background(LocalSearchPreviewAnchor(controller: preview))
         .task(id: connectionKey) {
             await model.appear(endpoint: endpoint)
             model.engineStateChanged(server.state)
@@ -147,7 +180,10 @@ struct LocalSearchView: View {
         .onChange(of: endpoint) { _, endpoint in
             if endpoint != nil { resultsFocused = false; searchFocused = true }
         }
-        .onDisappear { model.disappear(); previewURL = nil }
+        .onDisappear { model.disappear(); preview.close() }
+        .onChange(of: model.selection) { _, _ in
+            preview.selectionChanged(to: model.selectedResult.map { URL(fileURLWithPath: $0.path) })
+        }
         .onChange(of: model.focusRequest) { _, _ in resultsFocused = false; searchFocused = true }
         .alert(String(localized: "Restart model to enable Search?"), isPresented: $confirmingRestart) {
             Button(String(localized: "Restart and enable Search")) {
@@ -396,9 +432,6 @@ struct LocalSearchView: View {
         .onKeyPress(.space) {
             guard let result = model.selectedResult else { return .ignored }
             togglePreview(result); return .handled
-        }
-        .onChange(of: model.selection) { _, _ in
-            if previewURL != nil { previewURL = model.selectedResult.map { URL(fileURLWithPath: $0.path) } }
         }
     }
     private var gridColumns: Int { max(1, Int((gridWidth + 16) / 196)) }
@@ -708,6 +741,6 @@ struct LocalSearchView: View {
     private func reveal(_ result: LocalSearchResult) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.path)]) }
     private func togglePreview(_ result: LocalSearchResult) {
         let url = URL(fileURLWithPath: result.path)
-        previewURL = previewURL == url ? nil : url
+        preview.toggle(url)
     }
 }

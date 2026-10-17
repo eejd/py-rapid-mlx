@@ -92,6 +92,7 @@ from ..service.helpers import (
     _build_response_metrics,
     _build_usage,
     _check_admission_or_503,
+    _clean_final_content_tool_envelope,
     _client_signalled_reasoning_intent,
     _consume_guided_lifecycle_cancel,
     _disconnect_guard,
@@ -1935,6 +1936,7 @@ async def _non_stream(
             output.text,
             openai_request,
             structured_tool_calls=_engine_calls,
+            finish_reason=output.finish_reason,
         )
         _strict_tool_turn = bool(_detected_calls)
 
@@ -2276,7 +2278,10 @@ async def _non_stream(
 
     engine_tool_calls = getattr(output, "tool_calls", None)
     cleaned_text, tool_calls = _parse_tool_calls_with_parser(
-        output.text, openai_request, structured_tool_calls=engine_tool_calls
+        output.text,
+        openai_request,
+        structured_tool_calls=engine_tool_calls,
+        finish_reason=output.finish_reason,
     )
 
     # Yuki F6 (0.8.5 dogfood): mirror the chat-route ``tool_choice``
@@ -2405,6 +2410,19 @@ async def _non_stream(
         finish_reason,
         include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
     )
+
+    # Clean only the finalized visible lane; keep raw reasoning boundaries.
+    if (
+        cfg.reasoning_parser is not None
+        and openai_request.tools
+        and not engine_tool_calls
+    ):
+        final_content = _clean_final_content_tool_envelope(
+            final_content,
+            openai_request,
+            reasoning_source=output.raw_text or output.text,
+            finish_reason=output.finish_reason,
+        )
 
     if (
         output.finish_reason == "stop"

@@ -862,3 +862,76 @@ def test_eager_dispatch_default_compilation_probe_is_false() -> None:
     from rapid_mlx.patches import qwen3_5_eager_dispatch
 
     assert qwen3_5_eager_dispatch._not_compiling() is False
+
+
+@pytest.mark.parametrize("detach_raises", [False, True])
+def test_scheduler_retirement_discards_compiled_state(monkeypatch, detach_raises):
+    from rapid_mlx.scheduler import Scheduler
+
+    batch, generation = _installed_fake_generation(monkeypatch)
+    state = generation._rapid_compiled_decode_state
+    step = CompiledDecodeStep(_ToyModel(), convert_cache([_filled_cache()]))
+    step(mx.array([[5]], dtype=mx.int32))
+    state["step"] = step
+    hooks = (generation._step, generation.filter)
+    if detach_raises:
+        original = step.detach
+
+        def detach():
+            original()
+            raise RuntimeError("detach failed")
+
+        monkeypatch.setattr(step, "detach", detach)
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.batch_generator = batch
+
+    scheduler._close_batch_generator()
+
+    assert state["step"] is None
+    assert not step._pending
+    assert not step._variants
+    assert all(slot.cache._rapid_compiled_owner is None for slot in step._kv_slots)
+    assert generation.prompt_cache == []
+    assert all(callable(hook) for hook in hooks)
+
+
+@pytest.mark.parametrize("poison_raises", [False, True])
+def test_retirement_detaches_even_when_poison_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    poison_raises: bool,
+) -> None:
+    batch, generation = _installed_fake_generation(monkeypatch)
+    state = generation._rapid_compiled_decode_state
+    step = CompiledDecodeStep(_ToyModel(), convert_cache([_filled_cache()]))
+    step(mx.array([[5]], dtype=mx.int32))
+    state["step"] = step
+    original_poison = step.poison
+    original_detach = step.detach
+    calls: list[str] = []
+
+    def poison(
+        error: BaseException, *, phase: str
+    ) -> compiled_decode.CompiledDecodePoisonedError:
+        calls.append("poison")
+        if poison_raises:
+            raise RuntimeError("poison failed")
+        return original_poison(error, phase=phase)
+
+    def detach() -> None:
+        calls.append("detach")
+        original_detach()
+
+    monkeypatch.setattr(step, "poison", poison)
+    monkeypatch.setattr(step, "detach", detach)
+    with caplog.at_level("DEBUG", logger=compiled_decode.__name__):
+        batch._compiled_decode_teardown()
+
+    assert calls == ["poison", "detach"]
+    assert state["step"] is None
+    assert all(slot.cache._rapid_compiled_owner is None for slot in step._kv_slots)
+    assert ("poison failed" in caplog.text) is poison_raises
+    if not poison_raises:
+        assert step.poisoned
+        assert not step._pending
+        assert not step._variants

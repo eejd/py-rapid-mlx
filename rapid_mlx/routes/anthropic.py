@@ -58,6 +58,7 @@ from ..service.helpers import (
     _build_response_metrics,
     _build_usage,
     _check_admission_or_503,
+    _clean_final_content_tool_envelope,
     _disconnect_guard,
     _effective_enable_thinking,
     _finalize_content_and_reasoning,
@@ -1077,7 +1078,10 @@ async def create_anthropic_message(
         # harmony sentinels).
         engine_tool_calls = getattr(output, "tool_calls", None)
         cleaned_text, tool_calls = _parse_tool_calls_with_parser(
-            output.text, openai_request, structured_tool_calls=engine_tool_calls
+            output.text,
+            openai_request,
+            structured_tool_calls=engine_tool_calls,
+            finish_reason=output.finish_reason,
         )
 
         # H-05: tool_choice={"type":"tool","name":X} pins WHICH tool the
@@ -1273,6 +1277,19 @@ async def create_anthropic_message(
             finish_reason,
             include_reasoning_tail=not _uses_deepseek_v4_reasoning(cfg),
         )
+
+        # Clean only the finalized visible lane; keep raw reasoning boundaries.
+        if (
+            cfg.reasoning_parser is not None
+            and openai_request.tools
+            and not engine_tool_calls
+        ):
+            final_content = _clean_final_content_tool_envelope(
+                final_content,
+                openai_request,
+                reasoning_source=output.raw_text or output.text,
+                finish_reason=output.finish_reason,
+            )
 
         openai_response = ChatCompletionResponse(
             model=cfg.model_name or openai_request.model,

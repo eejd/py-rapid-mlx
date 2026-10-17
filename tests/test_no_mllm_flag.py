@@ -3451,3 +3451,190 @@ class TestPagedCacheLaneAdmission:
         # the test does not leak a thread.
         if engine._model_load_executor is not None:
             engine._model_load_executor.shutdown(wait=False)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing_shard",
+        "absent_tensor",
+        "truncated",
+        "backbone",
+        "wrapped_backbone",
+        "mtp",
+        "vision",
+        "extra",
+        "unparseable",
+        "hub",
+        "legacy",
+    ],
+)
+def test_checkpoint_strict_retry_safety(tmp_path, monkeypatch, case):
+    import json
+    import struct
+    from types import SimpleNamespace
+
+    import mlx_lm.utils
+
+    from rapid_mlx.model_load_errors import IncompatibleWeights
+    from rapid_mlx.utils import tokenizer as loader
+
+    header = json.dumps(
+        {"weight": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}
+    ).encode()
+    shard = tmp_path / "model.safetensors"
+    shard.write_bytes(struct.pack("<Q", len(header)) + header + b"\0" * 4)
+    weight_map = {"weight": shard.name}
+    if case == "missing_shard":
+        weight_map["other"] = "model-00002-of-00002.safetensors"
+    elif case == "absent_tensor":
+        weight_map["other"] = shard.name
+    elif case == "truncated":
+        shard.write_bytes(shard.read_bytes()[:-1])
+    if case not in ("backbone", "wrapped_backbone"):
+        (tmp_path / "model.safetensors.index.json").write_text(
+            json.dumps({"weight_map": weight_map})
+        )
+
+    missing = {"mtp": "model.mtp.layers.0.weight", "vision": "vision_tower.weight"}
+    message = f"Missing 1 parameters: \n{missing.get(case, 'model.layers.0.weight')}."
+    if case in ("extra", "hub", "legacy"):
+        message = "Received 1 parameters not in model: extra.weight."
+    if case == "unparseable":
+        message = "Missing parameters (names unavailable)"
+    failure = ValueError(message)
+    if case == "wrapped_backbone":
+        wrapped = IncompatibleWeights(f"Model weights are incompatible: {message}")
+        wrapped.__cause__ = failure
+        failure = wrapped
+
+    def strict_load(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(loader, "load_mlx_lm_checked", strict_load)
+    for name in (
+        "_register_vendored_archs",
+        "_try_inject_mtp",
+        "_apply_chat_template_sidecar",
+        "augment_eos_token_ids_from_generation_config",
+        "repair_byte_level_decoder",
+    ):
+        monkeypatch.setattr(loader, name, lambda *_args, **_kwargs: None)
+    for name in ("_needs_tokenizer_fallback", "_is_vendored_arch_model"):
+        monkeypatch.setattr(loader, name, lambda *_args: False)
+    monkeypatch.setattr(
+        loader, "_neutralize_unbundled_template_types", lambda _name, config: config
+    )
+    calls = []
+    model, tokenizer = object(), SimpleNamespace(chat_template="fixture")
+
+    def relaxed_load(path, **kwargs):
+        calls.append((path, kwargs))
+        return model, {}
+
+    monkeypatch.setattr(mlx_lm.utils, "load_model", relaxed_load)
+    monkeypatch.setattr(
+        mlx_lm.utils, "load_tokenizer", lambda *_args, **_kwargs: tokenizer
+    )
+    from rapid_mlx import model_downloads
+
+    resolved = []
+
+    def resolve(ref):
+        resolved.append(ref)
+        return str(tmp_path)
+
+    monkeypatch.setattr(model_downloads, "snapshot_download", resolve)
+    ref = "owner/checkpoint" if case == "hub" else str(tmp_path)
+    if case in (
+        "missing_shard",
+        "absent_tensor",
+        "truncated",
+        "backbone",
+        "wrapped_backbone",
+        "unparseable",
+    ):
+        incomplete = case in ("missing_shard", "absent_tensor", "truncated")
+        expected = ValueError if incomplete else type(failure)
+        with pytest.raises(expected) as caught:
+            loader._load_model_with_fallback_impl(ref)
+        assert calls == []
+        if incomplete:
+            assert type(caught.value).__name__ == "IncompleteCheckpoint"
+            assert caught.value.__cause__ is failure
+        else:
+            assert caught.value is failure
+    else:
+        result = (
+            loader._load_strict_false(ref)
+            if case == "legacy"
+            else loader._load_model_with_fallback_impl(ref)
+        )
+        assert result == (model, tokenizer)
+        assert calls == [(tmp_path, {"strict": False})]
+        assert resolved == ([ref] if case == "hub" else [])
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Missing parameters in model",
+        "Received 1 parameters not in model: extra.weight.\nMissing parameters",
+        "Missing 1 parameters: \n",
+        "Missing 2 parameters: \nvision_tower.weight.",
+        "Missing 1 parameters: \nvision_tower.weight,\nmodel.mtp.layers.0.weight.",
+        "Model weights are incompatible: Missing 3 parameters: \n"
+        "model.layers.0.weight,\nmodel.layers.1.weight,\nmodel.layers.2.weight.",
+    ],
+)
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_unparsed_missing_parameters_refuse_strict_false(
+    tmp_path, monkeypatch, message, wrapped
+):
+    from unittest.mock import Mock
+
+    import mlx_lm.utils
+
+    from rapid_mlx.model_load_errors import IncompatibleWeights
+    from rapid_mlx.utils import tokenizer as loader
+
+    original = ValueError(message)
+    failure = original
+    if wrapped:
+        failure = IncompatibleWeights(f"Model weights are incompatible: {message}")
+        failure.__cause__ = original
+    load_model = Mock(side_effect=AssertionError("unsafe strict=False load"))
+    monkeypatch.setattr(mlx_lm.utils, "load_model", load_model)
+
+    with pytest.raises(type(failure)) as caught:
+        loader._load_strict_false(str(tmp_path), load_error=failure)
+
+    assert caught.value is failure
+    load_model.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "offsets",
+    [[False, 4], [0, True], [-1, 4], [0, -1], [-2, -1], [4, 0]],
+)
+def test_checkpoint_header_rejects_invalid_offsets(tmp_path, offsets):
+    import json
+    import struct
+
+    from rapid_mlx.checkpoint_integrity import (
+        _read_header,
+        _UnreadableHeaderError,
+        incomplete_checkpoint_reason,
+    )
+
+    header = json.dumps(
+        {"weight": {"dtype": "F32", "shape": [1], "data_offsets": offsets}}
+    ).encode()
+    shard = tmp_path / "model.safetensors"
+    shard.write_bytes(struct.pack("<Q", len(header)) + header + b"\0" * 4)
+
+    with pytest.raises(_UnreadableHeaderError):
+        _read_header(shard)
+    assert incomplete_checkpoint_reason(tmp_path) == (
+        "model.safetensors is truncated or unreadable"
+    )

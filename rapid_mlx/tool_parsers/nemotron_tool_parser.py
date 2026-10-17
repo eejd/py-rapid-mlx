@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import uuid
+from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from typing import Any
 
@@ -107,6 +108,109 @@ class NemotronToolParser(ToolParser):
         super().reset()
         self._content_upto = 0
         self._stream_started = False
+        self._undeclared_logged = False
+
+    def flush_held_content(self, full_text: str) -> str:
+        # Completed calls are already accounted for by the streaming watermark.
+        # Inspect only the held range: old markers elsewhere in the response
+        # must not hide trailing prose. A full opener or ambiguous suffix still
+        # belongs to markup and must never be flushed onto the content channel.
+        held = full_text[self._content_upto :]
+        pending = self._pending_markup_index(
+            held,
+            include_closers=(
+                "<tool_call>" in full_text[: self._content_upto]
+                or "<function=" in full_text[: self._content_upto]
+            ),
+        )
+        safe_end = len(held) if pending is None else pending
+        self._content_upto += safe_end
+        return held[:safe_end]
+
+    def _undeclared_spans(self, text, request, accepted):
+        """Consume rejected siblings in bounded, unfenced call wrappers."""
+        from .qwen3coder_tool_parser import _MarkdownCodeTracker
+
+        declared = _declared_tool_names(request)
+        if not declared:
+            return []
+        tracker = _MarkdownCodeTracker()
+        spans = []
+        wrapper_closes = [m.start() for m in re.finditer(r"</tool_call>", text)]
+        accepted_ends = [b for _, _, _, b in accepted]
+        consumed = 0
+        for wrapper in re.finditer(r"<tool_call>", text):
+            start = wrapper.start()
+            if start < consumed:
+                continue
+            # Bound the search BEFORE looking for a close. Repeated unclosed
+            # openers must not each rescan the entire remaining response.
+            limit = min(len(text), start + 32768)
+            close = text.find("</function>", wrapper.end(), limit)
+            if close == -1:
+                continue
+            function_end = close + len("</function>")
+            first_calls = split_marked_calls(
+                text[wrapper.end() : function_end],
+                r"<function=([^>]+)>",
+                "</function>",
+            )
+            if not first_calls:
+                continue
+            first_start = wrapper.end() + first_calls[0][2]
+            # A closed decorative wrapper cannot claim a later bare function.
+            # A literal wrapper close *inside* the function remains payload.
+            if text.find("</tool_call>", wrapper.end(), first_start) != -1:
+                continue
+            close_index = bisect_left(wrapper_closes, function_end)
+            wrapper_close = (
+                wrapper_closes[close_index] if close_index < len(wrapper_closes) else -1
+            )
+            next_wrapper = text.find("<tool_call>", function_end, limit)
+            wrapped = wrapper_close != -1 and (
+                next_wrapper == -1 or wrapper_close < next_wrapper
+            )
+            if wrapped and wrapper_close + len("</tool_call>") > limit:
+                continue
+            if tracker.inside(text, start):
+                continue
+            boundary = (
+                wrapper_close
+                if wrapped
+                else (next_wrapper if next_wrapper != -1 else limit)
+            )
+            # Recognize every sibling with the same nested-opener rules as
+            # accepted calls. Never cut a rejected-looking span out of an
+            # accepted argument: marker-shaped payload must remain payload.
+            calls = split_marked_calls(
+                text[wrapper.end() : boundary],
+                r"<function=([^>]+)>",
+                "</function>",
+            )
+            rejected = []
+            for name, _, a, b in calls:
+                a += wrapper.end()
+                b += wrapper.end()
+                accepted_index = bisect_right(accepted_ends, a)
+                overlaps = (
+                    accepted_index < len(accepted) and accepted[accepted_index][2] < b
+                )
+                if name not in declared and not overlaps:
+                    rejected.append((a, b))
+            if not rejected:
+                continue
+            # Formatting-only whitespace belongs to the wrapper; narration
+            # between the same boundaries remains ordinary assistant content.
+            a = calls[0][2] + wrapper.end()
+            b = calls[-1][3] + wrapper.end()
+            prefix_end = a if text[wrapper.end() : a].isspace() else wrapper.end()
+            spans.append((start, prefix_end))
+            spans.extend(rejected)
+            if wrapped:
+                suffix_start = b if text[b:wrapper_close].isspace() else wrapper_close
+                spans.append((suffix_start, wrapper_close + len("</tool_call>")))
+            consumed = wrapper_close + len("</tool_call>") if wrapped else b
+        return spans
 
     def _visible_content_between(
         self,
@@ -118,8 +222,8 @@ class NemotronToolParser(ToolParser):
         """Project a raw range onto the non-tool content stream.
 
         Valid function spans are executable calls and must stay off the content
-        channel. Refused spans are deliberately retained as prose. When at
-        least one valid call exists, the decorative outer wrappers are removed
+        channel. Wrapped undeclared attempts are consumed; bare refused forms
+        remain prose. When at least one valid call exists, the decorative outer wrappers are removed
         too, matching :meth:`extract_tool_calls`.
 
         Keeping source offsets here is important: a single model delta can
@@ -138,17 +242,26 @@ class NemotronToolParser(ToolParser):
                 valid_names=_declared_tool_names(request),
             )
         ]
-        removed = list(valid_spans)
+        accepted = [("", "", a, b) for a, b in valid_spans]
+        removed = list(valid_spans) + self._undeclared_spans(text, request, accepted)
         if valid_spans:
             removed.extend(
                 (match.start(), match.end())
                 for match in self.RESIDUAL_WRAPPER_PATTERN.finditer(text)
             )
-        removed.sort()
+        # Accepted calls, rejected siblings and wrappers can overlap. Project
+        # their union in source order so no earlier markup becomes a gap.
+        merged: list[tuple[int, int]] = []
+        for span_start, span_end in sorted(removed):
+            if merged and span_start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], span_end))
+            else:
+                merged.append((span_start, span_end))
+        removed = merged
 
         parts: list[str] = []
         cursor = start
-        removed_before = False
+        removed_before = any(span_end == start for _, span_end in removed)
         for span_start, span_end in removed:
             if span_end <= start or span_start >= end:
                 continue
@@ -168,14 +281,20 @@ class NemotronToolParser(ToolParser):
         return "".join(parts)
 
     @staticmethod
-    def _pending_markup_index(text: str) -> int | None:
+    def _pending_markup_index(
+        text: str, *, include_closers: bool = False
+    ) -> int | None:
         """Return where recognized complete/partial markup begins, if any.
 
         A bare ``<`` in assistant prose (for example ``2 < 3``) is content,
         not sufficient evidence of a tool-call opener. Only suppress a suffix
         that is already a known marker or can still grow into one.
         """
-        markers = ("<function=", "<tool_call>", "</function>", "</tool_call>")
+        markers: tuple[str, ...] = ("<function=", "<tool_call>")
+        # Only an actual preceding opener makes a closing tag markup. Orphan
+        # closers in ordinary prose must pass through, including byte streams.
+        if include_closers:
+            markers += ("</function>", "</tool_call>")
         candidates: list[int] = []
         for marker in markers:
             full = text.find(marker)
@@ -202,7 +321,13 @@ class NemotronToolParser(ToolParser):
         if latest_close == 0:
             return 0
         tail = text[latest_close:]
-        pending = NemotronToolParser._pending_markup_index(tail)
+        # Whitespace after a function may be wrapper formatting or the start
+        # of narration. Hold it until the next byte resolves that ambiguity.
+        if tail.isspace() and text.rfind("<tool_call>") > text.rfind("</tool_call>"):
+            return latest_close
+        pending = NemotronToolParser._pending_markup_index(tail, include_closers=True)
+        if pending is not None and tail[:pending].isspace():
+            return latest_close
         return len(text) if pending is None else latest_close + pending
 
     def extract_tool_calls(
@@ -238,6 +363,13 @@ class NemotronToolParser(ToolParser):
             "</function>",
             valid_names=_declared_tool_names(request),
         )
+        rejected = self._undeclared_spans(model_output, request, matches)
+        self._undeclared_dropped = sum(
+            model_output.startswith("<function=", a) for a, _ in rejected
+        )
+        if rejected and not getattr(self, "_undeclared_logged", False):
+            logger.warning("nemotron tool parser: dropped undeclared tool attempt")
+            self._undeclared_logged = True
         for func_name, content, _span_start, _span_end in matches:
             func_name = func_name.strip()
 
@@ -295,22 +427,22 @@ class NemotronToolParser(ToolParser):
 
         # Clean the text: drop the function bodies and any residual bare
         # <tool_call>/</tool_call> wrapper tags so they don't leak as content.
-        if matches:
-            # Excise the exact spans the scan identified. A second regex pass
-            # would truncate at a different point than the parse did whenever
-            # a value holds a literal marker, leaving a tail of the call in
-            # the content the user sees.
-            for _n, _b, span_start, span_end in matches:
-                cleaned_text = cleaned_text.replace(
-                    model_output[span_start:span_end], "", 1
-                )
-            cleaned_text = self.RESIDUAL_WRAPPER_PATTERN.sub("", cleaned_text).strip()
+        if matches or rejected:
+            # Share streaming's projection, including formatting-only gaps
+            # between removed siblings and overlapping accepted payload spans.
+            cleaned_text = self._visible_content_between(
+                model_output, 0, len(model_output), request
+            ).strip()
 
         if tool_calls:
             return ExtractedToolCallInformation(
                 tools_called=True,
                 tool_calls=tool_calls,
                 content=cleaned_text if cleaned_text else None,
+            )
+        elif rejected:
+            return ExtractedToolCallInformation(
+                tools_called=False, tool_calls=[], content=cleaned_text or None
             )
         else:
             # Diagnostic: a tool-call marker was present but nothing parsed
@@ -369,7 +501,11 @@ class NemotronToolParser(ToolParser):
             # No close tag yet → we are still inside the (first) call's markup.
             return None
         tail = current_text[end:]
-        pending = NemotronToolParser._pending_markup_index(tail)
+        if tail.isspace() and current_text.rfind("<tool_call>") > current_text.rfind(
+            "</tool_call>"
+        ):
+            return None
+        pending = NemotronToolParser._pending_markup_index(tail, include_closers=True)
         return None if pending is not None else tail
 
     def extract_tool_calls_streaming(
@@ -397,8 +533,11 @@ class NemotronToolParser(ToolParser):
         if "<tool_call>" not in current_text and "<function=" not in current_text:
             # Ordinary prose, forwarded verbatim — already on the wire, so a
             # later refusal must not send it again.
-            self._content_upto = len(current_text)
-            return {"content": delta_text}
+            pending = self._pending_markup_index(current_text)
+            safe_end = len(current_text) if pending is None else pending
+            content = current_text[self._content_upto : safe_end]
+            self._content_upto = safe_end
+            return {"content": content} if content else None
 
         # The XML parameter format has no escaping rule. A literal
         # ``</function>`` inside a value can appear before the structural
@@ -435,6 +574,9 @@ class NemotronToolParser(ToolParser):
         # arrive in separate deltas (each bumps the count → one re-parse each,
         # but the second finds nothing new to emit).
         if self._close_tag_count(current_text) > self._close_tag_count(previous_text):
+            # Account for completed functions immediately. Only the ambiguous
+            # suffix stays held at the safe boundary; deferring the function
+            # too would replay its markup if that suffix resolves into prose.
             # ``request`` matters here, not just to the non-streaming caller:
             # ``extract_tool_calls`` derives its declared-name gate from it, so
             # omitting it let a name the caller never offered through on the
@@ -454,6 +596,9 @@ class NemotronToolParser(ToolParser):
                     new_calls = result.tool_calls[already_emitted:]
                     self.current_tool_id = total - 1
                     out: dict[str, Any] = {
+                        # A function can finish before its held suffix resolves
+                        # into narration. Keep that later prose on the wire.
+                        "preserve_post_tool_content": True,
                         "tool_calls": [
                             {
                                 "index": already_emitted + i,
@@ -465,7 +610,7 @@ class NemotronToolParser(ToolParser):
                                 },
                             }
                             for i, tc in enumerate(new_calls)
-                        ]
+                        ],
                     }
                     if unsent_content:
                         out["content"] = unsent_content
@@ -475,23 +620,9 @@ class NemotronToolParser(ToolParser):
                     self._content_upto = safe_end
                     return out
             elif safe_end > self._content_upto:
-                # The block CLOSED and is not a call — the declared-name gate
-                # refused it. Non-streaming answers that with
-                # ``content=model_output``: text the caller never authorised as
-                # a tool is still the model's answer and belongs on the wire.
-                #
-                # Streaming had no equivalent. Every delta of the block was
-                # withheld (``None``), and the postprocessor buffers those only
-                # until a closing tag arrives — at which point it drops the
-                # buffer unemitted (``_tool_suppressed_buffer = ""``) because
-                # the parser "made progress". Its #1359 release is byte-budget
-                # driven, so a short refused call never trips it and the user
-                # gets an EMPTY response instead of the prose.
-                #
-                # Returning the accumulated text hands the postprocessor the
-                # content it is about to discard, so nothing is duplicated.
-                # Once per turn: ``</function>`` and ``</tool_call>`` each bump
-                # the close count, and the second must not re-send it.
+                # Advance past a consumed attempt or a refused bare form.
+                # The projection keeps narration and bare prose, excluding
+                # wrapped undeclared markup even at the first function close.
                 self._content_upto = safe_end
                 if unsent_content:
                     return {"content": unsent_content}
@@ -504,7 +635,9 @@ class NemotronToolParser(ToolParser):
                 self._content_upto = safe_end
                 if unsent_content:
                     return {"content": unsent_content}
-            return None
+            # Consumed markup is progress even without visible output: clear
+            # the postprocessor suppression budget before narration resumes.
+            return {"content": ""}
 
         # No new call closed in this delta. If we are past all tool-call markup
         # (a call has closed and no new "<" has started since), the delta is

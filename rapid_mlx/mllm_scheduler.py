@@ -41,6 +41,7 @@ _mlx_compat.install()
 
 from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer  # noqa: E402
 
+from .memory_peak import cumulative_peak_bytes  # noqa: E402
 from .mllm_batch_generator import (  # noqa: E402
     MLLMBatchGenerator,
     MLLMBatchRequest,
@@ -2396,7 +2397,7 @@ class MLLMScheduler:
         try:
             if mx.metal.is_available():
                 stats["metal_active_memory_gb"] = round(mx.get_active_memory() / 1e9, 2)
-                stats["metal_peak_memory_gb"] = round(mx.get_peak_memory() / 1e9, 2)
+                stats["metal_peak_memory_gb"] = round(cumulative_peak_bytes() / 1e9, 2)
                 stats["metal_cache_memory_gb"] = round(mx.get_cache_memory() / 1e9, 2)
         except Exception:
             pass

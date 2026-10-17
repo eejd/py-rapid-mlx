@@ -929,6 +929,9 @@ async def lifespan(app: FastAPI):
             if detail := startup_error_lines(_start_exc, _model_alias or _model_path):
                 print(f"  Cause: {detail[0]}", file=sys.stderr)
                 print(f"  Next step: {detail[1]}", file=sys.stderr)
+                from rapid_mlx._uvicorn import suppress_next_lifespan_traceback
+
+                suppress_next_lifespan_traceback(_start_exc)
             raise
 
     if _engine is not None and getattr(_engine, "is_text_diffusion", False):

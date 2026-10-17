@@ -181,6 +181,8 @@ class Request:
 
     # Prefix cache fields
     prompt_cache: list[Any] | None = None  # Cached KV state from prefix cache
+    # KV state extracted at completion, retained until cache publication/cleanup.
+    _extracted_cache: list[Any] | None = field(default=None, init=False, repr=False)
     cached_tokens: int = 0  # Number of tokens retrieved from cache
     remaining_tokens: list[int] | None = None  # Tokens still needing processing
     prefix_boundary: int = 0  # Token count for shared prefix (messages[:-1])
@@ -278,6 +280,8 @@ class Request:
     # Opt-in scheduler-local starvation accounting. ``init=False`` keeps the
     # public and positional Request constructor unchanged.
     _admission_deferrals: int = field(default=0, init=False, repr=False)
+    # Set while a prefill memory-calibration sample covers this request.
+    _prefill_memory_sampled: bool = field(default=False, init=False, repr=False)
 
     # Monotonic twins of ``arrival_time``/``first_token_time`` for the
     # per-request timing snapshot, so a wall-clock step during generation
