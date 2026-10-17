@@ -176,8 +176,8 @@ struct SidecarBuildScriptTests {
         #expect(!script.contains(#"rm -rf "$STAGE/site-packages/mlx_audio/tts/models""#),
                 "The trim must never remove the complete TTS model directory.")
         // 194 pre-full-runtime Mach-O files plus torch/torchvision/matplotlib
-        // from the base runtimes, plus three torch/bin executables (OpenCV excluded).
-        #expect(script.contains(#"MACHO_BASELINE_COUNT="${MACHO_BASELINE_COUNT:-231}""#),
+        // from the base runtimes, plus torch_shm_manager (build-only protoc and OpenCV excluded).
+        #expect(script.contains(#"MACHO_BASELINE_COUNT="${MACHO_BASELINE_COUNT:-229}""#),
                 "The signing baseline must include the measured full-runtime closure.")
     }
 

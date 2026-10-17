@@ -121,7 +121,9 @@ LTX25_RUNTIME_SHA256="fa9a66a0c78721c3dce51d0f1dadcabad060682410303be748e529a846
 # excluded (GPL FFmpeg). Measured on an Apple Silicon build host.
 # Re-locked at 231 after the same bundle added three extensionless regular
 # Mach-O executables under torch/bin. Content-based inventory now includes them.
-MACHO_BASELINE_COUNT="${MACHO_BASELINE_COUNT:-231}"
+# Re-locked at 229 on 2026-10-17: removed two build-only protoc executables.
+# These are Mach-Os we used to sign; no new signing surface is introduced.
+MACHO_BASELINE_COUNT="${MACHO_BASELINE_COUNT:-229}"
 # Allow modest drift without blocking — wheel updates sometimes shift
 # 1-2 .so files. Bigger drift means a new dependency, needs review.
 # Kept at 5 across the 51 → 77 baseline rebase to give Pillow and
@@ -831,6 +833,23 @@ find "$STAGE/site-packages/numpy" -type d -name tests -prune -exec rm -rf {} + 2
 find "$STAGE/site-packages/scipy" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
 find "$STAGE/site-packages/mlx_audio" -type d -name tests -prune -exec rm -rf {} + 2>/dev/null || true
 
+# Torch headers, CMake configs and protobuf compilers are build-only payload.
+# The bundled runtime never compiles C++ extensions. Keep torch_shm_manager:
+# torch multiprocessing uses it at runtime.
+rm -rf \
+    "$STAGE/site-packages/torch/include" \
+    "$STAGE/site-packages/torch/share" \
+    "$STAGE/site-packages/torch/bin/protoc" \
+    "$STAGE/site-packages/torch/bin/protoc-"*
+# These packages never import their test suites at runtime. Scope the sweep
+# to them and match only tests/test, preserving runtime helpers such as
+# sympy/testing, matplotlib/testing, numpy/testing and torch/testing.
+for package in sympy networkx matplotlib mpmath mpl_toolkits; do
+    if [ -d "$STAGE/site-packages/$package" ]; then
+        find "$STAGE/site-packages/$package" -type d \( -name tests -o -name test \) -prune -exec rm -rf {} +
+    fi
+done
+
 # pyobjc-core wheels include their upstream extension test bundle and dSYM
 # companions. Neither is imported by ApplicationServices/Quartz at runtime;
 # leaving them would add more than a hundred debug/test Mach-Os to the signing
@@ -1016,6 +1035,38 @@ MACHOS_LIST="$(mktemp)"
 # runs doesn't leak the tmpfile (codex r1 NIT).
 trap 'rm -f "$MACHOS_LIST"' EXIT INT TERM
 "$STAGE/python/bin/python3.12" "$ENGINE_ROOT/scripts/sidecar_macho_inventory.py" "$STAGE" "$MACHOS_LIST"
+
+# The sidecar interpreter is arm64-only. Drop unused Intel slices from
+# universal wheels before counting/signing, including --skip-codesign builds.
+# Preserve each file's mode when replacing it with the thinned Mach-O.
+THINNED_COUNT=0
+while IFS= read -r f; do
+    if ! arches="$(lipo -archs "$f")"; then
+        echo "ERR: lipo could not inspect $f" >&2
+        exit 1
+    fi
+    read -r -a MACHO_ARCHS <<< "$arches"
+    if [ "${#MACHO_ARCHS[@]}" -gt 1 ]; then
+        case " $arches " in
+            *" arm64 "*) ;;
+            *) echo "ERR: multi-arch Mach-O lacks arm64: $f ($arches)" >&2; exit 1 ;;
+        esac
+        if ! mode="$(stat -f '%Lp' "$f")"; then
+            echo "ERR: could not read Mach-O mode: $f" >&2
+            exit 1
+        fi
+        if ! lipo "$f" -thin arm64 -output "$f.thin.$$" \
+            || ! chmod "$mode" "$f.thin.$$" \
+            || ! mv "$f.thin.$$" "$f"; then
+            rm -f "$f.thin.$$"
+            echo "ERR: could not thin Mach-O to arm64: $f" >&2
+            exit 1
+        fi
+        THINNED_COUNT=$(( THINNED_COUNT + 1 ))
+    fi
+done < "$MACHOS_LIST"
+echo "==> thinned $THINNED_COUNT multi-arch Mach-Os to arm64"
+
 MACHO_COUNT="$(wc -l < "$MACHOS_LIST" | tr -d ' ')"
 echo "    found $MACHO_COUNT Mach-Os (baseline $MACHO_BASELINE_COUNT, tolerance $MACHO_TOLERANCE)"
 
