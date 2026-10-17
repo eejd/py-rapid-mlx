@@ -223,6 +223,11 @@ def _clean_content(text, choice=None):
 PARSERS = ["hermes", "qwen3_coder_xml"]
 ROUTES = ["chat", "messages", "responses"]
 PARTIAL = TRUNCATED + [
+    "<tool_call>{",
+    "<tool_call>{ \n\t",
+    '<tool_call>{"name":"get_weather","arguments":{"city":"</tool_call>',
+    '<tool_call>{"name":"get_weather","arguments":{"city":"<tool_call>',
+    r'<tool_call>{"name":"get_weather","arguments":{"city":"escaped \" </tool_call>',
     "<tool_call>\n<function",
     '<tool_call>\n{"name',
     '<tool_call>\n{  "',
@@ -516,3 +521,18 @@ def test_hermes_complete_json(client, route):
             route
         ]
     )
+
+
+@pytest.mark.parametrize("parser", PARSERS)
+def test_linear_cleanup_closed_wrappers(client, parser, record_property):
+    from time import perf_counter
+
+    from rapid_mlx.tool_parsers.abstract_tool_parser import ToolParserManager
+
+    cls = ToolParserManager.get_tool_parser(parser)
+    raw = ("long narration " * 6 + "<tool_call>{}</tool_call>") * 8600 + "<tool_call>"
+    start = perf_counter()
+    assert cls.strip_trailing_tool_envelope(raw) == raw[: -len("<tool_call>")]
+    elapsed = perf_counter() - start
+    record_property("closed_wrappers_seconds", elapsed)
+    assert elapsed < 0.15

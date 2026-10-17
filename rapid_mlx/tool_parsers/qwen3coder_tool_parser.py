@@ -164,20 +164,54 @@ class _MarkdownCodeTracker:
 
 
 def _strip_trailing_tool_envelope(text: str, declared: set[str] | None = None) -> str:
-    """Hide only the last unfinished call suffix outside Markdown, in O(n)."""
-    opener = text.rfind("<tool_call>")
-    if opener < 0:
-        return text
-    body_start = opener + len("<tool_call>")
-    if text.find("</tool_call>", body_start) >= 0:
-        return text
-    if _MarkdownCodeTracker().inside(text, opener):
+    """Hide the first unfinished framing suffix outside Markdown, in O(n)."""
+    tokens = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})[^\n]*|`+|\n|<tool_call>", re.M)
+    json_tokens = re.compile(r'"(?:\\[\s\S]|[^"\\])*(?:"|\\?\Z)|</tool_call>')
+    cursor, fence, inline = 0, "", 0
+    while match := tokens.search(text, cursor):
+        cursor = match.end()
+        token = match.group()
+        if run := match.group(1):
+            if not fence:
+                fence = run
+            elif (
+                run[0] == fence[0]
+                and len(run) >= len(fence)
+                and not token.strip()[len(run) :].strip()
+            ):
+                fence = ""
+        elif token == "\n":
+            inline = 0
+        elif token.startswith("`"):
+            inline = 0 if inline == len(token) else inline or len(token)
+        elif not fence and not inline:
+            opener, body_start = match.start(), cursor
+            payload = re.compile(r"\s*").match(text, cursor).end()
+            if text.startswith("{", payload):
+                close = next(
+                    (
+                        m
+                        for m in json_tokens.finditer(text, payload)
+                        if m.group() == "</tool_call>"
+                    ),
+                    None,
+                )
+                end = close.end() if close else -1
+            else:
+                # XML keeps the first-literal-close limitation, including in values.
+                close_pos = text.find("</tool_call>", cursor)
+                end = close_pos + len("</tool_call>") if close_pos >= 0 else -1
+            if end < 0:
+                break
+            cursor = end
+    else:
         return text
     body = text[body_start:].lstrip()
     if not (
         not body
         or "<function=".startswith(body)
         or body.startswith("<function=")
+        or re.fullmatch(r"\{\s*", body)
         or re.fullmatch(r'\{\s*"(n(a(m(e("?)?)?)?)?)?$', body)
         or re.match(r'\{\s*"name"', body)
     ):

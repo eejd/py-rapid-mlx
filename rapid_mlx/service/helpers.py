@@ -3568,8 +3568,10 @@ def _parse_tool_calls_with_parser(
     content, tool_calls = _run_tool_parser(
         output_text, request, structured_tool_calls=structured_tool_calls
     )
-    if request and request.tools and not structured_tool_calls:
-        content = _strip_trailing_tool_envelope(content, request)
+    if not structured_tool_calls:
+        request_dict = request.model_dump() if request else None
+        if request_dict and request_dict.get("tools"):
+            content = _strip_trailing_tool_envelope(content, request)
     if tool_choice_is_none(request):
         return content, None
     declared = declared_names(request)
