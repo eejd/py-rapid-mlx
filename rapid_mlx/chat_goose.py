@@ -297,6 +297,16 @@ def run(args, base_url: str, model: str, *, max_tokens_explicit: bool) -> bool:
             "  Goose Chat ready. Use Goose's approval prompts for tool calls.",
             flush=True,
         )
+        while True:
+            try:
+                first_prompt = input("You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return True
+            if first_prompt.lower() in {"/exit", "exit", "quit"}:
+                return True
+            if first_prompt:
+                break
         completed = subprocess.run(
             [
                 str(goose),
@@ -310,6 +320,8 @@ def run(args, base_url: str, model: str, *, max_tokens_explicit: bool) -> bool:
                 "--no-profile",
                 "--with-builtin",
                 BUILTINS,
+                "--text",
+                first_prompt,
             ],
             cwd=os.getcwd(),
             env=goose_env,

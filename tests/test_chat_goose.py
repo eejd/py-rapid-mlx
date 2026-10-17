@@ -26,6 +26,7 @@ def test_goose_cli_starts_desktop_helpers_and_runs_pinned_harness(
     monkeypatch.setattr(chat_goose, "_goose_binary", lambda: binary)
     monkeypatch.setattr(chat_goose, "_cache_root", lambda: tmp_path / "cache")
     monkeypatch.setattr(chat_goose.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "What causes tides?")
     args = SimpleNamespace(
         mcp_config=None,
         mcp_max_rounds=8,
