@@ -80,7 +80,7 @@ class Vector:
         return Vector([left + right for left, right in zip(self.values, values)])
 
 
-class FakeOps:
+class LegacyOps:
     def __init__(self):
         self.rolls = []
 
@@ -99,13 +99,15 @@ class FakeOps:
             result.extend(row.rows)
         return Rows(result)
 
-    @staticmethod
-    def select_rows(sources, indices):
-        return Rows([sources[source].rows[row] for row, source in enumerate(indices)])
-
     def roll_rows(self, value, shifts, *, axis, stop):
         self.rolls.append((value, shifts.tolist(), axis, stop))
         return ("rolled", value, tuple(shifts.tolist()), axis, stop)
+
+
+class FakeOps(LegacyOps):
+    @staticmethod
+    def select_rows(sources, indices):
+        return Rows([sources[source].rows[row] for row, source in enumerate(indices)])
 
     def roll_kv(self, keys, values, shifts, *, stop):
         return tuple(
@@ -283,8 +285,9 @@ def test_installer_rejects_qwen_cache_from_a_different_runtime():
         _install(arrays=Arrays, qwen=ForeignQwen, qsa=None)
 
 
-def test_batch_kv_splits_uniform_cursor_move_from_residual_row_roll():
-    ops = FakeOps()
+@pytest.mark.parametrize("ops_cls", [FakeOps, LegacyOps])
+def test_batch_kv_splits_uniform_cursor_move_from_residual_row_roll(ops_cls):
+    ops = ops_cls()
 
     class Arrays(FakeArraysCache):
         pass
@@ -300,7 +303,9 @@ def test_batch_kv_splits_uniform_cursor_move_from_residual_row_roll():
     assert cache.offset.tolist() == [7, 3]
     assert cache.left_padding.tolist() == [0, 4]
     assert len(ops.rolls) == 2
-    assert ops.rolls[0][1:] == ([0, 2], 2, 7)
+    assert ops.rolls == [("keys", [0, 2], 2, 7), ("values", [0, 2], 2, 7)]
+    assert cache.keys == ("rolled", "keys", (0, 2), 2, 7)
+    assert cache.values == ("rolled", "values", (0, 2), 2, 7)
     assert cache.invalidations == 1
 
 
@@ -361,11 +366,12 @@ def test_batch_kv_preflight_rejects_pending_padding_and_overtrim():
         cache.preflight_ragged_trim([1, 7], verify_size=7)
 
 
-def test_arrays_cache_selects_each_rows_exact_verify_boundary():
+@pytest.mark.parametrize("ops_cls", [FakeOps, LegacyOps])
+def test_arrays_cache_selects_each_rows_exact_verify_boundary(ops_cls):
     class Arrays(FakeArraysCache):
         pass
 
-    _install(FakeOps(), arrays=Arrays, qwen=None, qsa=None)
+    _install(ops_cls(), arrays=Arrays, qwen=None, qsa=None)
     cache = Arrays([Rows(["a-live", "b-live"]), Rows(["A-live", "B-live"])])
     cache.rollback_state = [
         [Rows(["a-keep1", "b-keep1"]), Rows(["A-keep1", "B-keep1"])],

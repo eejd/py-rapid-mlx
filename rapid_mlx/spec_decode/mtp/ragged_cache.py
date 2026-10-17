@@ -217,6 +217,13 @@ def _snapshot_plan(
 def _snapshot_rows(plan: _ArraysTrimPlan, ops: Any) -> list[Any]:
     if len(plan.sources) == 1:
         return list(plan.sources[0])
+    if not hasattr(ops, "select_rows"):
+        return [
+            ops.concat(
+                [slot[source][row : row + 1] for row, source in enumerate(plan.indices)]
+            )
+            for slot in zip(*plan.sources)
+        ]
     return [ops.select_rows(list(slot), plan.indices) for slot in zip(*plan.sources)]
 
 
@@ -309,9 +316,17 @@ def _batch_kv_trim(self, n, *, verify_size=None, validate: bool = True, _plan=No
         self.offset = self.offset - uniform
     if max(residual, default=0):
         shifts = self._rapid_ragged_ops.vector(residual)
-        self.keys, self.values = self._rapid_ragged_ops.roll_kv(
-            self.keys, self.values, shifts, stop=self._idx
-        )
+        if hasattr(self._rapid_ragged_ops, "roll_kv"):
+            self.keys, self.values = self._rapid_ragged_ops.roll_kv(
+                self.keys, self.values, shifts, stop=self._idx
+            )
+        else:
+            self.keys = self._rapid_ragged_ops.roll_rows(
+                self.keys, shifts, axis=2, stop=self._idx
+            )
+            self.values = self._rapid_ragged_ops.roll_rows(
+                self.values, shifts, axis=2, stop=self._idx
+            )
         if aux_hook is not None:
             aux_hook(
                 self,
