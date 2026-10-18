@@ -1,0 +1,28 @@
+name: tart proof utility (throwaway)
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  utility-tools:
+    runs-on: [self-hosted, Linux, ARM64, rapidmlx-tart]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tools the moved utility jobs call without setup-python
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          python --version | grep -E '^Python 3\.12\.'
+          python3 --version
+          for t in gh jq git curl zstd node npm zip unzip make swift tar xz; do command -v "$t"; done
+          gh --version
+          gh api rate_limit --jq .rate.limit
+          # main-guard and merge-on-green entry points (stdlib only) import and parse args.
+          python -c "import scripts.main_guard, scripts.merge_on_green"
+          python -m scripts.main_guard --help >/dev/null
+          python -m scripts.merge_on_green --help >/dev/null

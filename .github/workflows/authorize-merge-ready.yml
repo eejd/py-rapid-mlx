@@ -17,7 +17,7 @@ jobs:
       github.event.action == 'labeled' &&
       (github.event.label.name == 'merge-ready' ||
        github.event.label.name == 'merge-ready-mac')
-    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: [self-hosted, Linux, ARM64, rapidmlx-tart]
     permissions:
       issues: write
       pull-requests: read
@@ -138,7 +138,7 @@ jobs:
        (github.event.action == 'unlabeled' &&
         (github.event.label.name == 'merge-ready' ||
          github.event.label.name == 'merge-ready-mac')))
-    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
+    runs-on: [self-hosted, Linux, ARM64, rapidmlx-tart]
     concurrency:
       group: merge-ready-stale-notice-${{ github.event.pull_request.number }}
       cancel-in-progress: false
