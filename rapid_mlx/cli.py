@@ -13542,7 +13542,9 @@ def agents_command(args):
     from rapid_mlx.agents.adapter import get_setup_instructions, setup_agent_config
 
     agent_name = args.agent_name
-    base_url = args.base_url
+    base_url = (
+        args.base_url if args.base_url is not None else "http://localhost:8000/v1"
+    )
     # The CLI's shared alias resolver replaces --model with its HF repository
     # before dispatch. Agent configs and commands must use the server's public
     # alias when one was supplied, especially clients that validate model IDs.
@@ -13611,6 +13613,14 @@ def agents_command(args):
         print("  Run 'rapid-mlx agents' to see available agents.")
         sys.exit(1)  # pragma: no cover - CLI error path
 
+    saved_endpoint = None
+    if args.test and profile.name == "codex" and args.base_url is None:
+        from rapid_mlx.agents.adapter import saved_codex_base_url
+
+        saved_endpoint = saved_codex_base_url(profile, args.agent_version)
+        if saved_endpoint is not None:
+            base_url = saved_endpoint
+
     # Share Codex's API base across discovery, setup, and integration tests.
     try:
         base_url = profile.normalize_base_url(base_url)
@@ -13620,6 +13630,11 @@ def agents_command(args):
 
     # --test: run integration tests
     if args.test:
+        from rapid_mlx.agents.adapter import _redact_endpoint
+
+        display_url = _redact_endpoint(base_url)
+        if saved_endpoint is not None:
+            print(f"  Using saved Codex endpoint: {display_url}")
         from rapid_mlx.agents.testing import AgentTestRunner  # pragma: no cover
 
         model_id = requested_model or None
@@ -13630,7 +13645,7 @@ def agents_command(args):
             agent_version=args.agent_version,
         )
         if not runner._server_available():
-            print(f"\n  Server not running at {base_url}")
+            print(f"\n  Server not running at {display_url}")
             print("  Start it first: rapid-mlx serve <model>")
             sys.exit(1)
 

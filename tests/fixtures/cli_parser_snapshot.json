@@ -243,7 +243,7 @@
        "class": "argparse._StoreAction",
        "completer": null,
        "const": null,
-       "default": "http://localhost:8000/v1",
+       "default": null,
        "dest": "base_url",
        "help": "Rapid-MLX server URL (default: http://localhost:8000/v1)",
        "metavar": null,

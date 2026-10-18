@@ -52,6 +52,8 @@ def test_claude_code_profile_has_runnable_test_command():
 def test_claude_code_e2e_receives_rendered_environment(tmp_path):
     profile = get_profile("claude-code")
     assert profile is not None
+    from rapid_mlx.agents.testing import AgentTestRunner, TestResult, TestStatus
+
     isolated_home = tmp_path / "isolated-claude-home"
     isolated_home.mkdir()
     temporary_home = SimpleNamespace(
@@ -73,21 +75,52 @@ def test_claude_code_e2e_receives_rendered_environment(tmp_path):
             return_value=True,
         ),
         patch("rapid_mlx.agents.testing._test_plain_chat") as plain_chat,
-        patch("rapid_mlx.agents.testing._test_single_tool_call"),
-        patch("rapid_mlx.agents.testing._test_tool_choice"),
-        patch("rapid_mlx.agents.testing._test_multi_turn_tool"),
-        patch("rapid_mlx.agents.testing._test_no_tool_leak"),
-        patch("rapid_mlx.agents.testing._test_no_tool_needed"),
-        patch("rapid_mlx.agents.testing._test_streaming_tool_call"),
-        patch("rapid_mlx.agents.testing._test_many_tools"),
-        patch("rapid_mlx.agents.testing._test_streaming_basic"),
-        patch("rapid_mlx.agents.testing._test_stress_no_leak"),
+        patch(
+            "rapid_mlx.agents.testing._test_single_tool_call",
+            return_value=TestResult("_test_single_tool_call", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_tool_choice",
+            return_value=TestResult("_test_tool_choice", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_multi_turn_tool",
+            return_value=TestResult("_test_multi_turn_tool", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_no_tool_leak",
+            return_value=TestResult("_test_no_tool_leak", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_no_tool_needed",
+            return_value=TestResult("_test_no_tool_needed", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_streaming_tool_call",
+            return_value=TestResult("_test_streaming_tool_call", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_many_tools",
+            return_value=TestResult("_test_many_tools", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_streaming_basic",
+            return_value=TestResult("_test_streaming_basic", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_stress_no_leak",
+            return_value=TestResult("_test_stress_no_leak", TestStatus.PASS),
+        ),
         patch("rapid_mlx.agents.testing._test_e2e_chat") as e2e_chat,
-        patch("rapid_mlx.agents.testing._test_e2e_file_read"),
-        patch("rapid_mlx.agents.testing._test_e2e_terminal"),
+        patch(
+            "rapid_mlx.agents.testing._test_e2e_file_read",
+            return_value=TestResult("_test_e2e_file_read", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_e2e_terminal",
+            return_value=TestResult("_test_e2e_terminal", TestStatus.PASS),
+        ),
     ):
-        from rapid_mlx.agents.testing import AgentTestRunner, TestResult, TestStatus
-
         plain_chat.return_value = TestResult("plain_chat", TestStatus.PASS)
         e2e_chat.return_value = TestResult("e2e_chat", TestStatus.PASS)
         AgentTestRunner(

@@ -136,6 +136,8 @@ def test_pi_e2e_receives_relocated_agent_dir_and_home(tmp_path):
     The runner redirects HOME universally and layers the profile's own
     relocation variable on top; for pi that variable is PI_CODING_AGENT_DIR.
     """
+    from rapid_mlx.agents.testing import AgentTestRunner, TestResult, TestStatus
+
     isolated_home = tmp_path / "isolated-pi-home"
     isolated_home.mkdir()
     temporary_home = SimpleNamespace(name=str(isolated_home), cleanup=lambda: None)
@@ -153,21 +155,52 @@ def test_pi_e2e_receives_relocated_agent_dir_and_home(tmp_path):
             "rapid_mlx.agents.testing.AgentTestRunner._agent_binary_available",
             return_value=True,
         ),
-        patch("rapid_mlx.agents.testing._test_plain_chat"),
-        patch("rapid_mlx.agents.testing._test_single_tool_call"),
-        patch("rapid_mlx.agents.testing._test_tool_choice"),
-        patch("rapid_mlx.agents.testing._test_multi_turn_tool"),
-        patch("rapid_mlx.agents.testing._test_no_tool_leak"),
-        patch("rapid_mlx.agents.testing._test_no_tool_needed"),
-        patch("rapid_mlx.agents.testing._test_streaming_tool_call"),
-        patch("rapid_mlx.agents.testing._test_streaming_basic"),
-        patch("rapid_mlx.agents.testing._test_stress_no_leak"),
+        patch(
+            "rapid_mlx.agents.testing._test_plain_chat",
+            return_value=TestResult("_test_plain_chat", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_single_tool_call",
+            return_value=TestResult("_test_single_tool_call", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_tool_choice",
+            return_value=TestResult("_test_tool_choice", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_multi_turn_tool",
+            return_value=TestResult("_test_multi_turn_tool", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_no_tool_leak",
+            return_value=TestResult("_test_no_tool_leak", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_no_tool_needed",
+            return_value=TestResult("_test_no_tool_needed", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_streaming_tool_call",
+            return_value=TestResult("_test_streaming_tool_call", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_streaming_basic",
+            return_value=TestResult("_test_streaming_basic", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_stress_no_leak",
+            return_value=TestResult("_test_stress_no_leak", TestStatus.PASS),
+        ),
         patch("rapid_mlx.agents.testing._test_e2e_chat") as e2e_chat,
-        patch("rapid_mlx.agents.testing._test_e2e_file_read"),
-        patch("rapid_mlx.agents.testing._test_e2e_terminal"),
+        patch(
+            "rapid_mlx.agents.testing._test_e2e_file_read",
+            return_value=TestResult("_test_e2e_file_read", TestStatus.PASS),
+        ),
+        patch(
+            "rapid_mlx.agents.testing._test_e2e_terminal",
+            return_value=TestResult("_test_e2e_terminal", TestStatus.PASS),
+        ),
     ):
-        from rapid_mlx.agents.testing import AgentTestRunner, TestResult, TestStatus
-
         e2e_chat.return_value = TestResult("e2e_chat", TestStatus.PASS)
         AgentTestRunner(
             get_profile("pi"),

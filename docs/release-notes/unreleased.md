@@ -17,6 +17,7 @@
 - **`/v1/responses` honors `max_tokens`**: it is treated as `max_output_tokens` instead of being ignored (which allowed unbounded replies); conflicting values return 400.
 
 - **Cleaner tool-call replies**: unfinished tool payloads stay out of visible replies when arguments contain literal tool markers or a forced tool call is returned.
+- **`agents codex --test` uses your saved server address**: after `rapid-mlx agents codex --setup --base-url <url>`, `rapid-mlx agents codex --test` now tests that saved address instead of always probing localhost:8000.
 - **XML tool-call examples stay visible**: fenced code-block examples remain content even when they name an available tool, including in streamed replies; real calls after a closed fence still execute.
 - **XML tool-call examples with CR line endings stay visible**: fenced examples written with bare CR or CRLF line endings remain content instead of running as tool calls, in streamed and non-streamed replies.
 - **Leaner Desktop app bundle**: the app now ships only the math font it renders equations with, trimming about 6 MB from the installed app.

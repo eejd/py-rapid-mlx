@@ -181,3 +181,316 @@ def test_other_agent_url_contracts_unchanged(name):
         get_profile(name).normalize_base_url("http://localhost:8899/")
         == "http://localhost:8899/"
     )
+
+
+@pytest.fixture(autouse=True)
+def isolated_agent_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+
+
+@pytest.fixture
+def cli_runner(monkeypatch):
+    from unittest.mock import Mock
+
+    runner = Mock()
+    runner.return_value._server_available.return_value = True
+    runner.return_value.run.return_value.print_summary.return_value = True
+    monkeypatch.setattr("rapid_mlx.agents.testing.AgentTestRunner", runner)
+    return runner
+
+
+def _cli_args(*flags):
+    from rapid_mlx.cli import build_parser
+
+    return build_parser().parse_args(["agents", *flags])
+
+
+def _run_cli_test(cli_runner, *flags, exit_code=0):
+    from rapid_mlx.cli import agents_command
+
+    with pytest.raises(SystemExit) as raised:
+        agents_command(_cli_args(*flags, "--test"))
+    assert raised.value.code == exit_code
+    return cli_runner.call_args.kwargs["base_url"]
+
+
+def test_cli_setup_then_test_uses_saved_endpoint(monkeypatch, cli_runner, capsys):
+    from rapid_mlx.cli import agents_command
+
+    monkeypatch.setattr(
+        "rapid_mlx.agents.adapter.fetch_context_window", lambda *_: 32768
+    )
+    agents_command(
+        _cli_args(
+            "codex",
+            "--setup",
+            "--base-url",
+            "http://127.0.0.1:8581",
+            "--model",
+            "local-qwen",
+            "--no-check",
+        )
+    )
+    capsys.readouterr()
+    assert _run_cli_test(cli_runner, "codex") == "http://127.0.0.1:8581/v1"
+    assert (
+        "Using saved Codex endpoint: http://127.0.0.1:8581/v1"
+        in capsys.readouterr().out
+    )
+
+
+def test_cli_explicit_endpoint_wins(cli_runner, tmp_path):
+    config = tmp_path / "codex" / "config.toml"
+    config.parent.mkdir()
+    config.write_text(
+        'model_provider = "rapid-mlx"\n'
+        '[model_providers.rapid-mlx]\nbase_url = "http://127.0.0.1:8581/v1"\n'
+    )
+    assert (
+        _run_cli_test(cli_runner, "codex", "--base-url", "http://localhost:8000/v1")
+        == "http://localhost:8000/v1"
+    )
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        None,
+        "invalid toml = [",
+        "",
+        "model_provider = 123\n",
+        'model_provider = "missing"\n',
+        'model_provider = "rapid-mlx"\nmodel_providers = 1\n',
+        'model_provider = "rapid-mlx"\n[model_providers]\nrapid-mlx = 1\n',
+        'model_provider = "rapid-mlx"\n[model_providers.rapid-mlx]\n',
+        'model_provider = "rapid-mlx"\n[model_providers.rapid-mlx]\nbase_url = 123\n',
+        'model_provider = "rapid-mlx"\n[model_providers.rapid-mlx]\nbase_url = "http://localhost:bad"\n',
+    ],
+)
+def test_cli_unusable_saved_endpoint_falls_back(cli_runner, tmp_path, contents, capsys):
+    if contents is not None:
+        config = tmp_path / "codex" / "config.toml"
+        config.parent.mkdir()
+        config.write_text(contents)
+    assert _run_cli_test(cli_runner, "codex") == "http://localhost:8000/v1"
+    assert "Using saved Codex endpoint" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("endpoint_source", ["saved", "explicit"])
+@pytest.mark.parametrize("refresh_fails", [False, True])
+def test_cli_endpoint_credentials_are_not_printed(
+    tmp_path, monkeypatch, capsys, caplog, endpoint_source, refresh_fails
+):
+    import httpx
+
+    from rapid_mlx.cli import agents_command
+
+    endpoint = "http://credential-user:credential-password@127.0.0.1:8581/v1"
+    requests = []
+
+    def handle_request(_transport, request):
+        requests.append(request)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={})
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "local-qwen"}]})
+        return httpx.Response(401, json={"error": "Unauthorized"})
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+    monkeypatch.setattr(AgentTestRunner, "_agent_binary_available", lambda _: False)
+    if refresh_fails:
+
+        def fail_refresh(*args, **kwargs):
+            raise RuntimeError(f"Cannot refresh config for {endpoint}")
+
+        monkeypatch.setattr("rapid_mlx.agents.adapter.setup_agent_config", fail_refresh)
+
+    flags = ["codex", "--test"]
+    if endpoint_source == "saved":
+        config = tmp_path / "codex" / "config.toml"
+        config.parent.mkdir()
+        config.write_text(
+            'model_provider = "custom"\n[model_providers.custom]\n'
+            f'base_url = "{endpoint}"\n'
+        )
+    else:
+        flags += ["--base-url", endpoint]
+
+    with pytest.raises(SystemExit) as raised:
+        agents_command(_cli_args(*flags))
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + caplog.text
+    assert "401 Unauthorized" in output
+    assert "http://127.0.0.1:8581/v1/chat/completions" in output
+    assert "credential-user" not in output
+    assert "credential-password" not in output
+    posts = [request for request in requests if request.method == "POST"]
+    assert posts
+    for request in posts:
+        assert request.url.userinfo == b"credential-user:credential-password"
+        assert request.headers["authorization"].startswith("Basic ")
+    if refresh_fails:
+        assert "could not refresh codex" in output
+
+
+@pytest.mark.parametrize(
+    "endpoint,secrets",
+    [
+        ("http://LOCALHOST:8581/v1?api_key=secret", ["secret"]),
+        (
+            "http://credential-user:p%40ss%20w0rd%21@LOCALHOST:8581/v1",
+            ["credential-user", "p@ss w0rd!", "p%40ss%20w0rd%21", "p%40ss%20w0rd!"],
+        ),
+    ],
+)
+def test_cli_derived_request_url_credentials_are_not_printed(
+    monkeypatch, capsys, caplog, endpoint, secrets
+):
+    import httpx
+
+    from rapid_mlx.cli import agents_command
+
+    # HTTPX lowercases the host, so the diagnostic cannot match base_url exactly.
+    requests = []
+
+    def handle_request(_transport, request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "local-qwen"}]})
+        return httpx.Response(401, json={"error": "Unauthorized"})
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+    monkeypatch.setattr(AgentTestRunner, "_agent_binary_available", lambda _: False)
+    with pytest.raises(SystemExit) as raised:
+        agents_command(_cli_args("codex", "--test", "--base-url", endpoint))
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + caplog.text
+    assert "401 Unauthorized" in output
+    assert "http://localhost:8581/v1" in output
+    for secret in secrets:
+        assert secret not in output
+    posts = [request for request in requests if request.method == "POST"]
+    assert posts
+    for request in posts:
+        # Diagnostics alone change; HTTPX still receives the original URL.
+        assert request.url == httpx.URL(f"{endpoint}/chat/completions")
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (
+            "bad 'http://user:secret@[::1/path?api_key=secret#private' next",
+            "bad 'http://[::1/path' next",
+        ),
+        (
+            'bad "HTTPS://[broken/path?secret#private" next',
+            'bad "HTTPS://[broken/path" next',
+        ),
+        (
+            'URLs "https://user:secret@example.com/path?secret#private" '
+            "'http://other:secret@localhost/next?secret' plain text",
+            "URLs \"https://example.com/path\" 'http://localhost/next' plain text",
+        ),
+    ],
+)
+def test_runner_redacts_all_urls_including_malformed_text(text, expected):
+    runner = AgentTestRunner(
+        get_profile("codex"), "http://localhost:8000/v1", model_id="local-qwen"
+    )
+    assert runner._redact(text) == expected
+
+
+def test_cli_unavailable_saved_endpoint_credentials_are_not_printed(
+    tmp_path, monkeypatch, capsys
+):
+    import httpx
+
+    from rapid_mlx.cli import agents_command
+
+    config = tmp_path / "codex" / "config.toml"
+    config.parent.mkdir()
+    config.write_text(
+        'model_provider = "custom"\n[model_providers.custom]\n'
+        'base_url = "http://credential-user:credential-password@127.0.0.1:8581"\n'
+    )
+    monkeypatch.setattr(
+        httpx.HTTPTransport,
+        "handle_request",
+        lambda *_: httpx.Response(503, json={}),
+    )
+    with pytest.raises(SystemExit) as raised:
+        agents_command(_cli_args("codex", "--test"))
+    assert raised.value.code == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "Server not running at http://127.0.0.1:8581/v1" in output
+    assert "credential-user" not in output
+    assert "credential-password" not in output
+
+
+def test_cli_unavailable_explicit_endpoint_credentials_are_not_printed(
+    cli_runner, capsys
+):
+    cli_runner.return_value._server_available.return_value = False
+    endpoint = "http://credential-user:credential-password@127.0.0.1:8581/v1"
+    assert (
+        _run_cli_test(cli_runner, "codex", "--base-url", endpoint, exit_code=1)
+        == endpoint
+    )
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "Server not running at http://127.0.0.1:8581/v1" in output
+    assert "Using saved Codex endpoint" not in output
+    assert "credential-user" not in output
+    assert "credential-password" not in output
+
+
+def test_cli_other_agent_keeps_default_without_readback(cli_runner, monkeypatch):
+    def unexpected_read(*_):
+        pytest.fail("Other agents must not read Codex config")
+
+    monkeypatch.setattr(
+        "rapid_mlx.agents.adapter._resolve_config_path", unexpected_read
+    )
+    assert _run_cli_test(cli_runner, "aider") == "http://localhost:8000/v1"
+
+
+def test_cli_setup_none_endpoint_defaults_before_discovery(tmp_path, monkeypatch):
+    from rapid_mlx.cli import agents_command
+
+    calls = []
+
+    def discover(url):
+        calls.append(url)
+        return "local-qwen", 32768
+
+    monkeypatch.setattr("rapid_mlx.agents.adapter._detect_running_model", discover)
+    args = _cli_args("codex", "--setup", "--no-check")
+    args.base_url = None
+    agents_command(args)
+    assert calls == ["http://localhost:8000/v1"]
+    config = tomllib.loads((tmp_path / "codex" / "config.toml").read_text())
+    assert (
+        config["model_providers"]["rapid-mlx"]["base_url"] == "http://localhost:8000/v1"
+    )
+
+
+def test_cli_instructions_none_endpoint_defaults(monkeypatch):
+    from unittest.mock import Mock
+
+    from rapid_mlx.cli import agents_command
+
+    instructions = Mock(return_value="setup guide")
+    monkeypatch.setattr("rapid_mlx.agents.adapter.get_setup_instructions", instructions)
+    args = _cli_args("codex")
+    args.base_url = None
+    agents_command(args)
+    assert instructions.call_args.args[1] == "http://localhost:8000/v1"
+
+
+def test_agents_parser_preserves_omitted_endpoint():
+    assert _cli_args("codex", "--test").base_url is None

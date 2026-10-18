@@ -31,6 +31,7 @@ import httpx
 
 from ..client_header import RAPID_CLIENT_AGENTS
 from ..http_auth import rapid_mlx_client_headers
+from .adapter import _redact_endpoint
 from .base import AgentProfile
 from .opencode_version import installed_version
 
@@ -51,6 +52,9 @@ _ANTHROPIC_REMOTE_ENV = (
 # property of the string the subprocess boundary produced, not a guess made
 # from the child's own prose.
 _EXIT_ERR_PREFIX = "EXIT:"
+
+# Diagnostics may contain normalized or derived request URLs, not just base_url.
+_DIAGNOSTIC_URL_RE = re.compile(r"https?://[^\s\"']+", re.IGNORECASE)
 
 # One separator character models actually use for thousands: comma, no-break
 # space, narrow no-break space, plain space.
@@ -1462,6 +1466,7 @@ class AgentTestRunner:
         self.profile = profile
         base_url = profile.normalize_base_url(base_url)
         self.base_url = base_url
+        self._safe_base_url = _redact_endpoint(base_url)
         self.agent_version = (
             installed_version()
             if profile.name == "opencode" and agent_version is None
@@ -1481,6 +1486,23 @@ class AgentTestRunner:
                 self.model_id = resp.json()["data"][0]["id"]
             except Exception:
                 self.model_id = "default"
+
+    def _redact(self, text: str) -> str:
+        """Strip URL credentials from diagnostics without changing requests."""
+
+        def sanitize(match: re.Match[str]) -> str:
+            url = match.group()
+            try:
+                return _redact_endpoint(url)
+            except ValueError:
+                # Malformed authorities (e.g. unmatched IPv6 brackets) must
+                # still lose userinfo, query and fragment without parsing.
+                url = re.split(r"[?#]", url, maxsplit=1)[0]
+                return re.sub(r"(https?://)[^/]*@", r"\1", url, flags=re.IGNORECASE)
+
+        # Also handle an exact configured endpoint containing literal spaces.
+        text = text.replace(self.base_url, self._safe_base_url)
+        return _DIAGNOSTIC_URL_RE.sub(sanitize, text)
 
     def _server_available(self) -> bool:
         """Check if the Rapid-MLX server is running."""
@@ -1524,8 +1546,8 @@ class AgentTestRunner:
     def run(self) -> TestReport:
         """Run all applicable tests and return a report."""
         report = TestReport(
-            agent_name=self.profile.display_name,
-            model_id=self.model_id,
+            agent_name=self._redact(self.profile.display_name),
+            model_id=self._redact(self.model_id),
         )
 
         if not self._server_available():
@@ -1614,7 +1636,7 @@ class AgentTestRunner:
             logger.warning(
                 "could not refresh %s config before harness sweep: %s",
                 self.profile.name,
-                exc,
+                self._redact(str(exc)),
             )
 
         t0 = time.time()
@@ -1812,6 +1834,9 @@ class AgentTestRunner:
             report.results.extend(specific_results)
 
         report.total_duration_ms = (time.time() - t0) * 1000
+        for result in report.results:
+            result.name = self._redact(result.name)
+            result.message = self._redact(result.message)
         if isolated_config_home is not None:
             isolated_config_home.cleanup()
         return report
