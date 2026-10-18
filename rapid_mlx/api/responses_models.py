@@ -402,7 +402,8 @@ class ResponsesRequest(BaseModel):
     @field_validator("max_tokens", mode="before")
     @classmethod
     def _validate_max_tokens(cls, v) -> int | None:
-        return _validate_positive_int(v, field_name="max_tokens")
+        value: int | None = _validate_positive_int(v, field_name="max_tokens")
+        return value
 
     @model_validator(mode="after")
     def _normalize_max_tokens(self) -> "ResponsesRequest":
