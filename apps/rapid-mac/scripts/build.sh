@@ -445,15 +445,35 @@ fi
 
 # SwiftMath's upstream resource accessor looks beside `Contents/`, a location
 # that makes a strict app signature invalid. Our vendored resolver loads this
-# nested bundle through Bundle.main instead. Keep the full upstream bundle so
-# every public MathFont case remains usable and its font licences travel with
-# the corresponding binaries.
+# nested bundle through Bundle.main instead. Ship only the default font pair
+# and all upstream licence notices. Adopting another MathFont case requires
+# adding its font pair here.
+# >>> swiftmath-font-staging
 SWIFTMATH_FONTS="$ROOT/Vendor/SwiftMath/Sources/SwiftMath/mathFonts.bundle"
+# Must match SwiftMath's default MathFont.latinModernFont, the only font the app renders with.
+SWIFTMATH_DEFAULT_FONT="latinmodern-math"
 if [[ ! -d "$SWIFTMATH_FONTS" ]]; then
     echo "ERR: vendored SwiftMath font bundle missing: $SWIFTMATH_FONTS" >&2
     exit 1
 fi
-cp -R "$SWIFTMATH_FONTS" "$CONTENTS/Resources/mathFonts.bundle"
+SWIFTMATH_REQUIRED_FILES=(
+    "${SWIFTMATH_DEFAULT_FONT}.otf"
+    "${SWIFTMATH_DEFAULT_FONT}.plist"
+    "LICENSE"
+    "OFL.txt"
+    "GUST-FONT-LICENSE.txt"
+)
+# Recreate the font bundle so stale resources cannot survive staging.
+rm -rf "$CONTENTS/Resources/mathFonts.bundle"
+mkdir -p "$CONTENTS/Resources/mathFonts.bundle"
+for file in "${SWIFTMATH_REQUIRED_FILES[@]}"; do
+    if [[ ! -f "$SWIFTMATH_FONTS/$file" ]]; then
+        echo "ERR: required vendored SwiftMath resource missing: $SWIFTMATH_FONTS/$file" >&2
+        exit 1
+    fi
+    cp "$SWIFTMATH_FONTS/$file" "$CONTENTS/Resources/mathFonts.bundle/"
+done
+# <<< swiftmath-font-staging
 
 # Third-party license texts (#1596). BSD-2-Clause (swift-cmark) and the MIT
 # licenses of the other linked Swift packages ask their notice to travel "with
