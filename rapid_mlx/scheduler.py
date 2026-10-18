@@ -380,6 +380,17 @@ _SHARED_PREFIX_SNAPSHOT_MIN_TOKENS = 1024
 # Measured on Qwen3.5-9B-4bit, 23k-token cold prefill, 2048-token chunks:
 # peak - weights = 3.2 GB for 0.75 GB of prompt KV (3.3x the KV beyond it).
 _COLD_PREFILL_TRANSIENT_KV_MULTIPLE = 3.5
+# Upper bound on prefill workspace growth per (query token x key token) per
+# attention head, in fp32 score-matrix copies, used only to extrapolate beyond
+# the longest context measured so far. Fused attention grows far less (35B MoE
+# hybrid: ~9 bytes per query x key token in total). Non-fused attention
+# materializes the score matrix with its scale/softcap/mask/softmax
+# intermediates; a softcapped model measured ~7 fp32 copies live per head.
+_PREFILL_ATTENTION_SCORE_COPIES = 8
+# Live 35B MoE hybrid, calibrated 49k prefill: projected KV + workspace was
+# 6.22 GB vs 6.29 GB peak growth from admission (two rows: 12.35 vs 12.04 GB).
+# Step peak - active misses persistent non-KV growth (~0.2 GB at 49k).
+_PREFILL_WORKSPACE_MEASURED_HEADROOM = 1.25
 
 
 @dataclass
@@ -4332,6 +4343,8 @@ class Scheduler:
     # __init__ still step cleanly; __init__ resolves the real value once
     # (an os.environ lookup per step would sit on the decode hot path).
     _step_timing_enabled = False
+    # Resolved lazily by ``_resolve_prefill_attention_beta`` (unset until then).
+    _prefill_attention_beta: int | None
     # Decode steps accumulated since the last recurrent-state barrier. The
     # barrier fires off THIS depth (not the global step counter) so a batch
     # size change re-evaluates the interval against the actual live chain:
@@ -9932,12 +9945,40 @@ class Scheduler:
         chunk = min(self.config.prefill_step_size, remaining)
         return chunk * context
 
+    def _resolve_prefill_attention_beta(self) -> int | None:
+        if hasattr(self, "_prefill_attention_beta"):
+            return self._prefill_attention_beta
+        beta: int | None = None
+        # Match KV geometry's structural/text-tower selection for config/args.
+        for holder in (
+            getattr(self.model, "config", None),
+            getattr(self.model, "args", None),
+        ):
+            text = _cfg_get(holder, "text_config")
+            candidates = (holder, text)
+            structural = [
+                cfg
+                for cfg in candidates
+                if isinstance(_cfg_get(cfg, "num_hidden_layers"), int)
+                and _valid_layer_types(
+                    _cfg_get(cfg, "layer_types"), _cfg_get(cfg, "num_hidden_layers")
+                )
+            ]
+            cfg = (
+                structural[0] if structural else (text if text is not None else holder)
+            )
+            heads = _cfg_get(cfg, "num_attention_heads")
+            if isinstance(heads, int) and not isinstance(heads, bool) and heads > 0:
+                beta = heads * 4 * _PREFILL_ATTENTION_SCORE_COPIES
+                break
+        self._prefill_attention_beta = beta
+        return beta
+
     def _prefill_workspace_bytes(
         self, request: Request, *, padded_units: int = 0, padded_chunk: int = 0
     ) -> int:
         # The geometry-based cold prior is a floor, not a universal workspace
-        # coefficient. Until measured, admit only one prefill row. Thereafter
-        # retain the monotonic observed peak delta / sum(chunk * final_context).
+        # coefficient. Until measured, admit only one prefill row.
         prior = (
             _COLD_PREFILL_TRANSIENT_KV_MULTIPLE
             * self._resolve_kv_bytes_per_token()
@@ -9949,6 +9990,31 @@ class Scheduler:
             self.config.prefill_step_size,
             max(1, _prompt_len(request) - request.cached_tokens),
         )
+        beta = self._resolve_prefill_attention_beta()
+        if beta is not None:
+            rate = getattr(self, "_prefill_workspace_per_chunk", 0.0)
+            if rate:
+                context = max(
+                    _prompt_len(request),
+                    padded_units // padded_chunk if padded_chunk else 0,
+                )
+                # Within the observed context range the max observed rate
+                # bounds workspace: monotone context-dependent attention is
+                # included in the sample at A. Beyond A, extrapolate using an
+                # explicit upper bound for attention scores and their copies.
+                rate += beta * max(
+                    0, context - getattr(self, "_prefill_workspace_max_context", 0)
+                )
+            return int(
+                max(
+                    prior * units,
+                    int(
+                        max(chunk, padded_chunk)
+                        * rate
+                        * _PREFILL_WORKSPACE_MEASURED_HEADROOM
+                    ),
+                )
+            )
         return int(
             max(
                 coefficient * units,
@@ -10049,7 +10115,7 @@ class Scheduler:
 
     def _begin_prefill_memory_sample(
         self,
-    ) -> tuple[int, list[tuple[Request, int]], int] | None:
+    ) -> tuple[int, list[tuple[Request, int, int]], int] | None:
         if self._resolve_metal_cap_bytes() <= 0:
             return None
         bg = self.batch_generator
@@ -10067,11 +10133,12 @@ class Scheduler:
             (seq[0], seq[1]) for seq in getattr(bg, "_unprocessed_sequences", ())
         )
         rows = [
-            (r, min(int(bg.prefill_step_size), len(segments[r.batch_uid][0])))
-            for r, _ in self._prefill_memory_rows()
+            (r, chunk, r.cached_tokens + processed + chunk)
+            for r, processed in self._prefill_memory_rows()
+            for chunk in [min(int(bg.prefill_step_size), len(segments[r.batch_uid][0]))]
         ]
         minimum = min(256, self.config.prefill_step_size)
-        if not rows or max(chunk for _, chunk in rows) < minimum:
+        if not rows or max(chunk for _, chunk, _ in rows) < minimum:
             return None
         active = self._current_metal_active_bytes()
         token = reset_peak_for_sample()
@@ -10079,7 +10146,7 @@ class Scheduler:
 
     def _finish_prefill_memory_sample(
         self,
-        before: tuple[int, list[tuple[Request, int]], int] | None,
+        before: tuple[int, list[tuple[Request, int, int]], int] | None,
         raw_next=None,
     ) -> None:
         if before is None:
@@ -10089,12 +10156,16 @@ class Scheduler:
             # Only rows actually dispatched in this step belong in the sample:
             # completion/prefill capacity can leave inserted rows queued.
             dispatched = {response.uid for response in raw_next[0]}
-            rows = [(r, chunk) for r, chunk in rows if r.batch_uid in dispatched]
+            rows = [
+                (r, chunk, context)
+                for r, chunk, context in rows
+                if r.batch_uid in dispatched
+            ]
         minimum = min(256, self.config.prefill_step_size)
-        if not rows or max(chunk for _, chunk in rows) < minimum:
+        if not rows or max(chunk for _, chunk, _ in rows) < minimum:
             return
-        units = sum(chunk * max(1, _prompt_len(r)) for r, chunk in rows)
-        chunks = sum(chunk for _, chunk in rows)
+        units = sum(chunk * max(1, _prompt_len(r)) for r, chunk, _ in rows)
+        chunks = sum(chunk for _, chunk, _ in rows)
         # Include KV allocation and simultaneous decode in the residual rather
         # than trying to subtract uncertain allocator/copy lifetimes. This is
         # deliberately conservative; the high-water can only rise.
@@ -10111,7 +10182,11 @@ class Scheduler:
         self._prefill_workspace_per_chunk = max(
             getattr(self, "_prefill_workspace_per_chunk", 0.0), delta / max(1, chunks)
         )
-        for request, chunk in rows:
+        self._prefill_workspace_max_context = max(
+            getattr(self, "_prefill_workspace_max_context", 0),
+            min(context for _, _, context in rows),
+        )
+        for request, chunk, _ in rows:
             if chunk >= minimum:
                 request._prefill_memory_sampled = True
 
