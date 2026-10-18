@@ -13,6 +13,7 @@ import pytest
 from rapid_mlx import cli
 
 EMBED_ID = "mlx-community/all-MiniLM-L6-v2-4bit"
+RERANK_ID = "mlx-community/Qwen3-Reranker-0.6B-mxfp8"
 
 
 # main() must accept a model-less serve when --embedding-model is given.
@@ -34,6 +35,145 @@ def test_main_dispatches_serve_without_model_when_embedding_model_set(capsys):
     assert "a model is required" not in capsys.readouterr().err
 
 
+def test_load_rerank_model_reports_download_failure(monkeypatch, capsys):
+    """A missing checkpoint is translated into an actionable CLI failure."""
+
+    class CheckpointNotFoundError(Exception):
+        pass
+
+    rerank_stub = types.ModuleType("rapid_mlx.rerank")
+    rerank_stub.UnsupportedRerankModelError = ValueError
+    rerank_stub.normalize_max_length = lambda value: value
+    monkeypatch.setitem(sys.modules, "rapid_mlx.rerank", rerank_stub)
+    monkeypatch.setattr(
+        cli,
+        "_embedding_not_found_exception_classes",
+        lambda: (CheckpointNotFoundError,),
+    )
+
+    def fail_load(_model, **_options):
+        raise CheckpointNotFoundError("no cached revision")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli._load_rerank_model_or_exit(
+            Namespace(rerank_model="missing/reranker"), fail_load
+        )
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr().out
+    assert "missing/reranker" in output
+    assert "CheckpointNotFoundError: no cached revision" in output
+    assert "pass the full HuggingFace id of a supported reranker" in output
+
+
+def test_text_mode_preloads_configured_reranker(monkeypatch):
+    from rapid_mlx import server
+
+    class StopAfterRerankLoadError(Exception):
+        pass
+
+    calls = []
+    scheduler_stub = types.ModuleType("rapid_mlx.scheduler")
+    scheduler_stub.SchedulerConfig = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    monkeypatch.setitem(sys.modules, "rapid_mlx.scheduler", scheduler_stub)
+    args = cli.build_parser().parse_args(
+        [
+            "serve",
+            "org/text-model",
+            "--rerank-model",
+            RERANK_ID,
+            "--port",
+            "0",
+        ]
+    )
+    monkeypatch.setattr(cli, "_ensure_model_downloaded", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli, "_port_preflight_or_die", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli, "_resolve_audio_model_for_serve", lambda _name: None)
+    monkeypatch.setattr(cli, "_check_disk_space", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli, "_check_memory_capacity", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli, "_run_uvicorn", lambda *_a, **_k: None)
+    monkeypatch.setattr(server, "load_model", lambda *_a, **_k: None)
+    monkeypatch.setattr("rapid_mlx.api.utils.is_mllm_model", lambda _name: False)
+    monkeypatch.setattr(
+        "rapid_mlx.models.mllm.require_mlx_vlm_or_exit", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "rapid_mlx._version_check.prompt_upgrade_if_available", lambda: False
+    )
+    monkeypatch.setattr(
+        "rapid_mlx._version_check.print_staleness_warning_if_any",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_load_rerank_model_or_exit",
+        lambda loaded_args, loader: (
+            calls.append((loaded_args.rerank_model, loader))
+            or (_ for _ in ()).throw(StopAfterRerankLoadError())
+        ),
+    )
+
+    with pytest.raises(StopAfterRerankLoadError):
+        cli.serve_command(args)
+
+    assert calls == [(RERANK_ID, server.load_rerank_model)]
+
+
+@pytest.mark.parametrize(
+    ("mode", "model", "warning"),
+    [
+        ("dflash", "qwen3.5-27b-8bit", "ignored under DFlash"),
+        ("ddtree", "qwen3.5-9b-8bit", "ignored under DDTree"),
+    ],
+)
+def test_serial_speculative_modes_warn_that_reranker_is_ignored(
+    monkeypatch, capsys, mode, model, warning
+):
+    class StopAfterWarningsError(Exception):
+        pass
+
+    args = cli.build_parser().parse_args(
+        ["serve", model, "--rerank-model", RERANK_ID, "--port", "0"]
+    )
+    args.enable_dflash = mode == "dflash"
+    args.enable_ddtree = mode == "ddtree"
+    scheduler_stub = types.ModuleType("rapid_mlx.scheduler")
+    scheduler_stub.SchedulerConfig = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    monkeypatch.setitem(sys.modules, "rapid_mlx.scheduler", scheduler_stub)
+    monkeypatch.setattr(cli, "_normalize_speculative_config_or_exit", lambda _a: None)
+    monkeypatch.setattr(cli, "_preflight_dflash_mutexes_or_exit", lambda _a: None)
+    monkeypatch.setattr(cli, "_preflight_ddtree_or_exit", lambda _a: None)
+    monkeypatch.setattr(
+        "rapid_mlx.speculative.dflash.eligibility.have_runtime", lambda: True
+    )
+    monkeypatch.setattr(cli, "_ensure_model_downloaded", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli, "_port_preflight_or_die", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli, "_resolve_audio_model_for_serve", lambda _name: None)
+    monkeypatch.setattr("rapid_mlx.api.utils.is_mllm_model", lambda _name: False)
+    monkeypatch.setattr(
+        "rapid_mlx.models.mllm.require_mlx_vlm_or_exit", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "rapid_mlx._version_check.prompt_upgrade_if_available", lambda: False
+    )
+    monkeypatch.setattr(
+        "rapid_mlx._version_check.print_staleness_warning_if_any",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_serve_companion_dspark_if_requested",
+        lambda *_a, **_k: (_ for _ in ()).throw(StopAfterWarningsError()),
+    )
+
+    with pytest.raises(StopAfterWarningsError):
+        cli.serve_command(args)
+
+    output = capsys.readouterr().out
+    assert warning in output
+    assert "--rerank-model" in output
+
+
 # serve_command must fork before any primary-model resolution or download.
 def test_serve_command_routes_to_embedding_only_mode(stub_serve_port_resolution):
     args = Namespace(
@@ -44,7 +184,7 @@ def test_serve_command_routes_to_embedding_only_mode(stub_serve_port_resolution)
         listen_fd=None,
     )
     with (
-        mock.patch.object(cli, "_serve_embedding_only_mode") as embed_only,
+        mock.patch.object(cli, "_serve_retrieval_only_mode") as embed_only,
         mock.patch.object(cli, "_ensure_model_downloaded") as download,
         mock.patch.object(cli, "_serve_audio_mode") as audio,
     ):
@@ -66,7 +206,7 @@ def test_serve_command_rejects_primary_model_flags_in_embedding_only_mode(capsys
         max_tokens=None,
     )
     with (
-        mock.patch.object(cli, "_serve_embedding_only_mode") as embed_only,
+        mock.patch.object(cli, "_serve_retrieval_only_mode") as embed_only,
         mock.patch.object(cli, "_resolve_serve_port") as resolve_port,
         pytest.raises(SystemExit) as exc_info,
     ):
@@ -74,7 +214,7 @@ def test_serve_command_rejects_primary_model_flags_in_embedding_only_mode(capsys
 
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "embeddings-only" in err
+    assert "retrieval-only" in err
     assert "--served-model-name, --lazy-load" in err
     assert "--max-tokens" not in err
     embed_only.assert_not_called()
@@ -149,7 +289,7 @@ def test_embedding_only_rejects_explicit_generation_tuning(options, capsys):
     ):
         cli.serve_command(args)
     assert exc_info.value.code == 2
-    assert "embeddings-only" in capsys.readouterr().err
+    assert "retrieval-only" in capsys.readouterr().err
     resolve_port.assert_not_called()
 
 
@@ -177,7 +317,7 @@ def test_embedding_only_accepts_shared_and_embedding_options():
             "-y",
         ]
     )
-    assert cli._embedding_only_incompatible_options(args) == []
+    assert cli._retrieval_only_incompatible_options(args) == []
 
 
 @pytest.mark.parametrize("flag", ["--lazy", "--lazy-l", "--embedding-mo=other"])
@@ -273,7 +413,7 @@ async def test_embedding_only_lifespan_sets_and_clears_readiness(monkeypatch):
 # An audio server with an embedding sidecar keeps reporting its lazy primary.
 def test_embedding_sidecar_does_not_mark_primary_loaded(embeddings_only_config):
     embeddings_only_config.model_name = "mlx-community/Kokoro-82M-bf16"
-    assert embeddings_only_config.embeddings_only is False
+    assert embeddings_only_config.retrieval_only is False
     assert embeddings_only_config.model_loaded is False
 
 
@@ -282,7 +422,7 @@ def test_serve_command_with_model_does_not_take_embedding_only_mode():
     args = Namespace(model="qwen3.5-4b-4bit", embedding_model=EMBED_ID)
     with (
         mock.patch.object(
-            cli, "_serve_embedding_only_mode", side_effect=AssertionError
+            cli, "_serve_retrieval_only_mode", side_effect=AssertionError
         ) as embed_only,
         mock.patch.object(
             cli, "_validate_primary_lifecycle_args", side_effect=SystemExit(0)
@@ -342,7 +482,7 @@ def test_embedding_only_mode_configures_server_and_runs_uvicorn(monkeypatch, lis
         rate_limit=0,
         cors_origins=None,
     )
-    cli._serve_embedding_only_mode(args)
+    cli._serve_retrieval_only_mode(args)
 
     assert events == ["cors", "hosts", "sync", f"load:{EMBED_ID}", "uvicorn", "exit"]
     assert stub_server._api_key == "secret"

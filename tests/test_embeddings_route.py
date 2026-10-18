@@ -187,5 +187,324 @@ def test_embeddings_returns_200_when_configured(monkeypatch):
     engine.embed.assert_called_once()
 
 
+def test_embeddings_list_of_strings_embeds_each_text(monkeypatch):
+    engine = MagicMock()
+    engine.model_name = "stub-embed"
+    engine.embed.return_value = [[1.0, 0.0], [0.0, 1.0]]
+    engine.count_tokens.return_value = 4
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    try:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "stub-embed", "input": ["alpha", "beta"]},
+        )
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    assert [item["embedding"] for item in response.json()["data"]] == [
+        [1.0, 0.0],
+        [0.0, 1.0],
+    ]
+    engine.embed.assert_called_once_with(["alpha", "beta"])
+
+
+def test_embeddings_pretokenized_input_uses_retrieval_worker(monkeypatch):
+    engine = MagicMock()
+    engine.model_name = "stub-embed"
+    engine.embed_tokens.return_value = [[1.0, 0.0]]
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    try:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "stub-embed", "input": [101, 102]},
+        )
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    engine.embed_tokens.assert_called_once_with([[101, 102]])
+
+
+def test_embeddings_dimensions_truncate_and_renormalize(monkeypatch):
+    engine = MagicMock()
+    engine.model_name = "stub-embed"
+    engine.embed.return_value = [[3.0, 4.0, 12.0]]
+    engine.count_tokens.return_value = 1
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    try:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "stub-embed", "input": "a", "dimensions": 2},
+        )
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["embedding"] == pytest.approx([0.6, 0.8])
+
+
+def test_embeddings_reject_dimensions_above_native_size(monkeypatch):
+    engine = MagicMock()
+    engine.model_name = "stub-embed"
+    engine.embed.return_value = [[1.0, 0.0]]
+    engine.count_tokens.return_value = 1
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    try:
+        response = client.post(
+            "/v1/embeddings",
+            json={"model": "stub-embed", "input": "a", "dimensions": 3},
+        )
+    finally:
+        restore()
+
+    assert response.status_code == 400
+    assert "native embedding size of 2" in str(response.json())
+
+
+def test_embeddings_base64_encoding_contains_float32_vector(monkeypatch):
+    import base64
+    import struct
+
+    engine = MagicMock()
+    engine.model_name = "stub-embed"
+    engine.embed.return_value = [[0.25, -0.5]]
+    engine.count_tokens.return_value = 1
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    try:
+        response = client.post(
+            "/v1/embeddings",
+            json={
+                "model": "stub-embed",
+                "input": "a",
+                "encoding_format": "base64",
+            },
+        )
+    finally:
+        restore()
+
+    assert response.status_code == 200, response.text
+    encoded = response.json()["data"][0]["embedding"]
+    assert struct.unpack("<2f", base64.b64decode(encoded)) == pytest.approx(
+        (0.25, -0.5)
+    )
+
+
+class _ChatWorker:
+    def __init__(self):
+        self.calls = 0
+
+    async def execute_on_model_worker(self, func, *args, **kwargs):
+        self.calls += 1
+        raise AssertionError("retrieval work used the chat model worker")
+
+
+def _thread_recording_engine(error=None):
+    import threading
+
+    engine = MagicMock()
+    engine.model_name = "stub-embed"
+    engine.count_tokens.return_value = 1
+    engine.threads = []
+
+    def embed(texts):
+        engine.threads.append(threading.current_thread().name)
+        if error is not None:
+            raise error
+        return [[1.0, 0.0]]
+
+    engine.embed.side_effect = embed
+    return engine
+
+
+@pytest.fixture
+def chat_engine():
+    from rapid_mlx.config import get_config
+
+    cfg = get_config()
+    saved = cfg.engine
+    yield cfg
+    cfg.engine = saved
+
+
+async def test_embedding_does_not_block_event_loop(monkeypatch, chat_engine):
+    import asyncio
+    import threading
+
+    import httpx
+
+    started, release = threading.Event(), threading.Event()
+    engine = MagicMock()
+    engine.model_name = "stub-embed"
+    engine.count_tokens.return_value = 1
+
+    def embed(texts):
+        started.set()
+        release.wait(timeout=5)
+        return [[1.0, 0.0]]
+
+    engine.embed.side_effect = embed
+    chat_engine.engine = None
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    client.app.add_api_route("/ping", lambda: {"ok": True})
+    transport = httpx.ASGITransport(app=client.app)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            embedding = asyncio.create_task(
+                c.post("/v1/embeddings", json={"model": "stub-embed", "input": "a"})
+            )
+            assert await asyncio.to_thread(started.wait, 5)
+            assert (await c.get("/ping")).status_code == 200
+            assert not embedding.done()
+            release.set()
+            assert (await embedding).status_code == 200
+    finally:
+        release.set()
+        restore()
+
+
+async def test_embedding_and_rerank_share_one_mlx_lane(chat_engine):
+    import asyncio
+    import threading
+
+    from rapid_mlx.routes import embeddings, rerank
+
+    first_started = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+    thread_ids = []
+
+    def blocking_work():
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+            thread_ids.append(threading.get_ident())
+            first_started.set()
+        try:
+            assert release.wait(timeout=5)
+        finally:
+            with lock:
+                active -= 1
+
+    chat_engine.engine = None
+    embedding = asyncio.create_task(embeddings.run_on_mlx_worker(blocking_work))
+    try:
+        assert await asyncio.to_thread(first_started.wait, 5)
+        reranking = asyncio.create_task(rerank.run_on_mlx_worker(blocking_work))
+        await asyncio.sleep(0.05)
+        release.set()
+        await asyncio.gather(embedding, reranking)
+    finally:
+        release.set()
+
+    assert len(set(thread_ids)) == 1
+    assert max_active == 1
+
+
+def test_embedding_uses_dedicated_worker_not_chat_worker(monkeypatch, chat_engine):
+    engine = _thread_recording_engine()
+    worker = _ChatWorker()
+    chat_engine.engine = worker
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    try:
+        r = client.post("/v1/embeddings", json={"model": "stub-embed", "input": "a"})
+    finally:
+        restore()
+    assert r.status_code == 200, r.text
+    assert worker.calls == 0
+    assert len(engine.threads) == 1
+    assert engine.threads[0].startswith("mlx-retrieval")
+
+
+async def test_embedding_load_and_inference_share_retrieval_thread(monkeypatch):
+    import threading
+
+    from rapid_mlx import embedding, server
+    from rapid_mlx.config import get_config
+    from rapid_mlx.routes._mlx_worker import run_on_mlx_worker
+
+    threads = []
+
+    class _Engine:
+        def __init__(self, model_name, **_kwargs):
+            self.model_name = model_name
+
+        def load(self):
+            threads.append(threading.current_thread().name)
+
+        def embed(self, _texts):
+            threads.append(threading.current_thread().name)
+
+    monkeypatch.setattr(embedding, "EmbeddingEngine", _Engine)
+    monkeypatch.setattr(server, "_emit_embedding_model_served_once", lambda *_a: None)
+    monkeypatch.setattr(server, "_embedding_engine", None)
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "embedding_engine", None)
+    monkeypatch.setattr(cfg, "embedding_model_locked", None)
+    # The CLI calls this before uvicorn starts, while the lazy route caller may
+    # invoke it with an event loop already running. The blocking API must work
+    # in both cases without dispatching through that loop.
+    server.load_embedding_model("stub-embed", reuse_existing=False)
+    await run_on_mlx_worker(server._embedding_engine.embed, ["hello"])
+
+    assert len(threads) == 2
+    assert threads[0].startswith("mlx-retrieval")
+    assert threads[0] == threads[1]
+
+
+def test_embedding_load_error_propagates(monkeypatch):
+    from rapid_mlx import embedding, server
+
+    error = ValueError("load failed unchanged")
+
+    class _Engine:
+        def __init__(self, model_name, **_kwargs):
+            self.model_name = model_name
+
+        def load(self):
+            raise error
+
+    monkeypatch.setattr(embedding, "EmbeddingEngine", _Engine)
+    monkeypatch.setattr(server, "_embedding_engine", None)
+
+    with pytest.raises(ValueError, match="load failed unchanged") as exc_info:
+        server.load_embedding_model("stub-embed", reuse_existing=False)
+    assert exc_info.value is error
+
+
+def test_embedding_inference_error_propagates_once(monkeypatch, chat_engine):
+    error = RuntimeError("boom")
+    engine = _thread_recording_engine(error=error)
+    worker = _ChatWorker()
+    chat_engine.engine = worker
+    client, restore = _build_embed_app(
+        monkeypatch, engine, embedding_model_locked="stub-embed"
+    )
+    try:
+        r = client.post("/v1/embeddings", json={"model": "stub-embed", "input": "a"})
+    finally:
+        restore()
+    assert r.status_code == 500
+    assert worker.calls == 0
+    assert len(engine.threads) == 1
+
+
 if __name__ == "__main__":  # pragma: no cover — convenience only
     pytest.main([__file__, "-v"])
