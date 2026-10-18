@@ -8,9 +8,17 @@ LOG_TAG="slot$N"
 STATE="$CI_ROOT/state/slot$N"
 mkdir -p "$CI_ROOT/state" "$LOG_DIR"
 
-VM_PID=""; EXEC_PID=""; RUNNER_ID=""
+VM_PID=""; EXEC_PID=""; RUNNER_ID=""; resp=""
 
 destroy_vm() {
+  if [ -z "$RUNNER_ID" ] && [ -n "${resp:-}" ]; then
+    local id
+    id=$(printf '%s' "$resp" | jq -r '.runner.id // empty' 2>/dev/null)
+    case "$id" in
+      ''|*[!0-9]*) ;;
+      *) RUNNER_ID="$id" ;;
+    esac
+  fi
   [ -n "$EXEC_PID" ] && kill "$EXEC_PID" 2>/dev/null
   "$TART" stop "$VM" --timeout 10 >/dev/null 2>&1
   [ -n "$VM_PID" ] && { kill "$VM_PID" 2>/dev/null; wait "$VM_PID" 2>/dev/null; }
@@ -20,7 +28,7 @@ destroy_vm() {
     echo "$RUNNER_ID" >> "$STATE.orphans"
     log "could not remove runner $RUNNER_ID; will retry"
   fi
-  VM_PID=""; EXEC_PID=""; RUNNER_ID=""; rm -f "$STATE.runner"
+  VM_PID=""; EXEC_PID=""; RUNNER_ID=""; resp=""; rm -f "$STATE.runner"
 }
 
 # Removed now, or already gone on GitHub.
@@ -42,6 +50,10 @@ reap_orphans() {
 
 on_term() { log "terminating; destroying $VM"; destroy_vm; exit 0; }
 trap on_term TERM INT HUP
+on_exit() {
+  if [ -n "$VM_PID" ] || [ -n "$EXEC_PID" ] || [ -n "$RUNNER_ID" ] || [ -n "$resp" ]; then destroy_vm; fi
+}
+trap on_exit EXIT
 
 # Recover from a previous crash/reboot: stale VM and stale runner registration.
 if [ -f "$STATE.runner" ]; then RUNNER_ID=$(cat "$STATE.runner"); fi
@@ -85,10 +97,18 @@ while true; do
     log "jitconfig request failed; destroying"; destroy_vm; nap 60; continue
   fi
   RUNNER_ID=$(printf '%s' "$resp" | jq -r '.runner.id')
-  echo "$RUNNER_ID" > "$STATE.runner"
+  case "$RUNNER_ID" in
+    ''|*[!0-9]*)
+      log "invalid runner id; destroying"; RUNNER_ID=""
+      destroy_vm; nap 60; continue;;
+  esac
+  if ! echo "$RUNNER_ID" > "$STATE.runner"; then
+    log "could not persist runner id; destroying"; destroy_vm; nap 60; continue
+  fi
   log "registered runner $name (id $RUNNER_ID)"
 
   # The JIT config goes in over stdin; no host credential ever enters the VM.
+  # shellcheck disable=SC2016  # Variables expand inside the guest.
   printf '%s\n' "$resp" | jq -r '.encoded_jit_config' |
     "$TART" exec -i "$VM" sudo -u admin -H bash -c 'cd ~/actions-runner && read -r c && exec ./run.sh --jitconfig "$c"' \
       >>"$LOG_DIR/slot$N.runner.log" 2>&1 &
