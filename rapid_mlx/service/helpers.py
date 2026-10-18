@@ -64,6 +64,7 @@ from ..api.utils import (
 from ..config import get_config
 from ..engine import BaseEngine, GenerationOutput
 from ..errors import BackpressureError, MetalMemoryBackpressureError
+from ..prompt_tokenization import encode_prompt
 from ..tool_parsers import ToolParserManager
 from ..utils.chat_template import (
     detect_native_reasoning_effort_levels,
@@ -5367,19 +5368,16 @@ def count_prompt_tokens(engine, prompt) -> int:
     if tokenizer is None:
         return 0
     try:
-        bos = getattr(tokenizer, "bos_token", None)
-        add_special_tokens = bos is None or not prompt.startswith(bos)
         # The engine's own encoder caches this exact prompt for the scheduler,
-        # which tokenizes it again at admission. Looked up on the class so a
-        # dynamic proxy or mock never stands in for the real method.
+        # which tokenizes it again at admission with the same BOS-aware rule
+        # (``encode_prompt``). Looked up on the class so a dynamic proxy or mock
+        # never stands in for the real method.
         encode_prompt_text = getattr(type(engine), "encode_prompt_text", None)
         token_ids = (
-            encode_prompt_text(engine, prompt)
-            if add_special_tokens and callable(encode_prompt_text)
-            else None
+            encode_prompt_text(engine, prompt) if callable(encode_prompt_text) else None
         )
         if token_ids is None:
-            token_ids = tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
+            token_ids = encode_prompt(tokenizer, prompt)
         return len(token_ids)
     except Exception:
         logger.debug("count_prompt_tokens: tokenizer.encode failed", exc_info=True)

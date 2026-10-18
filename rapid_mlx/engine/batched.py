@@ -38,6 +38,7 @@ from ..api.utils import (
 from ..output_router import Channel, OutputRouter
 from ..prompt_host_cache import PromptHostCache
 from ..prompt_token_reuse import added_token_markers, encode_sharing_head
+from ..prompt_tokenization import encode_prompt
 from ..utils.chat_template import apply_chat_template as shared_apply_chat_template
 from .base import BaseEngine, GenerationOutput
 
@@ -3835,7 +3836,9 @@ class BatchedEngine(BaseEngine):
                 real_text = real_prompt
                 encoded = self.encode_prompt_text(real_prompt)
                 real_tokens = (
-                    encoded if encoded is not None else tokenizer.encode(real_prompt)
+                    encoded
+                    if encoded is not None
+                    else encode_prompt(tokenizer, real_prompt)
                 )
             else:
                 real_text = None
@@ -3859,7 +3862,7 @@ class BatchedEngine(BaseEngine):
                         markers=markers,
                     )
                 )
-                return reused if reused is not None else tokenizer.encode(text)
+                return reused if reused is not None else encode_prompt(tokenizer, text)
 
             if transient_message_start is not None:
                 future_prompt = self._apply_chat_template(
@@ -5168,7 +5171,7 @@ class BatchedEngine(BaseEngine):
         return GenerationOutput(
             text=result,
             tokens=tokens,
-            prompt_tokens=len(tokenizer.encode(prompt)),
+            prompt_tokens=len(encode_prompt(tokenizer, prompt)),
             completion_tokens=len(tokens),
             finish_reason="stop",
         )

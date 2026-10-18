@@ -159,6 +159,7 @@ from .prefix_cache import (
     validate_paged_cache_capability,
 )
 from .prompt_host_cache import PromptHostCache
+from .prompt_tokenization import encode_prompt
 from .repetition_guard import (
     AgentRepetitionLogitsProcessor,
     detect_repeated_token_suffix,
@@ -8281,7 +8282,7 @@ class Scheduler:
 
         host_cache: PromptHostCache | None = getattr(self, "prompt_host_cache", None)
         if host_cache is None or not host_cache.enabled:
-            return [int(token) for token in encoder.encode(prompt)]
+            return [int(token) for token in encode_prompt(encoder, prompt)]
         base_tokenizer = getattr(encoder, "_tokenizer", encoder)
         init_kwargs = getattr(base_tokenizer, "init_kwargs", {}) or {}
         fingerprint = host_cache.fingerprint(
@@ -8300,7 +8301,7 @@ class Scheduler:
         cached = host_cache.get_tokens(fingerprint)
         if cached is not None:
             return cached
-        tokens = [int(token) for token in encoder.encode(prompt)]
+        tokens = [int(token) for token in encode_prompt(encoder, prompt)]
         host_cache.put_tokens(fingerprint, tokens)
         return tokens
 
