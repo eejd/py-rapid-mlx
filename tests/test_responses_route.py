@@ -1097,6 +1097,104 @@ class TestStatelessGate:
         assert engine.calls == []
 
 
+class TestResponsesMaxTokensAlias:
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("budget_field", ["max_tokens", "max_output_tokens"])
+    def test_max_tokens_alias_limits_generation(
+        self, responses_client, monkeypatch, stream, budget_field
+    ):
+        from rapid_mlx.routes import responses as responses_route
+
+        engine = responses_client.engine
+        context_budgets = []
+
+        def _capture_context_check(_engine, _messages, **kwargs):
+            context_budgets.append(kwargs["max_tokens"])
+            return 3
+
+        monkeypatch.setattr(
+            responses_route,
+            "enforce_context_length_for_messages",
+            _capture_context_check,
+        )
+
+        async def _limited_chat(messages, **kwargs):
+            engine.calls.append(SimpleNamespace(messages=messages, kwargs=kwargs))
+            budget = kwargs["max_tokens"]
+            return _GenerationOutput(
+                text="x" * budget,
+                new_text="x" * budget,
+                prompt_tokens=3,
+                completion_tokens=budget,
+                finish_reason="length",
+            )
+
+        async def _limited_stream(messages, **kwargs):
+            yield await _limited_chat(messages, **kwargs)
+
+        monkeypatch.setattr(engine, "chat", _limited_chat)
+        monkeypatch.setattr(engine, "stream_chat", _limited_stream)
+        response = responses_client.client.post(
+            "/v1/responses",
+            json=_payload(stream=stream, **{budget_field: 4}),
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        assert response.status_code == 200, response.text
+        # A client alias is explicit: it must reach context admission as 4,
+        # rather than None (which enables implicit-default budget clamping).
+        assert context_budgets == [4]
+        assert engine.calls[-1].kwargs["max_tokens"] == 4
+        if stream:
+            events = [
+                json.loads(line.removeprefix("data: "))
+                for line in response.text.splitlines()
+                if line.startswith("data: ")
+            ]
+            body = next(
+                event["response"]
+                for event in events
+                if event["type"] == "response.completed"
+            )
+        else:
+            body = response.json()
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": "max_output_tokens"}
+        assert body["usage"]["output_tokens"] == 4
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_max_tokens_alias_conflict_returns_400(self, responses_client, stream):
+        response = responses_client.client.post(
+            "/v1/responses",
+            json=_payload(max_tokens=4, max_output_tokens=5, stream=stream),
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        assert response.status_code == 400, response.text
+        error = response.json()["error"]
+        assert error["type"] == "invalid_request_error"
+        assert (
+            "Cannot specify both max_tokens and max_output_tokens with "
+            "different values; use max_output_tokens only."
+        ) in error["message"]
+        assert responses_client.engine.calls == []
+        assert responses_client.engine.stream_calls == []
+
+    @pytest.mark.parametrize("bad_value", [0, -1, True, "4"])
+    def test_max_tokens_alias_invalid_returns_named_400(
+        self, responses_client, bad_value
+    ):
+        response = responses_client.client.post(
+            "/v1/responses",
+            json=_payload(max_tokens=bad_value),
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        assert response.status_code == 400, response.text
+        error = response.json()["error"]
+        assert error["type"] == "invalid_request_error"
+        assert error["param"] == "max_tokens"
+        assert "max_tokens" in error["message"]
+        assert responses_client.engine.calls == []
+
+
 class TestResponsesPydanticValidation:
     """Codex bundled-review finding on the v0.7.32 bundle: #685 added a
     strict ``reasoning_max_tokens`` ``model_validator(mode="before")``

@@ -9,6 +9,7 @@ dependency. Mirrors the test shape of test_anthropic_adapter.py.
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from rapid_mlx.api.models import (
     AssistantMessage,
@@ -41,6 +42,44 @@ from rapid_mlx.api.responses_models import (
 # ---------------------------------------------------------------------------
 # Status mapping
 # ---------------------------------------------------------------------------
+
+
+class TestResponsesMaxTokensAlias:
+    @pytest.mark.parametrize(
+        "budgets, expected",
+        [
+            ({"max_tokens": 4}, 4),
+            ({"max_tokens": 4, "max_output_tokens": 4}, 4),
+            ({"max_tokens": 4, "max_output_tokens": None}, 4),
+            ({"max_tokens": None, "max_output_tokens": 4}, 4),
+            ({"max_tokens": None}, None),
+            ({"max_output_tokens": 4}, 4),
+            ({}, None),
+        ],
+    )
+    def test_max_tokens_alias_normalized(self, budgets, expected):
+        request = ResponsesRequest(model="test-model", input="hi", **budgets)
+        assert request.max_output_tokens == expected
+
+    def test_max_tokens_alias_conflict(self):
+        with pytest.raises(
+            ValidationError,
+            match="Cannot specify both max_tokens and max_output_tokens with "
+            "different values; use max_output_tokens only.",
+        ):
+            ResponsesRequest(
+                model="test-model", input="hi", max_tokens=4, max_output_tokens=5
+            )
+
+    @pytest.mark.parametrize("bad_value", [0, -1, True, "4"])
+    def test_max_tokens_alias_invalid(self, bad_value):
+        with pytest.raises(ValidationError) as exc_info:
+            ResponsesRequest(model="test-model", input="hi", max_tokens=bad_value)
+        assert exc_info.value.errors()[0]["loc"] == ("max_tokens",)
+
+    def test_max_tokens_alias_forwarded_to_chat(self):
+        request = ResponsesRequest(model="test-model", input="hi", max_tokens=4)
+        assert responses_to_openai(request).max_tokens == 4
 
 
 class TestConvertStatus:

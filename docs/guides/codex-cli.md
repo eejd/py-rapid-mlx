@@ -102,6 +102,7 @@ nothing more.
 - `tools` (Responses-flat shape) → Chat-nested tools
 - `text.format` JSON-schema → `response_format`
 - `max_output_tokens` → `max_tokens`
+- `max_tokens` is also accepted as an alias for `max_output_tokens`; conflicting values return 400.
 - `reasoning.effort` (or the top-level `reasoning_effort` shorthand) →
   rapid-mlx's thinking controls: `"none"` disables thinking
   (`chat_template_kwargs.enable_thinking=false`). A graded value

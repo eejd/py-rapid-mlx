@@ -228,6 +228,8 @@ class ResponsesRequest(BaseModel):
     metadata: dict | None = None
     previous_response_id: str | None = None  # 400 if set; this shim is stateless
     max_output_tokens: int | None = None
+    # Compatibility alias; normalize before adapter and context-budget handling.
+    max_tokens: int | None = None
     temperature: float | None = None
     top_p: float | None = None
     # Yuki R6 (0.8.5 dogfood): OpenAI Responses spec defines
@@ -396,6 +398,26 @@ class ResponsesRequest(BaseModel):
     @classmethod
     def _validate_max_output_tokens(cls, v) -> int | None:
         return _validate_positive_int(v, field_name="max_output_tokens")
+
+    @field_validator("max_tokens", mode="before")
+    @classmethod
+    def _validate_max_tokens(cls, v) -> int | None:
+        value: int | None = _validate_positive_int(v, field_name="max_tokens")
+        return value
+
+    @model_validator(mode="after")
+    def _normalize_max_tokens(self) -> "ResponsesRequest":
+        if self.max_tokens is not None:
+            if (
+                self.max_output_tokens is not None
+                and self.max_output_tokens != self.max_tokens
+            ):
+                raise ValueError(
+                    "Cannot specify both max_tokens and max_output_tokens with "
+                    "different values; use max_output_tokens only."
+                )
+            self.max_output_tokens = self.max_tokens
+        return self
 
     @model_validator(mode="before")
     @classmethod
