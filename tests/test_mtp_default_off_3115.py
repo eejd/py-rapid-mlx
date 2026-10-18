@@ -114,11 +114,12 @@ def test_serve_9b_with_eligible_cached_config_auto_selects_mtp(monkeypatch) -> N
     [None, {"model_type": "qwen3_5", "mtp_num_hidden_layers": 0}],
 )
 def test_serve_9b_without_eligible_cached_config_uses_plain_decode(
-    monkeypatch, capsys, hf_config
+    monkeypatch, capsys, hf_config, tmp_path
 ) -> None:
     monkeypatch.setattr(
         cli, "_gather_kv_cache_dtype_inputs", lambda _model: (hf_config, None)
     )
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", str(tmp_path))
     args = _args("qwen3.5-9b-4bit")
 
     cli._normalize_speculative_config_or_exit(args)
@@ -126,9 +127,13 @@ def test_serve_9b_without_eligible_cached_config_uses_plain_decode(
     assert args.speculative_config is None
     assert args._speculative_config is None
     assert args.spec_decode == "none"
+    reason = (
+        "mlx-community/Qwen3.5-9B-4bit is not in the local cache"
+        if hf_config is None
+        else "mtp_num_hidden_layers <= 0 (MTP weights stripped at convert time)"
+    )
     assert capsys.readouterr().err == (
-        "Automatic MTP sidecar skipped: target config is unavailable "
-        "or does not qualify; using plain decode.\n"
+        f"Automatic MTP skipped: {reason}; using plain decode.\n"
     )
 
 
