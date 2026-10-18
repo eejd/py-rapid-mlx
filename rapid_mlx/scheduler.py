@@ -230,6 +230,12 @@ logger = logging.getLogger(__name__)
 # One clamp warning per server process (the batch generator, and with it the
 # continuous-MTP router install, is recreated during the server's life).
 _CONTINUOUS_MTP_DEPTH_CLAMP_WARNED = False
+# At 4+ concurrent requests a cohort's per-cycle verify/rollback cost exceeds
+# the speculative gain and it trails plain batched decode, so larger bursts
+# stay on plain batched decode. Measurements:
+# docs/engineering/performance/2026-10-17-mtp-cohort-m3-ultra-long-context.md
+_CONTINUOUS_MTP_MAX_COHORT_LANES = 3
+_CONTINUOUS_MTP_OCCUPANCY_SKIP_LOGGED = False
 
 # Functional hybrid cache updates retain their prior lazy graph until an eval
 # barrier. Eight steps bounds that graph to a few hundred live Metal handles on
@@ -1291,8 +1297,32 @@ def _install_continuous_mtp_router(
 
     def _stage_initial() -> None:
         nonlocal driver
+        global _CONTINUOUS_MTP_OCCUPANCY_SKIP_LOGGED
         candidates = _queued_candidates()
         if not candidates:
+            return
+        # Include scheduler requests awaiting insertion, plain decode, and
+        # in-flight prefill: never split a burst into a cohort plus plain overflow.
+        occupancy = max(
+            len(candidates)
+            + sum(
+                len(getattr(getattr(batch_gen, name, None), "uids", ()))
+                for name in ("_generation_batch", "_prompt_batch")
+            ),
+            len(requests) if requests is not None else 0,
+        )
+        if occupancy > _CONTINUOUS_MTP_MAX_COHORT_LANES:
+            level = (
+                logging.DEBUG if _CONTINUOUS_MTP_OCCUPANCY_SKIP_LOGGED else logging.INFO
+            )
+            _CONTINUOUS_MTP_OCCUPANCY_SKIP_LOGGED = True
+            logger.log(
+                level,
+                "[MTP-continuous] skipping cohort formation: occupancy=%d exceeds "
+                "cap=%d; retaining plain batched decode",
+                occupancy,
+                _CONTINUOUS_MTP_MAX_COHORT_LANES,
+            )
             return
         metadata = [item[1] for item in candidates]
         routed = router.plan(metadata, free_bytes=_free_bytes())
@@ -1346,8 +1376,15 @@ def _install_continuous_mtp_router(
     def _stage_joins() -> None:
         if driver is None or not driver.dynamic_membership:
             return
+        if requests is not None and len(requests) > _CONTINUOUS_MTP_MAX_COHORT_LANES:
+            return
         occupied = len(driver.lane_uids) + len(driver.pending_join_uids)
-        room = max(0, int(router.config.max_lanes) - occupied)
+        # The router's width also controls scheduler admission. Limit only
+        # cohort membership so overflow can still use ordinary batched decode.
+        cohort_capacity = min(
+            int(router.config.max_lanes), _CONTINUOUS_MTP_MAX_COHORT_LANES
+        )
+        room = max(0, cohort_capacity - occupied)
         if room == 0 or _free_bytes() <= int(router.config.hard_reserve_bytes):
             return
         joining_specs: list[SelfMTPLaneSpec] = []
