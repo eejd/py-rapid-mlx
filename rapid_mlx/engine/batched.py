@@ -1900,6 +1900,11 @@ class BatchedEngine(BaseEngine):
                 self._model_name,
                 trust_remote_code=self._trust_remote_code,
             )
+            instance.spec_decode = (
+                "auto"
+                if getattr(self, "_force_spec_decode", False)
+                else getattr(self._scheduler_config, "spec_decode", "none")
+            )
             instance.load()
             # Model constructors create random, lazy placeholder weights
             # before checkpoint tensors replace them. The process-global RNG
