@@ -355,11 +355,13 @@ def test_count_prompt_tokens_for_bos_prefixed_prompts_shares_the_scheduler_encod
     tokenizer = _BosTokenizer(bos=True)
     engine = _engine(tokenizer)
     prompt = "<s>hello"
-    single_bos = tokenizer.encode(prompt, add_special_tokens=False)
-    assert helpers.count_prompt_tokens(engine, prompt) == len(single_bos)
+    counted = helpers.count_prompt_tokens(engine, prompt)
     # The scheduler admits the same string next and reuses that one encode.
-    assert engine.encode_prompt_text(prompt) == single_bos
+    admitted = engine.encode_prompt_text(prompt)
     assert tokenizer.encode_calls == 1
+    single_bos = tokenizer.encode(prompt, add_special_tokens=False)
+    assert counted == len(single_bos)
+    assert admitted == single_bos
     assert engine._prompt_host_cache.stats()["stores"] == 1
 
 
