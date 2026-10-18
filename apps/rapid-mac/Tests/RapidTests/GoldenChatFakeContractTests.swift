@@ -46,8 +46,23 @@ struct GoldenChatFakeContractTests {
         let recorded = try #require(surface.fake.recordedPrompts().first)
         #expect(surface.fake.recordedPrompts().count == 1)
         #expect(recorded.hasPrefix("probe prompt"))
-        #expect(recorded.contains("[MESSAGE SENT]"))
-        #expect(recorded.contains("This message was sent "))
+        #expect(recorded.contains("(Local time:"))
+        let row = try #require(surface.chat.messages.first { $0.role == .user })
+        // A send that straddles a minute boundary may append a current-time line.
+        let expected = "probe prompt\n\n" + ChatViewModel.clockContext(at: row.createdAt)
+        #expect(recorded.hasPrefix(expected))
+        // The request instant lies between the row's createdAt and now, so the
+        // only valid extra line names one of the minutes in that window.
+        let rest = String(recorded.dropFirst(expected.count))
+        let firstMinute = (row.createdAt.timeIntervalSinceReferenceDate / 60).rounded(.down)
+        let lastMinute = (Date().timeIntervalSinceReferenceDate / 60).rounded(.down)
+        let validLines = stride(from: firstMinute, through: lastMinute, by: 1).map {
+            ChatViewModel.answeringNowLine(
+                asked: row.createdAt,
+                answeringAt: Date(timeIntervalSinceReferenceDate: $0 * 60)
+            )
+        }
+        #expect(validLines.contains(rest))
     }
 
     @MainActor
@@ -65,7 +80,7 @@ struct GoldenChatFakeContractTests {
         let firstRow = try #require(surface.chat.messages.first { $0.role == .user })
         let firstWire = try #require(surface.fake.recordedPrompts().last)
         let firstTrailer = try #require(
-            firstWire.range(of: "[MESSAGE SENT]").map { String(firstWire[$0.lowerBound...]) }
+            firstWire.range(of: "(Local time:").map { String(firstWire[$0.lowerBound...]) }
         )
 
         // Regenerate: the SAME row is re-sent, so the trailer must come back
