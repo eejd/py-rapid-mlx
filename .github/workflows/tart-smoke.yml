@@ -1,0 +1,127 @@
+name: tart runner smoke (throwaway)
+on:
+  push:
+    branches: [ci/tart-runner-smoke]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: [self-hosted, Linux, ARM64, rapidmlx-tart]
+    timeout-minutes: 10
+    steps:
+      - run: uname -a; nproc; free -g; df -h /; ls $RUNNER_TOOL_CACHE/Python
+  tart-shard:
+    runs-on: [self-hosted, Linux, ARM64, rapidmlx-tart]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      # Ordinary leaf-only PRs run the complete three-shard suite on the
+      # coverage interpreter. Shared/core/unknown changes and every promoted
+      # integration candidate retain all supported Python versions.
+      matrix:
+        include:
+          - {python-version: "3.11", shard: 1}
+          - {python-version: "3.12", shard: 2}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # diff-cover compares the PR head with the immutable base SHA. A
+          # shallow checkout can make that commit unavailable.
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        # The lane's test surface is declared in pyproject.toml as the
+        # `ci-linux` extra (see its comment for why jinja2 lives there —
+        # reasoning-template tests #2445/#2446 render chat templates with it).
+        # This lane MUST stay no-MLX (Apple-Silicon-only), so `--no-deps`
+        # installs the package without pulling mlx/mlx-lm. The synced
+        # requirements file supplies the complete cross-platform unit-test
+        # surface without `-e ".[ci-linux]"` dragging MLX onto Linux.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . --no-deps
+          pip install --requirement config/requirements-ci-linux.txt
+
+      - name: Run unit tests (no MLX required)
+        env:
+          COVERAGE_FILE: coverage-linux-${{ matrix.python-version }}-${{ matrix.shard }}.data
+          CI_TEST_SHARD: ${{ matrix.shard }}
+        # Ordinary unit tests are discovered by directory. MLX-bound modules
+        # own a requires_mlx marker + collection guard. Tests that deliberately
+        # consume a real HF cache or network are non-hermetic and stay outside
+        # this hosted lane; live/integration tests and the isolated fake-MLX
+        # process have stable directory boundaries.
+        run: |
+          set -euo pipefail
+          ordinary_plan="$RUNNER_TEMP/ordinary-ignores.txt"
+          python scripts/ci_test_shard.py \
+            --suite ordinary \
+            --shard-index "$CI_TEST_SHARD" \
+            --shard-count 3 > "$ordinary_plan"
+          mapfile -t ordinary_ignores < "$ordinary_plan"
+          pytest \
+            tests \
+            "${ordinary_ignores[@]}" \
+            --ignore=tests/integrations \
+            --ignore=tests/headless_mlx \
+            -m "not requires_mlx and not real_hf_cache and not requires_network and not slow and not integration and not needle" \
+            -v --tb=short \
+            --cov=rapid_mlx \
+            --cov=scripts.sidecar_macho_inventory \
+            --cov=scripts.pr_validate.steps.stress_e2e_bench \
+            --cov=scripts.pr_validate.queue_ready \
+            --cov=scripts.pr_validate.runner \
+            --cov=scripts.pr_validate.pr_validate \
+            --cov=scripts.merge_on_green \
+            --cov=scripts.main_guard \
+            --cov=scripts.check_release_source_ref \
+            --cov=scripts.check_release_environment \
+            --cov=scripts.upload_release_r2 \
+            --cov=scripts.release_prepare \
+            --cov=scripts.release_control \
+            --cov=scripts.classify_ci_changes \
+            --cov-report=term-missing
+
+          # These lifecycle contracts install inert MLX modules before import.
+          # A separate process prevents those fakes from contaminating normal
+          # no-MLX discovery while preserving automatic enrollment by folder.
+          headless_plan="$RUNNER_TEMP/headless-ignores.txt"
+          python scripts/ci_test_shard.py \
+            --suite headless \
+            --shard-index "$CI_TEST_SHARD" \
+            --shard-count 3 > "$headless_plan"
+          mapfile -t headless_ignores < "$headless_plan"
+          pytest \
+            tests/headless_mlx \
+            "${headless_ignores[@]}" \
+            -v --tb=short \
+            --cov=rapid_mlx \
+            --cov-append \
+            --cov-report=term-missing
+
+      - name: Install package builder for release-stamp integration test
+        if: matrix.python-version == '3.11' && matrix.shard == 1
+        run: python -m pip install build
+
+      - name: Run real release-stamp package build
+        if: matrix.python-version == '3.11' && matrix.shard == 1
+        run: |
+          pytest \
+            tests/test_release_stamp_scripts.py::test_real_build_ships_the_stamp_in_wheel_and_sdist \
+            --run-slow -m slow \
+            -v --tb=short
+
+      - name: Upload Linux shard coverage data
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: linux-coverage-${{ github.sha }}-${{ matrix.shard }}
+          path: coverage-linux-3.11-${{ matrix.shard }}.data
+          if-no-files-found: error
+          retention-days: 1
+
