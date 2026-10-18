@@ -4,8 +4,151 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
 
+import pytest
+
 from rapid_mlx.request import RequestOutput
 from rapid_mlx.speculative.tensorfold_qwen27_server import TensorFoldRequestProvider
+
+
+@pytest.mark.parametrize("value", ["2", "4", "8", "3", "", " 1", "2.0"])
+@pytest.mark.parametrize("backend", [None, "native"])
+def test_cli_refuses_tensorfold_lanes_off_lane(monkeypatch, capsys, value, backend):
+    from rapid_mlx import cli
+    from rapid_mlx.speculative.tensorfold_concurrency import (
+        LANES_ENV,
+        QUALIFIED_PROFILES,
+    )
+
+    monkeypatch.setenv(LANES_ENV, value)
+    args = SimpleNamespace(
+        model="mlx-community/Qwen3.5-4B-4bit",
+        _original_alias="qwen3.5-4b-4bit",
+        _speculative_config=SimpleNamespace(backend=backend) if backend else None,
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli._reject_tensorfold_lanes_off_lane_or_exit(args)
+    assert exc.value.code == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert output.err.startswith("error: ")
+    assert LANES_ENV in output.err
+    assert "only on qualified TensorFold profiles" in output.err
+    assert ", ".join(sorted(QUALIFIED_PROFILES)) in output.err
+    assert args._original_alias in output.err
+    profiles = ", ".join(sorted(QUALIFIED_PROFILES))
+    if value in {"2", "4", "8"}:
+        assert output.err == (
+            f"error: {LANES_ENV}={value} enables concurrent decoding only on "
+            f"qualified TensorFold profiles ({profiles}); {args._original_alias!r} "
+            f"is not served through one. Unset {LANES_ENV} or set it to 1.\n"
+        )
+    else:
+        assert output.err == (
+            f"error: {LANES_ENV} must be 1, 2, 4 or 8 (got {value!r}). "
+            f"It enables concurrent decoding only on qualified TensorFold profiles "
+            f"({profiles}); unset it or set it to 1 for {args._original_alias!r}.\n"
+        )
+
+
+@pytest.mark.parametrize("value", [None, "1"])
+def test_cli_serial_lanes_are_a_noop(monkeypatch, capsys, value):
+    from rapid_mlx import cli
+    from rapid_mlx.speculative.tensorfold_concurrency import LANES_ENV
+
+    monkeypatch.delenv(LANES_ENV, raising=False)
+    if value is not None:
+        monkeypatch.setenv(LANES_ENV, value)
+    cli._reject_tensorfold_lanes_off_lane_or_exit(SimpleNamespace(model="ordinary"))
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("value", ["4", "3", ""])
+def test_cli_tensorfold_lane_delegates_validation(monkeypatch, capsys, value):
+    from rapid_mlx import cli
+    from rapid_mlx.speculative.tensorfold_concurrency import LANES_ENV
+
+    monkeypatch.setenv(LANES_ENV, value)
+    cli._reject_tensorfold_lanes_off_lane_or_exit(
+        SimpleNamespace(_speculative_config=SimpleNamespace(backend="tensorfold"))
+    )
+    assert capsys.readouterr() == ("", "")
+
+
+def test_cli_qualified_spelling_off_lane_still_refuses(monkeypatch, capsys):
+    from rapid_mlx import cli
+    from rapid_mlx.speculative.tensorfold_concurrency import (
+        LANES_ENV,
+        QUALIFIED_PROFILES,
+    )
+
+    model = sorted(QUALIFIED_PROFILES)[0]
+    monkeypatch.setenv(LANES_ENV, "4")
+    with pytest.raises(SystemExit) as exc:
+        cli._reject_tensorfold_lanes_off_lane_or_exit(SimpleNamespace(model=model))
+    assert exc.value.code == 2
+    assert model in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["4", "3"])
+def test_serve_refuses_tensorfold_lanes_before_download(monkeypatch, capsys, value):
+    from unittest.mock import Mock
+
+    from rapid_mlx import cli
+    from rapid_mlx.speculative.tensorfold_concurrency import LANES_ENV
+
+    monkeypatch.setenv(LANES_ENV, value)
+    download = Mock(side_effect=AssertionError("must refuse before downloading"))
+    next_preflight = Mock(
+        side_effect=AssertionError("must refuse after lane resolution")
+    )
+    monkeypatch.setattr(cli, "_ensure_model_downloaded", download)
+    monkeypatch.setattr(cli, "_reject_unsupported_listen_fd_lane", next_preflight)
+    with pytest.raises(SystemExit) as exc:
+        cli.serve_command(SimpleNamespace(model="qwen3.5-4b-4bit"))
+    assert exc.value.code == 2
+    download.assert_not_called()
+    next_preflight.assert_not_called()
+    output = capsys.readouterr()
+    assert not output.out
+    assert LANES_ENV in output.err
+
+
+@pytest.mark.parametrize("has_model", [False, True])
+@pytest.mark.parametrize("value", ["4", None])
+def test_embedding_only_serve_tensorfold_lanes(monkeypatch, capsys, has_model, value):
+    from argparse import Namespace
+    from unittest.mock import Mock
+
+    from rapid_mlx import cli
+    from rapid_mlx.speculative.tensorfold_concurrency import LANES_ENV
+
+    monkeypatch.delenv(LANES_ENV, raising=False)
+    if value is not None:
+        monkeypatch.setenv(LANES_ENV, value)
+    args = Namespace(embedding_model="mlx-community/all-MiniLM-L6-v2-4bit")
+    if has_model:
+        args.model = None
+    embed_only = Mock()
+    resolve_port = Mock(return_value=cli.DEFAULT_SERVE_PORT)
+    monkeypatch.setattr(cli, "_serve_embedding_only_mode", embed_only)
+    monkeypatch.setattr(cli, "_resolve_serve_port", resolve_port)
+
+    if value is not None:
+        with pytest.raises(SystemExit) as exc:
+            cli.serve_command(args)
+        assert exc.value.code == 2
+        embed_only.assert_not_called()
+        resolve_port.assert_not_called()
+        output = capsys.readouterr()
+        assert not output.out
+        assert f"{LANES_ENV}=4" in output.err
+        assert repr(args.embedding_model) in output.err
+    else:
+        cli.serve_command(args)
+        resolve_port.assert_called_once()
+        embed_only.assert_called_once_with(args)
+        assert args.port == cli.DEFAULT_SERVE_PORT
+        assert capsys.readouterr() == ("", "")
 
 
 def test_one_provider_keeps_nonstream_token_results_per_request(monkeypatch):
@@ -43,7 +186,6 @@ import asyncio
 import threading
 
 import httpx
-import pytest
 
 from rapid_mlx.speculative.dflash import server
 from rapid_mlx.speculative.tensorfold_qwen27_server import ProviderChunk, ProviderResult
