@@ -2434,6 +2434,37 @@ class MLLMScheduler:
         )
         return bool(future.result())
 
+    def save_prefix_cache_to_disk(self, cache_dir: str, should_abort=None) -> bool:
+        """Serialize lifespan snapshots in inference order on the MLX owner thread."""
+        if self.batch_generator is None:
+            logger.info("[cache_persist] vision lane: no batch generator")
+            return False
+        save = self.batch_generator.save_exact_prefix_cache_to_disk
+        executor = self._step_executor or self._injected_step_executor
+        if executor is None:
+            return save(cache_dir, should_abort)
+        return bool(executor.submit(save, cache_dir, should_abort).result())
+
+    def load_prefix_cache_from_disk(self, cache_dir: str) -> int:
+        """Restore lifespan snapshots before subsequent inference steps.
+
+        The batch generator is normally built lazily by the first scheduled
+        request, which is after the startup restore runs; build it here on
+        the owner thread so the restored entries have somewhere to live.
+        """
+
+        def load() -> int:
+            self._ensure_batch_generator()
+            assert self.batch_generator is not None
+            return int(
+                self.batch_generator.load_exact_prefix_cache_from_disk(cache_dir)
+            )
+
+        executor = self._step_executor or self._injected_step_executor
+        if executor is None:
+            return load()
+        return int(executor.submit(load).result())
+
     def reset(self) -> None:
         """Reset the scheduler state."""
         # ``abort_request`` may only enqueue work when the step loop owns the

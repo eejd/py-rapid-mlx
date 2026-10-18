@@ -21,8 +21,10 @@ import contextlib
 import copy
 import importlib
 import inspect
+import json
 import logging
 import os
+import shutil
 import sys
 import textwrap
 import threading
@@ -33,6 +35,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
+from pathlib import Path
 from typing import Any, cast
 
 import mlx.core as mx
@@ -3062,6 +3065,268 @@ class MLLMBatchGenerator:
         self._evict_text_exact_to_fit(
             max_bytes - media_bytes, cache, allow_empty=bool(media_entries)
         )
+
+    def _exact_persistence_context(self) -> tuple[Any, set[int]] | None:
+        """Resolve the text-only persistence guard; unknown media IDs fail closed."""
+        from .models.mlx_vlm_vendored import apc
+
+        cache = self._prefix_cache
+        if (
+            cache is None
+            or self._prefix_cache_mode != "exact"
+            or not self._prefix_cache_enabled
+        ):
+            logger.info("[cache_persist] vision lane: exact prefix cache is disabled")
+            return None
+        try:
+            media_ids = apc.multimodal_token_ids_from_config(self.model.config)
+        except (AttributeError, TypeError, ValueError):
+            media_ids = set()
+        if not media_ids:
+            logger.info(
+                "[cache_persist] vision lane: skipped %d entries: unresolved media token IDs",
+                len(cache._exact_cache),
+            )
+            return None
+        return cache, media_ids
+
+    def _persistable_exact_entry(self, entry: Any, media_ids: set[int]) -> bool:
+        from .models.mlx_vlm_vendored import apc
+
+        if entry.extra_hash != self._prefix_cache_extra_hash:
+            logger.info(
+                "[cache_persist] vision lane: skipped 1 entry: foreign extra_hash"
+            )
+            return False
+        if apc.prefix_contains_media_tokens(
+            entry.token_ids, len(entry.token_ids), media_ids
+        ):
+            logger.info("[cache_persist] vision lane: skipped 1 entry: media tokens")
+            return False
+        return True
+
+    def save_exact_prefix_cache_to_disk(
+        self, cache_dir: str | Path, should_abort: Callable[[float], bool] | None = None
+    ) -> bool:
+        """Snapshot text-only exact APC entries during lifespan shutdown.
+
+        Called on the scheduler's MLX step executor, never from the request path.
+        Tensor serialization remains owned by the vendored exact_cache_v1 store.
+        """
+        from .models.mlx_vlm_vendored import apc
+
+        context = self._exact_persistence_context()
+        if context is None:
+            return False
+        cache, media_ids = context
+        target = Path(cache_dir)
+        staging = Path(str(target) + ".new")
+        old = Path(str(target) + ".old")
+        shutil.rmtree(staging, ignore_errors=True)
+        moved_old = False
+        try:
+            store = apc.DiskBlockStore(staging)
+            saved: list[int] = []
+            try:
+                with cache.lock:
+                    entries = list(reversed(cache._exact_cache.items()))
+                for key, entry in entries:
+                    if not self._persistable_exact_entry(entry, media_ids):
+                        continue
+                    # Conservative shutdown write-throughput estimate.
+                    predicted = self._exact_entry_bytes(entry.prompt_cache) / (
+                        100 << 20
+                    )
+                    if should_abort is not None and should_abort(predicted):
+                        break
+                    if store.save_exact_cache(
+                        key,
+                        entry.token_ids,
+                        entry.extra_hash,
+                        entry.prompt_cache,
+                        synchronous=True,
+                    ):
+                        saved.append(key)
+            finally:
+                store.close()
+            if not saved:
+                shutil.rmtree(staging)
+                logger.info(
+                    "[cache_persist] vision lane: no text-only exact prefix entries to persist"
+                )
+                return False
+            # This index also marks a complete (possibly deadline-limited) snapshot.
+            index = staging / "index.json.tmp"
+            index.write_text(json.dumps(saved))
+            index.rename(staging / "index.json")
+            shutil.rmtree(old, ignore_errors=True)
+            if target.exists():
+                target.rename(old)
+                moved_old = True
+            staging.rename(target)
+            shutil.rmtree(old, ignore_errors=True)
+            return True
+        except Exception as exc:  # noqa: BLE001 — shutdown must complete
+            logger.warning("[cache_persist] vision lane: snapshot save failed: %s", exc)
+            shutil.rmtree(staging, ignore_errors=True)
+            if moved_old:
+                try:
+                    old.rename(target)
+                except OSError as rollback_exc:
+                    logger.warning(
+                        "[cache_persist] vision lane: snapshot rollback failed: %s",
+                        rollback_exc,
+                    )
+            return False
+
+    @staticmethod
+    def _read_exact_snapshot_index(snapshot: Path) -> list[int] | None:
+        """Return a snapshot's validated entry keys, or None when unusable."""
+        index = snapshot / "index.json"
+        if not index.is_file():
+            return None
+        try:
+            keys = json.loads(index.read_text())
+            if not isinstance(keys, list) or any(type(key) is not int for key in keys):
+                raise ValueError("index must be a list of integers (excluding bool)")
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "[cache_persist] vision lane: invalid snapshot index in %s: %s",
+                snapshot,
+                exc,
+            )
+            return None
+        return keys
+
+    def load_exact_prefix_cache_from_disk(self, cache_dir: str | Path) -> int:
+        """Restore missing text-only entries on the scheduler's MLX step executor."""
+        from .models.mlx_vlm_vendored import apc
+
+        context = self._exact_persistence_context()
+        if context is None:
+            return 0
+        cache, media_ids = context
+        target = Path(cache_dir)
+        loaded = 0
+        try:
+            # Use the first snapshot whose index validates: the committed one,
+            # else a crash-left ``.new`` (complete once its index exists), else
+            # the previous ``.old``. An invalid candidate never shadows a valid
+            # one.
+            keys = None
+            for candidate in (
+                target,
+                Path(str(target) + ".new"),
+                Path(str(target) + ".old"),
+            ):
+                keys = self._read_exact_snapshot_index(candidate)
+                if keys is None:
+                    continue
+                if candidate != target:
+                    shutil.rmtree(target, ignore_errors=True)
+                    candidate.rename(target)
+                break
+            if keys is None:
+                return 0
+            store = apc.DiskBlockStore(target)
+            try:
+                # Prefer the newest disk entries within the remaining capacity, then
+                # insert newest-last without evicting any already-live entry.
+                restored: list[tuple[int, Any, int]] = []
+                restored_bytes = 0
+
+                def over_budget(pending_bytes: int) -> bool:
+                    with self._media_entries_guard():
+                        live_bytes = self._exact_cache_footprint_bytes() + sum(
+                            media.cache_bytes
+                            for media in getattr(
+                                self, "_media_boundary_entries", {}
+                            ).values()
+                        )
+                    projected = live_bytes + pending_bytes
+                    return any(
+                        budget > 0 and projected > budget
+                        for budget in (
+                            self._prefix_cache_max_bytes,
+                            cache.memory_max_bytes,
+                        )
+                    )
+
+                for key in keys:
+                    with cache.lock:
+                        if key in cache._exact_cache:
+                            continue
+                        if (
+                            len(cache._exact_cache) + len(restored)
+                            >= cache._exact_cache_max
+                        ):
+                            break
+                    try:
+                        # On-disk size gates the read; the decoded footprint
+                        # gates insertion, so live entries are never evicted
+                        # to make room for restored ones.
+                        entry_bytes = store.exact_cache_bytes(key)
+                        if over_budget(restored_bytes + entry_bytes):
+                            continue
+                        if cache._disk_min_free_ram_bytes > 0:
+                            free_now = apc._free_ram_bytes()
+                            if (
+                                free_now is not None
+                                and free_now
+                                < cache._disk_min_free_ram_bytes + entry_bytes
+                            ):
+                                break
+                        snapshot = store.load_exact_cache(key)
+                        if snapshot is None:
+                            continue
+                        entry = apc.APCExactCacheEntry(*snapshot)
+                        del snapshot
+                        actual_bytes = max(
+                            entry_bytes, self._exact_entry_bytes(entry.prompt_cache)
+                        )
+                        # The slot key must be the hash of the decoded prefix
+                        # and salt; a mismatched index is a corrupt snapshot.
+                        if (
+                            apc._sequence_hash(
+                                entry.token_ids, entry.extra_hash, cache.block_size
+                            )
+                            != key
+                        ):
+                            raise ValueError("snapshot key does not match its tokens")
+                        if self._persistable_exact_entry(
+                            entry, media_ids
+                        ) and not over_budget(restored_bytes + actual_bytes):
+                            restored.append((key, entry, actual_bytes))
+                            restored_bytes += actual_bytes
+                        del entry
+                    except MemoryError:
+                        raise
+                    except Exception as exc:
+                        logger.warning(
+                            "[cache_persist] vision lane: skipped unreadable "
+                            "snapshot entry: %s",
+                            exc,
+                        )
+                for key, entry, entry_bytes in reversed(restored):
+                    # Re-check against the live footprint (which now includes
+                    # entries inserted so far) right before each insertion.
+                    if over_budget(entry_bytes):
+                        continue
+                    with cache.lock:
+                        # Never replace an entry that became live meanwhile.
+                        if (
+                            key in cache._exact_cache
+                            or len(cache._exact_cache) >= cache._exact_cache_max
+                        ):
+                            continue
+                        cache._exact_cache[key] = entry
+                        loaded += 1
+            finally:
+                store.close()
+            return loaded
+        except OSError as exc:
+            logger.warning("[cache_persist] vision lane: snapshot load failed: %s", exc)
+            return loaded
 
     def get_prefix_cache_stats(self) -> dict[str, Any] | None:
         """Return the common prefix-cache counter shape for APIs/metrics."""
