@@ -3,7 +3,10 @@
 
 The workflow deliberately keeps this policy in tested Python instead of a
 large, fragile GitHub Actions expression.  Unknown paths fail safe by selecting
-both product lanes.
+both product lanes. Ordinary PR diffs with an engine lane use Python 3.11
+across all three shards, preserving the coverage interpreter. Missing/invalid
+diffs and dormant engine lanes keep the full matrix; promoted heads force full.
+Non-PR events bypass this classifier in ci.yml and keep the full matrix.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ LinuxMatrixMode = Literal["py311", "full"]
 
 @dataclass(frozen=True)
 class ValidationPolicy:
-    """Lane selection plus the Linux interpreter breadth for this diff."""
+    """PR lane selection and interpreter breadth, with promoted-head override."""
 
     lanes: Lanes
     linux_matrix_mode: LinuxMatrixMode
@@ -106,37 +109,6 @@ _DOC_FILES = {
     "LICENSE",
 }
 
-# Start with an exact allowlist of leaf metadata whose changes do not alter the
-# shared CLI, API, engine, runtime, dependency, collection, authentication, or
-# download control planes. A directory allowlist is deliberately avoided:
-# telemetry/model_id.py, for example, participates in authenticated Hub access.
-# Everything outside this set keeps the full supported-Python matrix. The merge
-# candidate also forces the full matrix regardless of this result.
-_PY311_ENGINE_PATHS = {
-    "rapid_mlx/telemetry/events.json",
-    "rapid_mlx/telemetry/registry.py",
-}
-
-# A filename heuristic cannot reliably tell whether a test is cheap or whether
-# it protects a critical product surface (for example, "dflash", "toolchoice",
-# and "wheel" are all critical without saying "kernel", "tool", or
-# "packaging"). Keep this first slice exact and grow it only with reviewed path
-# contracts.
-_PY311_TEST_PATHS = {
-    "tests/test_telemetry_registry.py",
-    "tests/test_telemetry_registry_drift.py",
-}
-
-_FULL_MATRIX_REASONS = {
-    ".github": "ci-control",
-    "config": "dependency-or-policy",
-    "scripts": "ci-or-build-control",
-    "videox_fun_mlx": "shared-runtime",
-}
-_FULL_MATRIX_FILES = _ENGINE_FILES | {
-    ".coveragerc",
-}
-
 
 def linux_test_matrix(mode: LinuxMatrixMode) -> dict[str, list[dict[str, object]]]:
     """Return an explicit matrix so route changes cannot alter shard count."""
@@ -152,10 +124,6 @@ def linux_test_matrix(mode: LinuxMatrixMode) -> dict[str, list[dict[str, object]
 
 def _normalized_paths(paths: Iterable[str]) -> set[str]:
     return {path.strip().removeprefix("./") for path in paths if path.strip()}
-
-
-def _is_py311_test_path(path: str) -> bool:
-    return path in _PY311_TEST_PATHS
 
 
 def _linux_matrix_decision(
@@ -175,28 +143,7 @@ def _linux_matrix_decision(
     ):
         return "full", "invalid-path"
 
-    product_paths = [
-        path
-        for path, pure in parsed_paths
-        if not (pure.parts[:1] == ("docs",) or path in _DOC_FILES)
-    ]
-    for path in product_paths:
-        pure = PurePosixPath(path)
-        if path in _FULL_MATRIX_FILES:
-            return "full", "dependency-or-policy"
-        root = pure.parts[0]
-        if root in _FULL_MATRIX_REASONS:
-            return "full", _FULL_MATRIX_REASONS[root]
-        if _is_py311_test_path(path):
-            continue
-        if root == "tests":
-            return "full", "test-support-or-fixture"
-        if path in _PY311_ENGINE_PATHS:
-            continue
-        # Desktop and unknown paths are deliberately not neutral in a mixed
-        # diff. Cross-lane and shared/core changes retain compatibility breadth.
-        return "full", "shared-core-or-unmapped"
-    return "py311", "leaf-engine-only"
+    return "py311", "pr-single-python"
 
 
 def classify(paths: Iterable[str]) -> Lanes:
@@ -247,6 +194,7 @@ def classify_policy(
     force_full: bool = False,
     force_reason: str = "promoted-head",
 ) -> ValidationPolicy:
+    """Select the ordinary PR matrix, or full breadth for promoted heads."""
     normalized = _normalized_paths(paths)
     lanes = classify(normalized)
     mode, reason = _linux_matrix_decision(normalized, lanes)

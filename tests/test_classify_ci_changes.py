@@ -133,7 +133,8 @@ def test_pr_validate_dependency_and_test_diff_is_engine_only():
         "tests/test_pr_validate_full_unit.py",
     ]
     assert classify(paths) == Lanes(engine=True, desktop=False, docs_only=False)
-    assert classify_policy(paths).linux_matrix_mode == "full"
+    assert classify_policy(paths).linux_matrix_mode == "py311"
+    assert classify_policy(paths).linux_matrix_reason == "pr-single-python"
 
 
 @pytest.mark.parametrize(
@@ -163,14 +164,6 @@ def test_empty_diff_fails_closed():
     assert classify([]) == Lanes(engine=True, desktop=True, docs_only=False)
 
 
-def test_py311_allowlist_only_contains_existing_files():
-    assert {
-        path
-        for path in ci_changes._PY311_ENGINE_PATHS | ci_changes._PY311_TEST_PATHS
-        if not (ROOT / path).is_file()
-    } == set()
-
-
 @pytest.mark.parametrize(
     "paths",
     [
@@ -180,12 +173,12 @@ def test_py311_allowlist_only_contains_existing_files():
         ["tests/test_telemetry_registry_drift.py"],
     ],
 )
-def test_leaf_engine_changes_use_complete_py311_matrix(paths):
+def test_ordinary_engine_pr_changes_use_complete_py311_matrix(paths):
     policy = classify_policy(paths)
 
     assert policy.lanes.engine is True
     assert policy.linux_matrix_mode == "py311"
-    assert policy.linux_matrix_reason == "leaf-engine-only"
+    assert policy.linux_matrix_reason == "pr-single-python"
     assert linux_test_matrix(policy.linux_matrix_mode) == {
         "include": [
             {"python-version": "3.11", "shard": 1},
@@ -196,92 +189,93 @@ def test_leaf_engine_changes_use_complete_py311_matrix(paths):
 
 
 @pytest.mark.parametrize(
-    ("path", "reason"),
+    "path",
     [
-        (".github/workflows/ci.yml", "ci-control"),
-        ("config/requirements-ci-linux.txt", "dependency-or-policy"),
-        ("config/pr-validate-deps.txt", "dependency-or-policy"),
-        ("pyproject.toml", "dependency-or-policy"),
-        (".coveragerc", "dependency-or-policy"),
-        ("scripts/ci_test_shard.py", "ci-or-build-control"),
-        ("videox_fun_mlx/pipeline/scheduler.py", "shared-runtime"),
-        ("rapid_mlx/cli.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/agent_runtime/server.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/api/tool_calling.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/audio/processor.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/byom/preflight.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/computer_use/backend.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/cua/gates.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/engine/batched.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/headless_service/install.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/image/engine.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/kernels/qsa_stage1.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/mcp/security.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/models/mllm.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/routes/chat.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/runtime/primary_lifecycle.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/spec_decode/mtp/continuous_engine.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/agents/adapter.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/bench/pflash_replication.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/community_bench/local_runner.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/share/cli.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/telemetry/model_id.py", "shared-core-or-unmapped"),
-        ("rapid_mlx/video/ltx25.py", "shared-core-or-unmapped"),
-        ("tests/test_security_hardening.py", "test-support-or-fixture"),
-        ("tests/test_download_gate.py", "test-support-or-fixture"),
-        ("tests/test_scheduler_fairness.py", "test-support-or-fixture"),
-        ("tests/test_kv_cache.py", "test-support-or-fixture"),
-        ("tests/test_model_loader.py", "test-support-or-fixture"),
-        ("tests/test_tool_parser.py", "test-support-or-fixture"),
-        ("tests/test_kernel_perf.py", "test-support-or-fixture"),
-        ("tests/test_dflash_integration.py", "test-support-or-fixture"),
-        ("tests/test_mlx_inference.py", "test-support-or-fixture"),
-        ("tests/test_bench_dflash.py", "test-support-or-fixture"),
-        ("tests/test_tools_auto_disable_thinking.py", "test-support-or-fixture"),
-        ("tests/test_harmony_parsers.py", "test-support-or-fixture"),
-        ("tests/test_mirror_throughput_floor_2010.py", "test-support-or-fixture"),
-        ("tests/test_base_wheel_vlm_text_degrade.py", "test-support-or-fixture"),
-        ("tests/test_resident_models.py", "test-support-or-fixture"),
-        ("tests/test_benchmark_contract.py", "test-support-or-fixture"),
-        ("tests/test_release_golden.py", "test-support-or-fixture"),
-        ("tests/test_1256_forced_toolchoice_empty_args.py", "test-support-or-fixture"),
-        ("tests/test_streaming_pipeline_integration.py", "test-support-or-fixture"),
-        ("tests/test_cli_output.py", "test-support-or-fixture"),
-        ("tests/conftest.py", "test-support-or-fixture"),
-        ("tests/integrations/test_live.py", "test-support-or-fixture"),
-        ("tests/qwen3coder_stream_harness.py", "test-support-or-fixture"),
-        ("tests/fixtures/sillytavern_golden.json", "test-support-or-fixture"),
-        ("tests/fixtures/security/auth_cases.json", "test-support-or-fixture"),
-        ("new-product/module.py", "shared-core-or-unmapped"),
+        ".github/workflows/ci.yml",
+        "config/requirements-ci-linux.txt",
+        "config/pr-validate-deps.txt",
+        "pyproject.toml",
+        ".coveragerc",
+        "scripts/ci_test_shard.py",
+        "videox_fun_mlx/pipeline/scheduler.py",
+        "rapid_mlx/cli.py",
+        "rapid_mlx/agent_runtime/server.py",
+        "rapid_mlx/api/tool_calling.py",
+        "rapid_mlx/audio/processor.py",
+        "rapid_mlx/byom/preflight.py",
+        "rapid_mlx/computer_use/backend.py",
+        "rapid_mlx/cua/gates.py",
+        "rapid_mlx/engine/batched.py",
+        "rapid_mlx/headless_service/install.py",
+        "rapid_mlx/image/engine.py",
+        "rapid_mlx/kernels/qsa_stage1.py",
+        "rapid_mlx/mcp/security.py",
+        "rapid_mlx/models/mllm.py",
+        "rapid_mlx/routes/chat.py",
+        "rapid_mlx/runtime/primary_lifecycle.py",
+        "rapid_mlx/spec_decode/mtp/continuous_engine.py",
+        "rapid_mlx/agents/adapter.py",
+        "rapid_mlx/bench/pflash_replication.py",
+        "rapid_mlx/community_bench/local_runner.py",
+        "rapid_mlx/share/cli.py",
+        "rapid_mlx/telemetry/model_id.py",
+        "rapid_mlx/video/ltx25.py",
+        "tests/test_security_hardening.py",
+        "tests/test_download_gate.py",
+        "tests/test_scheduler_fairness.py",
+        "tests/test_kv_cache.py",
+        "tests/test_model_loader.py",
+        "tests/test_tool_parser.py",
+        "tests/test_kernel_perf.py",
+        "tests/test_dflash_integration.py",
+        "tests/test_mlx_inference.py",
+        "tests/test_bench_dflash.py",
+        "tests/test_tools_auto_disable_thinking.py",
+        "tests/test_harmony_parsers.py",
+        "tests/test_mirror_throughput_floor_2010.py",
+        "tests/test_base_wheel_vlm_text_degrade.py",
+        "tests/test_resident_models.py",
+        "tests/test_benchmark_contract.py",
+        "tests/test_release_golden.py",
+        "tests/test_1256_forced_toolchoice_empty_args.py",
+        "tests/test_streaming_pipeline_integration.py",
+        "tests/test_cli_output.py",
+        "tests/conftest.py",
+        "tests/integrations/test_live.py",
+        "tests/qwen3coder_stream_harness.py",
+        "tests/fixtures/sillytavern_golden.json",
+        "tests/fixtures/security/auth_cases.json",
+        "new-product/module.py",
     ],
 )
-def test_shared_unknown_and_control_changes_keep_full_matrix(path, reason):
+def test_shared_unknown_and_control_pr_changes_use_single_python(path):
     policy = classify_policy([path])
 
-    assert policy.linux_matrix_mode == "full"
-    assert policy.linux_matrix_reason == reason
+    assert policy.lanes.engine is True
+    assert policy.linux_matrix_mode == "py311"
+    assert policy.linux_matrix_reason == "pr-single-python"
     matrix = linux_test_matrix(policy.linux_matrix_mode)["include"]
-    assert len(matrix) == 9
+    assert len(matrix) == 3
     assert {entry["python-version"] for entry in matrix} == {
-        "3.10",
         "3.11",
-        "3.12",
     }
     assert {entry["shard"] for entry in matrix} == {1, 2, 3}
 
 
-def test_mixed_desktop_and_leaf_engine_change_keeps_full_matrix():
+def test_mixed_desktop_and_engine_pr_change_uses_single_python():
     policy = classify_policy(
         ["rapid_mlx/telemetry/events.json", "apps/rapid-mac/Sources/App.swift"]
     )
 
     assert policy.lanes == Lanes(engine=True, desktop=True, docs_only=False)
-    assert policy.linux_matrix_mode == "full"
-    assert policy.linux_matrix_reason == "shared-core-or-unmapped"
+    assert policy.lanes.engine is True
+    assert policy.linux_matrix_mode == "py311"
+    assert policy.linux_matrix_reason == "pr-single-python"
 
 
 @pytest.mark.parametrize(
-    "path", ["../rapid_mlx/telemetry/events.json", "/tmp/test_x.py"]
+    "path",
+    ["../rapid_mlx/telemetry/events.json", "/tmp/test_x.py", ".", "tests/../test_x.py"],
 )
 def test_invalid_path_cannot_enter_reduced_matrix(path):
     policy = classify_policy([path, "rapid_mlx/telemetry/events.json"])
@@ -290,10 +284,17 @@ def test_invalid_path_cannot_enter_reduced_matrix(path):
     assert policy.linux_matrix_reason == "invalid-path"
 
 
-def test_no_engine_lane_keeps_dormant_matrix_full():
-    policy = classify_policy(["docs/guides/server.md", "README.md"])
+@pytest.mark.parametrize(
+    "paths,lanes",
+    [
+        (["docs/guides/server.md", "README.md"], Lanes(False, False, True)),
+        (["apps/rapid-mac/Sources/App.swift"], Lanes(False, True, False)),
+    ],
+)
+def test_no_engine_lane_keeps_dormant_matrix_full(paths, lanes):
+    policy = classify_policy(paths)
 
-    assert policy.lanes == Lanes(engine=False, desktop=False, docs_only=True)
+    assert policy.lanes == lanes
     assert policy.linux_matrix_mode == "full"
     assert policy.linux_matrix_reason == "no-engine-lane"
 
@@ -309,3 +310,27 @@ def test_promoted_head_forces_full_matrix_without_changing_lane_scope():
     assert policy.linux_matrix_mode == "full"
     assert policy.linux_matrix_reason == "promoted-head"
     assert len(json.loads(policy.as_outputs()["test_matrix"])["include"]) == 9
+
+
+@pytest.mark.parametrize("paths", [[], ["", "  "]])
+def test_missing_diff_keeps_full_matrix(paths):
+    policy = classify_policy(paths)
+    assert policy.lanes == Lanes(True, True, False)
+    assert policy.linux_matrix_mode == "full"
+    assert policy.linux_matrix_reason == "missing-diff"
+    assert len(json.loads(policy.as_outputs()["test_matrix"])["include"]) == 9
+
+
+def test_normalized_pr_paths_use_single_python():
+    policy = classify_policy([" ./rapid_mlx/server.py ", "", "README.md"])
+    assert policy.linux_matrix_mode == "py311"
+    assert policy.linux_matrix_reason == "pr-single-python"
+    assert json.loads(policy.as_outputs()["test_matrix"]) == linux_test_matrix("py311")
+
+
+def test_force_full_accepts_explicit_reason():
+    policy = classify_policy(
+        ["rapid_mlx/server.py"], force_full=True, force_reason="manual"
+    )
+    assert policy.linux_matrix_mode == "full"
+    assert policy.linux_matrix_reason == "manual"

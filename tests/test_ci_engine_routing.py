@@ -47,7 +47,12 @@ def test_headless_and_type_baseline_do_not_neutralize_control_changes(control):
         control,
     ]
     policy = classify_policy(paths)
-    assert policy.linux_matrix_mode == "full"
+    assert policy.lanes.engine is True
+    invalid = ".." in Path(control).parts
+    assert policy.linux_matrix_mode == ("full" if invalid else "py311")
+    assert policy.linux_matrix_reason == (
+        "invalid-path" if invalid else "pr-single-python"
+    )
 
 
 def test_headless_source_tests_remain_enrolled_once_and_in_separate_process():
@@ -129,7 +134,21 @@ def test_actual_engine_workflow_source_context(
     )
     assert result.returncode == 0, result.stderr
     values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert len(json.loads(values["test_matrix"])["include"]) == 9
+    promoted = (
+        event == "pull_request"
+        and head_repo == "owner/repo"
+        and head_ref.startswith("train/")
+    )
+    full = event != "pull_request" or promoted
+    assert values["linux_matrix_mode"] == ("full" if full else "py311")
+    assert values["linux_matrix_reason"] == (
+        "non-pr-full"
+        if event != "pull_request"
+        else "promoted-head"
+        if promoted
+        else "pr-single-python"
+    )
+    assert len(json.loads(values["test_matrix"])["include"]) == (9 if full else 3)
     if event != "pull_request" or head_ref.startswith("train/"):
         assert values["full_gate"] == "true"
         assert len(json.loads(values["l1_matrix"])["include"]) == 5

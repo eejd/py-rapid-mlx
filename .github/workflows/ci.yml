@@ -27,12 +27,16 @@ concurrency:
 env:
   RAPID_MLX_TELEMETRY: "0"
 
+# CI_LINUX_RUNNER is a JSON runner spec (string or label array); unset uses ubuntu-latest.
+# Fork heads (pull_request, pull_request_target, workflow_run) always use ubuntu-latest.
+# Rollback: gh variable delete CI_LINUX_RUNNER
+
 jobs:
   changes:
     permissions:
       contents: read
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     outputs:
       engine: ${{ steps.policy.outputs.engine }}
       desktop: ${{ steps.policy.outputs.desktop }}
@@ -116,7 +120,7 @@ jobs:
       needs.changes.result == 'success' &&
       needs.changes.outputs.engine != 'true' &&
       needs.changes.outputs.desktop != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - name: Mark no-Mac merge lane
         run: echo "This head requires neither the engine nor Desktop lane."
@@ -128,7 +132,7 @@ jobs:
       needs.changes.result == 'success' &&
       (needs.changes.outputs.engine == 'true' ||
        needs.changes.outputs.desktop == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - name: Mark Mac-required merge lane
         run: echo "This head requires the engine, Desktop, or both lanes."
@@ -138,7 +142,7 @@ jobs:
     if: >-
       !cancelled() &&
       needs.changes.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -190,7 +194,7 @@ jobs:
       !cancelled() &&
       needs.changes.result == 'success' &&
       needs.changes.outputs.engine == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -264,7 +268,7 @@ jobs:
       needs.changes.result == 'success' &&
       github.event_name == 'pull_request' &&
       needs.changes.outputs.engine == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     permissions:
       contents: read
       pull-requests: read
@@ -302,7 +306,7 @@ jobs:
       !cancelled() &&
       needs.changes.result == 'success' &&
       needs.changes.outputs.engine == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -326,12 +330,12 @@ jobs:
       !cancelled() &&
       needs.changes.result == 'success' &&
       needs.changes.outputs.engine == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     strategy:
       fail-fast: false
-      # Ordinary leaf-only PRs run the complete three-shard suite on the
-      # coverage interpreter. Shared/core/unknown changes and every promoted
-      # integration candidate retain all supported Python versions.
+      # Ordinary PRs run all three shards on Python 3.11, the coverage
+      # interpreter. Promoted heads and non-PR events retain all supported
+      # Python versions; missing or invalid diffs also fail safe to full.
       matrix: ${{ fromJSON(needs.changes.outputs.test_matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -443,7 +447,7 @@ jobs:
       needs.changes.result == 'success' &&
       needs.changes.outputs.engine == 'true' &&
       needs.test-matrix.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -698,7 +702,7 @@ jobs:
       needs.changes.outputs.engine == 'true' &&
       needs.linux-coverage.result == 'success' &&
       needs.test-apple-silicon.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -832,7 +836,7 @@ jobs:
       - test-apple-silicon
       - changed-lines-coverage
       - l1-smoke
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_LINUX_RUNNER != '' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && (!github.event.workflow_run || github.event.workflow_run.head_repository.full_name == github.repository)) && vars.CI_LINUX_RUNNER || '"ubuntu-latest"') }}
     # Keep the required verdict terminal after failure or cancellation;
     # classifier and workload jobs above stop when their source is superseded.
     if: always()
