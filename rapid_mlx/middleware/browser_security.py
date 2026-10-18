@@ -131,6 +131,7 @@ class BrowserSecurityMiddleware:
                         origin_authority != authority
                         and not (
                             origin_authority is not None
+                            and authority is not None
                             and authority[0] in _LOOPBACK_HOSTNAMES
                             and origin_authority[0] in _LOOPBACK_HOSTNAMES
                             and origin_authority[1] == authority[1]
