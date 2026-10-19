@@ -3,12 +3,19 @@
 
 from __future__ import annotations
 
+import ast
+import html
+import re
 import uuid
-import xml.etree.ElementTree as ET
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from ..api.tool_calling import _serialize_tool_arguments
+from ..api.tool_calling import (
+    _decode_json_like,
+    _get_tool_param_config,
+    _schema_type,
+    _serialize_tool_arguments,
+)
 from .abstract_tool_parser import (
     ExtractedToolCallInformation,
     ToolParser,
@@ -20,9 +27,110 @@ _CLOSE = "</function>"
 _CDATA_OPEN = "<![CDATA["
 _CDATA_CLOSE = "]]>"
 
+_NAME = r"""(?:"([^"]*)"|'([^']*)')"""
+_FUNCTION_OPEN = re.compile(rf"<function\s+name\s*=\s*{_NAME}\s*(/?)>")
+_PARAM_OPEN = re.compile(rf"\s*<param\s+name\s*=\s*{_NAME}\s*(/?)>")
+_FUNCTION_CLOSE = re.compile(r"\s*</function>\Z")
+# The XML character references a model writes instead of CDATA; a bare ``&`` is data.
+_ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#[0-9]+|#[xX][0-9a-fA-F]+);")
+
 
 def _tool_id() -> str:
     return f"call_{uuid.uuid4().hex[:8]}"
+
+
+def _attr(match: re.Match[str]) -> str:
+    """The quoted ``name`` attribute of a matched ``<function>``/``<param>`` opener."""
+    return (match.group(1) if match.group(1) is not None else match.group(2)).strip()
+
+
+def _structured_value(raw: str, schema: Any) -> Any:
+    """A raw parameter value as the array/object the schema declares, else unchanged.
+
+    The MiniCPM5 chat template renders a non-string argument with Python's ``str``
+    (``['a', 'b']``, ``{'k': 1}``) and the model writes it the same way, which is
+    not JSON. JSON is tried first, then a Python literal (``ast.literal_eval``: literals
+    only, nothing is executed); only a list or a dict is accepted, anything else stays
+    the raw string.
+    """
+    if _schema_type(schema) not in ("array", "object"):
+        return raw
+    decoded = _decode_json_like(raw)
+    if not isinstance(decoded, str):
+        return decoded
+    try:
+        literal = ast.literal_eval(raw.strip())
+    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
+        return raw
+    return literal if isinstance(literal, list | dict) else raw
+
+
+def _unescape(text: str) -> str:
+    return _ENTITY.sub(lambda m: html.unescape(m.group()), text)
+
+
+def _read_value(block: str, pos: int) -> tuple[str, int] | None:
+    """One parameter value starting after its opening tag, and where it ends.
+
+    Text is data up to ``</param>``; a ``<![CDATA[...]]>`` section inside it is exact
+    (no decoding) and may hold ``</param>``. Plain text between sections has its
+    well-formed character references decoded. ``None`` if the value never ends.
+    """
+    parts: list[str] = []
+    while True:
+        close = block.find("</param>", pos)
+        cdata = block.find(_CDATA_OPEN, pos)
+        if cdata >= 0 and (close < 0 or cdata < close):
+            parts.append(_unescape(block[pos:cdata]))
+            end = block.find(_CDATA_CLOSE, cdata + len(_CDATA_OPEN))
+            if end < 0:
+                return None
+            parts.append(block[cdata + len(_CDATA_OPEN) : end])
+            pos = end + len(_CDATA_CLOSE)
+            continue
+        if close < 0:
+            return None
+        parts.append(_unescape(block[pos:close]))
+        return "".join(parts), close + len("</param>")
+
+
+def _scan_function(block: str) -> tuple[str, list[tuple[str, str]]] | None:
+    """Name and raw ``(key, value)`` parameters of one complete ``<function>`` block.
+
+    The chat template asks for ``<![CDATA[...]]>`` around a value holding ``<``,
+    ``&`` or a newline, but the model does not always write it, so the block is
+    scanned, not parsed as XML: a value is the text up to the next ``</param>``
+    (``_read_value``), so ``<``, ``&`` and tags in it are data. ``None`` for a block
+    that is not a valid call: no name, an attribute other than ``name``, a duplicate
+    or unnamed parameter, text between parameters, a value that never ends.
+    """
+    opener = _FUNCTION_OPEN.match(block)
+    if opener is None:
+        return None
+    name = _attr(opener)
+    if not name:
+        return None
+    pos = opener.end()
+    if opener.group(3):  # <function name="..."/>
+        return (name, []) if pos == len(block) else None
+    params: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    while (param := _PARAM_OPEN.match(block, pos)) is not None:
+        key = _attr(param)
+        if not key or key in seen:
+            return None
+        seen.add(key)
+        pos = param.end()
+        if param.group(3):  # <param name="..."/>
+            params.append((key, ""))
+            continue
+        read = _read_value(block, pos)
+        if read is None:
+            return None
+        value, pos = read
+        params.append((key, value))
+    return (name, params) if _FUNCTION_CLOSE.match(block, pos) else None
+
 
 
 @ToolParserManager.register_module("minicpm")
@@ -83,8 +191,10 @@ class MiniCPMToolParser(ToolParser):
             return opener
 
     @classmethod
-    def _blocks(cls, text: str) -> Iterator[tuple[int, int, ET.Element]]:
-        """Yield complete, well-formed native call elements in wire order."""
+    def _blocks(
+        cls, text: str
+    ) -> Iterator[tuple[int, int, tuple[str, list[tuple[str, str]]]]]:
+        """Yield complete, valid native calls in wire order: ``(start, end, scan)``."""
         cursor = 0
         while (start := text.find(_OPEN, cursor)) != -1:
             if not cls._is_function_opener(text, start):
@@ -99,60 +209,35 @@ class MiniCPMToolParser(ToolParser):
                 # scanning forward would risk parsing CDATA data as markup —
                 # so stop.
                 return
-            try:
-                element = ET.fromstring(text[start:end])
-            except ET.ParseError:
-                # ``_function_end`` may have bound a *later* call's close tag
-                # to this malformed opener (e.g. a nested ``<function>``).
-                # Resync at the next opener that is NOT inside a CDATA value
-                # so the nested/later valid call is recovered without ever
-                # treating CDATA data as a tool call.
+            scan = _scan_function(text[start:end])
+            if scan is None:
+                # Not a valid call. ``_function_end`` may have bound a *later*
+                # call's close tag to this malformed opener (e.g. a nested
+                # ``<function>``). Resync at the next opener that is NOT
+                # inside a CDATA value so the nested/later valid call is
+                # recovered without ever treating CDATA data as a tool call.
                 nxt = cls._next_opener_outside_cdata(text, start + len(_OPEN))
                 if nxt == -1:
                     return
                 cursor = nxt
                 continue
-            yield start, end, element
+            yield start, end, scan
             cursor = end
 
     @staticmethod
-    def _call_from_element(
-        element: ET.Element, request: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
-        """Validate one documented element and normalize it to OpenAI JSON."""
-        name = element.get("name")
-        if (
-            element.tag != "function"
-            or set(element.attrib) != {"name"}
-            or not isinstance(name, str)
-            or not name.strip()
-            or (element.text or "").strip()
-        ):
-            return None
-
-        arguments: dict[str, str] = {}
-        for param in element:
-            raw_name = param.get("name")
-            # Strip before both duplicate detection and insertion so a
-            # whitespace-padded name maps to the same schema key that type
-            # normalization looks up — mirrors the ``name.strip()`` applied
-            # to the function name above.
-            param_name = raw_name.strip() if isinstance(raw_name, str) else None
-            if (
-                param.tag != "param"
-                or set(param.attrib) != {"name"}
-                or not param_name
-                or param_name in arguments
-                or len(param)
-                or (param.tail or "").strip()
-            ):
-                return None
-            arguments[param_name] = param.text or ""
-
+    def _call_from_scan(
+        scan: tuple[str, list[tuple[str, str]]], request: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Type one scanned call's arguments by the tool schema, as OpenAI JSON."""
+        name, params = scan
+        schema = _get_tool_param_config(name, request)
+        arguments = {
+            key: _structured_value(raw, schema.get(key)) for key, raw in params
+        }
         return {
             "id": _tool_id(),
-            "name": name.strip(),
-            "arguments": _serialize_tool_arguments(arguments, name.strip(), request),
+            "name": name,
+            "arguments": _serialize_tool_arguments(arguments, name, request),
         }
 
     @classmethod
@@ -161,11 +246,9 @@ class MiniCPMToolParser(ToolParser):
     ) -> tuple[list[dict[str, Any]], str]:
         calls: list[dict[str, Any]] = []
         spans: list[tuple[int, int]] = []
-        for start, end, element in cls._blocks(text):
-            call = cls._call_from_element(element, request)
-            if call is not None:
-                calls.append(call)
-                spans.append((start, end))
+        for start, end, scan in cls._blocks(text):
+            calls.append(cls._call_from_scan(scan, request))
+            spans.append((start, end))
 
         if not spans:
             return calls, text
