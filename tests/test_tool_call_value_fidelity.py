@@ -207,18 +207,16 @@ _FIDELITY_EXEMPT: dict[str, str] = {
 # tests/test_xfail_audit.py, issue #320).
 # ---------------------------------------------------------------------------
 KNOWN_BROKEN: dict[tuple[str, str, str], str] = {
-    # (1) qwen3coder and minicpm still carry their own non-greedy scan of a
-    #     marker-delimited body. A literal closing marker truncates the value;
-    #     a literal OPENING marker truncates it and fabricates an element.
+    # (1) qwen3coder still carries its own non-greedy scan of a marker-delimited
+    #     body. A literal closing marker truncates the value; a literal OPENING
+    #     marker truncates it and fabricates an element.
     #     `rapid_mlx/tool_call_scan` fixes both for tool_calling.py, nemotron
     #     and hermes; porting is mechanical but touches qwen3coder's four
     #     instance-level regexes across the streaming and non-streaming paths.
-    ("minicpm", "minicpm_native", "literal_close_tool_call"): "own scan",
-    ("minicpm", "minicpm_native", "literal_close_parameter"): "own scan",
+    #     minicpm scans a call and reads a value up to `</param>` (CDATA
+    #     sections exact), so every literal marker round-trips except a literal
+    #     `</function>`, which still ends the call (`_function_end`).
     ("minicpm", "minicpm_native", "literal_close_function"): "own scan",
-    ("minicpm", "minicpm_native", "literal_open_parameter"): "own scan",
-    ("minicpm", "minicpm_native", "literal_open_function"): "own scan",
-    ("minicpm", "minicpm_native", "literal_open_and_close"): "own scan",
     # (2) A configured ToolParser decodes arguments without consulting the
     #     request schema, so a string that merely LOOKS like an object is
     #     promoted to one even though the schema says string — configuring the
