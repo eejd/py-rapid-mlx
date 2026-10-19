@@ -22,6 +22,7 @@ from rapid_mlx.prompt_token_reuse import (
     common_prefix_length,
     encode_sharing_head,
 )
+from rapid_mlx.prompt_tokenization import encode_prompt
 from rapid_mlx.service import helpers
 
 _MARKERS = ("<|im_start|>", "<|im_end|>", "<think>")
@@ -102,7 +103,7 @@ class _FakeScheduler:
         cached = self.host_cache.get_tokens(fingerprint)
         if cached is not None:
             return cached
-        tokens = list(self.tokenizer.encode(prompt))
+        tokens = encode_prompt(self.tokenizer, prompt)
         self.host_cache.put_tokens(fingerprint, tokens)
         return tokens
 
@@ -340,33 +341,28 @@ def test_dummy_user_fallback_uses_the_shared_head(monkeypatch):
 
 
 def test_engines_without_a_text_scheduler_keep_their_tokenizer_calls():
-    class _RecordingTokenizer(_SectionTokenizer):
-        def __init__(self):
-            super().__init__()
-            self.kwargs = []
-
-        def encode(self, text, **kwargs):
-            self.kwargs.append(kwargs)
-            return super().encode(text, **kwargs)
-
-    tokenizer = _RecordingTokenizer()
+    tokenizer = _SectionTokenizer()
     engine = _engine(tokenizer, scheduler=False)
     assert engine.encode_prompt_text("<|im_start|>hi") is None
     assert helpers.count_prompt_tokens(engine, "<|im_start|>hi") == 3
-    assert tokenizer.kwargs == [{"add_special_tokens": True}]
+    assert tokenizer.encode_calls == 1
 
 
-def test_count_prompt_tokens_keeps_direct_path_for_bos_prefixed_prompts():
+def test_count_prompt_tokens_for_bos_prefixed_prompts_shares_the_scheduler_encode():
     class _BosTokenizer(_SectionTokenizer):
         bos_token = "<s>"
 
     tokenizer = _BosTokenizer(bos=True)
     engine = _engine(tokenizer)
     prompt = "<s>hello"
-    assert helpers.count_prompt_tokens(engine, prompt) == len(
-        tokenizer.encode(prompt, add_special_tokens=False)
-    )
-    assert engine._prompt_host_cache.stats()["stores"] == 0
+    counted = helpers.count_prompt_tokens(engine, prompt)
+    # The scheduler admits the same string next and reuses that one encode.
+    admitted = engine.encode_prompt_text(prompt)
+    assert tokenizer.encode_calls == 1
+    single_bos = tokenizer.encode(prompt, add_special_tokens=False)
+    assert counted == len(single_bos)
+    assert admitted == single_bos
+    assert engine._prompt_host_cache.stats()["stores"] == 1
 
 
 def test_token_list_generation_prompt_keeps_full_variant_encodes():

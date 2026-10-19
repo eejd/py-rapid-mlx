@@ -44,6 +44,7 @@ from typing import Any
 # ``from rapid_mlx.api.guided import *``. Adding an ``__all__`` would silently
 # hide every name not listed, breaking existing ``import *`` consumers; leaving
 # it off keeps all module-level public names exported.
+from ..prompt_tokenization import encode_prompt
 from .errors import (
     GuidedGenerationCancelledError,
     GuidedSchemaCompileError,
@@ -422,7 +423,7 @@ class GuidedGenerator:
         vocab = lltok.vocab_size
         bitmask = allocate_token_bitmask(1, vocab)
 
-        prompt_ids = tokenizer.encode(prompt)
+        prompt_ids = encode_prompt(tokenizer, prompt)
 
         # Empty-prompt guard. When ``encode`` yields ``[]`` (e.g. an empty
         # prompt string), indexing the last-token logits ``[:, -1, :]`` off a
