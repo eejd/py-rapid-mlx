@@ -1,10 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tool-call parser for MiniCPM5's documented native XML format."""
+"""Tool-call parser for MiniCPM5's documented native XML format.
+
+A call is scanned, not parsed as XML (see ``_scan_function``). Compared with the
+``xml.etree`` parser this replaced it rejects the same shapes (text between
+parameters, attributes other than ``name``, duplicate parameters) and accepts the
+same ``</param >``; a numeric character reference to a character XML does not allow
+stays as written where ElementTree rejected the call. The quantbench reference
+extractor ``minicpm5`` decodes no character references at all and trims whitespace
+around a leading CDATA and newlines around plain strings; this parser keeps
+whitespace as written, as ElementTree did.
+"""
 
 from __future__ import annotations
 
 import ast
-import html
 import re
 import uuid
 from collections.abc import Iterator, Sequence
@@ -30,9 +39,12 @@ _CDATA_CLOSE = "]]>"
 _NAME = r"""(?:"([^"]*)"|'([^']*)')"""
 _FUNCTION_OPEN = re.compile(rf"<function\s+name\s*=\s*{_NAME}\s*(/?)>")
 _PARAM_OPEN = re.compile(rf"\s*<param\s+name\s*=\s*{_NAME}\s*(/?)>")
+_PARAM_END = re.compile(r"</param\s*>")
 _FUNCTION_CLOSE = re.compile(r"\s*</function>\Z")
-# The XML character references a model writes instead of CDATA; a bare ``&`` is data.
-_ENTITY = re.compile(r"&(?:amp|lt|gt|quot|apos|#[0-9]+|#[xX][0-9a-fA-F]+);")
+_NAMED_REFERENCES = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
+_REFERENCE = re.compile(
+    r"&(?:(amp|lt|gt|quot|apos)|#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6}));"
+)
 
 
 def _tool_id() -> str:
@@ -65,22 +77,48 @@ def _structured_value(raw: str, schema: Any) -> Any:
     return literal if isinstance(literal, list | dict) else raw
 
 
+def _decode_reference(match: re.Match[str]) -> str:
+    named, decimal, hexadecimal = match.groups()
+    if named:
+        return _NAMED_REFERENCES[named]
+    code = int(decimal) if decimal is not None else int(hexadecimal, 16)
+    valid = (
+        code in (0x9, 0xA, 0xD)
+        or 0x20 <= code <= 0xD7FF
+        or 0xE000 <= code <= 0xFFFD
+        or 0x10000 <= code <= 0x10FFFF
+    )
+    return chr(code) if valid else match.group()
+
+
 def _unescape(text: str) -> str:
-    return _ENTITY.sub(lambda m: html.unescape(m.group()), text)
+    """Decode the XML character references in plain text; anything else is data.
+
+    The five named references and numeric references (at most 7 decimal or 6 hex
+    digits) to a valid XML character. An invalid or longer reference stays as written
+    where ElementTree rejected the whole call. Not ``html.unescape``: that remaps
+    ``&#x80;``..``&#x9F;`` through cp1252, substitutes U+FFFD, and raises ValueError
+    on a numeric reference of more than 4300 digits.
+    """
+    return _REFERENCE.sub(_decode_reference, text) if "&" in text else text
 
 
 def _read_value(block: str, pos: int) -> tuple[str, int] | None:
     """One parameter value starting after its opening tag, and where it ends.
 
-    Text is data up to ``</param>``; a ``<![CDATA[...]]>`` section inside it is exact
-    (no decoding) and may hold ``</param>``. Plain text between sections has its
-    well-formed character references decoded. ``None`` if the value never ends.
+    Text is data up to ``</param>`` (``</param >`` too); a ``<![CDATA[...]]>`` section
+    inside it is exact (no decoding) and may hold ``</param>``. Plain text outside
+    CDATA has its character references decoded (``_unescape``). Whitespace is kept
+    as written, as ElementTree did. ``None`` if the value never ends.
     """
     parts: list[str] = []
+    close = _PARAM_END.search(block, pos)
     while True:
-        close = block.find("</param>", pos)
-        cdata = block.find(_CDATA_OPEN, pos)
-        if cdata >= 0 and (close < 0 or cdata < close):
+        if close is not None and close.start() < pos:  # it lay inside a CDATA section
+            close = _PARAM_END.search(block, pos)
+        limit = close.start() if close is not None else len(block)
+        cdata = block.find(_CDATA_OPEN, pos, limit)
+        if cdata >= 0:
             parts.append(_unescape(block[pos:cdata]))
             end = block.find(_CDATA_CLOSE, cdata + len(_CDATA_OPEN))
             if end < 0:
@@ -88,10 +126,10 @@ def _read_value(block: str, pos: int) -> tuple[str, int] | None:
             parts.append(block[cdata + len(_CDATA_OPEN) : end])
             pos = end + len(_CDATA_CLOSE)
             continue
-        if close < 0:
+        if close is None:
             return None
-        parts.append(_unescape(block[pos:close]))
-        return "".join(parts), close + len("</param>")
+        parts.append(_unescape(block[pos : close.start()]))
+        return "".join(parts), close.end()
 
 
 def _scan_function(block: str) -> tuple[str, list[tuple[str, str]]] | None:
@@ -132,7 +170,6 @@ def _scan_function(block: str) -> tuple[str, list[tuple[str, str]]] | None:
     return (name, params) if _FUNCTION_CLOSE.match(block, pos) else None
 
 
-
 @ToolParserManager.register_module("minicpm")
 class MiniCPMToolParser(ToolParser):
     """Parse ``<function name=...><param name=...>...</param></function>``."""
@@ -153,12 +190,15 @@ class MiniCPMToolParser(ToolParser):
         opener_end = text.find(">", cursor)
         if opener_end != -1 and text[opener_end - 1] == "/":
             return opener_end + 1
+        close = text.find(_CLOSE, cursor)
         while True:
-            close = text.find(_CLOSE, cursor)
             if close == -1:
                 return None
-            cdata = text.find(_CDATA_OPEN, cursor)
-            if cdata == -1 or close < cdata:
+            if close < cursor:  # that close tag lay inside a CDATA section
+                close = text.find(_CLOSE, cursor)
+                continue
+            cdata = text.find(_CDATA_OPEN, cursor, close)
+            if cdata == -1:
                 return close + len(_CLOSE)
             cdata_end = text.find(_CDATA_CLOSE, cdata + len(_CDATA_OPEN))
             if cdata_end == -1:

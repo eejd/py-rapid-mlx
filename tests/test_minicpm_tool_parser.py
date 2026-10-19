@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from rapid_mlx.tool_parsers import MiniCPMToolParser, ToolParserManager
 
@@ -214,6 +215,47 @@ def test_value_with_markup_characters_without_cdata_is_data() -> None:
         )
         assert result.tools_called is True, value
         assert _arguments(result.tool_calls[0]) == {"text": expected, "count": 3}, value
+
+
+def test_character_references_decode_only_valid_xml_characters() -> None:
+    parser = MiniCPMToolParser()
+    for value, expected in (
+        ("&quot;&apos;", "\"'"),
+        # not valid XML characters (ElementTree rejected the call): stay as written;
+        # no cp1252 remapping, no U+FFFD substitution
+        ("&#0; &#xD800; &#x110000; &#8;", "&#0; &#xD800; &#x110000; &#8;"),
+        ("&#x80; &#x9F;", "\x80 \x9f"),
+        # an absurdly long numeric reference is data (html.unescape raised ValueError)
+        ("&#" + "1" * 5000 + ";", "&#" + "1" * 5000 + ";"),
+    ):
+        call = _echo_call("text", value)
+        result = parser.extract_tool_calls(call, _ECHO_REQUEST)
+        assert _arguments(result.tool_calls[0]) == {"text": expected}, value
+        streamed = parser.extract_tool_calls_streaming(
+            "", call, call, request=_ECHO_REQUEST
+        )
+        assert _arguments(streamed["tool_calls"][0]["function"]) == {"text": expected}
+
+
+def test_close_tag_with_inner_space_and_value_whitespace() -> None:
+    # `</param >` closes a parameter as it did with ElementTree; whitespace is kept
+    # as written (the quantbench reference trims a leading CDATA's surroundings and
+    # strip("\n")s plain strings: a documented difference)
+    result = MiniCPMToolParser().extract_tool_calls(
+        '<function name="echo_args"><param name="text">\n<![CDATA[x]]>\n</param >'
+        '<param name="count"> 3 </param></function>',
+        _ECHO_REQUEST,
+    )
+    assert _arguments(result.tool_calls[0]) == {"text": "\nx\n", "count": 3}
+
+
+def test_many_cdata_sections_scan_in_linear_time() -> None:
+    section = "<![CDATA[<a>]]>"
+    call = _echo_call("text", section * 100_000)
+    started = time.perf_counter()
+    result = MiniCPMToolParser().extract_tool_calls(call, _ECHO_REQUEST)
+    assert _arguments(result.tool_calls[0]) == {"text": "<a>" * 100_000}
+    assert time.perf_counter() - started < 5
 
 
 def test_invalid_self_closed_function_does_not_hide_next_tool_call() -> None:
