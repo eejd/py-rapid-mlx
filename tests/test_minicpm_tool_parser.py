@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from rapid_mlx.tool_parsers import MiniCPMToolParser, ToolParserManager
 
@@ -94,15 +95,167 @@ def test_rejects_invalid_or_incomplete_markup_without_losing_content() -> None:
         '<functionality name="not-a-tool"></functionality>',
         '<function name="bad"><param name="x">1</param>',
         '<function name="bad"><param name="x"><![CDATA[1</function>',
-        '<function name="bad"><param name="x">a & b</param></function>',
         '<function name="bad" extra="nope"><param name="x">1</param></function>',
         '<function name="bad"><param name="x">1</param><param name="x">2</param></function>',
-        '<function name="bad"><param name="x"><nested /></param></function>',
+        '<function name="bad"><param name="x">1</param> stray</function>',
+        '<function name=""><param name="x">1</param></function>',
     ):
         result = parser.extract_tool_calls(text)
         assert result.tools_called is False
         assert result.tool_calls == []
         assert result.content == text
+
+
+# Verbatim greedy outputs of MiniCPM5-2B-4bit (openbmb/MiniCPM5-2B-MLX@8a9ad75) for the
+# `tool_arg` cases of eejd/py-quantbench docs/evidence/model-qualification-2026-10-19/
+# minicpm5-2b-4bit/result.json, and the tool the case set declares.
+_ECHO_REQUEST = {
+    "tools": [
+        {
+            "type": "function",
+            "function": {
+                "name": "echo_args",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "count": {"type": "integer"},
+                        "flag": {"type": "boolean"},
+                        "items": {"type": "array", "items": {"type": "string"}},
+                        "nested": {"type": "object"},
+                    },
+                    "required": ["text"],
+                },
+            },
+        }
+    ]
+}
+_ECHO_RAW = {
+    "scalars-00": (
+        '<function name="echo_args"><param name="text">hand summer</param>'
+        '<param name="count">17</param><param name="flag">True</param></function>',
+        {"text": "hand summer", "count": 17, "flag": True},
+    ),
+    "list-01": (
+        '<function name="echo_args"><param name="text">list</param>'
+        "<param name=\"items\">['age', 'computer', 'issue']</param></function>",
+        {"text": "list", "items": ["age", "computer", "issue"]},
+    ),
+    "object-02": (
+        '<function name="echo_args"><param name="text">obj</param>'
+        "<param name=\"nested\">{'unit': 'a', 'depth': 2}</param></function>",
+        {"text": "obj", "nested": {"unit": "a", "depth": 2}},
+    ),
+    "markup-03": (
+        '<function name="echo_args"><param name="text">if student < way and '
+        "official > organization then <ok> & done</param></function>",
+        {"text": "if student < way and official > organization then <ok> & done"},
+    ),
+    "code-04": (
+        '<function name="echo_args"><param name="text">'
+        "<![CDATA[def canyon(x):\n    return x + 1]]></param></function>",
+        {"text": "def canyon(x):\n    return x + 1"},
+    ),
+    "object-17": (
+        '<function name="echo_args"><param name="text">obj</param>'
+        "<param name=\"nested\">{'unit': 'p', 'depth': 4}</param></function>",
+        {"text": "obj", "nested": {"unit": "p", "depth": 4}},
+    ),
+    "markup-18": (
+        '<function name="echo_args"><param name="text">if organization < state and '
+        "control > table then <ok> & done</param></function>",
+        {"text": "if organization < state and control > table then <ok> & done"},
+    ),
+}
+
+
+def _echo_call(key: str, value: str) -> str:
+    return f'<function name="echo_args"><param name="{key}">{value}</param></function>'
+
+
+def test_minicpm5_reference_raw_outputs_parse_to_the_declared_types() -> None:
+    parser = MiniCPMToolParser()
+    for case, (raw, expected) in _ECHO_RAW.items():
+        result = parser.extract_tool_calls(raw, _ECHO_REQUEST)
+        assert result.tools_called is True, case
+        assert result.content is None, case
+        assert [call["name"] for call in result.tool_calls] == ["echo_args"], case
+        assert _arguments(result.tool_calls[0]) == expected, case
+
+
+def test_python_literal_arrays_and_objects_follow_the_schema_type() -> None:
+    """The template renders ``str(list)``/``str(dict)``; JSON and literals both type."""
+    parser = MiniCPMToolParser()
+    for items in ("['a', 'b']", '["a", "b"]', "[ \"a\" , 'b' ]"):
+        result = parser.extract_tool_calls(_echo_call("items", items), _ECHO_REQUEST)
+        assert _arguments(result.tool_calls[0]) == {"items": ["a", "b"]}
+    # not a list/dict literal, or not declared as array/object: left as the string
+    for key, value in (("items", "a, b"), ("items", "(1, 2)"), ("text", "['a']")):
+        result = parser.extract_tool_calls(_echo_call(key, value), _ECHO_REQUEST)
+        assert _arguments(result.tool_calls[0]) == {key: value}
+
+
+def test_value_with_markup_characters_without_cdata_is_data() -> None:
+    parser = MiniCPMToolParser()
+    for value, expected in (
+        ("a < b", "a < b"),
+        ("a & b", "a & b"),
+        ("<ok>", "<ok>"),
+        ("<nested />", "<nested />"),
+        ("x</y>", "x</y>"),
+        # well-formed character references are decoded; a CDATA block is exact
+        ("a &amp; b &lt;c&gt; &#65;&#x42;", "a & b <c> AB"),
+        ("<![CDATA[ a &amp; <b> ]]>", " a &amp; <b> "),
+        ("<![CDATA[</param>]]> & <![CDATA[x]]>", "</param> & x"),
+    ):
+        result = parser.extract_tool_calls(
+            f'<function name="echo_args"><param name="text">{value}</param>'
+            '<param name="count">3</param></function>',
+            _ECHO_REQUEST,
+        )
+        assert result.tools_called is True, value
+        assert _arguments(result.tool_calls[0]) == {"text": expected, "count": 3}, value
+
+
+def test_character_references_decode_only_valid_xml_characters() -> None:
+    parser = MiniCPMToolParser()
+    for value, expected in (
+        ("&quot;&apos;", "\"'"),
+        # not valid XML characters (ElementTree rejected the call): stay as written;
+        # no cp1252 remapping, no U+FFFD substitution
+        ("&#0; &#xD800; &#x110000; &#8;", "&#0; &#xD800; &#x110000; &#8;"),
+        ("&#x80; &#x9F;", "\x80 \x9f"),
+        # an absurdly long numeric reference is data (html.unescape raised ValueError)
+        ("&#" + "1" * 5000 + ";", "&#" + "1" * 5000 + ";"),
+    ):
+        call = _echo_call("text", value)
+        result = parser.extract_tool_calls(call, _ECHO_REQUEST)
+        assert _arguments(result.tool_calls[0]) == {"text": expected}, value
+        streamed = parser.extract_tool_calls_streaming(
+            "", call, call, request=_ECHO_REQUEST
+        )
+        assert _arguments(streamed["tool_calls"][0]["function"]) == {"text": expected}
+
+
+def test_close_tag_with_inner_space_and_value_whitespace() -> None:
+    # `</param >` closes a parameter as it did with ElementTree; whitespace is kept
+    # as written (the quantbench reference trims a leading CDATA's surroundings and
+    # strip("\n")s plain strings: a documented difference)
+    result = MiniCPMToolParser().extract_tool_calls(
+        '<function name="echo_args"><param name="text">\n<![CDATA[x]]>\n</param >'
+        '<param name="count"> 3 </param></function>',
+        _ECHO_REQUEST,
+    )
+    assert _arguments(result.tool_calls[0]) == {"text": "\nx\n", "count": 3}
+
+
+def test_many_cdata_sections_scan_in_linear_time() -> None:
+    section = "<![CDATA[<a>]]>"
+    call = _echo_call("text", section * 100_000)
+    started = time.perf_counter()
+    result = MiniCPMToolParser().extract_tool_calls(call, _ECHO_REQUEST)
+    assert _arguments(result.tool_calls[0]) == {"text": "<a>" * 100_000}
+    assert time.perf_counter() - started < 5
 
 
 def test_invalid_self_closed_function_does_not_hide_next_tool_call() -> None:
@@ -337,3 +490,23 @@ def test_streaming_content_and_final_flush_behave_like_plain_text() -> None:
     )
     assert event is not None
     assert event["content"] == " after"
+
+
+def test_streaming_emits_a_call_whose_value_holds_markup_characters_once() -> None:
+    parser = MiniCPMToolParser()
+    text = _ECHO_RAW["markup-03"][0]
+    previous = ""
+    events = []
+    for cut in range(1, len(text) + 1):
+        current = text[:cut]
+        event = parser.extract_tool_calls_streaming(
+            previous, current, current[len(previous) :], request=_ECHO_REQUEST
+        )
+        if event is not None:
+            events.append(event)
+        previous = current
+
+    assert [event for event in events if "content" in event] == []
+    calls = [call for event in events for call in event["tool_calls"]]
+    assert len(calls) == 1
+    assert _arguments(calls[0]["function"]) == _ECHO_RAW["markup-03"][1]
