@@ -5576,6 +5576,25 @@
       },
       {
        "choices": [
+        "on",
+        "off"
+       ],
+       "class": "argparse._StoreAction",
+       "completer": null,
+       "const": null,
+       "default": null,
+       "dest": "tool_use_system_suffix",
+       "help": "Whether the chat route appends its default tool-use instruction ('IMPORTANT: When the user's request can be answered using the provided tools, you MUST use the appropriate tool immediately ...', about 145 tokens) to the system prompt of every request that carries tools while a tool parser is active (tool_choice auto or unset). 'on' is upstream's behaviour; 'off' appends nothing, so the model sees the client's own system prompt and tool definitions as its chat template renders them. tool_choice=required / named-function suffixes are not affected (always injected). Default: off. Env fallback: RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX (the flag wins).",
+       "metavar": "{on,off}",
+       "nargs": null,
+       "option_strings": [
+        "--tool-use-system-suffix"
+       ],
+       "required": false,
+       "type": "builtins.str"
+      },
+      {
+       "choices": [
         "gemma4",
         "qwen3",
         "hy_v3",
@@ -6367,6 +6386,7 @@
         "enable_auto_tool_choice",
         "tool_call_parser",
         "enable_tool_logits_bias",
+        "tool_use_system_suffix",
         "reasoning_parser",
         "default_reasoning_effort",
         "no_thinking",

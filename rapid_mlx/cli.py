@@ -6627,6 +6627,12 @@ def serve_command(args):
     # #3714 --default-reasoning-effort: server-wide effort for requests
     # that carry no reasoning knob (see maybe_apply_default_reasoning_effort)
     server._default_reasoning_effort = getattr(args, "default_reasoning_effort", None)
+    # --tool-use-system-suffix / RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX: whether the chat
+    # route appends the default tool-use instruction to tool requests (on = upstream,
+    # off = this fork's default)
+    server._tool_use_system_suffix = server._resolve_tool_use_system_suffix(
+        getattr(args, "tool_use_system_suffix", None)
+    )
 
     # Configure system prompt pinning
     server._pin_system_prompt = args.pin_system_prompt

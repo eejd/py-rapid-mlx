@@ -1492,6 +1492,26 @@ def _add_serve_parser(
         help="Bias logits toward structural tool call tokens for faster generation. "
         "Only active when --tool-call-parser is also set. Currently supports minimax.",
     )
+    serve_parser.add_argument(
+        "--tool-use-system-suffix",
+        dest="tool_use_system_suffix",
+        type=str,
+        default=None,
+        choices=("on", "off"),
+        metavar="{on,off}",
+        help=(
+            "Whether the chat route appends its default tool-use instruction "
+            "('IMPORTANT: When the user's request can be answered using the provided "
+            "tools, you MUST use the appropriate tool immediately ...', about 145 "
+            "tokens) to the system prompt of every request that carries tools while a "
+            "tool parser is active (tool_choice auto or unset). 'on' is upstream's "
+            "behaviour; 'off' appends nothing, so the model sees the client's own "
+            "system prompt and tool definitions as its chat template renders them. "
+            "tool_choice=required / named-function suffixes are not affected (always "
+            "injected). Default: off. Env fallback: RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX "
+            "(the flag wins)."
+        ),
+    )
     # Reasoning parser options - choices loaded dynamically from registry
     from .api.models import _VALID_REASONING_EFFORTS
     from .reasoning import list_parsers
