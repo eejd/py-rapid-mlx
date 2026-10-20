@@ -4747,9 +4747,12 @@ async def _create_chat_completion_impl(
             _named = (tc.get("function") or {}).get("name")
             if _named:
                 _inject_suffix = _tool_use_required_named_suffix(_named)
-            else:
+            elif cfg.tool_use_system_suffix:
                 _inject_suffix = _TOOL_USE_SYSTEM_SUFFIX
-        else:
+        elif cfg.tool_use_system_suffix:
+            # ``serve --tool-use-system-suffix off`` drops exactly this default
+            # instruction; the strict tool_choice=required suffixes above are a
+            # client's explicit request and stay.
             _inject_suffix = _TOOL_USE_SYSTEM_SUFFIX
     elif cfg.reasoning_parser_name == "minimax":
         _inject_suffix = (

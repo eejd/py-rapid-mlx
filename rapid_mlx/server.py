@@ -336,6 +336,33 @@ _api_key: str | None = None
 _auth_warning_logged: bool = False
 
 
+TOOL_USE_SYSTEM_SUFFIX_ENV = "RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX"
+TOOL_USE_SYSTEM_SUFFIX_CHOICES = ("on", "off")
+
+
+def _resolve_tool_use_system_suffix(argv_value: str | None) -> bool:
+    """Resolve ``--tool-use-system-suffix`` (``on``/``off``): argv, then the env var, then on.
+
+    ``on`` keeps the upstream behaviour (the default tool-use instruction is appended
+    to the system prompt of every tool request while a tool parser is active); ``off``
+    removes exactly that text. An invalid env value is an error, not a silent default:
+    the knob changes the prompt the model sees.
+    """
+    value = argv_value
+    source = "--tool-use-system-suffix"
+    if value is None:
+        value = os.environ.get(TOOL_USE_SYSTEM_SUFFIX_ENV, "").strip().lower() or None
+        source = TOOL_USE_SYSTEM_SUFFIX_ENV
+    if value is None:
+        return True
+    if value not in TOOL_USE_SYSTEM_SUFFIX_CHOICES:
+        raise SystemExit(
+            f"error: {source}={value!r} is not one of "
+            f"{', '.join(TOOL_USE_SYSTEM_SUFFIX_CHOICES)}"
+        )
+    return value == "on"
+
+
 def _resolve_api_key(argv_value: str | None) -> str | None:
     """Resolve the effective API key with env-var fallback.
 
@@ -388,6 +415,10 @@ _enable_auto_tool_choice: bool = False
 _tool_call_parser: str | None = None  # Parser name: auto, mistral, qwen, llama, hermes
 _tool_parser_instance = None  # Instantiated parser
 _enable_tool_logits_bias: bool = False  # Jump-forward decoding for tool calls
+# ``serve --tool-use-system-suffix`` / ``RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX``: append
+# the default tool-use instruction (``_TOOL_USE_SYSTEM_SUFFIX``) to the system prompt
+# of tool requests. On by default; pushed into ``ServerConfig`` by ``_sync_config``.
+_tool_use_system_suffix: bool = True
 
 # GC control (Tier 0 optimization)
 _gc_control: bool = True  # Disable GC during generation to avoid latency spikes
@@ -3341,6 +3372,7 @@ def _sync_config() -> None:
     cfg.tool_call_parser = _tool_call_parser
     cfg.tool_parser_instance = _tool_parser_instance
     cfg.enable_tool_logits_bias = _enable_tool_logits_bias
+    cfg.tool_use_system_suffix = _tool_use_system_suffix
     cfg.reasoning_parser = _reasoning_parser
     cfg.reasoning_parser_name = _reasoning_parser_name
     cfg.default_reasoning_effort = _default_reasoning_effort
@@ -3918,6 +3950,25 @@ Examples:
         help="Enable jump-forward decoding bias for tool call structural tokens",
     )
     parser.add_argument(
+        "--tool-use-system-suffix",
+        dest="tool_use_system_suffix",
+        type=str,
+        default=None,
+        choices=("on", "off"),
+        metavar="{on,off}",
+        help=(
+            "Whether the chat route appends its default tool-use instruction "
+            "('IMPORTANT: When the user's request can be answered using the provided "
+            "tools, you MUST use the appropriate tool immediately ...', about 145 "
+            "tokens) to the system prompt of every request that carries tools while a "
+            "tool parser is active (tool_choice auto or unset). 'off' removes exactly "
+            "that text: the model sees the client's own system prompt and tool "
+            "definitions, as in the model's chat template. tool_choice=required / "
+            "named-function suffixes are not affected. Default: on (upstream "
+            "behaviour). Env fallback: RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX."
+        ),
+    )
+    parser.add_argument(
         "--embedding-model",
         type=str,
         default=None,
@@ -4148,6 +4199,10 @@ def main():
     # without this the gate would silently advertise audio on the next
     # text-only boot.
     _enable_audio_lane = bool(getattr(args, "enable_audio", False))
+    global _tool_use_system_suffix
+    _tool_use_system_suffix = _resolve_tool_use_system_suffix(
+        getattr(args, "tool_use_system_suffix", None)
+    )
     # Env-fallback for the bearer key: keep it out of argv where
     # ``ps -ef`` would leak it. ``_resolve_api_key`` is the single
     # SSOT for the policy (inline-wins, env-fallback) — see its
