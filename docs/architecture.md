@@ -117,7 +117,8 @@ Client POST /v1/chat/completions (stream=true)
 routes/chat.py: create_chat_completion()
     ├── Validate request
     ├── Apply chat template
-    ├── Inject tool/reasoning system prompts
+    ├── Inject tool/reasoning system prompts (the default tool-use suffix only with
+    │   --tool-use-system-suffix on; tool_choice=required/named suffixes always)
     ↓
 routes/chat.py: stream_chat_completion()
     ├── Create StreamingPostProcessor (per-request parser instances)
