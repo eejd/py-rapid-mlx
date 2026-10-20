@@ -1504,11 +1504,12 @@ def _add_serve_parser(
             "('IMPORTANT: When the user's request can be answered using the provided "
             "tools, you MUST use the appropriate tool immediately ...', about 145 "
             "tokens) to the system prompt of every request that carries tools while a "
-            "tool parser is active (tool_choice auto or unset). 'off' removes exactly "
-            "that text: the model sees the client's own system prompt and tool "
-            "definitions, as in the model's chat template. tool_choice=required / "
-            "named-function suffixes are not affected. Default: on (upstream "
-            "behaviour). Env fallback: RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX."
+            "tool parser is active (tool_choice auto or unset). 'on' is upstream's "
+            "behaviour; 'off' appends nothing, so the model sees the client's own "
+            "system prompt and tool definitions as its chat template renders them. "
+            "tool_choice=required / named-function suffixes are not affected (always "
+            "injected). Default: off. Env fallback: RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX "
+            "(the flag wins)."
         ),
     )
     # Reasoning parser options - choices loaded dynamically from registry

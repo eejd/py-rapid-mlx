@@ -341,12 +341,13 @@ TOOL_USE_SYSTEM_SUFFIX_CHOICES = ("on", "off")
 
 
 def _resolve_tool_use_system_suffix(argv_value: str | None) -> bool:
-    """Resolve ``--tool-use-system-suffix`` (``on``/``off``): argv, then the env var, then on.
+    """Resolve ``--tool-use-system-suffix`` (``on``/``off``): argv, then the env var, then off.
 
-    ``on`` keeps the upstream behaviour (the default tool-use instruction is appended
-    to the system prompt of every tool request while a tool parser is active); ``off``
-    removes exactly that text. An invalid env value is an error, not a silent default:
-    the knob changes the prompt the model sees.
+    ``on`` is the upstream behaviour (the default tool-use instruction is appended to
+    the system prompt of every tool request while a tool parser is active); ``off``, the
+    default of this fork, appends nothing. Rapid-MLX has no config file for serve
+    options, so the precedence is flag > env > default. An invalid value is an error,
+    not a silent default: the knob changes the prompt the model sees.
     """
     value = argv_value
     source = "--tool-use-system-suffix"
@@ -354,7 +355,7 @@ def _resolve_tool_use_system_suffix(argv_value: str | None) -> bool:
         value = os.environ.get(TOOL_USE_SYSTEM_SUFFIX_ENV, "").strip().lower() or None
         source = TOOL_USE_SYSTEM_SUFFIX_ENV
     if value is None:
-        return True
+        return False
     if value not in TOOL_USE_SYSTEM_SUFFIX_CHOICES:
         raise SystemExit(
             f"error: {source}={value!r} is not one of "
@@ -417,8 +418,9 @@ _tool_parser_instance = None  # Instantiated parser
 _enable_tool_logits_bias: bool = False  # Jump-forward decoding for tool calls
 # ``serve --tool-use-system-suffix`` / ``RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX``: append
 # the default tool-use instruction (``_TOOL_USE_SYSTEM_SUFFIX``) to the system prompt
-# of tool requests. On by default; pushed into ``ServerConfig`` by ``_sync_config``.
-_tool_use_system_suffix: bool = True
+# of tool requests. Off by default (a deliberate divergence from upstream, which always
+# injects it); pushed into ``ServerConfig`` by ``_sync_config``.
+_tool_use_system_suffix: bool = False
 
 # GC control (Tier 0 optimization)
 _gc_control: bool = True  # Disable GC during generation to avoid latency spikes
@@ -3961,11 +3963,12 @@ Examples:
             "('IMPORTANT: When the user's request can be answered using the provided "
             "tools, you MUST use the appropriate tool immediately ...', about 145 "
             "tokens) to the system prompt of every request that carries tools while a "
-            "tool parser is active (tool_choice auto or unset). 'off' removes exactly "
-            "that text: the model sees the client's own system prompt and tool "
-            "definitions, as in the model's chat template. tool_choice=required / "
-            "named-function suffixes are not affected. Default: on (upstream "
-            "behaviour). Env fallback: RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX."
+            "tool parser is active (tool_choice auto or unset). 'on' is upstream's "
+            "behaviour; 'off' appends nothing, so the model sees the client's own "
+            "system prompt and tool definitions as its chat template renders them. "
+            "tool_choice=required / named-function suffixes are not affected (always "
+            "injected). Default: off. Env fallback: RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX "
+            "(the flag wins)."
         ),
     )
     parser.add_argument(

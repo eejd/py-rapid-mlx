@@ -121,6 +121,9 @@ def _make_client(
     cfg.model_registry = None
     cfg.no_thinking = True
     cfg.tool_call_parser = tool_call_parser
+    # This fork's default is --tool-use-system-suffix off; these tests exercise the
+    # injection (upstream behaviour), so the harness turns it on.
+    cfg.tool_use_system_suffix = True
     app = FastAPI()
     app.include_router(chat_router)
     return TestClient(app)

@@ -144,8 +144,8 @@ ALLOWED_RAPID_MLX_ENV_VARS: frozenset[str] = frozenset(
         "RAPID_MLX_TENSORFOLD_AUDIT_PATH",
         # Prompt-text knob: whether the chat route appends its default tool-use
         # instruction to the system prompt of tool requests (the env fallback of
-        # ``--tool-use-system-suffix on|off``). It selects no model, parser, tier,
-        # engine or lane; an invalid value is a startup error.
+        # ``--tool-use-system-suffix on|off``, default off). It selects no model,
+        # parser, tier, engine or lane; an invalid value is a startup error.
         "RAPID_MLX_TOOL_USE_SYSTEM_SUFFIX",
         # Security policy knobs, none of which selects a model, parser, tier,
         # or engine route. TRUST_REMOTE_CODE only constrains whether an

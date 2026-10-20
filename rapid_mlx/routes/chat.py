@@ -4750,9 +4750,9 @@ async def _create_chat_completion_impl(
             elif cfg.tool_use_system_suffix:
                 _inject_suffix = _TOOL_USE_SYSTEM_SUFFIX
         elif cfg.tool_use_system_suffix:
-            # ``serve --tool-use-system-suffix off`` drops exactly this default
-            # instruction; the strict tool_choice=required suffixes above are a
-            # client's explicit request and stay.
+            # Only with ``serve --tool-use-system-suffix on`` (off is the default
+            # of this fork); the strict tool_choice=required suffixes above are a
+            # client's explicit request and are always injected.
             _inject_suffix = _TOOL_USE_SYSTEM_SUFFIX
     elif cfg.reasoning_parser_name == "minimax":
         _inject_suffix = (

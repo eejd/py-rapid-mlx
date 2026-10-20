@@ -135,9 +135,9 @@ class ServerConfig:
     enable_tool_logits_bias: bool = False
     # ``serve --tool-use-system-suffix on|off``: whether the chat route appends
     # ``_TOOL_USE_SYSTEM_SUFFIX`` to the system prompt of a request that carries tools
-    # while a tool parser is active (``tool_choice`` auto or unset). ``True`` is the
-    # upstream behaviour.
-    tool_use_system_suffix: bool = True
+    # while a tool parser is active (``tool_choice`` auto or unset). ``False`` (off) is
+    # the default of this fork; upstream always injects it (``True`` reproduces that).
+    tool_use_system_suffix: bool = False
 
     # --- Reasoning ---
     reasoning_parser: Any = None
