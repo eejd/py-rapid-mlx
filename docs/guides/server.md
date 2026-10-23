@@ -490,6 +490,33 @@ response = client.completions.create(
 )
 ```
 
+#### Fixed-length output: `ignore_eos`
+
+`POST /v1/chat/completions`, `POST /v1/completions` and `POST /v1/responses`
+accept `"ignore_eos": true` (vLLM / llama.cpp / guidellm semantics). The model's
+own end-of-sequence and chat-terminator tokens (for Llama 3 `<|eot_id|>`,
+`<|end_of_text|>`, `<|eom_id|>`; for Qwen `<|im_end|>`, `<|endoftext|>`) no
+longer end the request, so it runs until `max_tokens` and
+`usage.completion_tokens` equals `max_tokens` (`finish_reason: "length"`), for
+streaming and non-streaming alike. Use it for fixed-output-length load tests.
+
+- Absent, `null` or `false`: nothing changes. Any other type (`"true"`, `1`)
+  is rejected with HTTP 400.
+- `stop` strings, `stop_token_ids` and `max_tokens` still end the request.
+- An ignored EOS token counts in `completion_tokens` and `logprobs` but adds no
+  text; what the model writes after it (usually a new turn) is returned as
+  generated.
+- A batch can mix `ignore_eos` and default requests; the scheduler keeps the two
+  kinds in separate generators, so a request of the other kind waits for the
+  running batch to drain (latency, not correctness).
+- Honoured by the batched text scheduler (including the MTP, continuous-MTP and
+  suffix paths that run inside it) and by the multimodal scheduler. Not honoured
+  where the output is not ended by the model's EOS in the first place: the
+  grammar-constrained `response_format` (JSON schema) lane ends when the grammar
+  accepts, and the text-diffusion engine ends on its own stopping criteria. The
+  serial speculative servers (`--enable-dflash`, `--enable-ddtree`, native MTP,
+  TensorFold, DSpark, DeepSeek V4.1) cannot suppress EOS and answer HTTP 400.
+
 ### Models
 
 ```bash

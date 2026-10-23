@@ -1020,6 +1020,12 @@ def _build_app(
             unsupported_samplers.append("dry_multiplier")
         if getattr(request, "repetition_penalty_range", None) is not None:
             unsupported_samplers.append("repetition_penalty_range")
+        # ``ignore_eos`` is an engine-lane (scheduler) feature. These serial
+        # speculative servers end a request on the target's EOS inside
+        # mlx-vlm / the native-MTP transaction and cannot suppress it, so a
+        # fixed-length client must be told rather than get a short answer.
+        if getattr(request, "ignore_eos", None) is True:
+            unsupported_samplers.append("ignore_eos")
         if unsupported_samplers:
             raise HTTPException(
                 status_code=400,

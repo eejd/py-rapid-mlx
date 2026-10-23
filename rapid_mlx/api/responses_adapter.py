@@ -652,6 +652,7 @@ def responses_to_openai(
         # parse, validate, and stop here — the ChatCompletionRequest
         # the rest of the pipeline reads would carry None.
         seed=request.seed,
+        ignore_eos=request.ignore_eos,
         # R12-M2 (Mira r12 / finding R-1) — forward the two
         # thinking-control knobs so ``_resolve_enable_thinking``
         # (which the rest of the /v1/responses pipeline calls on the

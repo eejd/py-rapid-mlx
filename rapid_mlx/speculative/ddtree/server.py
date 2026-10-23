@@ -361,6 +361,11 @@ def _validate_request(request: ChatCompletionRequest) -> None:
                 "the model's EOS/chat-template stops still apply."
             ),
         )
+    if getattr(request, "ignore_eos", None) is True:
+        raise HTTPException(
+            status_code=400,
+            detail="ignore_eos is not supported in DDTree mode.",
+        )
 
 
 def _validate_model_name(request_model: str | None, *, served_model_name: str) -> None:
