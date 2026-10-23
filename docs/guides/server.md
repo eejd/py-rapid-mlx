@@ -522,9 +522,9 @@ streaming and non-streaming alike. Use it for fixed-output-length load tests.
 - Not honoured: the text-diffusion engine (it ends on its own stopping criteria;
   the field is ignored like other sampling controls it does not read). The
   serial speculative servers (`--enable-dflash`, `--enable-ddtree`, native MTP,
-  TensorFold, DSpark, DeepSeek V4.1) answer HTTP 400: the field is not wired
-  into them (some of their code has an `ignore_eos` parameter that the request
-  field does not reach).
+  TensorFold, DSpark, DeepSeek V4.1) answer HTTP 400: the request field is not
+  forwarded to them (some of their code has an `ignore_eos` parameter; whether
+  it could be fed from the request was not established).
 
 ### Models
 
