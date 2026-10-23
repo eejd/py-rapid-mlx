@@ -1020,6 +1020,15 @@ def _build_app(
             unsupported_samplers.append("dry_multiplier")
         if getattr(request, "repetition_penalty_range", None) is not None:
             unsupported_samplers.append("repetition_penalty_range")
+        # ``ignore_eos`` is wired into the scheduler lanes only. These serial
+        # speculative servers end a request on the target's EOS (mlx-vlm / the
+        # native-MTP transaction) and nothing here forwards the request field
+        # to them (the TensorFold and DeepSeek V4.1 code has an ``ignore_eos``
+        # parameter; whether it could be fed from the request was not
+        # established), so a fixed-length client is told rather than given a
+        # short answer.
+        if getattr(request, "ignore_eos", None) is True:
+            unsupported_samplers.append("ignore_eos")
         if unsupported_samplers:
             raise HTTPException(
                 status_code=400,

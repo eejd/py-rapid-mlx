@@ -517,6 +517,44 @@ def _validate_seed(v) -> int | None:
     return v
 
 
+def _validate_ignore_eos(v) -> bool | None:
+    """``ignore_eos`` is a JSON boolean (``null`` = absent).
+
+    Pydantic's lax bool would turn ``"yes"``, ``"false"``, ``0`` and ``1``
+    into booleans. A load-test client that sends the string ``"false"`` and
+    gets EOS suppression anyway (or the reverse) produces exactly the wrong
+    run length without any error, so anything that is not a real boolean is
+    rejected at the schema layer.
+    """
+    if v is None or isinstance(v, bool):
+        return v
+    raise ValueError(f"ignore_eos must be a boolean (got {type(v).__name__})")
+
+
+def _reject_ignore_eos_with_json_schema(ignore_eos, response_format) -> None:
+    """``ignore_eos: true`` cannot be combined with a JSON-schema response format.
+
+    A ``json_schema`` request runs through a grammar that ends the answer at
+    the accepting state: the non-scheduler guided lane stops there and never
+    sees ``ignore_eos``, and on a multimodal engine the grammar processor
+    forces one of the model's EOS ids once the value is complete, ids that
+    ``ignore_eos`` removes from the stop set, so the run would be padded to
+    ``max_tokens`` with EOS tokens. A fixed-length client asking for both
+    would get a wrong-length run either way; say so instead.
+    """
+    if ignore_eos is not True or response_format is None:
+        return
+    if isinstance(response_format, dict):
+        rf_type = response_format.get("type")
+    else:
+        rf_type = getattr(response_format, "type", None)
+    if rf_type == "json_schema":
+        raise ValueError(
+            "ignore_eos is not supported together with response_format "
+            "type 'json_schema': the schema grammar ends the output by itself"
+        )
+
+
 # R10-H5 (R9-H3 carry) — closed set of values accepted by OpenAI's
 # ``reasoning_effort`` parameter. Pre-fix BOTH ``/v1/chat/completions``
 # and ``/v1/responses`` silently accepted any value (string, int, list,
@@ -1716,6 +1754,13 @@ class ChatCompletionRequest(BaseModel):
     # OpenAI seed values and broke compatibility for clients using the
     # broader documented integer range.
     seed: int | None = None
+    # vLLM / llama.cpp / guidellm ``ignore_eos``: do not end the request at
+    # the model's EOS / chat-terminator tokens; generate until
+    # ``max_tokens`` (or a user ``stop`` string / ``stop_token_ids``). Used
+    # by fixed-output-length load tests. ``None`` / ``False`` = unchanged
+    # behaviour. Flows through ``build_extended_sampling_kwargs`` into
+    # ``SamplingParams.ignore_eos``.
+    ignore_eos: bool | None = None
 
     # F-011: NaN/inf scrub on the raw dict, BEFORE Pydantic coerces a
     # bad value onto the typed float slot. Needed because (a) Field
@@ -1871,6 +1916,16 @@ class ChatCompletionRequest(BaseModel):
     @classmethod
     def _validate_seed_field(cls, v) -> int | None:
         return _validate_seed(v)
+
+    @field_validator("ignore_eos", mode="before")
+    @classmethod
+    def _validate_ignore_eos_field(cls, v) -> bool | None:
+        return _validate_ignore_eos(v)
+
+    @model_validator(mode="after")
+    def _reject_ignore_eos_with_schema(self):
+        _reject_ignore_eos_with_json_schema(self.ignore_eos, self.response_format)
+        return self
 
     # R10-H5 (R9-H3 carry) — closed-set gate on ``reasoning_effort``.
     # ``mode="before"`` so non-string wire forms (int, list, dict,
@@ -2375,6 +2430,8 @@ class CompletionRequest(BaseModel):
     # Unbounded at the request layer (codex round-6); backend uint32
     # narrowing happens in ``make_seeded_sampler``.
     seed: int | None = None
+    # ``ignore_eos`` — see ChatCompletionRequest.ignore_eos.
+    ignore_eos: bool | None = None
     # R10-H4 (R9-H2 carry) — ``response_format`` on legacy completions.
     # Vlad r10-R1 + Bo r10-R1: ``/v1/completions`` with
     # ``response_format={"type":"json_object"}`` silently accepted the
@@ -2478,6 +2535,16 @@ class CompletionRequest(BaseModel):
     @classmethod
     def _validate_seed_field(cls, v) -> int | None:
         return _validate_seed(v)
+
+    @field_validator("ignore_eos", mode="before")
+    @classmethod
+    def _validate_ignore_eos_field(cls, v) -> bool | None:
+        return _validate_ignore_eos(v)
+
+    @model_validator(mode="after")
+    def _reject_ignore_eos_with_schema(self):
+        _reject_ignore_eos_with_json_schema(self.ignore_eos, self.response_format)
+        return self
 
     @model_validator(mode="before")
     @classmethod

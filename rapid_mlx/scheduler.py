@@ -4819,6 +4819,18 @@ class Scheduler:
                 stop_tokens.update(extras)
         return stop_tokens
 
+    def _model_stop_token_ids(self) -> frozenset[int]:
+        """The model's EOS / chat-terminator ids, computed once per scheduler.
+
+        Used to keep an EOS that an ``ignore_eos`` request generated out of
+        the text stream (see the decode step in ``_process_batch_responses``).
+        """
+        ids = getattr(self, "_model_stop_token_ids_cache", None)
+        if ids is None:
+            ids = frozenset(self._get_stop_tokens())
+            self._model_stop_token_ids_cache = ids
+        return ids
+
     def _get_request_sampler(self, sampling_params: SamplingParams) -> Any:
         """Return a cached sampler for these sampling params.
 
@@ -10149,7 +10161,13 @@ class Scheduler:
 
             # Decode the new token using IncrementalDecoder for multi-byte
             # safety (emoji, CJK). Skip stop tokens — they are not content.
-            if response.finish_reason == "stop":
+            # An EOS the request ignores (``ignore_eos``) is the same control
+            # token: counted and kept in ``output_token_ids``, but it adds no
+            # text.
+            if response.finish_reason == "stop" or (
+                request.sampling_params.ignore_eos
+                and response.token in self._model_stop_token_ids()
+            ):
                 new_text = ""
             else:
                 decoder = getattr(request, "_decoder", None)
@@ -10222,6 +10240,7 @@ class Scheduler:
             if (
                 finish_reason is None
                 and request.has_tools
+                and not request.sampling_params.ignore_eos
                 and request.num_output_tokens % 8 == 0
             ):
                 repetition_match = detect_repeated_token_suffix(

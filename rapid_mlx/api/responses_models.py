@@ -24,6 +24,8 @@ from .models import (
     PerRequestMetrics,
     ResponseFormat,
     StreamOptions,
+    _reject_ignore_eos_with_json_schema,
+    _validate_ignore_eos,
     _validate_nonnegative_int,
     _validate_positive_int,
     _validate_reasoning_effort,
@@ -270,6 +272,9 @@ class ResponsesRequest(BaseModel):
     # downstream in ``make_seeded_sampler`` (parity with the chat /
     # legacy completion surfaces).
     seed: int | None = None
+    # ``ignore_eos`` — see ChatCompletionRequest.ignore_eos; forwarded by
+    # ``responses_to_openai`` to the materialized ChatCompletionRequest.
+    ignore_eos: bool | None = None
     # r6-A R6-H8: ``top_k`` upper-bound gate on the Responses surface.
     # r5-E B-7 (PR #824) landed the shared ``_validate_nonnegative_int``
     # validator + ``_TOP_K_SENTINEL_CAP = 1 << 20`` ceiling on
@@ -331,6 +336,19 @@ class ResponsesRequest(BaseModel):
     @classmethod
     def _validate_seed_field(cls, v) -> int | None:
         return _validate_seed(v)
+
+    @field_validator("ignore_eos", mode="before")
+    @classmethod
+    def _validate_ignore_eos_field(cls, v) -> bool | None:
+        return _validate_ignore_eos(v)
+
+    @model_validator(mode="after")
+    def _reject_ignore_eos_with_schema(self):
+        _reject_ignore_eos_with_json_schema(self.ignore_eos, self.response_format)
+        fmt = (self.text or {}).get("format")
+        if isinstance(fmt, dict):
+            _reject_ignore_eos_with_json_schema(self.ignore_eos, fmt)
+        return self
 
     # R14 task #293: share the same response_format dict-arm validator
     # the chat / completions surfaces use so the shape gates (strict

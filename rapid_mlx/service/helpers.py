@@ -2689,6 +2689,12 @@ def build_extended_sampling_kwargs(request) -> dict:
     window = getattr(request, "repetition_penalty_range", None)
     if isinstance(window, int) and not isinstance(window, bool):
         kwargs["repetition_context_size"] = window
+    # ``ignore_eos: true`` suppresses the model's EOS / chat-terminator
+    # tokens so the request runs to ``max_tokens``. Forward it only when
+    # true: absent / ``false`` keeps the key out of the kwargs, which is
+    # exactly the engine default (``SamplingParams.ignore_eos=False``).
+    if getattr(request, "ignore_eos", None) is True:
+        kwargs["ignore_eos"] = True
     return kwargs
 
 

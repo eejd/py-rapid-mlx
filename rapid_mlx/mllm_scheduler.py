@@ -1190,7 +1190,13 @@ class MLLMScheduler:
                 self._detokenizer_pool[request_id] = detok
             detok = self._detokenizer_pool[request_id]
             stop_params = [s for s in request.stop if s] if request.stop else []
-            if token_is_control_stop_token:
+            # An EOS the request ignores (``ignore_eos``) stays a counted
+            # output token (it is not a control stop here) but adds no text.
+            token_is_ignored_eos = (
+                request.sampling_params.ignore_eos
+                and response.token in self.stop_tokens
+            )
+            if token_is_control_stop_token or token_is_ignored_eos:
                 new_text = ""
             else:
                 detok.add_token(response.token)
