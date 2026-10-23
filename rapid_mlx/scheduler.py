@@ -10241,6 +10241,7 @@ class Scheduler:
                 finish_reason is None
                 and request.has_tools
                 and not request.sampling_params.ignore_eos
+                and request.num_output_tokens % 8 == 0
             ):
                 repetition_match = detect_repeated_token_suffix(
                     request.output_token_ids

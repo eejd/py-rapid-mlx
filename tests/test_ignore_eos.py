@@ -31,7 +31,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from rapid_mlx.api.models import ChatCompletionRequest, CompletionRequest
+from rapid_mlx.api.models import (
+    ChatCompletionRequest,
+    CompletionRequest,
+    ResponseFormat,
+    ResponseFormatJsonSchema,
+)
 from rapid_mlx.api.responses_adapter import responses_to_openai
 from rapid_mlx.api.responses_models import ResponsesRequest
 from rapid_mlx.config import reset_config
@@ -74,6 +79,86 @@ def test_schema_rejects_everything_that_is_not_a_boolean(make, value) -> None:
     """Pydantic's lax bool would read ``"false"`` as False and ``1`` as True."""
     with pytest.raises(ValidationError, match="ignore_eos must be a boolean"):
         make(ignore_eos=value)
+
+
+_SCHEMA_RF = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "x",
+        "schema": {"type": "object", "properties": {"a": {"type": "string"}}},
+    },
+}
+
+
+@pytest.mark.parametrize("make", SCHEMAS, ids=["chat", "completions", "responses"])
+def test_schema_rejects_ignore_eos_with_json_schema_response_format(make) -> None:
+    """The schema grammar ends the answer; a fixed-length run cannot be had."""
+    with pytest.raises(ValidationError, match="response_format type 'json_schema'"):
+        make(ignore_eos=True, response_format=_SCHEMA_RF)
+    with pytest.raises(ValidationError, match="response_format type 'json_schema'"):
+        make(
+            ignore_eos=True,
+            response_format=ResponseFormat(
+                type="json_schema",
+                json_schema=ResponseFormatJsonSchema(
+                    name="x", schema={"type": "object"}
+                ),
+            ),
+        )
+
+
+@pytest.mark.parametrize("make", SCHEMAS, ids=["chat", "completions", "responses"])
+@pytest.mark.parametrize("ignore_eos", [None, False])
+def test_json_schema_response_format_is_unchanged_without_ignore_eos(
+    make, ignore_eos
+) -> None:
+    assert make(ignore_eos=ignore_eos, response_format=_SCHEMA_RF).response_format
+
+
+@pytest.mark.parametrize("make", SCHEMAS, ids=["chat", "completions", "responses"])
+def test_ignore_eos_with_json_object_response_format_is_accepted(make) -> None:
+    """``json_object`` is not a grammar lane: the model still ends it."""
+    req = make(ignore_eos=True, response_format={"type": "json_object"})
+    assert req.ignore_eos is True
+
+
+def test_responses_text_format_json_schema_is_rejected_too() -> None:
+    with pytest.raises(ValidationError, match="response_format type 'json_schema'"):
+        _responses(
+            ignore_eos=True,
+            text={"format": {"type": "json_schema", "name": "x", "schema": {"a": 1}}},
+        )
+    assert _responses(ignore_eos=True, text={"format": {"type": "text"}}).ignore_eos
+
+
+@pytest.mark.parametrize("surface", ["chat", "responses"])
+def test_routes_answer_400_for_ignore_eos_with_json_schema(surface) -> None:
+    engine = _RouteRecordingEngine(is_mllm=True)
+    client = _route_client(surface, engine)
+    if surface == "chat":
+        path = "/v1/chat/completions"
+        body = {
+            "model": "lane-parity-test",
+            "messages": [{"role": "user", "content": "hello"}],
+            "response_format": _SCHEMA_RF,
+        }
+    else:
+        path = "/v1/responses"
+        body = {
+            "model": "lane-parity-test",
+            "input": "hello",
+            "text": {
+                "format": {"type": "json_schema", "name": "x", "schema": {"a": 1}}
+            },
+        }
+    try:
+        response = client.post(path, json={**body, "ignore_eos": True})
+        assert response.status_code == 400, response.text
+        assert "ignore_eos" in response.text
+        assert "input_value" not in response.text  # no request echo
+        assert engine.calls == []
+    finally:
+        reset_config()
 
 
 # ------------------------------------------------- sampling kwargs + adapter
@@ -433,6 +518,49 @@ def test_text_scheduler_repetition_abort_is_off_under_ignore_eos() -> None:
         scheduler.uid_to_request_id[0] = "r"
         (out,), _ = scheduler._process_batch_responses([_response(pattern[-1])])
         assert out.finish_reason == expected_finish
+
+
+@pytest.mark.parametrize(
+    "length,expected_finish",
+    [(76, None), (80, "abort"), (84, None), (88, "abort")],
+    ids=["76-skipped", "80-checked", "84-skipped", "88-checked"],
+)
+def test_text_scheduler_repetition_check_cadence_is_every_eighth_token(
+    length: int, expected_finish: str | None
+) -> None:
+    """Default requests keep the every-8-tokens cadence of the loop detector.
+
+    A period-12 loop is detectable from 72 tokens on; only lengths that are a
+    multiple of 8 are examined, so 76 and 84 pass and 80 and 88 abort.
+    """
+    from rapid_mlx.request import Request, RequestStatus, SamplingParams
+
+    scheduler = _bare_scheduler(eos=99)
+    req = Request("r", "p", SamplingParams(max_tokens=1000))
+    req.status = RequestStatus.RUNNING
+    req.has_tools = True
+    req.output_token_ids = [i % 12 for i in range(length - 1)]
+    scheduler.running["r"] = req
+    scheduler.uid_to_request_id[0] = "r"
+    (out,), _ = scheduler._process_batch_responses([_response((length - 1) % 12)])
+    assert out.finish_reason == expected_finish
+
+
+@pytest.mark.parametrize("length", [80, 84])
+def test_text_scheduler_no_repetition_abort_under_ignore_eos_at_any_length(
+    length: int,
+) -> None:
+    from rapid_mlx.request import Request, RequestStatus, SamplingParams
+
+    scheduler = _bare_scheduler(eos=99)
+    req = Request("r", "p", SamplingParams(max_tokens=1000, ignore_eos=True))
+    req.status = RequestStatus.RUNNING
+    req.has_tools = True
+    req.output_token_ids = [i % 12 for i in range(length - 1)]
+    scheduler.running["r"] = req
+    scheduler.uid_to_request_id[0] = "r"
+    (out,), _ = scheduler._process_batch_responses([_response((length - 1) % 12)])
+    assert out.finish_reason is None
 
 
 # ------------------------------------------------------ multimodal scheduler

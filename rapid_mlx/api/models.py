@@ -531,6 +531,30 @@ def _validate_ignore_eos(v) -> bool | None:
     raise ValueError(f"ignore_eos must be a boolean (got {type(v).__name__})")
 
 
+def _reject_ignore_eos_with_json_schema(ignore_eos, response_format) -> None:
+    """``ignore_eos: true`` cannot be combined with a JSON-schema response format.
+
+    A ``json_schema`` request runs through a grammar that ends the answer at
+    the accepting state: the non-scheduler guided lane stops there and never
+    sees ``ignore_eos``, and on a multimodal engine the grammar processor
+    forces one of the model's EOS ids once the value is complete, ids that
+    ``ignore_eos`` removes from the stop set, so the run would be padded to
+    ``max_tokens`` with EOS tokens. A fixed-length client asking for both
+    would get a wrong-length run either way; say so instead.
+    """
+    if ignore_eos is not True or response_format is None:
+        return
+    if isinstance(response_format, dict):
+        rf_type = response_format.get("type")
+    else:
+        rf_type = getattr(response_format, "type", None)
+    if rf_type == "json_schema":
+        raise ValueError(
+            "ignore_eos is not supported together with response_format "
+            "type 'json_schema': the schema grammar ends the output by itself"
+        )
+
+
 # R10-H5 (R9-H3 carry) — closed set of values accepted by OpenAI's
 # ``reasoning_effort`` parameter. Pre-fix BOTH ``/v1/chat/completions``
 # and ``/v1/responses`` silently accepted any value (string, int, list,
@@ -1898,6 +1922,11 @@ class ChatCompletionRequest(BaseModel):
     def _validate_ignore_eos_field(cls, v) -> bool | None:
         return _validate_ignore_eos(v)
 
+    @model_validator(mode="after")
+    def _reject_ignore_eos_with_schema(self):
+        _reject_ignore_eos_with_json_schema(self.ignore_eos, self.response_format)
+        return self
+
     # R10-H5 (R9-H3 carry) — closed-set gate on ``reasoning_effort``.
     # ``mode="before"`` so non-string wire forms (int, list, dict,
     # bool, null) are rejected with a clear envelope BEFORE Pydantic's
@@ -2511,6 +2540,11 @@ class CompletionRequest(BaseModel):
     @classmethod
     def _validate_ignore_eos_field(cls, v) -> bool | None:
         return _validate_ignore_eos(v)
+
+    @model_validator(mode="after")
+    def _reject_ignore_eos_with_schema(self):
+        _reject_ignore_eos_with_json_schema(self.ignore_eos, self.response_format)
+        return self
 
     @model_validator(mode="before")
     @classmethod

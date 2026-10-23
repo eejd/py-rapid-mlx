@@ -24,6 +24,7 @@ from .models import (
     PerRequestMetrics,
     ResponseFormat,
     StreamOptions,
+    _reject_ignore_eos_with_json_schema,
     _validate_ignore_eos,
     _validate_nonnegative_int,
     _validate_positive_int,
@@ -340,6 +341,14 @@ class ResponsesRequest(BaseModel):
     @classmethod
     def _validate_ignore_eos_field(cls, v) -> bool | None:
         return _validate_ignore_eos(v)
+
+    @model_validator(mode="after")
+    def _reject_ignore_eos_with_schema(self):
+        _reject_ignore_eos_with_json_schema(self.ignore_eos, self.response_format)
+        fmt = (self.text or {}).get("format")
+        if isinstance(fmt, dict):
+            _reject_ignore_eos_with_json_schema(self.ignore_eos, fmt)
+        return self
 
     # R14 task #293: share the same response_format dict-arm validator
     # the chat / completions surfaces use so the shape gates (strict

@@ -501,7 +501,8 @@ longer end the request, so it runs until `max_tokens` and
 streaming and non-streaming alike. Use it for fixed-output-length load tests.
 
 - Absent, `null` or `false`: nothing changes. Any other type (`"true"`, `1`)
-  is rejected with HTTP 400.
+  is rejected with HTTP 400 (stricter than vLLM, which also accepts `"true"` /
+  `1`: a client that stringifies booleans must send a real one).
 - `stop` strings, `stop_token_ids` and `max_tokens` still end the request.
 - An ignored EOS token counts in `completion_tokens` and `logprobs` but adds no
   text; what the model writes after it (usually a new turn) is returned as
@@ -509,13 +510,21 @@ streaming and non-streaming alike. Use it for fixed-output-length load tests.
 - A batch can mix `ignore_eos` and default requests; the scheduler keeps the two
   kinds in separate generators, so a request of the other kind waits for the
   running batch to drain (latency, not correctness).
-- Honoured by the batched text scheduler (including the MTP, continuous-MTP and
-  suffix paths that run inside it) and by the multimodal scheduler. Not honoured
-  where the output is not ended by the model's EOS in the first place: the
-  grammar-constrained `response_format` (JSON schema) lane ends when the grammar
-  accepts, and the text-diffusion engine ends on its own stopping criteria. The
+- Where it is honoured: the batched text scheduler (tested on a real model) and
+  the multimodal scheduler (unit-tested only). The MTP, continuous-MTP and
+  suffix paths inside the text scheduler take the same stop-token set (by
+  reading the code; not run).
+- `ignore_eos: true` together with a `json_schema` `response_format` (or
+  `text.format`) is rejected with HTTP 400: the schema grammar ends the answer
+  by itself, so a fixed-length run is not possible. `json_object` is accepted.
+  A forced tool call (`tool_choice` required / named) uses a grammar too; its
+  behaviour under `ignore_eos` is not established.
+- Not honoured: the text-diffusion engine (it ends on its own stopping criteria;
+  the field is ignored like other sampling controls it does not read). The
   serial speculative servers (`--enable-dflash`, `--enable-ddtree`, native MTP,
-  TensorFold, DSpark, DeepSeek V4.1) cannot suppress EOS and answer HTTP 400.
+  TensorFold, DSpark, DeepSeek V4.1) answer HTTP 400: the field is not wired
+  into them (some of their code has an `ignore_eos` parameter that the request
+  field does not reach).
 
 ### Models
 
