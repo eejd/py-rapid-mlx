@@ -2304,6 +2304,35 @@ def test_singleton_yields_at_a_token_boundary_to_a_waiting_request(monkeypatch):
     assert batch_gen._unprocessed_sequences[1] == ("waiting",)
 
 
+@pytest.mark.parametrize("partial", [False, True], ids=["root", "partial"])
+def test_singleton_yield_with_032_stop_matcher(monkeypatch, partial):
+    from types import SimpleNamespace
+
+    from mlx_lm.generate import StopSequences
+
+    batch_gen, gb, _requests, fake = _yielding_setup(monkeypatch)
+    _emit(batch_gen, gb)
+    gb.cache = [SimpleNamespace(offset=10)]
+    batch_gen._unprocessed_sequences.append(("waiting",))
+    del gb.state_machines, gb._matcher_states
+    stops = StopSequences([(2, 3)])
+    matcher = stops.matcher()
+    if partial:
+        assert matcher.advance(2) is False
+    gb.stop_sequences = [stops]
+    gb._matchers = [matcher]
+
+    assert batch_gen._mtp_vendored_requeue_owner() is not partial
+    if partial:
+        assert batch_gen.removed == []
+        assert fake.closed is False
+        assert list(batch_gen._unprocessed_sequences) == [("waiting",)]
+    else:
+        assert batch_gen.removed == [(7,)]
+        assert batch_gen._unprocessed_sequences[0][7] is stops
+        assert batch_gen._unprocessed_sequences[1] == ("waiting",)
+
+
 def test_parked_rounds_stop_running_ahead_while_a_request_waits(monkeypatch):
     """A parked round's run-ahead step would put the cache past the token
     boundary the yield above needs, so it is held while anyone waits."""

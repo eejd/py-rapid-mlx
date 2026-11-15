@@ -2675,11 +2675,10 @@ def _install_mtp_vendored(
         def _row(values: Any, default: Any) -> Any:
             return values[0] if values else default
 
-        # A resumed row starts its stop matcher afresh, so yield only while
-        # the matcher sits at its initial state's root: never mid-way through
-        # a multi-token stop sequence or inside a non-initial state.
-        # A row with a stop matcher whose live state cannot be read or
-        # compared refuses too.
+        # A resumed row starts its stop matcher afresh, so yield only at the
+        # stop-trie root, never midway through a multi-token stop sequence.
+        # In mlx-lm 0.31 also require the initial text state; 0.32 tracks text
+        # state separately from the generation batch. Refuse unreadable state.
         machine = _row(getattr(gb, "stop_sequences", None), None)
         if hasattr(gb, "_matchers"):
             if machine is None:
