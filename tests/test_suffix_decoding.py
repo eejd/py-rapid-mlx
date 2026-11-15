@@ -491,6 +491,42 @@ class TestInstallSuffixDecoding:
 
         assert not can_advance(cache, 2)
 
+    def test_pending_emit_stops_with_mlx_lm_032_matcher(self, monkeypatch):
+        from mlx_lm.generate import GenerationBatch, StopSequences
+
+        _bg, gb = self._install_verify_fixture(
+            monkeypatch, [2, 3, 4], trim_result=1, source_response=True
+        )
+        del gb.state_machines, gb._matcher_states
+        gb.stop_sequences = [StopSequences([(2, 3)])]
+        gb._matchers = [gb.stop_sequences[0].matcher()]
+        gb.Response = GenerationBatch.Response
+        filtered = []
+        gb.filter = lambda keep: filtered.append(keep)
+        gb.max_tokens = [20]
+        gb._step()
+        responses = gb.next()
+        assert [(r.token, r.finish_reason) for r in responses[1:]] == [
+            (2, None),
+            (3, "stop"),
+        ]
+        assert filtered == [[]]
+
+    def test_pending_emit_propagates_matcher_error(self, monkeypatch):
+        _bg, gb = self._install_verify_fixture(
+            monkeypatch, [2, 3, 4], trim_result=1, source_response=True
+        )
+
+        class BrokenMatcher:
+            def advance(self, _token):
+                raise RuntimeError("broken matcher")
+
+        gb._matchers = [BrokenMatcher()]
+        gb.max_tokens = [20]
+        gb._step()
+        with pytest.raises(RuntimeError, match="broken matcher"):
+            gb.next()
+
     def test_terminal_pending_emit_rollback_fails_closed(self, monkeypatch):
         _bg, gb = self._install_verify_fixture(
             monkeypatch,
