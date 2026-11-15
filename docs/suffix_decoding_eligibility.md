@@ -12,6 +12,11 @@
 >   --speculative-config '{"method":"suffix","num_speculative_tokens":8}'
 > ```
 
+Accepted draft tokens use the generation batch's stop matcher, including
+multi-token stop sequences. The mlx-lm 0.32 matcher shape is handled by the
+speculative wrapper, but this does not change the project's mlx-lm version cap
+or imply that the rest of the serving stack supports 0.32.
+
 ## When To Use It
 
 Use SuffixDecoding only when the user explicitly knows their traffic is

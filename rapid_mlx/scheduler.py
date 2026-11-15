@@ -257,6 +257,20 @@ CACHE_CORRUPTION_PATTERNS = [
     "cache has no attribute",
 ]
 
+def _advance_speculative_stop(gb: Any, row: int, token: int) -> tuple[bool, dict]:
+    """Advance the generation batch's version-specific stop matcher."""
+    if hasattr(gb, "_matchers"):
+        return gb._matchers[row].advance(token), {}
+    state, matched, current = gb.state_machines[row].match(
+        gb._matcher_states[row], token
+    )
+    gb._matcher_states[row] = state
+    return matched is not None and current is None, {
+        "current_state": current,
+        "match_sequence": matched,
+    }
+
+
 
 def _assemble_stop_tokens(
     sampling_params: SamplingParams, model_stop_tokens: set[int]
@@ -2666,8 +2680,24 @@ def _install_mtp_vendored(
         # a multi-token stop sequence or inside a non-initial state.
         # A row with a stop matcher whose live state cannot be read or
         # compared refuses too.
-        machine = _row(getattr(gb, "state_machines", None), None)
-        if machine is not None:
+        machine = _row(getattr(gb, "stop_sequences", None), None)
+        if hasattr(gb, "_matchers"):
+            if machine is None:
+                return False
+            matchers = getattr(gb, "_matchers", None)
+            if not matchers:
+                return False
+            live = matchers[0]
+            fresh = machine.matcher()
+            if not (
+                getattr(live, "_node", None) is getattr(live, "_root", None)
+                and getattr(live, "_root", None) is getattr(fresh, "_root", None)
+                and getattr(live, "_root", None) is not None
+            ):
+                return False
+        else:
+            machine = _row(getattr(gb, "state_machines", None), None)
+        if machine is not None and not hasattr(gb, "_matchers"):
             matcher_states = getattr(gb, "_matcher_states", None)
             make_state = getattr(machine, "make_state", None)
             if not matcher_states or not callable(make_state):
@@ -3269,18 +3299,8 @@ def _install_dspark(
             for emit_idx, (token, logprobs) in enumerate(pending):
                 gb.tokens[row].append(token)
                 gb._num_tokens[row] += 1
-                finish_reason = None
-                match_sequence = None
-                current_state = None
-                try:
-                    new_state, match_sequence, current_state = gb.state_machines[
-                        row
-                    ].match(gb._matcher_states[row], token)
-                    gb._matcher_states[row] = new_state
-                    if match_sequence is not None and current_state is None:
-                        finish_reason = "stop"
-                except Exception:  # noqa: BLE001
-                    pass
+                stopped, stop_fields = _advance_speculative_stop(gb, row, token)
+                finish_reason = "stop" if stopped else None
                 if finish_reason is None and gb._num_tokens[row] >= gb.max_tokens[row]:
                     finish_reason = "length"
                 if finish_reason is not None:
@@ -3299,8 +3319,7 @@ def _install_dspark(
                             token=token,
                             logprobs=logprobs,
                             finish_reason=finish_reason,
-                            current_state=current_state,
-                            match_sequence=match_sequence,
+                            **stop_fields,
                             prompt_cache=gb.extract_cache(row),
                             all_tokens=gb.tokens[row],
                         )
@@ -3314,8 +3333,7 @@ def _install_dspark(
                         token=token,
                         logprobs=logprobs,
                         finish_reason=None,
-                        current_state=current_state,
-                        match_sequence=match_sequence,
+                        **stop_fields,
                         prompt_cache=None,
                         all_tokens=None,
                     )
@@ -3971,21 +3989,8 @@ def _install_suffix_decoding(
                 gb._num_tokens[row] += 1
 
                 # Run the stop-machine on this token to detect stop seqs.
-                finish_reason = None
-                match_sequence = None
-                current_state = None
-                try:
-                    new_state, match_sequence, current_state = gb.state_machines[
-                        row
-                    ].match(gb._matcher_states[row], tok)
-                    gb._matcher_states[row] = new_state
-                    if match_sequence is not None and current_state is None:
-                        finish_reason = "stop"
-                except Exception:  # noqa: BLE001
-                    # If the matcher is in an unexpected state for any
-                    # reason, treat the synthetic emit as plain. We'd
-                    # rather emit a token than crash the request.
-                    pass
+                stopped, stop_fields = _advance_speculative_stop(gb, row, tok)
+                finish_reason = "stop" if stopped else None
 
                 if finish_reason is None and gb._num_tokens[row] >= gb.max_tokens[row]:
                     finish_reason = "length"
@@ -4013,8 +4018,7 @@ def _install_suffix_decoding(
                             token=tok,
                             logprobs=lp,
                             finish_reason=finish_reason,
-                            current_state=current_state,
-                            match_sequence=match_sequence,
+                            **stop_fields,
                             prompt_cache=gb.extract_cache(row),
                             all_tokens=gb.tokens[row],
                         )
@@ -4040,8 +4044,7 @@ def _install_suffix_decoding(
                         token=tok,
                         logprobs=lp,
                         finish_reason=None,
-                        current_state=current_state,
-                        match_sequence=match_sequence,
+                        **stop_fields,
                         prompt_cache=None,
                         all_tokens=None,
                     )
