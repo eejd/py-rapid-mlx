@@ -704,15 +704,8 @@ class DiffusionEngine(BaseEngine):
             require_mlx_vlm_capability("diffusion")
             import mlx.core as mx
 
-            # ``is_diffusion_model`` is present in mlx-vlm 0.7.2, which is the
-            # ONLY version this runtime supports: rapid-mlx pins
-            # ``mlx-vlm==0.7.2`` in every vision extra (pyproject.toml), the
-            # doctor gate enforces it, and ``models/mllm.py``
-            # ``VALIDATED_MLX_VLM_VERSION`` hard-refuses any other installed
-            # version at import. So an unconditional import here is safe by
-            # the runtime's own contract, and no ``diffusion_generation_family``
-            # fallback is needed (or wanted — that shim is the brittle API this
-            # lane is moving off of).
+            # The capability gate above keeps this import on the separately
+            # qualified diffusion runtime rather than the broader chat lane.
             from mlx_vlm.generate.diffusion import (
                 is_diffusion_model,
             )

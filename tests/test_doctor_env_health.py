@@ -837,6 +837,8 @@ def test_required_packages_all_present_marks_ok():
 
 def test_runtime_compatibility_policy_matches_project():
     """Doctor's runtime contract must follow pyproject, not drift by hand."""
+    from rapid_mlx.mlx_vlm_compat import CHAT_MLX_VLM_SPEC
+
     with (Path(__file__).resolve().parents[1] / "pyproject.toml").open("rb") as handle:
         project = tomllib.load(handle)
 
@@ -849,7 +851,7 @@ def test_runtime_compatibility_policy_matches_project():
         "mlx": ">=0.32.1,<0.33",
         "mlx-lm": ">=0.31.3,<0.32",
         "transformers": ">=5.0.0,!=5.13.0,<5.16",
-        "mlx-vlm": "==0.7.2",
+        "mlx-vlm": CHAT_MLX_VLM_SPEC,
     }
     policy = {
         requirement.name.lower(): str(requirement.specifier)
@@ -2923,7 +2925,7 @@ def test_incompatible_mlx_vlm_names_bounded_extension_repair(tmp_path):
         if c.label.startswith("mlx-vlm (vision") and "incompatible" in c.label
     )
     assert row.status is eh.CheckStatus.FAIL
-    assert "requires ==0.7.2" in row.label
+    assert "requires >=0.7.2,<0.7.13" in row.label
     assert "rapid-mlx==" in row.label
     assert "transformers>=5.0.0,!=5.13.0,<5.16" in row.label
     assert str(runtime.resolve()) in row.label

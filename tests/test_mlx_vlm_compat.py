@@ -154,6 +154,15 @@ def test_hidream_gate(monkeypatch):
     monkeypatch.setattr(compat, "version", lambda _: "0.7.12")
     with pytest.raises(RuntimeError, match="image generation.*0.7.2"):
         HiDreamO1("unused")
+    import mlx_vlm
+
+    def stop_load(_path):
+        raise RuntimeError("reached loader")
+
+    monkeypatch.setattr(compat, "version", lambda _: "0.7.2")
+    monkeypatch.setattr(mlx_vlm, "load", stop_load)
+    with pytest.raises(RuntimeError, match="reached loader"):
+        HiDreamO1("unused")
 
 
 def test_diffusion_worker_rejects_unqualified(monkeypatch):
