@@ -2833,7 +2833,7 @@ def test_run_dflash_server_raises_when_mlx_vlm_missing(monkeypatch) -> None:
     from rapid_mlx.speculative.dflash import server as srv
 
     monkeypatch.setattr(srv, "have_runtime", lambda: False)
-    with pytest.raises(RuntimeError, match=r"rapid-mlx=="):
+    with pytest.raises(RuntimeError, match=r"mlx-vlm==0\.7\.2"):
         srv.run_dflash_server(
             main_model_repo="mlx-community/Qwen3.5-27B-8bit",
             drafter_repo="z-lab/Qwen3.5-27B-DFlash",

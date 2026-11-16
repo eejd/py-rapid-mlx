@@ -15,6 +15,26 @@ import pytest
 _HUB_GUIDANCE_CLI_MODULES: set[object] = set()
 
 
+@pytest.fixture(autouse=True)
+def _qualified_vlm_for_legacy_runtime_mocks(request, monkeypatch):
+    """These mocked backend tests exercise the 0.7.2-only runtime contract."""
+    module = request.path.name
+    name = request.node.name
+    legacy_tests = {
+        "test_hidream_o1_alias.py": "test_hidream_constructor_loads_only_validated_custom_heads",
+        "test_native_mtp.py": "test_glm_runtime_structural_probe_and_fail_closed",
+        "test_dflash_integration.py": "test_run_dflash_server_loads_models_on_executor_thread",
+        "test_chat_route_vlm_image.py": "test_chat_route_rejects_audio_content_on_mllm_engine",
+    }
+    if module != "test_diffusion_engine.py" and not name.startswith(
+        legacy_tests.get(module, "\0")
+    ):
+        return
+    from rapid_mlx import mlx_vlm_compat
+
+    monkeypatch.setattr(mlx_vlm_compat, "version", lambda _distribution: "0.7.2")
+
+
 @pytest.fixture
 def stub_serve_port_resolution(monkeypatch):
     """Keep non-collision serve tests independent of host port availability."""

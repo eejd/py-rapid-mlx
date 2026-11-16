@@ -46,6 +46,11 @@ def mlx_vlm_capability_qualified(capability: str) -> bool:
         return False
 
 
+def qualified_runtime_hint(capability: str) -> str:
+    requirements = ", ".join(f"mlx-vlm=={v}" for v in QUALIFIED_MLX_VLM[capability])
+    return f"Use {requirements} via the environment's package manager."
+
+
 def require_mlx_vlm_capability(capability: str) -> None:
     if not mlx_vlm_capability_qualified(capability):
         qualified = ", ".join(QUALIFIED_MLX_VLM[capability])

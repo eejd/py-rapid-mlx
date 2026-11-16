@@ -696,7 +696,8 @@ Covers chat, serve, system-one, share, agents (setup / test), bench, recipe, mod
 ## Troubleshooting
 
 The vision chat lane accepts the mlx-vlm 0.7.2 and 0.7.12 release lines,
-including post releases and local builds. On 0.7.12 all video and audio
+including post releases, local builds and prereleases such as `0.7.12rc1` or
+`0.7.12.dev1`, consistent with the install specifier. On 0.7.12 all video and audio
 requests are refused; diffusion, HiDream image generation, DFlash and native
 MTP require 0.7.2, and media-prefix reuse is disabled. Ordinary text prompt
 caching remains available. The legacy native-video implementation imports

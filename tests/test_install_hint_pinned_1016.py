@@ -89,8 +89,7 @@ def test_diffusion_lane_import_error_hint_is_pinned(monkeypatch):
 
     msg = str(exc_info.value)
     assert eng._load_error is not None
-    assert "ships with rapid-mlx" in msg
-    assert "rapid-mlx==" in msg
+    assert "mlx-vlm==0.7.2" in msg
     assert "mlx-vlm>=0.6.3" not in msg
     # The conflict-producing forced-upgrade flag is gone.
     assert "-U 'mlx-vlm" not in msg

@@ -159,6 +159,8 @@ def test_diffusion_cli_guard_is_actionable(monkeypatch):
         text_diffusion=True,
     )
     assert handled[0].marker_reason == "runtime_incompatible"
+    assert "mlx-vlm==0.7.2" in handled[0].format_user_message()
+    assert "--force-reinstall" not in handled[0].format_user_message()
     monkeypatch.setattr(mllm, "version", lambda _: "0.7.2")
     mllm.require_mlx_vlm_or_exit("model", text_diffusion=True)
 
@@ -191,3 +193,5 @@ def test_diffusion_worker_rejects_unqualified(monkeypatch):
     DiffusionEngine._worker_loop(worker)
     assert "diffusion" in str(worker._load_error)
     assert "0.7.2" in str(worker._load_error)
+    assert "mlx-vlm==0.7.2" in str(worker._load_error)
+    assert "--force-reinstall" not in str(worker._load_error)

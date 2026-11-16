@@ -469,11 +469,12 @@ def require_mlx_vlm_or_exit(model_name: str, *, text_diffusion: bool = False) ->
     # ``mlx_vlm_available()`` call would re-run the import redundantly).
     status, detail = vision_runtime_status()
     if status is VisionRuntimeStatus.OK and text_diffusion:
+        from rapid_mlx.mlx_vlm_compat import qualified_runtime_hint
         from rapid_mlx.runtime.optional_runtime import OptionalRuntimeMissing
 
         installed = version("mlx-vlm")
         if not mlx_vlm_version_qualified(installed, "diffusion"):
-            hint = _vision_install_hint(status="incompatible")
+            hint = qualified_runtime_hint("diffusion")
             raise OptionalRuntimeMissing(
                 extra="vision",
                 install_hint=hint,

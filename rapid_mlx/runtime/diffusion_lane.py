@@ -711,11 +711,11 @@ class DiffusionEngine(BaseEngine):
             )
             from mlx_vlm.utils import load
         except BaseException as e:  # noqa: BLE001 — propagate to caller
-            from .optional_runtime import optional_extra_install_hint
+            from rapid_mlx.mlx_vlm_compat import qualified_runtime_hint
 
             self._load_error = RuntimeError(
                 "DiffusionEngine failed to import its mlx / mlx-vlm "
-                "dependencies. " + optional_extra_install_hint("vision") + ". "
+                "dependencies. " + qualified_runtime_hint("diffusion") + ". "
                 f"Underlying error: {e}"
             )
             self._ready.set()

@@ -5,8 +5,8 @@ Status: draft — forward-looking vendoring design (not implemented). Its
 text-only degrade prerequisite (base-wheel VLM checkpoints with an
 allow-listed language backbone serve text-only) is implemented by the PR
 that adds this document.
-Upstream pin: `mlx-vlm==0.7.2` (exact pin in `pyproject.toml`, shared with the
-signed Desktop sidecar)
+At the time of this design, `mlx-vlm==0.7.2` was pinned in `pyproject.toml`
+and the signed Desktop sidecar. The local fork now also accepts 0.7.12 for chat.
 Counts and sizes measured at `9c56a62c1` against the PyPI
 `mlx_vlm-0.7.2-py3-none-any.whl`.
 
