@@ -695,11 +695,12 @@ Covers chat, serve, system-one, share, agents (setup / test), bench, recipe, mod
 
 ## Troubleshooting
 
-The vision chat lane accepts mlx-vlm 0.7.2 and 0.7.12 (including local
-build suffixes). The 0.7.12 qualification covers text and image chat, not
-native video, audio input, diffusion, HiDream image generation, DFlash, native MTP or media-prefix
-cache reuse. Those paths retain the 0.7.2 qualification; media-prefix reuse
-is disabled on 0.7.12. Ordinary text prompt caching remains available.
+The vision chat lane accepts the mlx-vlm 0.7.2 and 0.7.12 release lines,
+including post releases and local builds. On 0.7.12 all video and audio
+requests are refused; diffusion, HiDream image generation, DFlash and native
+MTP require 0.7.2, and media-prefix reuse is disabled. Ordinary text prompt
+caching remains available. The legacy native-video implementation imports
+`mlx_vlm.video_generate`, which is absent in both versions.
 
 Run the built-in self-check first:
 

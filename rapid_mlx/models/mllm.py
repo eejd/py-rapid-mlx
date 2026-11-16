@@ -158,7 +158,7 @@ def _all_missing_are_multimodal(missing_names: list[str]) -> bool:
 # resolver-dependent behavior between direct installs and the packaged app.
 from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM, mlx_vlm_version_qualified
 
-VALIDATED_MLX_VLM_VERSION = QUALIFIED_MLX_VLM["video"][0]
+VALIDATED_MLX_VLM_VERSION = QUALIFIED_MLX_VLM["chat"][0]
 
 
 def _managed_desktop_runtime_kind() -> str | None:
@@ -469,9 +469,19 @@ def require_mlx_vlm_or_exit(model_name: str, *, text_diffusion: bool = False) ->
     # ``mlx_vlm_available()`` call would re-run the import redundantly).
     status, detail = vision_runtime_status()
     if status is VisionRuntimeStatus.OK and text_diffusion:
-        from rapid_mlx.mlx_vlm_compat import require_mlx_vlm_capability
+        from rapid_mlx.runtime.optional_runtime import OptionalRuntimeMissing
 
-        require_mlx_vlm_capability("diffusion")
+        installed = version("mlx-vlm")
+        if not mlx_vlm_version_qualified(installed, "diffusion"):
+            hint = _vision_install_hint(status="incompatible")
+            raise OptionalRuntimeMissing(
+                extra="vision",
+                install_hint=hint,
+                status="incompatible",
+                marker_reason="runtime_incompatible",
+                detail=f"mlx-vlm diffusion {installed!r} is incompatible; "
+                f"qualified versions: {', '.join(QUALIFIED_MLX_VLM['diffusion'])}.\n{hint}",
+            )
     if status is VisionRuntimeStatus.OK:
         return
     from rapid_mlx.runtime.optional_runtime import (
@@ -552,8 +562,8 @@ def _require_mlx_vlm(model_name: str | None = None) -> None:
             status="incompatible",
             detail=(
                 f"Vision/multimodal runtime{model_context} is incompatible: "
-                f"installed mlx-vlm {detail!r}, validated version "
-                f"{VALIDATED_MLX_VLM_VERSION}. This is not a Metal "
+                f"installed mlx-vlm {detail!r}, validated versions "
+                f"{', '.join(QUALIFIED_MLX_VLM['chat'])}. This is not a Metal "
                 "out-of-memory error.\n" + _vision_install_hint()
             ),
         )

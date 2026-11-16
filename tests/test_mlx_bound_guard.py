@@ -141,7 +141,9 @@ def test_desktop_sidecar_uses_validated_mlx_vlm_bound():
 
     desktop_spec = matches[0]
     assert desktop_spec.specifier == Requirement("mlx-vlm==0.7.2").specifier
-    assert all(v in vision_specs[0].specifier for v in ("0.7.2", "0.7.12", "0.7.12+local01"))
+    assert all(
+        v in vision_specs[0].specifier for v in ("0.7.2", "0.7.12", "0.7.12+local01")
+    )
     assert all(v not in vision_specs[0].specifier for v in ("0.6.9", "0.7.4", "0.8.0"))
 
 

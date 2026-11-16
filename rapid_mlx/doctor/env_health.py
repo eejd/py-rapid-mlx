@@ -50,6 +50,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from rapid_mlx import __version__ as _rapid_mlx_version
+from rapid_mlx.mlx_vlm_compat import CHAT_MLX_VLM_SPEC, mlx_vlm_version_qualified
 from rapid_mlx.runtime.base_runtime import (
     homebrew_runtime_hint,
     is_homebrew_interpreter,
@@ -187,7 +188,7 @@ _SUPPORTED_VERSIONS: dict[str, str] = {
     "mlx": ">=0.32.1,<0.33",
     "mlx-lm": ">=0.31.3,<0.32",
     "transformers": ">=5.0.0,!=5.13.0,<5.16",
-    "mlx-vlm": "==0.7.2",
+    "mlx-vlm": CHAT_MLX_VLM_SPEC,
 }
 
 # Each tuple: (distribution, label, install hint). Missing optionals are ⚠
@@ -1966,6 +1967,8 @@ def _module_visibility(
 
 
 def _version_supported(dist: str, version: str) -> bool:
+    if dist == "mlx-vlm":
+        return mlx_vlm_version_qualified(version, "chat")
     spec = _SUPPORTED_VERSIONS.get(dist)
     if spec is None:
         return True

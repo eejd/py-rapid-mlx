@@ -8,6 +8,7 @@ the extra WOULD load is never reported as an unsupported architecture.
 ``tests/test_byom_preflight.py`` pins it against the live package.
 """
 
+# Provenance: inventory generated from the 0.7.2 wheel, not a runtime gate.
 MLX_VLM_PIN = "0.7.2"
 
 MLX_VLM_MODEL_TYPES: frozenset[str] = frozenset(

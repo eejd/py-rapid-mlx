@@ -1955,8 +1955,8 @@ def _host_hybrid_runtime_ok() -> bool:
 @lru_cache(maxsize=1)
 def _host_vision_runtime_ok() -> bool:
     """Cheap, import-free: mlx-vlm installed at the validated version."""
-    from ..models.mllm import _mlx_vlm_installed
     from ..mlx_vlm_compat import mlx_vlm_version_qualified
+    from ..models.mllm import _mlx_vlm_installed
 
     if not _mlx_vlm_installed():
         return False

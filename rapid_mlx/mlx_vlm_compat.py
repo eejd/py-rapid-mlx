@@ -7,7 +7,13 @@ diffusion, speculative decoding and media-prefix reuse retain the old pin.
 
 from importlib.metadata import PackageNotFoundError, version
 
+from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
+
+CHAT_MLX_VLM_SPEC = (
+    ">=0.7.2,<0.7.13,!=0.7.3.*,!=0.7.4.*,!=0.7.5.*,!=0.7.6.*,"
+    "!=0.7.7.*,!=0.7.8.*,!=0.7.9.*,!=0.7.10.*,!=0.7.11.*"
+)
 
 QUALIFIED_MLX_VLM = {
     "chat": ("0.7.2", "0.7.12"),
@@ -26,7 +32,11 @@ def mlx_vlm_version_qualified(installed: str, capability: str) -> bool:
         parsed = Version(installed)
     except InvalidVersion:
         return False
-    return not parsed.is_prerelease and not parsed.is_postrelease and parsed.base_version in QUALIFIED_MLX_VLM[capability]
+    if capability == "chat":
+        return parsed in SpecifierSet(CHAT_MLX_VLM_SPEC)
+    return not parsed.is_prerelease and Version(parsed.base_version) in {
+        Version(v) for v in QUALIFIED_MLX_VLM[capability]
+    }
 
 
 def mlx_vlm_capability_qualified(capability: str) -> bool:
@@ -39,4 +49,6 @@ def mlx_vlm_capability_qualified(capability: str) -> bool:
 def require_mlx_vlm_capability(capability: str) -> None:
     if not mlx_vlm_capability_qualified(capability):
         qualified = ", ".join(QUALIFIED_MLX_VLM[capability])
-        raise RuntimeError(f"mlx-vlm {capability} requires a qualified version: {qualified}")
+        raise RuntimeError(
+            f"mlx-vlm {capability} requires a qualified version: {qualified}"
+        )

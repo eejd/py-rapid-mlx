@@ -48,7 +48,6 @@ import pytest
 
 pytestmark = pytest.mark.requires_mlx
 from packaging.requirements import Requirement
-from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 # Codex round-1 BLOCKING: ``import tomllib`` at module-import time would

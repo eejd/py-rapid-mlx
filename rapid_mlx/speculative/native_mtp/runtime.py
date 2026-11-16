@@ -9,7 +9,11 @@ from importlib.metadata import version
 from importlib.util import find_spec
 from typing import Any
 
-from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM, mlx_vlm_capability_qualified, mlx_vlm_version_qualified
+from rapid_mlx.mlx_vlm_compat import (
+    QUALIFIED_MLX_VLM,
+    mlx_vlm_capability_qualified,
+    mlx_vlm_version_qualified,
+)
 
 logger = logging.getLogger(__name__)
 QUALIFIED_MLX_VLM_VERSION = QUALIFIED_MLX_VLM["mtp"][0]
@@ -79,10 +83,9 @@ def have_runtime() -> bool:
     """Return whether the exact runtime qualified by this backend is installed."""
 
     try:
-        return (
-            find_spec("mlx_vlm.speculative.drafters") is not None
-            and mlx_vlm_version_qualified(version("mlx-vlm"), "mtp")
-        )
+        return find_spec(
+            "mlx_vlm.speculative.drafters"
+        ) is not None and mlx_vlm_version_qualified(version("mlx-vlm"), "mtp")
     except Exception:  # noqa: BLE001 - a broken optional stack must fail closed
         return False
 

@@ -7,15 +7,17 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
+from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM, mlx_vlm_version_qualified
+
 from .artifacts import CompanionDSparkArtifacts
 from .eligibility import CompanionDSparkPair, validate_companion_artifacts
 
-QUALIFIED_MLX_VLM_VERSION = "0.7.2"
+QUALIFIED_MLX_VLM_VERSION = QUALIFIED_MLX_VLM["dflash"][0]
 
 
 def have_runtime() -> bool:
     try:
-        return version("mlx-vlm") == QUALIFIED_MLX_VLM_VERSION
+        return mlx_vlm_version_qualified(version("mlx-vlm"), "dflash")
     except PackageNotFoundError:
         return False
 

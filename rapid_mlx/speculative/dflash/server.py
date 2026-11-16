@@ -2490,8 +2490,8 @@ def run_dflash_server(
     not pointing it at a MoE model. Documented in CALLERS.md.
     """
     if not have_runtime():
-        from rapid_mlx.runtime.optional_runtime import optional_extra_install_hint
         from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM
+        from rapid_mlx.runtime.optional_runtime import optional_extra_install_hint
 
         raise RuntimeError(
             f"DFlash server requires mlx-vlm {', '.join(QUALIFIED_MLX_VLM['dflash'])}. "
