@@ -125,7 +125,9 @@ def test_media_prefix_gate(monkeypatch, installed, expected):
     assert fake.media_prefix_cache == expected
 
 
-@pytest.mark.parametrize("installed,expected", [("0.7.2", True), ("0.7.12", False)])
+@pytest.mark.parametrize(
+    "installed,expected", [("0.7.2", True), ("0.7.2+local01", True), ("0.7.12", False)]
+)
 def test_native_mtp_gate(monkeypatch, installed, expected):
     from rapid_mlx.speculative.native_mtp import runtime
 
@@ -144,6 +146,19 @@ def test_diffusion_cli_guard_is_actionable(monkeypatch):
     monkeypatch.setattr(mllm, "version", lambda _: "0.7.12+local01")
     with pytest.raises(OptionalRuntimeMissing, match="diffusion.*0.7.12"):
         mllm.require_mlx_vlm_or_exit("model", text_diffusion=True)
+    from rapid_mlx import cli
+
+    handled = []
+    monkeypatch.setattr(
+        cli, "_handle_optional_runtime_missing", lambda exc, **kw: handled.append(exc)
+    )
+    cli._run_optional_runtime_guard(
+        mllm.require_mlx_vlm_or_exit,
+        "model",
+        alias_or_path="model",
+        text_diffusion=True,
+    )
+    assert handled[0].marker_reason == "runtime_incompatible"
     monkeypatch.setattr(mllm, "version", lambda _: "0.7.2")
     mllm.require_mlx_vlm_or_exit("model", text_diffusion=True)
 
