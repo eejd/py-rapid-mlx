@@ -5824,12 +5824,13 @@ def serve_command(args):
     _wants_dflash = getattr(args, "enable_dflash", False) and not _wants_tensorfold
     if _wants_dflash:
         from .speculative.dflash.eligibility import have_runtime
+        from .mlx_vlm_compat import QUALIFIED_MLX_VLM
 
         if not have_runtime():
             print(
                 "\n  Error: DFlash speculative decoding "
                 '(--speculative-config \'{"method":"dflash"}\') requires '
-                "mlx-vlm 0.5.0+ for the DFlash drafter hooks.\n"
+                f"mlx-vlm {', '.join(QUALIFIED_MLX_VLM['dflash'])} for the DFlash drafter hooks.\n"
                 f"\n  {optional_extra_install_hint('dflash')}\n"
             )
             sys.exit(1)
