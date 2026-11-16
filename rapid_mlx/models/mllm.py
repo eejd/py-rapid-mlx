@@ -158,6 +158,8 @@ def _all_missing_are_multimodal(missing_names: list[str]) -> bool:
 # resolver-dependent behavior between direct installs and the packaged app.
 VALIDATED_MLX_VLM_VERSION = "0.7.2"
 
+from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM, mlx_vlm_version_qualified
+
 
 def _managed_desktop_runtime_kind() -> str | None:
     """Return the Desktop-managed runtime slot for this interpreter."""
@@ -382,7 +384,7 @@ def vision_runtime_status() -> tuple[VisionRuntimeStatus, str | None]:
         installed_version = version("mlx-vlm")
     except PackageNotFoundError:
         return VisionRuntimeStatus.BROKEN, "mlx-vlm version metadata unavailable"
-    if installed_version != VALIDATED_MLX_VLM_VERSION:
+    if not mlx_vlm_version_qualified(installed_version, "chat"):
         return VisionRuntimeStatus.INCOMPATIBLE, installed_version
     return VisionRuntimeStatus.OK, None
 
@@ -478,7 +480,7 @@ def require_mlx_vlm_or_exit(model_name: str, *, text_diffusion: bool = False) ->
         message = (
             f"error: model {model_name!r} requires the Rapid-MLX vision lane, "
             f"but mlx-vlm {detail!r} is incompatible; this release validates "
-            f"exactly {VALIDATED_MLX_VLM_VERSION}. This is a vision-runtime "
+            f"versions {', '.join(QUALIFIED_MLX_VLM['chat'])}. This is a vision-runtime "
             f"compatibility error, not a Metal out-of-memory error.\n"
             + _vision_install_hint()
         )
