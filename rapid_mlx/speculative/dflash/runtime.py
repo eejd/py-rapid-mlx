@@ -105,9 +105,10 @@ def load_runtime(
     """
     if not have_runtime():
         from rapid_mlx.runtime.optional_runtime import optional_extra_install_hint
+        from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM
 
         raise RuntimeError(
-            "DFlash runtime not available — mlx-vlm 0.5.0+ is required. "
+            f"DFlash requires qualified mlx-vlm {', '.join(QUALIFIED_MLX_VLM['dflash'])}. "
             + optional_extra_install_hint("dflash")
         )
     # Import here, not at module top, so the optional dep stays optional.

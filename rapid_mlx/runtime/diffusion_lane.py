@@ -699,6 +699,9 @@ class DiffusionEngine(BaseEngine):
         kill the worker before any startup signal.
         """
         try:
+            from rapid_mlx.mlx_vlm_compat import require_mlx_vlm_capability
+
+            require_mlx_vlm_capability("diffusion")
             import mlx.core as mx
 
             # ``is_diffusion_model`` is present in mlx-vlm 0.7.2, which is the

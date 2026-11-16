@@ -1955,12 +1955,13 @@ def _host_hybrid_runtime_ok() -> bool:
 @lru_cache(maxsize=1)
 def _host_vision_runtime_ok() -> bool:
     """Cheap, import-free: mlx-vlm installed at the validated version."""
-    from ..models.mllm import VALIDATED_MLX_VLM_VERSION, _mlx_vlm_installed
+    from ..models.mllm import _mlx_vlm_installed
+    from ..mlx_vlm_compat import mlx_vlm_version_qualified
 
     if not _mlx_vlm_installed():
         return False
     try:
-        return version("mlx-vlm") == VALIDATED_MLX_VLM_VERSION
+        return mlx_vlm_version_qualified(version("mlx-vlm"), "chat")
     except PackageNotFoundError:
         return False
 
@@ -2413,6 +2414,20 @@ def validate_content_blocks_for_capabilities(
             item = _content_part_to_dict(raw_item)
             item_type = item["type"]
             _validate_content_part_payload(item)
+            if allow_image and item_type in VIDEO_CONTENT_TYPES | AUDIO_CONTENT_TYPES:
+                from ..mlx_vlm_compat import (
+                    QUALIFIED_MLX_VLM,
+                    mlx_vlm_capability_qualified,
+                )
+
+                capability = "video" if item_type in VIDEO_CONTENT_TYPES else "audio"
+                if not mlx_vlm_capability_qualified(capability):
+                    raise UnsupportedContentBlockError(
+                        f"mlx-vlm {capability} requires a qualified version: "
+                        f"{', '.join(QUALIFIED_MLX_VLM[capability])}",
+                        code=f"{capability}_input_unsupported",
+                        param="messages.content",
+                    )
             if item_type in TEXT_CONTENT_TYPES:
                 continue
             if item_type in IMAGE_CONTENT_TYPES and allow_image:

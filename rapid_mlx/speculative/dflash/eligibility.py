@@ -226,6 +226,10 @@ def have_runtime() -> bool:
     in CLI startup and in ``rapid-mlx info`` rendering. Result is
     cached by ``importlib`` after first call.
     """
+    from rapid_mlx.mlx_vlm_compat import mlx_vlm_capability_qualified
+
+    if not mlx_vlm_capability_qualified("dflash"):
+        return False
     try:
         # Probe the specific symbol DFlash needs — a partial install
         # (pre-0.5.0 mlx-vlm in our deps) would have `mlx_vlm` but no

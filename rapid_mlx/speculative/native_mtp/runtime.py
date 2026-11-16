@@ -9,13 +9,17 @@ from importlib.metadata import version
 from importlib.util import find_spec
 from typing import Any
 
+from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM, mlx_vlm_capability_qualified, mlx_vlm_version_qualified
+
 logger = logging.getLogger(__name__)
-QUALIFIED_MLX_VLM_VERSION = "0.7.2"
+QUALIFIED_MLX_VLM_VERSION = QUALIFIED_MLX_VLM["mtp"][0]
 GLM_CACHE_RUNTIME_LABEL = "cache-owned GLM runtime"
 
 
 def have_glm_cache_runtime() -> bool:
     """Probe the exact cache/model seams Rapid's GLM transaction requires."""
+    if not mlx_vlm_capability_qualified("mtp"):
+        return False
     try:
         from .glm5_compat import (
             _is_stateless_drafter,
@@ -77,7 +81,7 @@ def have_runtime() -> bool:
     try:
         return (
             find_spec("mlx_vlm.speculative.drafters") is not None
-            and version("mlx-vlm") == QUALIFIED_MLX_VLM_VERSION
+            and mlx_vlm_version_qualified(version("mlx-vlm"), "mtp")
         )
     except Exception:  # noqa: BLE001 - a broken optional stack must fail closed
         return False

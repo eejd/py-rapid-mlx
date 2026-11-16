@@ -468,6 +468,10 @@ def require_mlx_vlm_or_exit(model_name: str, *, text_diffusion: bool = False) ->
     # One authoritative probe; branch on the returned status (a second
     # ``mlx_vlm_available()`` call would re-run the import redundantly).
     status, detail = vision_runtime_status()
+    if status is VisionRuntimeStatus.OK and text_diffusion:
+        from rapid_mlx.mlx_vlm_compat import require_mlx_vlm_capability
+
+        require_mlx_vlm_capability("diffusion")
     if status is VisionRuntimeStatus.OK:
         return
     from rapid_mlx.runtime.optional_runtime import (
@@ -1947,6 +1951,9 @@ class MLXMultimodalLM:
 
         Currently Qwen-family-specific (video_token_id / video_token_index).
         """
+        from rapid_mlx.mlx_vlm_compat import require_mlx_vlm_capability
+
+        require_mlx_vlm_capability("video")
         import mlx.core as mx
 
         try:
