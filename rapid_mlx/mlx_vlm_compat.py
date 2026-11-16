@@ -14,6 +14,7 @@ QUALIFIED_MLX_VLM = {
     "video": ("0.7.2",),
     "audio": ("0.7.2",),
     "diffusion": ("0.7.2",),
+    "image generation": ("0.7.2",),
     "dflash": ("0.7.2",),
     "mtp": ("0.7.2",),
     "media prefix cache": ("0.7.2",),

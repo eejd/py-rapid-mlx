@@ -12,7 +12,7 @@ def test_chat_versions(version, expected):
     assert compat.mlx_vlm_version_qualified(version, "chat") is expected
 
 
-@pytest.mark.parametrize("capability", ["video", "audio", "diffusion", "dflash", "mtp", "media prefix cache"])
+@pytest.mark.parametrize("capability", ["video", "audio", "diffusion", "image generation", "dflash", "mtp", "media prefix cache"])
 def test_unqualified_paths_are_strict(capability, monkeypatch):
     monkeypatch.setattr(compat, "version", lambda _: "0.7.12+local01")
     with pytest.raises(RuntimeError, match=capability):

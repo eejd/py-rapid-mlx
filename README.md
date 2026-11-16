@@ -697,7 +697,7 @@ Covers chat, serve, system-one, share, agents (setup / test), bench, recipe, mod
 
 The vision chat lane accepts mlx-vlm 0.7.2 and 0.7.12 (including local
 build suffixes). The 0.7.12 qualification covers text and image chat, not
-native video, audio input, diffusion, DFlash, native MTP or media-prefix
+native video, audio input, diffusion, HiDream image generation, DFlash, native MTP or media-prefix
 cache reuse. Those paths retain the 0.7.2 qualification; media-prefix reuse
 is disabled on 0.7.12. Ordinary text prompt caching remains available.
 
