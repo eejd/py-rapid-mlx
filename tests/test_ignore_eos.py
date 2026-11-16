@@ -462,9 +462,7 @@ def test_text_scheduler_mixed_batch_each_request_keeps_its_own_setting() -> None
 def _bare_scheduler(eos: int):
     from rapid_mlx.scheduler import Scheduler, SchedulerConfig
 
-    scheduler = Scheduler(
-        MagicMock(), _Tokenizer(eos), SchedulerConfig(max_num_seqs=2)
-    )
+    scheduler = Scheduler(MagicMock(), _Tokenizer(eos), SchedulerConfig(max_num_seqs=2))
     scheduler.batch_generator = MagicMock()
     scheduler.batch_generator.remove.return_value = {}
     return scheduler
@@ -508,9 +506,7 @@ def test_text_scheduler_repetition_abort_is_off_under_ignore_eos() -> None:
     for ignore_eos, expected_finish in ((False, "abort"), (True, None)):
         scheduler = _bare_scheduler(eos=99)
         pattern = list(range(12))
-        req = Request(
-            "r", "p", SamplingParams(max_tokens=1000, ignore_eos=ignore_eos)
-        )
+        req = Request("r", "p", SamplingParams(max_tokens=1000, ignore_eos=ignore_eos))
         req.status = RequestStatus.RUNNING
         req.has_tools = True
         req.output_token_ids = pattern * 5 + pattern[:-1]
@@ -641,9 +637,7 @@ def test_mllm_scheduler_ignored_eos_is_counted_but_adds_no_text() -> None:
 def test_mllm_scheduler_without_ignore_eos_decodes_every_non_control_token() -> None:
     """Unchanged default: a token the generator did not flag is plain text."""
     eos = 7
-    scheduler, _request, detok = _mllm_scheduler_with_request(
-        ignore_eos=False, eos=eos
-    )
+    scheduler, _request, detok = _mllm_scheduler_with_request(ignore_eos=False, eos=eos)
     (out,), _ = scheduler._process_batch_responses([_mllm_response(eos)])
     assert out.new_text == f"<{eos}>"
     assert detok.fed == [eos]

@@ -104,11 +104,11 @@ def load_runtime(
     mlx-vlm code path.
     """
     if not have_runtime():
-        from rapid_mlx.runtime.optional_runtime import optional_extra_install_hint
+        from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM, qualified_runtime_hint
 
         raise RuntimeError(
-            "DFlash runtime not available — mlx-vlm 0.5.0+ is required. "
-            + optional_extra_install_hint("dflash")
+            f"DFlash requires qualified mlx-vlm {', '.join(QUALIFIED_MLX_VLM['dflash'])}. "
+            + qualified_runtime_hint("dflash")
         )
     # Import here, not at module top, so the optional dep stays optional.
     # Vendored-first: the availability guard still requires the qualified

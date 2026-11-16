@@ -156,7 +156,9 @@ def _all_missing_are_multimodal(missing_names: list[str]) -> bool:
 # The bare-mlx-vlm line is pinned to the same validated runtime as the
 # ``rapid-mlx[vision]`` extra. Keeping both recovery paths aligned avoids
 # resolver-dependent behavior between direct installs and the packaged app.
-VALIDATED_MLX_VLM_VERSION = "0.7.2"
+from rapid_mlx.mlx_vlm_compat import QUALIFIED_MLX_VLM, mlx_vlm_version_qualified
+
+VALIDATED_MLX_VLM_VERSION = QUALIFIED_MLX_VLM["chat"][0]
 
 
 def _managed_desktop_runtime_kind() -> str | None:
@@ -382,7 +384,7 @@ def vision_runtime_status() -> tuple[VisionRuntimeStatus, str | None]:
         installed_version = version("mlx-vlm")
     except PackageNotFoundError:
         return VisionRuntimeStatus.BROKEN, "mlx-vlm version metadata unavailable"
-    if installed_version != VALIDATED_MLX_VLM_VERSION:
+    if not mlx_vlm_version_qualified(installed_version, "chat"):
         return VisionRuntimeStatus.INCOMPATIBLE, installed_version
     return VisionRuntimeStatus.OK, None
 
@@ -466,6 +468,21 @@ def require_mlx_vlm_or_exit(model_name: str, *, text_diffusion: bool = False) ->
     # One authoritative probe; branch on the returned status (a second
     # ``mlx_vlm_available()`` call would re-run the import redundantly).
     status, detail = vision_runtime_status()
+    if status is VisionRuntimeStatus.OK and text_diffusion:
+        from rapid_mlx.mlx_vlm_compat import qualified_runtime_hint
+        from rapid_mlx.runtime.optional_runtime import OptionalRuntimeMissing
+
+        installed = version("mlx-vlm")
+        if not mlx_vlm_version_qualified(installed, "diffusion"):
+            hint = qualified_runtime_hint("diffusion")
+            raise OptionalRuntimeMissing(
+                extra="vision",
+                install_hint=hint,
+                status="incompatible",
+                marker_reason="runtime_incompatible",
+                detail=f"mlx-vlm diffusion {installed!r} is incompatible; "
+                f"qualified versions: {', '.join(QUALIFIED_MLX_VLM['diffusion'])}.\n{hint}",
+            )
     if status is VisionRuntimeStatus.OK:
         return
     from rapid_mlx.runtime.optional_runtime import (
@@ -478,7 +495,7 @@ def require_mlx_vlm_or_exit(model_name: str, *, text_diffusion: bool = False) ->
         message = (
             f"error: model {model_name!r} requires the Rapid-MLX vision lane, "
             f"but mlx-vlm {detail!r} is incompatible; this release validates "
-            f"exactly {VALIDATED_MLX_VLM_VERSION}. This is a vision-runtime "
+            f"versions {', '.join(QUALIFIED_MLX_VLM['chat'])}. This is a vision-runtime "
             f"compatibility error, not a Metal out-of-memory error.\n"
             + _vision_install_hint()
         )
@@ -546,8 +563,8 @@ def _require_mlx_vlm(model_name: str | None = None) -> None:
             status="incompatible",
             detail=(
                 f"Vision/multimodal runtime{model_context} is incompatible: "
-                f"installed mlx-vlm {detail!r}, validated version "
-                f"{VALIDATED_MLX_VLM_VERSION}. This is not a Metal "
+                f"installed mlx-vlm {detail!r}, validated versions "
+                f"{', '.join(QUALIFIED_MLX_VLM['chat'])}. This is not a Metal "
                 "out-of-memory error.\n" + _vision_install_hint()
             ),
         )
@@ -1945,6 +1962,9 @@ class MLXMultimodalLM:
 
         Currently Qwen-family-specific (video_token_id / video_token_index).
         """
+        from rapid_mlx.mlx_vlm_compat import require_mlx_vlm_capability
+
+        require_mlx_vlm_capability("video")
         import mlx.core as mx
 
         try:

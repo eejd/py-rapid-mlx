@@ -127,9 +127,7 @@ def test_off_and_on_differ_by_the_suffix_only() -> None:
 
 
 def test_requests_without_tools_are_the_same_in_both_modes() -> None:
-    assert _post([_SYSTEM, _USER], suffix=True) == _post(
-        [_SYSTEM, _USER], suffix=False
-    )
+    assert _post([_SYSTEM, _USER], suffix=True) == _post([_SYSTEM, _USER], suffix=False)
 
 
 @pytest.mark.parametrize("suffix", [False, True])

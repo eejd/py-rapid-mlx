@@ -699,27 +699,23 @@ class DiffusionEngine(BaseEngine):
         kill the worker before any startup signal.
         """
         try:
+            from rapid_mlx.mlx_vlm_compat import require_mlx_vlm_capability
+
+            require_mlx_vlm_capability("diffusion")
             import mlx.core as mx
 
-            # ``is_diffusion_model`` is present in mlx-vlm 0.7.2, which is the
-            # ONLY version this runtime supports: rapid-mlx pins
-            # ``mlx-vlm==0.7.2`` in every vision extra (pyproject.toml), the
-            # doctor gate enforces it, and ``models/mllm.py``
-            # ``VALIDATED_MLX_VLM_VERSION`` hard-refuses any other installed
-            # version at import. So an unconditional import here is safe by
-            # the runtime's own contract, and no ``diffusion_generation_family``
-            # fallback is needed (or wanted — that shim is the brittle API this
-            # lane is moving off of).
+            # The capability gate above keeps this import on the separately
+            # qualified diffusion runtime rather than the broader chat lane.
             from mlx_vlm.generate.diffusion import (
                 is_diffusion_model,
             )
             from mlx_vlm.utils import load
         except BaseException as e:  # noqa: BLE001 — propagate to caller
-            from .optional_runtime import optional_extra_install_hint
+            from rapid_mlx.mlx_vlm_compat import qualified_runtime_hint
 
             self._load_error = RuntimeError(
                 "DiffusionEngine failed to import its mlx / mlx-vlm "
-                "dependencies. " + optional_extra_install_hint("vision") + ". "
+                "dependencies. " + qualified_runtime_hint("diffusion") + ". "
                 f"Underlying error: {e}"
             )
             self._ready.set()

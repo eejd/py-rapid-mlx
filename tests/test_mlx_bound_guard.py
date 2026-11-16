@@ -119,7 +119,7 @@ class TestExtractMlxBounds:
 
 
 def test_desktop_sidecar_uses_validated_mlx_vlm_bound():
-    """The signed Desktop and every fresh CLI install use one VLM runtime."""
+    """Desktop keeps its signed pin while CLI accepts only qualified chat versions."""
     pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text())
     vision_specs = [
         Requirement(spec)
@@ -140,11 +140,11 @@ def test_desktop_sidecar_uses_validated_mlx_vlm_bound():
     assert '--constraint "$SIDECAR_CONSTRAINTS"' in sidecar
 
     desktop_spec = matches[0]
-    # Both surfaces deliberately pin one validated version. A range here caused
-    # fresh pip installs to backtrack to 0.6.3 while Desktop stayed on its
-    # validated exact pin.
     assert desktop_spec.specifier == Requirement("mlx-vlm==0.7.2").specifier
-    assert vision_specs[0].specifier == desktop_spec.specifier
+    assert all(
+        v in vision_specs[0].specifier for v in ("0.7.2", "0.7.12", "0.7.12+local01")
+    )
+    assert all(v not in vision_specs[0].specifier for v in ("0.6.9", "0.7.4", "0.8.0"))
 
 
 def test_image_extra_tracks_mlx_032_compatible_mflux_line():

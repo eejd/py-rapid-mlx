@@ -1310,6 +1310,10 @@ class MLLMBatchGenerator:
                 f"media_prefix_cache must be 'auto' or 'off', "
                 f"got {media_prefix_cache!r}"
             )
+        from .mlx_vlm_compat import mlx_vlm_capability_qualified
+
+        if not mlx_vlm_capability_qualified("media prefix cache"):
+            media_prefix_cache = "off"
         self.media_prefix_cache = media_prefix_cache
         self._media_structural_singleton = bool(structural_singleton)
         # Media boundary store: keyed by identity digest, LRU-evicted under

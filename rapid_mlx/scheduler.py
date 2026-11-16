@@ -257,6 +257,7 @@ CACHE_CORRUPTION_PATTERNS = [
     "cache has no attribute",
 ]
 
+
 def _advance_speculative_stop(gb: Any, row: int, token: int) -> tuple[bool, dict]:
     """Advance the generation batch's version-specific stop matcher."""
     if hasattr(gb, "_matchers"):
@@ -269,7 +270,6 @@ def _advance_speculative_stop(gb: Any, row: int, token: int) -> tuple[bool, dict
         "current_state": current,
         "match_sequence": matched,
     }
-
 
 
 def _assemble_stop_tokens(

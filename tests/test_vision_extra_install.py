@@ -48,7 +48,6 @@ import pytest
 
 pytestmark = pytest.mark.requires_mlx
 from packaging.requirements import Requirement
-from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 # Codex round-1 BLOCKING: ``import tomllib`` at module-import time would
@@ -144,12 +143,7 @@ def test_vision_extra_lists_mlx_vlm() -> None:
 
 
 def test_vision_mlx_vlm_matches_desktop_runtime() -> None:
-    """CLI and Desktop must run the same validated mlx-vlm release.
-
-    A floating 0.6.x range lets pip backtrack to 0.6.3 when another
-    dependency constrains Transformers, which gives fresh CLI installs a
-    different routing/runtime surface from the signed Desktop sidecar.
-    """
+    """Chat accepts the qualified releases without widening to other versions."""
     py = _load_pyproject()
     requirements = [
         Requirement(spec)
@@ -157,7 +151,9 @@ def test_vision_mlx_vlm_matches_desktop_runtime() -> None:
         if Requirement(spec).name == "mlx-vlm"
     ]
     assert len(requirements) == 1
-    assert requirements[0].specifier == SpecifierSet("==0.7.2")
+    specifier = requirements[0].specifier
+    assert all(v in specifier for v in ("0.7.2", "0.7.12", "0.7.12+local01"))
+    assert all(v not in specifier for v in ("0.6.9", "0.7.4", "0.8.0"))
 
 
 def test_transformers_range_excludes_5130_and_caps_next_minor() -> None:
@@ -184,7 +180,7 @@ def test_transformers_range_excludes_5130_and_caps_next_minor() -> None:
 
 
 def test_mlx_vlm_ships_in_core_dependencies() -> None:
-    """``mlx-vlm`` is an exact-pinned, ungated base dependency so the first
+    """``mlx-vlm`` is a qualified, ungated base dependency so the first
     serve of a multimodal alias never needs an extra-install step, and a
     missing copy is always repaired by reinstalling the base package.
     ``[vision]`` stays a valid alias extra for existing installers."""
@@ -192,7 +188,8 @@ def test_mlx_vlm_ships_in_core_dependencies() -> None:
     core = py.get("project", {}).get("dependencies", [])
     vlm = [Requirement(spec) for spec in core if _split_spec(spec)[0] == "mlx-vlm"]
     assert len(vlm) == 1, f"mlx-vlm missing from core deps={core!r}"
-    assert vlm[0].specifier == SpecifierSet("==0.7.2")
+    assert all(v in vlm[0].specifier for v in ("0.7.2", "0.7.12+local01"))
+    assert all(v not in vlm[0].specifier for v in ("0.6.9", "0.7.4", "0.8.0"))
     assert vlm[0].marker is None
 
 
@@ -563,27 +560,15 @@ def test_dev_extra_pins_tomli_for_python_310() -> None:
     )
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Runtime lockstep: every extra that installs mlx-vlm must select the exact
-# release validated by the Desktop sidecar and dependency-coherence sweep.
-# ──────────────────────────────────────────────────────────────────────
-
-
-def test_all_mlx_vlm_specs_match_validated_desktop_pin() -> None:
-    """Every optional surface must resolve mlx-vlm exactly to 0.7.2."""
+# Optional paths can require the Desktop pin; no extra may admit a release
+# outside the chat lane's qualified set.
+def test_all_mlx_vlm_specs_stay_within_qualified_chat_versions() -> None:
     py = _load_pyproject()
     extras = py.get("project", {}).get("optional-dependencies", {})
-    offenders: list[tuple[str, str]] = []
     for extra_name, specs in extras.items():
         for spec in specs:
-            name, _ = _split_spec(spec)
-            if name.lower() != "mlx-vlm":
+            if _split_spec(spec)[0].lower() != "mlx-vlm":
                 continue
-            if Requirement(spec).specifier != SpecifierSet("==0.7.2"):
-                offenders.append((extra_name, spec))
-    assert offenders == [], (
-        "These mlx-vlm specs can drift from the Desktop's validated 0.7.2 runtime:\n"
-        + "\n".join(f"  [{e}] {s!r}" for e, s in offenders)
-        + "\n\nPin every mlx-vlm-bearing extra to ==0.7.2. Move the pin only "
-        "after the Desktop and dependency-coherence sweeps validate a new release."
-    )
+            bound = Requirement(spec).specifier
+            assert "0.7.2" in bound, extra_name
+            assert all(v not in bound for v in ("0.6.9", "0.7.4", "0.8.0")), extra_name

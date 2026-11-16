@@ -2,8 +2,8 @@
 
 Date: 2026-09-18
 Status: approved (user ruling: follow the original Phase B plan)
-Upstream pin: `mlx-vlm==0.7.2` (exact pin in `pyproject.toml`, shared with the
-Desktop sidecar)
+At the time of this design, `mlx-vlm==0.7.2` was pinned in `pyproject.toml`
+and the Desktop sidecar. The local fork now also accepts 0.7.12 for chat.
 
 ## Why
 

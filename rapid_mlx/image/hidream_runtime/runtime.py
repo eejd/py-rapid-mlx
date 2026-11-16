@@ -338,6 +338,9 @@ class HiDreamO1(nn.Module):
         *,
         on_step: Callable[[int, int], None] | None = None,
     ) -> None:
+        from rapid_mlx.mlx_vlm_compat import require_mlx_vlm_capability
+
+        require_mlx_vlm_capability("image generation")
         from mlx_vlm import load as mlx_vlm_load
 
         super().__init__()
